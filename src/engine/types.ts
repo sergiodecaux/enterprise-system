@@ -130,7 +130,7 @@ export interface CoinSignal {
   /** Ghost path / ATR realism warning */
   ghostPathWarning?: string | null
   unrealisticTp?: boolean
-  /** Global Fibonacci HTF reaction context */
+  /** Global Fibonacci HTF — зона 141 как главный магнит */
   globalFib?: {
     impulse: 'UP' | 'DOWN'
     entryBias: 'LONG' | 'SHORT' | null
@@ -138,6 +138,9 @@ export interface CoinSignal {
     swingHigh: number
     swingLow: number
     inReactionZone: boolean
+    in141?: boolean
+    near141?: boolean
+    price141?: number | null
   } | null
 }
 

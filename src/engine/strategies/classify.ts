@@ -88,14 +88,13 @@ export function classifyTradeStyle(signal: CoinSignal): StyleClassification {
 
   // Global Fib 141 / reaction → SWING magnet
   const fib = signal.globalFib
-  if (fib?.inReactionZone && fib.entryBias === signal.direction) {
-    swingPts += 3
-    intraPts += 1
-    const lbl = fib.activeLabel ?? 'Fib zone'
-    reasons.push(`Global Fib ${lbl} → SWING`)
-    if (lbl.includes('141')) {
-      swingPts += 2
-      reasons.push('Зона 141 — приоритетный разворот')
+  if (fib?.entryBias === signal.direction) {
+    if (fib.in141 || fib.near141 || fib.inReactionZone) {
+      swingPts += 4
+      reasons.push(`Fib 141 зона → SWING ${fib.entryBias}`)
+    } else if (fib.price141 != null) {
+      swingPts += 1
+      reasons.push(`Fib 141 watch @ ${fib.price141.toPrecision(5)}`)
     }
   }
 

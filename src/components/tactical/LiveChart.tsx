@@ -169,18 +169,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
         .slice(0, 1)
       zones.push(...obs)
-      // Prefer 141 magnet / 141–161 band when active
+      // Always keep 141 band on chart (главный магнит), even if price far
       const fib141 = fibZones.filter(
         (z) =>
           (z.id ?? '').includes('141') || (z.label ?? '').includes('141')
       )
       zones.push(...fib141.slice(0, 2))
+      // Secondary active fib only if no 141 drawn
       if (!fib141.length) {
-        zones.push(...fibZones.filter((z) => (z.label ?? '').includes('◎')).slice(0, 2))
-      }
-      if (fibZones.length && !zones.some((z) => z.type === 'FIBONACCI')) {
         zones.push(
-          ...[...fibZones].sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0)).slice(0, 1)
+          ...fibZones.filter((z) => (z.label ?? '').includes('◎')).slice(0, 1)
         )
       }
       if (signal?.ote?.isActive && candles.length > 0) {
@@ -800,39 +798,44 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </div>
         )}
         <div ref={containerRef} className="h-full w-full" />
-        {globalFib?.activeZone && (
-          <div className="pointer-events-none absolute left-2 top-2 z-20 max-w-[90%] rounded border border-amber-400/40 bg-black/75 px-2 py-1 font-mono text-[10px] text-amber-200 shadow-lg">
-            <span className="font-bold text-amber-300">
-              {globalFib.activeZone.label.includes('141')
-                ? 'FIB 141'
-                : 'FIB ZONE'}
-            </span>
+        {globalFib && (
+          <div
+            className={`pointer-events-none absolute left-2 top-2 z-20 max-w-[92%] rounded border bg-black/80 px-2 py-1 font-mono text-[10px] shadow-lg ${
+              globalFib.in141 || globalFib.near141
+                ? 'border-amber-400/60 text-amber-200'
+                : 'border-amber-400/30 text-amber-100/90'
+            }`}
+          >
+            <span className="font-bold text-amber-300">FIB 141</span>
             {' · '}
-            {globalFib.activeZone.label}
+            {globalFib.impulse === 'UP' ? (
+              <span>импульс ↑ · шорт от 141</span>
+            ) : (
+              <span>импульс ↓ · лонг от 141</span>
+            )}
             {' · '}
             <span className="text-white">
-              ищем {globalFib.activeZone.bias}
+              {globalFib.in141
+                ? `◎ в зоне · ищем ${globalFib.zone141?.bias ?? globalFib.entryBias}`
+                : globalFib.near141
+                  ? `рядом · готовим ${globalFib.zone141?.bias ?? globalFib.entryBias}`
+                  : `ждём касания · ${globalFib.zone141?.bias ?? '—'}`}
             </span>
             <span className="mt-0.5 block text-[9px] text-holo/55">
-              Цена зоны{' '}
-              {globalFib.activeZone.bottom.toPrecision(5)}–
-              {globalFib.activeZone.top.toPrecision(5)}
+              0%={globalFib.fib0.toPrecision(5)} · 100%=
+              {globalFib.fib100.toPrecision(5)}
               {' · '}
-              {globalFib.impulse === 'UP' ? 'Импульс ↑' : 'Импульс ↓'}
-              {' · F141 @ '}
-              {globalFib.levels
-                .find((l) => l.ratio === 1.414)
-                ?.price.toPrecision(6) ?? '—'}
+              141%={globalFib.price141?.toPrecision(6) ?? '—'}
+              {' · '}
+              161%={globalFib.price161?.toPrecision(6) ?? '—'}
+              {globalFib.distTo141Pct != null && (
+                <>
+                  {' · Δ'}
+                  {globalFib.distTo141Pct >= 0 ? '+' : ''}
+                  {globalFib.distTo141Pct.toFixed(1)}%
+                </>
+              )}
             </span>
-          </div>
-        )}
-        {!globalFib?.activeZone && globalFib && (
-          <div className="pointer-events-none absolute left-2 top-2 z-20 rounded border border-hull-border/60 bg-black/60 px-2 py-1 font-mono text-[9px] text-holo/45">
-            Fib grid · F141 @{' '}
-            {globalFib.levels
-              .find((l) => l.ratio === 1.414)
-              ?.price.toPrecision(6) ?? '—'}
-            {' · вне зоны'}
           </div>
         )}
         {chartReady > 0 && showSessions && (

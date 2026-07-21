@@ -711,26 +711,19 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       logger.info(`[PE] ${internalSymbol} OTE boost: +${ote.scoreBoost}`)
     }
 
-    // Global Fib reaction zone — price at HTF bounce level → hunt entry this side
-    if (
-      globalFib?.activeZone &&
-      globalFib.activeZone.bias === direction
-    ) {
-      const is141 =
-        globalFib.activeZone.id.includes('141') ||
-        globalFib.activeZone.ratios[0] === 1.414
-      const fibBoost = is141
-        ? 1.6
-        : globalFib.activeZone.strength >= 10
-          ? 1.2
-          : 0.8
-      s = Math.min(s + fibBoost, 10)
-      z.push(
-        `GLOBAL_FIB_${direction}: ${globalFib.activeZone.label} (impulse ${globalFib.impulse})`
-      )
-      logger.info(
-        `[PE] ${internalSymbol} Global Fib boost: +${fibBoost} | ${globalFib.activeZone.label}`
-      )
+    // Global Fib 141 — главный магнит: вход только в/около зоны 141–161
+    if (globalFib?.entryBias === direction) {
+      const in141 = globalFib.in141 || globalFib.near141
+      if (in141) {
+        const fibBoost = globalFib.in141 ? 1.8 : 1.3
+        s = Math.min(s + fibBoost, 10)
+        z.push(
+          `GLOBAL_FIB_141_${direction}: ${globalFib.zone141?.label ?? '141'} (impulse ${globalFib.impulse})`
+        )
+        logger.info(
+          `[PE] ${internalSymbol} Fib 141 boost: +${fibBoost} | ${globalFib.zone141?.label}`
+        )
+      }
     }
 
     return { score: s, zones: z, mss: mssResult, raid: raidResult, ote: oteResult }
@@ -927,10 +920,14 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
         ? {
             impulse: globalFib.impulse,
             entryBias: globalFib.entryBias,
-            activeLabel: globalFib.activeZone?.label ?? null,
+            activeLabel:
+              globalFib.zone141?.label ?? globalFib.activeZone?.label ?? null,
             swingHigh: globalFib.swingHigh,
             swingLow: globalFib.swingLow,
-            inReactionZone: Boolean(globalFib.activeZone),
+            inReactionZone: globalFib.in141 || globalFib.near141,
+            in141: globalFib.in141,
+            near141: globalFib.near141,
+            price141: globalFib.price141,
           }
         : null,
     }
@@ -970,33 +967,29 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   let softDirection: TradeSide | null = null
   let softZones: string[] = []
 
-  // If price is in a global fib reaction zone, soft-bias that side first
+  // Soft-bias toward Fib 141 side (structural or when in/near zone)
   if (globalFib?.entryBias === 'LONG' && longAllowed) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
-    const is141 =
-      globalFib.activeZone?.id.includes('141') ||
-      globalFib.activeZone?.ratios[0] === 1.414
-    softScore = c.score + (globalFib.activeZone ? (is141 ? 2.2 : 1.5) : 0)
+    const at141 = globalFib.in141 || globalFib.near141
+    softScore = c.score + (at141 ? 2.4 : globalFib.zone141 ? 0.8 : 0)
     softDirection = 'LONG'
     softZones = [
       ...c.zones,
-      ...(globalFib.activeZone
-        ? [`GLOBAL_FIB_WATCH: ${globalFib.activeZone.label} → ищем LONG`]
-        : []),
-    ]
+      at141
+        ? [`GLOBAL_FIB_141: ${globalFib.zone141?.label ?? '141'} → ищем LONG`]
+        : [`GLOBAL_FIB_141_WATCH: ждём 141 @ ${globalFib.price141?.toPrecision(6) ?? '—'} → LONG`],
+    ].flat()
   } else if (globalFib?.entryBias === 'SHORT' && shortAllowed) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
-    const is141 =
-      globalFib.activeZone?.id.includes('141') ||
-      globalFib.activeZone?.ratios[0] === 1.414
-    softScore = c.score + (globalFib.activeZone ? (is141 ? 2.2 : 1.5) : 0)
+    const at141 = globalFib.in141 || globalFib.near141
+    softScore = c.score + (at141 ? 2.4 : globalFib.zone141 ? 0.8 : 0)
     softDirection = 'SHORT'
     softZones = [
       ...c.zones,
-      ...(globalFib.activeZone
-        ? [`GLOBAL_FIB_WATCH: ${globalFib.activeZone.label} → ищем SHORT`]
-        : []),
-    ]
+      at141
+        ? [`GLOBAL_FIB_141: ${globalFib.zone141?.label ?? '141'} → ищем SHORT`]
+        : [`GLOBAL_FIB_141_WATCH: ждём 141 @ ${globalFib.price141?.toPrecision(6) ?? '—'} → SHORT`],
+    ].flat()
   }
 
   if (longAllowed) {
@@ -1082,10 +1075,14 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       ? {
           impulse: globalFib.impulse,
           entryBias: globalFib.entryBias,
-          activeLabel: globalFib.activeZone?.label ?? null,
+          activeLabel:
+            globalFib.zone141?.label ?? globalFib.activeZone?.label ?? null,
           swingHigh: globalFib.swingHigh,
           swingLow: globalFib.swingLow,
-          inReactionZone: Boolean(globalFib.activeZone),
+          inReactionZone: globalFib.in141 || globalFib.near141,
+          in141: globalFib.in141,
+          near141: globalFib.near141,
+          price141: globalFib.price141,
         }
       : null,
   }
