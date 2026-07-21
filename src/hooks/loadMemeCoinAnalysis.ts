@@ -56,9 +56,14 @@ export async function loadMemeCoinAnalysis(
       toFlatSymbol(internalSymbol),
       currentPrice,
       meme.priceChange24h,
-      ohlcv1m,
+      ohlcv1m.length >= 90 ? ohlcv1m : await fetchOhlcv(internalSymbol, '1m', 180),
       depth,
-      trades
+      trades,
+      {
+        fundingRate: meme.squeeze?.fundingRate ?? null,
+        openInterest: null,
+        ohlcv5m,
+      }
     )
 
     const dailyBias = marketContext

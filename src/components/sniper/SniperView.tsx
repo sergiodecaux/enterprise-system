@@ -3,6 +3,7 @@ import { Crosshair, AlertCircle, TrendingUp } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { getSniperSignals } from '../../engine/sniperMode'
 import type { TradeSide } from '../../engine/smc'
+import type { TradeStyle } from '../../engine/types'
 import SniperCard from './SniperCard'
 import SniperFilters from './SniperFilters'
 
@@ -12,6 +13,7 @@ const SniperView = () => {
   const isScanning = useAppStore((s) => s.isScanning)
 
   const [activeFilter, setActiveFilter] = useState<'ALL' | TradeSide>('ALL')
+  const [styleFilter, setStyleFilter] = useState<'ALL' | TradeStyle>('ALL')
 
   const sniperSignals = useMemo(() => {
     const enriched = signals.map((s) => ({
@@ -19,14 +21,18 @@ const SniperView = () => {
       buyerAggression:
         buyerAggression[s.internalSymbol] ?? s.buyerAggression ?? null,
     }))
-    const all = getSniperSignals(enriched)
+    const all = getSniperSignals(enriched, styleFilter)
     if (activeFilter === 'ALL') return all
     return all.filter((s) => s.direction === activeFilter)
-  }, [signals, buyerAggression, activeFilter])
+  }, [signals, buyerAggression, activeFilter, styleFilter])
 
   const totalCount = sniperSignals.length
   const longCount = sniperSignals.filter((s) => s.direction === 'LONG').length
   const shortCount = sniperSignals.filter((s) => s.direction === 'SHORT').length
+  const scalpCount = sniperSignals.filter((s) => s.tradeStyle === 'SCALP').length
+  const intraCount = sniperSignals.filter(
+    (s) => s.tradeStyle === 'INTRADAY'
+  ).length
 
   return (
     <div className="flex min-h-screen flex-col bg-space pb-6">
@@ -47,7 +53,7 @@ const SniperView = () => {
           </div>
         </div>
 
-        <div className="mb-3 grid grid-cols-3 gap-2">
+        <div className="mb-3 grid grid-cols-4 gap-2">
           <div className="rounded-md bg-hull px-2 py-1.5 text-center">
             <div className="font-mono text-[10px] uppercase text-holo/40">
               Всего
@@ -72,11 +78,21 @@ const SniperView = () => {
               {shortCount}
             </div>
           </div>
+          <div className="rounded-md bg-hull px-2 py-1.5 text-center">
+            <div className="font-mono text-[9px] uppercase text-holo/40">
+              ⚡️/🎯
+            </div>
+            <div className="font-mono text-sm font-bold text-holo">
+              {scalpCount}/{intraCount}
+            </div>
+          </div>
         </div>
 
         <SniperFilters
           activeFilter={activeFilter}
           onFilterChange={setActiveFilter}
+          styleFilter={styleFilter}
+          onStyleFilterChange={setStyleFilter}
         />
       </div>
 
@@ -97,7 +113,7 @@ const SniperView = () => {
               Нет снайперских сигналов
             </p>
             <p className="max-w-xs text-center font-mono text-xs text-holo/30">
-              Ожидаем сетапы с подтверждением всех фильтров силы
+              Ожидаем сетапы с подтверждением фильтров силы (Scalp / Intraday)
             </p>
           </div>
         )}
@@ -105,7 +121,7 @@ const SniperView = () => {
         {totalCount > 0 && (
           <div className="space-y-3">
             {sniperSignals.map((signal) => (
-              <SniperCard key={signal.symbol} signal={signal} />
+              <SniperCard key={`${signal.symbol}_${signal.tradeStyle}`} signal={signal} />
             ))}
           </div>
         )}
@@ -121,8 +137,9 @@ const SniperView = () => {
               </span>
             </div>
             <p className="font-mono text-xs leading-relaxed text-holo/60">
-              Снайперские сигналы прошли минимум 2 из 3 фильтров силы. Входите
-              строго по входу, не гонитесь за ценой. SL — это закон.
+              ⚡️ SCALP и 🎯 INTRADAY считают Confidence по разным правилам.
+              Цифра — Confidence Score сетапа в моменте, не historical Win Rate.
+              Вход сеткой в OTE-зоне, SL — закон.
             </p>
           </div>
         </div>

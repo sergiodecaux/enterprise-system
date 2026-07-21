@@ -13,6 +13,21 @@ export {
 } from './memeFilter'
 export { analyzeMemeMarketData, computeMemeHeatScore } from './analyzer'
 export { buildMemeCoinSignal } from './memeSignalBuilder'
+export { detectShortSqueeze, type SqueezeResult } from './squeeze'
+export { detectMemeLifecycle, type LifecycleResult, type MemeLifecyclePhase } from './lifecycle'
+export { detectBidVoid, type BidVoidResult } from './bidVoid'
+export { detectFlatlineBreakout, type FlatlineResult } from './flatline'
+export { detectToxicChop, type ToxicResult } from './toxic'
+export { detectBacksideShort, type BacksideResult } from './backside'
+export {
+  detectIcebergAbsorption,
+  type AbsorptionAlertResult,
+} from './absorptionAlert'
+export { detectCvdTrap, type CvdTrapResult } from './cvdTrap'
+export {
+  calculateVolatilityGauge,
+  type VolatilityGaugeResult,
+} from './volatility'
 
 export const TOP_MEME_COUNT = 10
 

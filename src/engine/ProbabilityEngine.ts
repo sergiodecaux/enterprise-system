@@ -1,6 +1,7 @@
 /**
  * ProbabilityEngine — maps SniperBot SMC confluence weights to probability %.
  * Replaces historical system_core.json RSI-bucket lookups.
+ * Orchestrates SCALP vs INTRADAY profiles, VPVR, liquidation gate, CVD.
  */
 import type { OhlcvCandle } from '../api/mexc'
 import type {
@@ -20,6 +21,7 @@ import {
   calculateFibonacciLevels,
   calculateOTEZone,
   calculateRsi,
+  calculateAtr,
   checkCandleRejection,
   detectAbsorptionCandle,
   detectLiquidityRaid,
@@ -37,6 +39,25 @@ import {
 import { toDisplayName, toFlatSymbol } from '../api/mexc'
 import { calculateWallBoost } from './orderbook/scoreBooster'
 import { logger } from '../utils/logger'
+import {
+  classifyTradeStyle,
+  calculateScalpConfidence,
+  calculateIntradayConfidence,
+  buildScalpLevels,
+  buildIntradayLevels,
+  isKillzoneActive,
+} from './strategies'
+import {
+  calculateVolumeProfile,
+  applyObPocConfluence,
+} from './volumeProfile'
+import {
+  buildLiquidationClusters,
+  evaluateLiquidationGate,
+} from './derivatives'
+import { detectCvdDivergence } from './orderflow'
+import { calculateDynamicInvalidation } from './confidence/invalidation'
+import { buildGhostPath } from './prediction/ghostPath'
 
 export const CONFLUENCE_THRESHOLD = 5
 export const COOLDOWN_MS = 180 * 60 * 1000
@@ -169,6 +190,288 @@ function emptySignal(
     absorption: null,
     ltfChoCH: null,
     buyerAggression: null,
+    tradeStyle: null,
+    styleReasons: [],
+    styleConfidence: null,
+    volumeProfile: null,
+    liquidationContext: null,
+    cvdDivergence: null,
+    invalidationPrice: null,
+    invalidationMessage: null,
+    ghostPathWarning: null,
+    unrealisticTp: false,
+  }
+}
+
+/**
+ * Обогащает сигнал: VPVR, ликвидации, CVD, стиль, confidence, ghost path, invalidation.
+ */
+function enrichSignal(
+  signal: CoinSignal,
+  ctx: {
+    ohlcv1h: OhlcvCandle[]
+    ohlcv15m: OhlcvCandle[]
+    ohlcv5m?: OhlcvCandle[]
+    ohlcv1m?: OhlcvCandle[]
+    liquidityMap?: LiquidityMap
+    tapeBurst?: boolean
+    wallSupport?: boolean
+    bestZoneTop?: number | null
+    bestZoneBottom?: number | null
+  }
+): CoinSignal {
+  if (!signal.direction) return signal
+
+  const atr =
+    calculateAtr(ctx.ohlcv1h, 14) ?? signal.price * 0.005
+  const dailyAtr =
+    calculateAtr(ctx.ohlcv1h.slice(-24), 14) ?? atr
+  const dailyAtrPct = (dailyAtr / signal.price) * 100
+
+  // VPVR
+  let vpRaw = calculateVolumeProfile(ctx.ohlcv1h, 48, true)
+  if (vpRaw && ctx.bestZoneTop != null && ctx.bestZoneBottom != null) {
+    vpRaw = applyObPocConfluence(vpRaw, ctx.bestZoneTop, ctx.bestZoneBottom)
+  }
+  const volumeProfile = vpRaw
+    ? {
+        poc: vpRaw.poc,
+        vah: vpRaw.vah,
+        val: vpRaw.val,
+        obPocConfluence: vpRaw.obPocConfluence,
+        confluenceLabel: vpRaw.confluenceLabel,
+        scoreBoost: vpRaw.scoreBoost,
+      }
+    : null
+
+  // CVD
+  const cvdSrc = ctx.ohlcv5m?.length ? ctx.ohlcv5m : ctx.ohlcv15m
+  const cvd = detectCvdDivergence(cvdSrc, 20)
+  const cvdDivergence =
+    cvd.detected
+      ? {
+          detected: true,
+          type: cvd.type,
+          scoreBoost: cvd.scoreBoost,
+          label: cvd.label,
+        }
+      : null
+
+  // Liquidation clusters + gate
+  const clusters = buildLiquidationClusters(
+    ctx.liquidityMap,
+    signal.price,
+    ctx.ohlcv1h
+  )
+  const liq = evaluateLiquidationGate(
+    clusters,
+    signal.direction,
+    signal.price,
+    signal.raid
+  )
+  const liquidationContext = {
+    swept: liq.swept,
+    fresh: liq.fresh,
+    gateOpen: liq.gateOpen,
+    scoreBoost: liq.scoreBoost,
+    label: liq.label,
+    blockingPrice: liq.blockingCluster?.price ?? null,
+    clusterCount: clusters.length,
+  }
+
+  let score = signal.score
+  const zones = [...signal.zones]
+
+  if (volumeProfile?.obPocConfluence) {
+    score = Math.min(score + volumeProfile.scoreBoost, 10)
+    zones.push(`VPVR: ${volumeProfile.confluenceLabel}`)
+  }
+  if (cvdDivergence?.detected) {
+    const aligned =
+      (signal.direction === 'LONG' && cvdDivergence.type === 'BULLISH') ||
+      (signal.direction === 'SHORT' && cvdDivergence.type === 'BEARISH')
+    if (aligned) {
+      score = Math.min(score + cvdDivergence.scoreBoost, 10)
+      zones.push(`CVD: ${cvdDivergence.label}`)
+    }
+  }
+  if (liq.scoreBoost > 0) {
+    score = Math.min(score + liq.scoreBoost, 10)
+    zones.push(`LIQ: ${liq.label}`)
+  }
+
+  // Partial enrich for classification
+  let enriched: CoinSignal = {
+    ...signal,
+    score,
+    zones,
+    probabilityPct: scoreToProbability(score),
+    volumeProfile,
+    liquidationContext,
+    cvdDivergence,
+  }
+
+  const classification = classifyTradeStyle(enriched)
+  const style = classification.style
+  const kz = isKillzoneActive()
+
+  // Style-specific risk model (пересчёт SL/TP если есть уровни)
+  if (enriched.hasActiveSetup && enriched.sl != null && enriched.tp1 != null) {
+    if (style === 'SCALP') {
+      const levels = buildScalpLevels(
+        signal.direction,
+        signal.ltfChoCH?.surgicalEntryPrice ?? signal.price,
+        signal.raid?.sweptLevel ?? null,
+        volumeProfile?.vah && signal.direction === 'LONG'
+          ? volumeProfile.vah
+          : volumeProfile?.val && signal.direction === 'SHORT'
+            ? volumeProfile.val
+            : null,
+        atr
+      )
+      enriched = {
+        ...enriched,
+        sl: levels.sl,
+        tp1: levels.tp1,
+        tp2: levels.tp2,
+      }
+    } else {
+      const levels = buildIntradayLevels(
+        signal.direction,
+        signal.price,
+        signal.direction === 'LONG'
+          ? ctx.bestZoneBottom ?? null
+          : ctx.bestZoneTop ?? null,
+        null,
+        enriched.tpDaily,
+        atr
+      )
+      enriched = {
+        ...enriched,
+        sl: levels.sl,
+        tp1: levels.tp1,
+        tp2: levels.tp2,
+        tpDaily: levels.tpDaily ?? enriched.tpDaily,
+      }
+    }
+  }
+
+  // Style confidence
+  let styleConfidence = 0
+  let styleFactors: string[] = []
+
+  if (style === 'SCALP') {
+    const sc = calculateScalpConfidence({
+      freshSweep:
+        !!signal.raid &&
+        signal.raid.type !== 'NONE' &&
+        signal.raid.isFresh,
+      absorption: !!signal.absorption?.detected,
+      tapeBurst: !!ctx.tapeBurst || !!signal.buyerAggression?.detected,
+      cvdDivergence:
+        !!cvdDivergence?.detected &&
+        ((signal.direction === 'LONG' && cvdDivergence.type === 'BULLISH') ||
+          (signal.direction === 'SHORT' && cvdDivergence.type === 'BEARISH')),
+      chochOrMss: !!(signal.ltfChoCH?.detected || signal.mss?.detected),
+      wallSupport: !!ctx.wallSupport,
+      liquidationSwept: liq.swept && liq.fresh,
+    })
+    styleConfidence = sc.score
+    styleFactors = sc.factors
+  } else {
+    const dailyAligned =
+      (signal.direction === 'LONG' && signal.dailyBias === 'BULLISH') ||
+      (signal.direction === 'SHORT' && signal.dailyBias === 'BEARISH')
+    const h4Aligned =
+      (signal.direction === 'LONG' && signal.coinTrend === 'BULLISH') ||
+      (signal.direction === 'SHORT' && signal.coinTrend === 'BEARISH')
+    const inOb = zones.some((z) => z.includes('OB'))
+
+    const ic = calculateIntradayConfidence({
+      dailyBiasAligned: dailyAligned,
+      h4TrendAligned: h4Aligned,
+      ltfChoCH: !!(signal.ltfChoCH?.detected || signal.mss?.detected),
+      killzoneActive: kz.active,
+      inHtfOrderBlock: inOb,
+      oteInZone: !!signal.ote?.priceInZone,
+      pocConfluence: !!volumeProfile?.obPocConfluence,
+      liquidationSwept: liq.swept,
+    })
+    styleConfidence = ic.score
+    styleFactors = ic.factors
+  }
+
+  // Ghost path realism
+  let ghostPathWarning: string | null = null
+  let unrealisticTp = false
+  if (enriched.sl != null && enriched.tp1 != null) {
+    const ghost = buildGhostPath({
+      entry: enriched.ltfChoCH?.surgicalEntryPrice ?? enriched.price,
+      tp1: enriched.tp1,
+      tp2: enriched.tp2,
+      sl: enriched.sl,
+      direction: signal.direction,
+      atr,
+      dailyAtrPct,
+      style,
+      candleTimeframeSeconds: style === 'SCALP' ? 60 : 900,
+    })
+    unrealisticTp = ghost.unrealisticTp
+    ghostPathWarning = ghost.warning
+    if (ghost.unrealisticTp) {
+      enriched = {
+        ...enriched,
+        tp1: ghost.adjustedTp1,
+        tp2: ghost.adjustedTp2,
+      }
+      zones.push('TP_ADJUSTED: ATR realism')
+    }
+  }
+
+  // Dynamic invalidation
+  const invCandles = ctx.ohlcv5m?.length
+    ? ctx.ohlcv5m
+    : ctx.ohlcv1m?.length
+      ? ctx.ohlcv1m
+      : ctx.ohlcv15m
+  const inv = calculateDynamicInvalidation(
+    invCandles,
+    signal.direction,
+    ctx.ohlcv5m?.length ? '5m' : '1m'
+  )
+
+  // Интрадей: не триггерим элитный сетап если liq gate закрыт (сильный пул не снят)
+  let hasActiveSetup = enriched.hasActiveSetup
+  if (
+    hasActiveSetup &&
+    style === 'INTRADAY' &&
+    !liq.gateOpen &&
+    styleConfidence < 85
+  ) {
+    hasActiveSetup = false
+    zones.push(`LIQ_GATE: ${liq.label}`)
+    logger.info(
+      `[PE] ${signal.internalSymbol} liq gate closed — setup deferred`
+    )
+  }
+
+  return {
+    ...enriched,
+    zones,
+    hasActiveSetup,
+    tradeStyle: style,
+    styleReasons: [...classification.reasons, ...styleFactors],
+    styleConfidence,
+    invalidationPrice: inv?.price ?? null,
+    invalidationMessage: inv?.message ?? null,
+    ghostPathWarning,
+    unrealisticTp,
+    activeSignal: enriched.activeSignal
+      ? {
+          ...enriched.activeSignal,
+          win_rate: styleConfidence || enriched.probabilityPct,
+        }
+      : null,
   }
 }
 
@@ -591,7 +894,18 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       buyerAggression: null,
     }
 
-    return { signal, triggered: true }
+    const enriched = enrichSignal(signal, {
+      ohlcv1h,
+      ohlcv15m,
+      ohlcv5m,
+      ohlcv1m,
+      liquidityMap,
+      wallSupport: Boolean(wallTracker),
+      bestZoneTop: confluence.bestZone.top,
+      bestZoneBottom: confluence.bestZone.bottom,
+    })
+
+    return { signal: enriched, triggered: enriched.hasActiveSetup }
   }
 
   if (longAllowed) {
@@ -648,47 +962,61 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const flat = toFlatSymbol(internalSymbol)
   const probabilityPct = scoreToProbability(softBoosted.score)
 
+  const softSignal: CoinSignal = {
+    symbol: flat,
+    internalSymbol,
+    displayName: toDisplayName(internalSymbol),
+    price: currentPrice,
+    priceChange24h,
+    currentRSI: rsi,
+    probabilityPct,
+    score: softBoosted.score,
+    direction: softBoosted.score > 0 ? softDirection : null,
+    zones: softBoosted.zones,
+    sl: null,
+    tp1: null,
+    tp2: null,
+    tpDaily: null,
+    coinTrend,
+    btcTrend,
+    dailyBias: dailyBias.bias,
+    dailyConfidence: dailyBias.confidence,
+    dailyPattern: dailyBias.dailyAnalysis?.pattern ?? null,
+    isLocked: false,
+    hasActiveSetup: false,
+    activeSignal:
+      softBoosted.score > 0 && softDirection
+        ? {
+            win_rate: probabilityPct,
+            samples: softBoosted.score,
+            direction: softDirection,
+            avg_return: 0,
+          }
+        : null,
+    activeSignalKey: softBoosted.score > 0 ? `SOFT_${softBoosted.score}` : null,
+    btcDivergence: divergence.type !== 'NONE' ? divergence : null,
+    mss: softLTF.mss,
+    raid: softLTF.raid,
+    ote: softLTF.ote,
+    absorption: _absorption.detected ? _absorption : null,
+    ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
+    buyerAggression: null,
+  }
+
+  const enrichedSoft =
+    softSignal.direction != null
+      ? enrichSignal(softSignal, {
+          ohlcv1h,
+          ohlcv15m,
+          ohlcv5m,
+          ohlcv1m,
+          liquidityMap,
+          wallSupport: Boolean(wallTracker),
+        })
+      : softSignal
+
   return {
-    signal: {
-      symbol: flat,
-      internalSymbol,
-      displayName: toDisplayName(internalSymbol),
-      price: currentPrice,
-      priceChange24h,
-      currentRSI: rsi,
-      probabilityPct,
-      score: softBoosted.score,
-      direction: softBoosted.score > 0 ? softDirection : null,
-      zones: softBoosted.zones,
-      sl: null,
-      tp1: null,
-      tp2: null,
-      tpDaily: null,
-      coinTrend,
-      btcTrend,
-      dailyBias: dailyBias.bias,
-      dailyConfidence: dailyBias.confidence,
-      dailyPattern: dailyBias.dailyAnalysis?.pattern ?? null,
-      isLocked: false,
-      hasActiveSetup: false,
-      activeSignal:
-        softBoosted.score > 0 && softDirection
-          ? {
-              win_rate: probabilityPct,
-              samples: softBoosted.score,
-              direction: softDirection,
-              avg_return: 0,
-            }
-          : null,
-      activeSignalKey: softBoosted.score > 0 ? `SOFT_${softBoosted.score}` : null,
-      btcDivergence: divergence.type !== 'NONE' ? divergence : null,
-      mss: softLTF.mss,
-      raid: softLTF.raid,
-      ote: softLTF.ote,
-      absorption: _absorption.detected ? _absorption : null,
-      ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
-      buyerAggression: null,
-    },
+    signal: enrichedSoft,
     triggered: false,
   }
 }

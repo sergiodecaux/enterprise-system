@@ -25,6 +25,11 @@ import {
   DEFAULT_NEWS_SETTINGS,
   EMPTY_NEWS_INTEL,
 } from '../engine/sentiment/types'
+import {
+  DEFAULT_TELEGRAM_ALERT_SETTINGS,
+  TELEGRAM_ALERT_SETTINGS_KEY,
+  type TelegramAlertSettings,
+} from '../engine/telegram/types'
 import { CORE_WATCHLIST } from '../api/mexc'
 
 const defaultMarketContext: MarketContext = {
@@ -131,6 +136,17 @@ function loadNewsSettings(): NewsSettings {
   }
 }
 
+function loadTelegramAlertSettings(): TelegramAlertSettings {
+  try {
+    const saved = localStorage.getItem(TELEGRAM_ALERT_SETTINGS_KEY)
+    return saved
+      ? { ...DEFAULT_TELEGRAM_ALERT_SETTINGS, ...JSON.parse(saved) }
+      : DEFAULT_TELEGRAM_ALERT_SETTINGS
+  } catch {
+    return DEFAULT_TELEGRAM_ALERT_SETTINGS
+  }
+}
+
 export const useAppStore = create<AppState>()(
   subscribeWithSelector((set, get) => ({
     liveTickets: {},
@@ -142,6 +158,7 @@ export const useAppStore = create<AppState>()(
     sessionSettings: loadSessionSettings(),
     newsSettings: loadNewsSettings(),
     newsIntel: EMPTY_NEWS_INTEL,
+    telegramAlertSettings: loadTelegramAlertSettings(),
     liquidityMaps: {},
     whaleWatcher: {},
     sessionDNA: {},
@@ -271,6 +288,17 @@ export const useAppStore = create<AppState>()(
           /* ignore */
         }
         return { newsSettings: next }
+      }),
+
+    setTelegramAlertSettings: (partial) =>
+      set((state) => {
+        const next = { ...state.telegramAlertSettings, ...partial }
+        try {
+          localStorage.setItem(TELEGRAM_ALERT_SETTINGS_KEY, JSON.stringify(next))
+        } catch {
+          /* ignore */
+        }
+        return { telegramAlertSettings: next }
       }),
 
     setNewsIntel: (partial) =>

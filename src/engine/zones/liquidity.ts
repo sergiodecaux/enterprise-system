@@ -2,6 +2,10 @@ import type { Time } from 'lightweight-charts'
 import type { OhlcvCandle } from '../../api/mexc'
 import type { LiquidityZone, PriceLevel } from '../indicators/types'
 import { findOrderBlocks, findFvg, detectMarketStructure } from '../smc'
+import {
+  calculateVolumeProfile,
+  volumeProfileToZones,
+} from '../volumeProfile'
 
 export function calculateOrderBlockZones(candles: OhlcvCandle[]): LiquidityZone[] {
   if (candles.length < 20) return []
@@ -51,73 +55,27 @@ export function calculateFvgZones(candles: OhlcvCandle[]): LiquidityZone[] {
 }
 
 export function calculatePocLevel(candles: OhlcvCandle[]): LiquidityZone | null {
-  if (candles.length === 0) return null
+  const profile = calculateVolumeProfile(candles, 48, true)
+  if (!profile) return null
 
-  let maxVolume = 0
-  let maxIndex = 0
-
-  candles.forEach((candle, i) => {
-    if (candle[5] > maxVolume) {
-      maxVolume = candle[5]
-      maxIndex = i
-    }
-  })
-
-  const pocCandle = candles[maxIndex]
-  const pocPrice = (pocCandle[2] + pocCandle[3]) / 2
-
-  return {
-    id: 'poc_level',
-    type: 'POC',
-    side: 'NEUTRAL',
-    top: pocPrice + pocPrice * 0.001,
-    bottom: pocPrice - pocPrice * 0.001,
-    startTime: (candles[0][0] / 1000) as Time,
-    endTime: (candles[candles.length - 1][0] / 1000) as Time,
-    strength: 10,
-    label: `POC $${pocPrice.toFixed(2)}`,
-  }
+  const zones = volumeProfileToZones(
+    profile,
+    candles[0][0],
+    candles[candles.length - 1][0]
+  )
+  return zones.find((z) => z.type === 'POC') ?? null
 }
 
 export function calculateValueArea(candles: OhlcvCandle[]): LiquidityZone | null {
-  if (candles.length < 10) return null
+  const profile = calculateVolumeProfile(candles, 48, true)
+  if (!profile) return null
 
-  const volumes = candles.map((c) => c[5])
-  const totalVolume = volumes.reduce((a, b) => a + b, 0)
-  const target = totalVolume * 0.7
-
-  const sorted = candles
-    .map((c, i) => ({ candle: c, index: i }))
-    .sort((a, b) => b.candle[5] - a.candle[5])
-
-  let accumulated = 0
-  const vaIndices: number[] = []
-
-  for (const { candle, index } of sorted) {
-    accumulated += candle[5]
-    vaIndices.push(index)
-    if (accumulated >= target) break
-  }
-
-  const vaPrices = vaIndices.map((i) => ({
-    high: candles[i][2],
-    low: candles[i][3],
-  }))
-
-  const vaHigh = Math.max(...vaPrices.map((p) => p.high))
-  const vaLow = Math.min(...vaPrices.map((p) => p.low))
-
-  return {
-    id: 'value_area',
-    type: 'VALUE_AREA',
-    side: 'NEUTRAL',
-    top: vaHigh,
-    bottom: vaLow,
-    startTime: (candles[0][0] / 1000) as Time,
-    endTime: (candles[candles.length - 1][0] / 1000) as Time,
-    strength: 7,
-    label: 'Value Area (70%)',
-  }
+  const zones = volumeProfileToZones(
+    profile,
+    candles[0][0],
+    candles[candles.length - 1][0]
+  )
+  return zones.find((z) => z.type === 'VALUE_AREA') ?? null
 }
 
 /** Previous completed candle high/low/close as daily-style levels */

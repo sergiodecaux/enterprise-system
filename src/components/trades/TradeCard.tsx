@@ -178,13 +178,56 @@ const TradeCard = ({ trade }: TradeCardProps) => {
       {(trade.status === 'ACTIVE' ||
         trade.status === 'BREAKEVEN' ||
         trade.status === 'INVALIDATED') && (
-        <button
-          type="button"
-          onClick={handleClose}
-          className="w-full rounded-lg border border-hull-border bg-hull-light px-4 py-2 font-mono text-xs font-bold uppercase text-holo transition-colors hover:bg-hull hover:text-matrix active:scale-95"
-        >
-          Закрыть сделку вручную
-        </button>
+        <div className="space-y-2">
+          {trade.isMemeTrade && trade.trailingStop != null && (
+            <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-2.5">
+              <div className="mb-0.5 font-mono text-[10px] uppercase text-orange-400/70">
+                Shadow Trailing
+              </div>
+              <div className="flex justify-between font-mono text-xs">
+                <span className="text-holo/60">
+                  Peak: {(trade.peakPrice ?? trade.entryPrice).toFixed(6)}
+                </span>
+                <span className="font-bold text-orange-400">
+                  Trail: {trade.trailingStop.toFixed(6)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {trade.isMemeTrade && (
+            <button
+              type="button"
+              onClick={() => {
+                haptic.error()
+                const confirmed = window.confirm(
+                  `🚨 PANIC SELL ${trade.symbol}?\n\nСРОЧНО ИДИ В MEXC И ЖМИ SELL MARKET!\n\nЗакрыть локальный трек сделки?`
+                )
+                if (confirmed) {
+                  try {
+                    void navigator.clipboard?.writeText(
+                      `MEXC PANIC SELL MARKET ${trade.symbol.replace('USDT', '/USDT')} ${trade.direction}`
+                    )
+                  } catch {
+                    /* ignore */
+                  }
+                  closeTrade(trade.id, 'MANUAL', trade.currentPrice)
+                }
+              }}
+              className="w-full animate-pulse rounded-xl border-2 border-alert bg-gradient-to-r from-alert to-orange-600 px-4 py-4 font-mono text-base font-black uppercase tracking-wider text-white shadow-[0_0_24px_rgba(255,0,60,0.45)] transition-all active:scale-95"
+            >
+              🚨 PANIC SELL / BAIL OUT
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleClose}
+            className="w-full rounded-lg border border-hull-border bg-hull-light px-4 py-2 font-mono text-xs font-bold uppercase text-holo transition-colors hover:bg-hull hover:text-matrix active:scale-95"
+          >
+            Закрыть сделку вручную
+          </button>
+        </div>
       )}
     </div>
   )

@@ -32,7 +32,9 @@ export function usePriceForecast(
   liquidityMap: LiquidityLevel[],
   currentPrice: number,
   symbol: string,
-  activeTimeframe: string
+  activeTimeframe: string,
+  stopLoss?: number | null,
+  invalidationPrice?: number | null
 ): PriceForecast | null {
   return useMemo(() => {
     if (!alignment || candles.length < 20 || currentPrice === 0) return null
@@ -45,7 +47,8 @@ export function usePriceForecast(
       liquidityMap,
       currentPrice,
       activeTimeframe,
-      lastCandleTs
+      lastCandleTs,
+      { stopLoss, invalidationPrice }
     )
 
     return {
@@ -54,10 +57,19 @@ export function usePriceForecast(
       scenarios,
       mtfAlignment: alignment,
       liquidityMap,
-      dominantScenario: scenarios[0]?.id ?? 'A',
+      dominantScenario: 'A' as const,
       generatedAt: Date.now(),
       candleTimeframeSeconds: getCandleSeconds(activeTimeframe),
       lastCandleTimestamp: lastCandleTs,
     }
-  }, [candles, alignment, liquidityMap, currentPrice, symbol, activeTimeframe])
+  }, [
+    candles,
+    alignment,
+    liquidityMap,
+    currentPrice,
+    symbol,
+    activeTimeframe,
+    stopLoss,
+    invalidationPrice,
+  ])
 }

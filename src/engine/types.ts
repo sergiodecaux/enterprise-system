@@ -8,11 +8,21 @@ import type {
 import type { ChartPreferences } from './indicators/types'
 import type { SessionSettings } from './sessions/types'
 import type { NewsSettings, NewsIntelState } from './sentiment/types'
+import type { TelegramAlertSettings } from './telegram/types'
 import type {
   VolumeSpikeResult,
   LiquidityGapResult,
   MeanReversionResult,
   SpreadPressureResult,
+  SqueezeResult,
+  LifecycleResult,
+  BidVoidResult,
+  FlatlineResult,
+  ToxicResult,
+  BacksideResult,
+  AbsorptionAlertResult,
+  CvdTrapResult,
+  VolatilityGaugeResult,
 } from './meme'
 
 /** @deprecated Kept for backward-compat imports; unused in SMC path */
@@ -57,6 +67,9 @@ export interface LiveTicker {
   timestamp: number
 }
 
+/** Горизонт сделки — жёсткое разделение логики SCALP / INTRADAY */
+export type TradeStyle = 'SCALP' | 'INTRADAY'
+
 export interface CoinSignal {
   symbol: string // flat BTCUSDT
   internalSymbol: string // BTC/USDT:USDT
@@ -99,6 +112,24 @@ export interface CoinSignal {
   buyerAggression?: BuyerAggressionResult | null
   /** Meme Pulse данные (если сигнал из мем-сканера) */
   memePulse?: MemeSignal | null
+  /** SCALP | INTRADAY — разные алгоритмы Confidence / risk */
+  tradeStyle?: TradeStyle | null
+  /** Причины классификации стиля */
+  styleReasons?: string[]
+  /** Style-specific confidence 0-100 (не путать с historical win rate) */
+  styleConfidence?: number | null
+  /** Volume Profile (VPVR) контекст */
+  volumeProfile?: VolumeProfileSnapshot | null
+  /** Ликвидационные кластеры / gate */
+  liquidationContext?: LiquidationContextSnapshot | null
+  /** CVD divergence */
+  cvdDivergence?: CvdDivergenceSnapshot | null
+  /** Динамическая линия инвалидации */
+  invalidationPrice?: number | null
+  invalidationMessage?: string | null
+  /** Ghost path / ATR realism warning */
+  ghostPathWarning?: string | null
+  unrealisticTp?: boolean
 }
 
 export interface MarketContext {
@@ -127,6 +158,8 @@ export interface AppState {
   sessionSettings: SessionSettings
   newsSettings: NewsSettings
   newsIntel: NewsIntelState
+  /** Telegram bot alert preferences */
+  telegramAlertSettings: TelegramAlertSettings
   /** Карты ликвидности по символу (internalSymbol → LiquidityMap) */
   liquidityMaps: Record<string, LiquidityMap>
   /** Whale Watcher состояния по символу (internalSymbol → WhaleWatcherState) */
@@ -166,6 +199,7 @@ export interface AppState {
   setSessionSettings: (settings: Partial<SessionSettings>) => void
   setNewsSettings: (settings: Partial<NewsSettings>) => void
   setNewsIntel: (partial: Partial<NewsIntelState>) => void
+  setTelegramAlertSettings: (settings: Partial<TelegramAlertSettings>) => void
   setLiquidityMap: (internalSymbol: string, map: LiquidityMap) => void
   setWhaleWatcher: (internalSymbol: string, state: WhaleWatcherState) => void
   setSessionDNA: (internalSymbol: string, dna: SessionDNA) => void
@@ -206,6 +240,31 @@ export interface MemeSignal {
   quality: 'CRITICAL' | 'STRONG' | 'MODERATE' | 'WEAK'
   recommendation: 'QUICK_ENTRY' | 'MONITOR' | 'WAIT'
   updatedAt: number
+  /** Short squeeze / funding fuel */
+  squeeze?: SqueezeResult
+  /** Lifecycle phase */
+  lifecycle?: LifecycleResult
+  /** Bid void waterfall protection */
+  bidVoid?: BidVoidResult
+  /** Flatline ignition */
+  flatline?: FlatlineResult
+  /** Toxic chop shredder */
+  toxic?: ToxicResult
+  /** Backside short */
+  backside?: BacksideResult
+  /** Iceberg absorption */
+  absorptionAlert?: AbsorptionAlertResult
+  /** CVD trap */
+  cvdTrap?: CvdTrapResult
+  /** Volatility speedometer 0-100 */
+  volatility?: VolatilityGaugeResult
+  /** LONG/SHORT entry locks */
+  longBlocked?: boolean
+  shortBlocked?: boolean
+  /** Primary tactical alert for UI/haptics */
+  criticalAlert?: string | null
+  /** Preferred meme setup tag */
+  setupTag?: string | null
 }
 
 // ============================================================================
@@ -230,6 +289,9 @@ export interface TradeEvent {
     | 'TP2_HIT'
     | 'SL_HIT'
     | 'MANUAL_CLOSE'
+    | 'TRAILING_MOVED'
+    | 'TRAILING_HIT'
+    | 'PANIC_CLOSE'
   timestamp: number
   price: number
   message: string
@@ -258,6 +320,17 @@ export interface ActiveTrade {
   events: TradeEvent[]
   createdAt: number
   updatedAt: number
+  /** SCALP | INTRADAY */
+  tradeStyle?: TradeStyle | null
+  /** Dynamic Invalidation Line */
+  invalidationPrice?: number | null
+  /** Meme trade — shadow trailing instead of hard TP1 */
+  isMemeTrade?: boolean
+  /** Shadow trailing stop (virtual) */
+  trailingStop?: number | null
+  /** Peak price since entry (for trailing) */
+  peakPrice?: number | null
+  trailingAlertShown?: boolean
 }
 
 // ============================================================================
@@ -797,6 +870,36 @@ export interface AsiaBox {
   startTs: number
   /** Timestamp закрытия азиатской сессии */
   endTs: number
+}
+
+// ============================================================================
+// Volume Profile / Liquidation / CVD snapshots (на CoinSignal)
+// ============================================================================
+
+export interface VolumeProfileSnapshot {
+  poc: number
+  vah: number
+  val: number
+  obPocConfluence: boolean
+  confluenceLabel: string
+  scoreBoost: number
+}
+
+export interface LiquidationContextSnapshot {
+  swept: boolean
+  fresh: boolean
+  gateOpen: boolean
+  scoreBoost: number
+  label: string
+  blockingPrice: number | null
+  clusterCount: number
+}
+
+export interface CvdDivergenceSnapshot {
+  detected: boolean
+  type: 'BULLISH' | 'BEARISH' | 'NONE'
+  scoreBoost: number
+  label: string
 }
 
 /**

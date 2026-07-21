@@ -39,7 +39,76 @@ export const useTradeCopilot = () => {
 
         updateTrade(trade.id, { currentPrice, pnlPercent, pnlUsd })
 
-        if (trade.direction === 'LONG') {
+        // ── Meme Shadow Trailing ──────────────────────────────────────────
+        if (trade.isMemeTrade) {
+          const trailPct = 0.02 // 2% от пика
+          let peak = trade.peakPrice ?? trade.entryPrice
+          if (trade.direction === 'LONG' && currentPrice > peak) peak = currentPrice
+          if (trade.direction === 'SHORT' && currentPrice < peak) peak = currentPrice
+
+          const trailingStop =
+            trade.direction === 'LONG'
+              ? peak * (1 - trailPct)
+              : peak * (1 + trailPct)
+
+          const prevTrail = trade.trailingStop
+          if (
+            prevTrail == null ||
+            (trade.direction === 'LONG' && trailingStop > prevTrail) ||
+            (trade.direction === 'SHORT' && trailingStop < prevTrail)
+          ) {
+            if (prevTrail != null && Math.abs(trailingStop - prevTrail) / trade.entryPrice > 0.005) {
+              addTradeEvent(trade.id, {
+                type: 'TRAILING_MOVED',
+                price: currentPrice,
+                message: `Shadow trail → ${trailingStop.toFixed(6)} (peak ${peak.toFixed(6)})`,
+              })
+            }
+            updateTrade(trade.id, {
+              peakPrice: peak,
+              trailingStop,
+              currentPrice,
+              pnlPercent,
+              pnlUsd,
+            })
+          } else {
+            updateTrade(trade.id, { peakPrice: peak, currentPrice, pnlPercent, pnlUsd })
+          }
+
+          const trailHit =
+            trade.direction === 'LONG'
+              ? currentPrice <= trailingStop && peak > trade.entryPrice * 1.03
+              : currentPrice >= trailingStop && peak < trade.entryPrice * 0.97
+
+          if (trailHit && !trade.trailingAlertShown) {
+            haptic.error()
+            showAlert(
+              `🚨 ${trade.symbol}: ТРЕЙЛИНГ ПРОБИТ!\nСРОЧНО ИДИ В MEXC И ЖМИ SELL MARKET!`
+            )
+            addTradeEvent(trade.id, {
+              type: 'TRAILING_HIT',
+              price: currentPrice,
+              message: 'Shadow trailing пробит — закрывай по рынку!',
+            })
+            updateTrade(trade.id, { trailingAlertShown: true })
+            return
+          }
+
+          // Hard SL still applies
+          if (trade.direction === 'LONG' && currentPrice <= trade.sl) {
+            haptic.error()
+            showAlert(`🛑 ${trade.symbol}: SL активирован`)
+            closeTrade(trade.id, 'LOSS', currentPrice)
+            return
+          }
+          if (trade.direction === 'SHORT' && currentPrice >= trade.sl) {
+            haptic.error()
+            showAlert(`🛑 ${trade.symbol}: SL активирован`)
+            closeTrade(trade.id, 'LOSS', currentPrice)
+            return
+          }
+          // Skip hard TP1 for memes — trailing owns the exit
+        } else if (trade.direction === 'LONG') {
           if (currentPrice >= trade.tp1) {
             haptic.success()
             showAlert(`🎯 ${trade.symbol}: TP1 достигнут!`)
@@ -96,7 +165,7 @@ export const useTradeCopilot = () => {
           if (invalidation.invalidated) {
             haptic.error()
             showAlert(
-              `⚠️ ${trade.symbol}: СИЛА ПОТЕРЯНА!\n${invalidation.reason}\nЗакрой сделку вручную!`
+              `⚠️ ${trade.symbol}: ПАТТЕРН СЛОМАН!\n${invalidation.reason}`
             )
             addTradeEvent(trade.id, {
               type: 'INVALIDATION',
@@ -106,7 +175,20 @@ export const useTradeCopilot = () => {
             updateTrade(trade.id, {
               invalidationAlertShown: true,
               status: 'INVALIDATED',
+              invalidationPrice:
+                invalidation.invalidationPrice ?? trade.invalidationPrice,
             })
+          } else if (
+            trade.invalidationPrice != null &&
+            ((trade.direction === 'LONG' &&
+              currentPrice < trade.invalidationPrice) ||
+              (trade.direction === 'SHORT' &&
+                currentPrice > trade.invalidationPrice))
+          ) {
+            // Цена пробила линию, но структура ещё не закрылась — soft warning раз в цикл через message
+            logger.info(
+              `[Copilot] ${trade.symbol} near invalidation ${trade.invalidationPrice}`
+            )
           }
         }
 

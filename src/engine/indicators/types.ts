@@ -35,7 +35,7 @@ export interface VolumePoint {
 
 export interface LiquidityZone {
   id: string
-  type: 'ORDER_BLOCK' | 'FVG' | 'FIBONACCI' | 'POC' | 'VALUE_AREA' | 'DAILY'
+  type: 'ORDER_BLOCK' | 'FVG' | 'FIBONACCI' | 'POC' | 'VALUE_AREA' | 'DAILY' | 'OTE'
   side: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   top: number
   bottom: number
@@ -51,7 +51,7 @@ export interface LiquidityZone {
 
 export interface PriceLevel {
   id: string
-  type: 'SL' | 'TP1' | 'TP2' | 'TP_DAILY' | 'FIB_618' | 'FIB_786' | 'FIB_OTE' | 'DAILY_HIGH' | 'DAILY_LOW' | 'DAILY_CLOSE'
+  type: 'SL' | 'TP1' | 'TP2' | 'TP_DAILY' | 'FIB_618' | 'FIB_786' | 'FIB_OTE' | 'DAILY_HIGH' | 'DAILY_LOW' | 'DAILY_CLOSE' | 'INVALIDATION'
   price: number
   label: string
   color: string
@@ -98,7 +98,7 @@ export const DEFAULT_CHART_PREFERENCES: ChartPreferences = {
   indicators: {
     ema20: true,
     ema50: false,
-    ema200: true,
+    ema200: false,
     sma9: false,
     sma21: false,
     sma50: false,
@@ -112,12 +112,12 @@ export const DEFAULT_CHART_PREFERENCES: ChartPreferences = {
   },
   zones: {
     orderBlocks: true,
-    fvg: true,
+    fvg: false,
     fibonacci: false,
     poc: false,
     valueArea: false,
     dailyLevels: false,
   },
-  opacity: 20,
-  showLabels: true,
+  opacity: 18,
+  showLabels: false,
 }

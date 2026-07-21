@@ -77,6 +77,8 @@ const SniperCard = ({ signal }: SniperCardProps) => {
       breakevenAlertShown: false,
       invalidationAlertShown: false,
       wallAlertShown: false,
+      tradeStyle: signal.tradeStyle,
+      invalidationPrice: signal.invalidationPrice ?? null,
     })
 
     haptic.success()
@@ -132,6 +134,17 @@ const SniperCard = ({ signal }: SniperCardProps) => {
                 <DirectionIcon className="h-3 w-3" />
                 {directionLabel(signal.direction)}
               </span>
+              <span
+                className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-bold ${
+                  signal.tradeStyle === 'SCALP'
+                    ? 'border border-yellow-400/40 bg-yellow-400/10 text-yellow-300'
+                    : 'border border-sky-400/40 bg-sky-400/10 text-sky-300'
+                }`}
+              >
+                {signal.tradeStyle === 'SCALP'
+                  ? '⚡️ SCALP [M5]'
+                  : '🎯 INTRADAY [H1]'}
+              </span>
             </div>
             <div className="font-mono text-sm text-holo/60">
               ${formatPrice(signal.price)}
@@ -145,7 +158,7 @@ const SniperCard = ({ signal }: SniperCardProps) => {
               {signal.calibratedWinRate}%
             </div>
             <div className="font-mono text-[10px] uppercase text-holo/40">
-              Винрейт
+              Confidence
             </div>
           </div>
         </div>
@@ -156,10 +169,12 @@ const SniperCard = ({ signal }: SniperCardProps) => {
           <div>
             <div className="mb-0.5 flex items-center gap-1 font-mono text-[10px] uppercase text-holo/40">
               <Target className="h-3 w-3" />
-              Вход
+              {signal.ote?.isActive ? 'OTE зона' : 'Вход'}
             </div>
             <div className="font-mono text-sm font-bold text-holo">
-              {formatPrice(signal.entryPrice)}
+              {signal.ote?.priceInZone
+                ? `${formatPrice(signal.ote.zoneBottom)}–${formatPrice(signal.ote.zoneTop)}`
+                : formatPrice(signal.entryPrice)}
             </div>
           </div>
 

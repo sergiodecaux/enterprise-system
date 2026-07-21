@@ -36,10 +36,12 @@ export const useMemePulseScanner = () => {
     async (
       internalSymbol: string,
       tickerPrice: number,
-      priceChange24h: number
+      priceChange24h: number,
+      fundingRate?: number,
+      openInterest?: number
     ): Promise<MemeSignal | null> => {
       try {
-        const ohlcv1m = await fetchOhlcv(internalSymbol, '1m', 60)
+        const ohlcv1m = await fetchOhlcv(internalSymbol, '1m', 180)
         if (!ohlcv1m.length || !isMounted.current) return null
 
         await new Promise((resolve) => setTimeout(resolve, COIN_DELAY_MS))
@@ -52,6 +54,13 @@ export const useMemePulseScanner = () => {
         const trades = await fetchRecentTrades(internalSymbol, 100)
         const currentPrice = ohlcv1m[ohlcv1m.length - 1][4] || tickerPrice
 
+        let ohlcv5m = null
+        try {
+          ohlcv5m = await fetchOhlcv(internalSymbol, '5m', 60)
+        } catch {
+          /* optional */
+        }
+
         const signal = analyzeMemeMarketData(
           internalSymbol,
           toDisplayName(internalSymbol),
@@ -60,10 +69,20 @@ export const useMemePulseScanner = () => {
           priceChange24h,
           ohlcv1m,
           depth,
-          trades
+          trades,
+          { fundingRate, openInterest, ohlcv5m }
         )
 
         if (
+          signal.criticalAlert &&
+          !alertedRef.current.has(`${internalSymbol}:${signal.setupTag}`)
+        ) {
+          alertedRef.current.add(`${internalSymbol}:${signal.setupTag}`)
+          haptic.notification('warning')
+          showAlert(
+            `${signal.criticalAlert}\n${signal.displayName}\nHeat: ${signal.heatScore}/100`
+          )
+        } else if (
           signal.quality === 'CRITICAL' &&
           signal.volumeSpike.detected &&
           !alertedRef.current.has(internalSymbol)
@@ -99,7 +118,9 @@ export const useMemePulseScanner = () => {
         const signal = await scanMemeDeep(
           t.symbol,
           t.lastPrice,
-          t.priceChangePercent
+          t.priceChangePercent,
+          t.fundingRate,
+          t.openInterest
         )
         if (signal) results.push(signal)
         await new Promise((resolve) => setTimeout(resolve, COIN_DELAY_MS))

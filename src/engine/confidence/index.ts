@@ -1,6 +1,15 @@
 import type { OhlcvCandle } from '../../api/mexc'
 import type { CoinSignal, OrderBookMetrics } from '../types'
 import { detectMarketStructure } from '../smc'
+import {
+  calculateScalpConfidence,
+  calculateIntradayConfidence,
+  isKillzoneActive,
+} from '../strategies'
+import {
+  calculateDynamicInvalidation,
+  evaluateTradeInvalidation,
+} from './invalidation'
 
 export interface ConfidenceFactor {
   name: string
@@ -18,6 +27,8 @@ export interface ConfidenceScoreResult {
   passedFactors: number
   approved: boolean
   recommendation: string
+  /** SCALP | INTRADAY — какой алгоритм использован */
+  tradeStyle: 'SCALP' | 'INTRADAY'
 }
 
 export function calculateConfidenceScore(
@@ -25,170 +36,215 @@ export function calculateConfidenceScore(
   orderBookMetrics: OrderBookMetrics | null,
   _ohlcv1m: OhlcvCandle[] | null
 ): ConfidenceScoreResult {
-  const factors: ConfidenceFactor[] = []
+  const style = signal.tradeStyle ?? 'INTRADAY'
 
-  let htfScore = 0
-  const htfReasons: string[] = []
-
-  if (signal.direction === 'LONG' && signal.dailyBias === 'BULLISH') {
-    htfScore += 0.33
-    htfReasons.push('Дневной бычий')
-  } else if (signal.direction === 'SHORT' && signal.dailyBias === 'BEARISH') {
-    htfScore += 0.33
-    htfReasons.push('Дневной медвежий')
+  if (style === 'SCALP') {
+    return calculateScalpConfidenceScore(signal, orderBookMetrics)
   }
+  return calculateIntradayConfidenceScore(signal, orderBookMetrics)
+}
 
-  if (signal.direction === 'LONG' && signal.btcTrend === 'BULLISH') {
-    htfScore += 0.33
-    htfReasons.push('BTC бычий')
-  } else if (signal.direction === 'SHORT' && signal.btcTrend === 'BEARISH') {
-    htfScore += 0.33
-    htfReasons.push('BTC медвежий')
-  }
-
-  if (signal.direction === 'LONG' && signal.coinTrend === 'BULLISH') {
-    htfScore += 0.34
-    htfReasons.push('Монета бычья')
-  } else if (signal.direction === 'SHORT' && signal.coinTrend === 'BEARISH') {
-    htfScore += 0.34
-    htfReasons.push('Монета медвежья')
-  }
-
-  factors.push({
-    name: 'Контекст HTF',
-    weight: 30,
-    score: htfScore,
-    passed: htfScore >= 0.66,
-    reason: htfReasons.join(' + ') || 'Слабое совпадение',
-    emoji: '🌍',
-  })
-
-  let ltfScore = 0
-  const ltfReasons: string[] = []
-
-  if (signal.mss?.detected) {
-    ltfScore += 0.33
-    ltfReasons.push('MSS')
-  }
-
-  if (signal.ltfChoCH?.detected) {
-    ltfScore += 0.33
-    ltfReasons.push('CHoCH')
-    if (signal.ltfChoCH.surgicalEntryDetected) {
-      ltfScore += 0.17
-      ltfReasons.push('Точный вход')
-    }
-  }
-
-  if (signal.raid && signal.raid.type !== 'NONE' && signal.raid.isFresh) {
-    ltfScore += 0.33
-    ltfReasons.push('Raid')
-  }
-
-  if (signal.ote?.priceInZone) {
-    ltfScore += 0.17
-    ltfReasons.push('OTE')
-  }
-
-  ltfScore = Math.min(ltfScore, 1.0)
-
-  factors.push({
-    name: 'Смена структуры LTF',
-    weight: 30,
-    score: ltfScore,
-    passed: ltfScore >= 0.5,
-    reason: ltfReasons.join(' + ') || 'Нет смены структуры',
-    emoji: '📊',
-  })
-
-  let volumeScore = 0
-  const volumeReasons: string[] = []
-
-  if (signal.absorption?.detected) {
-    volumeScore += 0.5
-    volumeReasons.push(
-      `Поглощение ×${signal.absorption.volumeMultiplier.toFixed(1)}`
+function calculateScalpConfidenceScore(
+  signal: CoinSignal,
+  orderBookMetrics: OrderBookMetrics | null
+): ConfidenceScoreResult {
+  const wallSupport = Boolean(
+    orderBookMetrics?.walls.some((w) =>
+      signal.direction === 'LONG' ? w.side === 'BID' : w.side === 'ASK'
     )
-  }
-
-  if (signal.buyerAggression?.detected && signal.direction === 'LONG') {
-    volumeScore += 0.5
-    volumeReasons.push(
-      `Агрессия ×${signal.buyerAggression.buyToSellRatio.toFixed(1)}`
-    )
-  }
-
-  factors.push({
-    name: 'Подтверждение объёма',
-    weight: 20,
-    score: volumeScore,
-    passed: volumeScore >= 0.5,
-    reason: volumeReasons.join(' + ') || 'Нет всплеска объёма',
-    emoji: '📈',
-  })
-
-  let wallScore = 0
-  const wallReasons: string[] = []
-
-  if (orderBookMetrics && orderBookMetrics.walls.length > 0) {
-    const relevantWalls = orderBookMetrics.walls.filter((wall) => {
-      if (signal.direction === 'LONG') return wall.side === 'BID'
-      return wall.side === 'ASK'
-    })
-
-    if (relevantWalls.length > 0) {
-      const strongestWall = relevantWalls[0]
-      wallScore = 0.5
-      if (strongestWall.ratio >= 3) {
-        wallScore = 1.0
-      }
-      wallReasons.push(
-        `Стенка ${strongestWall.side} ×${strongestWall.ratio.toFixed(1)}`
-      )
-    }
-  }
-
-  if (!wallReasons.length) {
-    wallReasons.push('Нет значимых стенок')
-  }
-
-  factors.push({
-    name: 'Стенка в стакане',
-    weight: 20,
-    score: wallScore,
-    passed: wallScore >= 0.5,
-    reason: wallReasons.join(' + '),
-    emoji: '🧱',
-  })
-
-  const totalScore = Math.round(
-    factors.reduce((sum, f) => sum + f.score * f.weight, 0)
   )
 
+  const sc = calculateScalpConfidence({
+    freshSweep:
+      !!signal.raid && signal.raid.type !== 'NONE' && signal.raid.isFresh,
+    absorption: !!signal.absorption?.detected,
+    tapeBurst: !!signal.buyerAggression?.detected,
+    cvdDivergence:
+      !!signal.cvdDivergence?.detected &&
+      ((signal.direction === 'LONG' &&
+        signal.cvdDivergence.type === 'BULLISH') ||
+        (signal.direction === 'SHORT' &&
+          signal.cvdDivergence.type === 'BEARISH')),
+    chochOrMss: !!(signal.ltfChoCH?.detected || signal.mss?.detected),
+    wallSupport,
+    liquidationSwept: !!(
+      signal.liquidationContext?.swept && signal.liquidationContext.fresh
+    ),
+  })
+
+  const factors: ConfidenceFactor[] = [
+    {
+      name: 'Liquidity Sweep',
+      weight: 22,
+      score: signal.raid?.isFresh ? 1 : 0,
+      passed: !!signal.raid?.isFresh,
+      reason: signal.raid?.label || 'Нет свежего sweep',
+      emoji: '🔄',
+    },
+    {
+      name: 'Order Flow',
+      weight: 34,
+      score:
+        (signal.absorption?.detected ? 0.5 : 0) +
+        (signal.buyerAggression?.detected ? 0.5 : 0),
+      passed: !!(
+        signal.absorption?.detected || signal.buyerAggression?.detected
+      ),
+      reason:
+        sc.factors
+          .filter((f) => ['Absorption', 'Tape Momentum'].includes(f))
+          .join(' + ') || 'Нет аномалии ленты',
+      emoji: '⚡',
+    },
+    {
+      name: 'CVD / Структура',
+      weight: 26,
+      score:
+        (signal.cvdDivergence?.detected ? 0.5 : 0) +
+        (signal.ltfChoCH?.detected || signal.mss?.detected ? 0.5 : 0),
+      passed: !!(
+        signal.cvdDivergence?.detected ||
+        signal.ltfChoCH?.detected ||
+        signal.mss?.detected
+      ),
+      reason:
+        sc.factors
+          .filter((f) => ['CVD Divergence', 'LTF Structure'].includes(f))
+          .join(' + ') || 'Нет LTF подтверждения',
+      emoji: 'Δ',
+    },
+    {
+      name: 'Liq Cluster',
+      weight: 18,
+      score: signal.liquidationContext?.swept ? 1 : 0,
+      passed: !!signal.liquidationContext?.swept,
+      reason: signal.liquidationContext?.label || 'Пул не снят',
+      emoji: '💥',
+    },
+  ]
+
+  const totalScore =
+    signal.styleConfidence ??
+    Math.round(factors.reduce((sum, f) => sum + f.score * f.weight, 0))
+  const passedFactors = factors.filter((f) => f.passed).length
+  const approved = totalScore >= 70 && passedFactors >= 2
+
+  return {
+    totalScore: Math.min(totalScore, 98),
+    factors,
+    quality: sc.quality,
+    passedFactors,
+    approved,
+    tradeStyle: 'SCALP',
+    recommendation:
+      totalScore >= 88
+        ? `⚡️ SCALP ELITE ${totalScore}%. Микро-вход, стоп за свип.`
+        : approved
+          ? `⚡️ SCALP ${totalScore}%. Сетап допустим на M1/M5.`
+          : `⚡️ SCALP ${totalScore}%. Недостаточно order-flow confluence.`,
+  }
+}
+
+function calculateIntradayConfidenceScore(
+  signal: CoinSignal,
+  orderBookMetrics: OrderBookMetrics | null
+): ConfidenceScoreResult {
+  const kz = isKillzoneActive()
+  const dailyAligned =
+    (signal.direction === 'LONG' && signal.dailyBias === 'BULLISH') ||
+    (signal.direction === 'SHORT' && signal.dailyBias === 'BEARISH')
+  const h4Aligned =
+    (signal.direction === 'LONG' && signal.coinTrend === 'BULLISH') ||
+    (signal.direction === 'SHORT' && signal.coinTrend === 'BEARISH')
+  const inOb = signal.zones.some((z) => z.includes('OB'))
+
+  const ic = calculateIntradayConfidence({
+    dailyBiasAligned: dailyAligned,
+    h4TrendAligned: h4Aligned,
+    ltfChoCH: !!(signal.ltfChoCH?.detected || signal.mss?.detected),
+    killzoneActive: kz.active,
+    inHtfOrderBlock: inOb,
+    oteInZone: !!signal.ote?.priceInZone,
+    pocConfluence: !!signal.volumeProfile?.obPocConfluence,
+    liquidationSwept: !!signal.liquidationContext?.swept,
+  })
+
+  const factors: ConfidenceFactor[] = [
+    {
+      name: 'HTF Bias',
+      weight: 30,
+      score: (dailyAligned ? 0.5 : 0) + (h4Aligned ? 0.5 : 0),
+      passed: dailyAligned && h4Aligned,
+      reason:
+        [dailyAligned && 'Daily', h4Aligned && '4H'].filter(Boolean).join(' + ') ||
+        'Нет HTF alignment',
+      emoji: '🌍',
+    },
+    {
+      name: 'Структура / CHoCH',
+      weight: 25,
+      score:
+        (signal.ltfChoCH?.detected || signal.mss?.detected ? 0.6 : 0) +
+        (signal.ote?.priceInZone ? 0.4 : 0),
+      passed: !!(signal.ltfChoCH?.detected || signal.mss?.detected),
+      reason:
+        ic.factors
+          .filter((f) => f.includes('CHoCH') || f.includes('OTE'))
+          .join(' + ') || 'Нет смены характера',
+      emoji: '📊',
+    },
+    {
+      name: 'Killzone + OB/POC',
+      weight: 25,
+      score:
+        (kz.active ? 0.4 : 0) +
+        (inOb ? 0.3 : 0) +
+        (signal.volumeProfile?.obPocConfluence ? 0.3 : 0),
+      passed: kz.active || inOb || !!signal.volumeProfile?.obPocConfluence,
+      reason:
+        ic.factors
+          .filter(
+            (f) =>
+              f.includes('Killzone') || f.includes('OB') || f.includes('POC')
+          )
+          .join(' + ') || 'Вне сессии / без зоны',
+      emoji: '🎯',
+    },
+    {
+      name: 'Liq Sweep Gate',
+      weight: 20,
+      score: signal.liquidationContext?.swept
+        ? 1
+        : signal.liquidationContext?.gateOpen
+          ? 0.4
+          : 0,
+      passed: !!signal.liquidationContext?.gateOpen,
+      reason: signal.liquidationContext?.label || 'Нет liq-контекста',
+      emoji: '💥',
+    },
+  ]
+
+  void orderBookMetrics
+
+  const totalScore =
+    signal.styleConfidence ??
+    Math.round(factors.reduce((sum, f) => sum + f.score * f.weight, 0))
   const passedFactors = factors.filter((f) => f.passed).length
   const approved = totalScore >= 70 && passedFactors >= 3
 
-  let quality: ConfidenceScoreResult['quality'] = 'WEAK'
-  let recommendation = ''
-
-  if (totalScore >= 85) {
-    quality = 'ELITE'
-    recommendation = `Сделка одобрена на ${totalScore}%. Все факторы синхронизированы. ВХОДИ!`
-  } else if (totalScore >= 70) {
-    quality = 'STRONG'
-    recommendation = `Уверенность ${totalScore}%. ${passedFactors}/4 факторов подтверждены. Сделка допустима.`
-  } else {
-    quality = 'WEAK'
-    recommendation = `Уверенность ${totalScore}%. Мусорный сигнал — пропустить.`
-  }
-
   return {
-    totalScore,
+    totalScore: Math.min(totalScore, 98),
     factors,
-    quality,
+    quality: ic.quality,
     passedFactors,
     approved,
-    recommendation,
+    tradeStyle: 'INTRADAY',
+    recommendation:
+      totalScore >= 88
+        ? `🎯 INTRADAY ELITE ${totalScore}%. Каскадные TP, стоп за структуру.`
+        : approved
+          ? `🎯 INTRADAY ${totalScore}%. Сетап допустим на H1/15m.`
+          : `🎯 INTRADAY ${totalScore}%. Недостаточно HTF confluence.`,
   }
 }
 
@@ -196,17 +252,25 @@ export function isTradeInvalidated(
   ohlcv1m: OhlcvCandle[],
   direction: 'LONG' | 'SHORT',
   _entryPrice: number
-): { invalidated: boolean; reason: string } {
+): { invalidated: boolean; reason: string; invalidationPrice?: number } {
+  const inv = calculateDynamicInvalidation(ohlcv1m, direction, '1m')
+  if (inv?.breached) {
+    return {
+      invalidated: true,
+      reason: inv.message,
+      invalidationPrice: inv.price,
+    }
+  }
+
   if (ohlcv1m.length < 10) {
     return { invalidated: false, reason: '' }
   }
 
   const structure = detectMarketStructure(ohlcv1m, 10)
+  const currentPrice = ohlcv1m[ohlcv1m.length - 1][4]
 
   if (direction === 'LONG') {
-    const currentPrice = ohlcv1m[ohlcv1m.length - 1][4]
     const lastSwingLow = structure.lastSwingLow
-
     if (
       lastSwingLow &&
       currentPrice < lastSwingLow &&
@@ -214,15 +278,15 @@ export function isTradeInvalidated(
     ) {
       return {
         invalidated: true,
-        reason: `Структура сломана. Новый нижний минимум: ${lastSwingLow.toFixed(4)}. Инициатива у продавцов.`,
+        reason:
+          'Паттерн сломан (Structure Shift M1). Вероятность отработки упала до 20%. Закрывай руками или переводи в BE, не жди удара в Stop Loss!',
+        invalidationPrice: lastSwingLow,
       }
     }
   }
 
   if (direction === 'SHORT') {
-    const currentPrice = ohlcv1m[ohlcv1m.length - 1][4]
     const lastSwingHigh = structure.lastSwingHigh
-
     if (
       lastSwingHigh &&
       currentPrice > lastSwingHigh &&
@@ -230,10 +294,14 @@ export function isTradeInvalidated(
     ) {
       return {
         invalidated: true,
-        reason: `Структура сломана. Новый верхний максимум: ${lastSwingHigh.toFixed(4)}. Инициатива у покупателей.`,
+        reason:
+          'Паттерн сломан (Structure Shift M1). Вероятность отработки упала до 20%. Закрывай руками или переводи в BE, не жди удара в Stop Loss!',
+        invalidationPrice: lastSwingHigh,
       }
     }
   }
 
   return { invalidated: false, reason: '' }
 }
+
+export { calculateDynamicInvalidation, evaluateTradeInvalidation }

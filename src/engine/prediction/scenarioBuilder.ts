@@ -8,10 +8,14 @@ import type {
 import { calculateAtr } from '../smc'
 import { findNearestLiquidity } from './liquidityMap'
 
-const SCENARIO_COLORS = {
-  LONG: '#22c55e',
-  SHORT: '#ef4444',
-  RANGE: '#f59e0b',
+/** A основной · B свип · C слом */
+const COLORS = {
+  A: '#22c55e',
+  B: '#38bdf8',
+  C: '#f97316',
+  A_SHORT: '#ef4444',
+  B_SHORT: '#a78bfa',
+  C_SHORT: '#f97316',
 }
 
 function candleSeconds(tf: string): number {
@@ -26,257 +30,321 @@ function candleSeconds(tf: string): number {
   return map[tf] ?? 3600
 }
 
-function buildLongPath(
+/**
+ * A (70%): движение по тренду в OB / к цели — чистый импульс с лёгким ретестом.
+ */
+function buildPrimaryPath(
   entry: number,
   target: number,
   atr: number,
-  candleSec: number
+  candleSec: number,
+  isLong: boolean
 ): PathPoint[] {
-  const pullback = entry - atr * 0.25
-  const midTarget = entry + (target - entry) * 0.5
+  const sign = isLong ? 1 : -1
+  const obRetest = entry - sign * atr * 0.2
+  const mid = entry + sign * Math.abs(target - entry) * 0.55
 
   return [
-    { timeOffsetSeconds: 0, price: entry, label: 'Вход' },
-    { timeOffsetSeconds: candleSec * 1, price: pullback, label: 'Откат' },
-    { timeOffsetSeconds: candleSec * 3, price: entry + atr * 0.3 },
+    { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
+    {
+      timeOffsetSeconds: candleSec * 1,
+      price: obRetest,
+      label: 'Ретест OB',
+    },
+    {
+      timeOffsetSeconds: candleSec * 3,
+      price: entry + sign * atr * 0.35,
+      label: 'Импульс',
+    },
     {
       timeOffsetSeconds: candleSec * 5,
-      price: midTarget,
+      price: mid,
       label: 'TP1',
       isKeyLevel: true,
     },
     {
       timeOffsetSeconds: candleSec * 8,
       price: target,
-      label: 'Цель',
+      label: 'Цель (OB/Liq)',
       isKeyLevel: true,
     },
   ]
 }
 
-function buildShortPath(
+/**
+ * B (20%): снятие ликвидности (пересвип) → возврат → поход выше/ниже цели.
+ */
+function buildSweepPath(
   entry: number,
   target: number,
+  sweepLevel: number,
   atr: number,
-  candleSec: number
+  candleSec: number,
+  isLong: boolean
 ): PathPoint[] {
-  const pullback = entry + atr * 0.25
-  const midTarget = entry - (entry - target) * 0.5
+  const sign = isLong ? 1 : -1
+  const extended = target + sign * atr * 0.8
 
   return [
-    { timeOffsetSeconds: 0, price: entry, label: 'Вход' },
-    { timeOffsetSeconds: candleSec * 1, price: pullback, label: 'Откат' },
-    { timeOffsetSeconds: candleSec * 3, price: entry - atr * 0.3 },
+    { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
+    {
+      timeOffsetSeconds: candleSec * 1.5,
+      price: sweepLevel,
+      label: 'Liquidity Sweep',
+      isKeyLevel: true,
+    },
+    {
+      timeOffsetSeconds: candleSec * 3,
+      price: entry + sign * atr * 0.15,
+      label: 'Reclaim',
+    },
     {
       timeOffsetSeconds: candleSec * 5,
-      price: midTarget,
-      label: 'TP1',
-      isKeyLevel: true,
+      price: entry + sign * Math.abs(target - entry) * 0.4,
+      label: 'Продолжение',
     },
     {
-      timeOffsetSeconds: candleSec * 8,
-      price: target,
-      label: 'Цель',
+      timeOffsetSeconds: candleSec * 9,
+      price: extended,
+      label: 'Цель+',
       isKeyLevel: true,
     },
   ]
 }
 
-function buildRangePath(
+/**
+ * C (10%): слом структуры — цена уходит за стоп / инвалидацию.
+ */
+function buildBreakPath(
   entry: number,
-  rangeTop: number,
-  rangeBottom: number,
-  candleSec: number
+  stopLevel: number,
+  atr: number,
+  candleSec: number,
+  isLong: boolean
 ): PathPoint[] {
+  const sign = isLong ? 1 : -1
+  // После стопа — продолжение против тренда
+  const afterStop = stopLevel - sign * atr * 1.2
+
   return [
-    { timeOffsetSeconds: 0, price: entry },
-    { timeOffsetSeconds: candleSec * 2, price: rangeTop, label: 'Верх' },
-    { timeOffsetSeconds: candleSec * 4, price: rangeBottom, label: 'Низ' },
-    { timeOffsetSeconds: candleSec * 6, price: entry, label: 'Возврат' },
+    { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
     {
-      timeOffsetSeconds: candleSec * 8,
-      price: rangeTop,
-      label: 'Цель выхода',
+      timeOffsetSeconds: candleSec * 1,
+      price: entry - sign * atr * 0.35,
+      label: 'Слабость',
+    },
+    {
+      timeOffsetSeconds: candleSec * 3,
+      price: stopLevel,
+      label: 'Слом / SL',
+      isKeyLevel: true,
+    },
+    {
+      timeOffsetSeconds: candleSec * 6,
+      price: afterStop,
+      label: 'Против тренда',
       isKeyLevel: true,
     },
   ]
 }
 
-function calcProbabilities(alignment: MultiTFAlignment) {
-  const { score } = alignment
-  let longBase = 33
-  let shortBase = 33
-  let rangeBase = 34
+function calcFixedProbabilities(alignment: MultiTFAlignment): {
+  a: number
+  b: number
+  c: number
+} {
+  // База 70 / 20 / 10; лёгкая коррекция по силе MTF (сумма = 100)
+  let a = 70
+  let b = 20
+  let c = 10
 
-  if (score >= 4) {
-    longBase = 65
-    shortBase = 15
-    rangeBase = 20
-  } else if (score >= 2) {
-    longBase = 55
-    shortBase = 20
-    rangeBase = 25
-  } else if (score <= -4) {
-    longBase = 15
-    shortBase = 65
-    rangeBase = 20
-  } else if (score <= -2) {
-    longBase = 20
-    shortBase = 55
-    rangeBase = 25
+  const abs = Math.abs(alignment.score)
+  if (abs >= 4 && alignment.agreement) {
+    a = 78
+    b = 15
+    c = 7
+  } else if (abs <= 1) {
+    a = 55
+    b = 28
+    c = 17
   }
 
-  if (alignment.agreement) {
-    if (score > 0) {
-      longBase += 5
-      rangeBase -= 5
-    } else {
-      shortBase += 5
-      rangeBase -= 5
-    }
-  }
-
-  const total = longBase + shortBase + rangeBase
-  return {
-    longPct: Math.round((longBase / total) * 100),
-    shortPct: Math.round((shortBase / total) * 100),
-    rangePct: Math.round((rangeBase / total) * 100),
-  }
+  return { a, b, c }
 }
 
-function buildReasoning(alignment: MultiTFAlignment, isLong: boolean): string[] {
+function buildReasoning(
+  alignment: MultiTFAlignment,
+  isLong: boolean,
+  kind: 'A' | 'B' | 'C'
+): string[] {
   const want = isLong ? 'LONG' : 'SHORT'
-  const reasons: string[] = []
-
-  if (alignment.daily.bias === want) reasons.push(`1D: ${alignment.daily.biasReason}`)
-  if (alignment.h4.bias === want) reasons.push(`4H: ${alignment.h4.biasReason}`)
-  if (alignment.h1.bias === want) reasons.push(`1H: ${alignment.h1.biasReason}`)
-  if (alignment.agreement) reasons.push('Все TF согласованы')
-  if (reasons.length === 0) {
-    reasons.push(`Сценарий ${want} при MTF score: ${alignment.score}`)
+  if (kind === 'A') {
+    const reasons: string[] = [
+      `Тренд ${want}: движение к ближайшему OB / ликвидности`,
+    ]
+    if (alignment.daily.bias === want) reasons.push(`1D: ${alignment.daily.biasReason}`)
+    if (alignment.h4.bias === want) reasons.push(`4H: ${alignment.h4.biasReason}`)
+    if (alignment.agreement) reasons.push('MTF согласованы')
+    return reasons
   }
-
-  return reasons
+  if (kind === 'B') {
+    return [
+      'Сначала снятие стопов (liquidity sweep)',
+      'Reclaim структуры → продолжение тренда',
+      'Не путать свип со сломом',
+    ]
+  }
+  return [
+    'Цена закрывается за стопом / микро-структурой',
+    'Сценарий инвалидации — не «обязана» отработать A',
+    'Мысли вероятностями: 10% тоже бывает',
+  ]
 }
 
+export interface BuildScenariosOptions {
+  stopLoss?: number | null
+  invalidationPrice?: number | null
+}
+
+/**
+ * Три вероятностных сценария:
+ * A ~70% — основной тренд в OB
+ * B ~20% — пересвип ликвидности, затем продолжение
+ * C ~10% — слом структуры ниже/выше стопа
+ */
 export function buildScenarios(
   candles: OhlcvCandle[],
   alignment: MultiTFAlignment,
   liquidityMap: LiquidityLevel[],
   currentPrice: number,
   activeTimeframe = '1h',
-  _lastCandleTs?: number
+  _lastCandleTs?: number,
+  options?: BuildScenariosOptions
 ): PriceScenario[] {
   const atr = calculateAtr(candles, 14) ?? currentPrice * 0.005
   const candleSec = candleSeconds(activeTimeframe)
-  const { longPct, shortPct, rangePct } = calcProbabilities(alignment)
+  const { a: pctA, b: pctB, c: pctC } = calcFixedProbabilities(alignment)
 
   const nearestUp = findNearestLiquidity(liquidityMap, 'UP', 0.3)
   const nearestDown = findNearestLiquidity(liquidityMap, 'DOWN', 0.3)
 
-  const upTarget = nearestUp?.price ?? currentPrice + atr * 2.5
-  const downTarget = nearestDown?.price ?? currentPrice - atr * 2.5
-
   const isLong = alignment.dominantBias !== 'SHORT'
+  const target = isLong
+    ? nearestUp?.price ?? currentPrice + atr * 2.5
+    : nearestDown?.price ?? currentPrice - atr * 2.5
+
+  // Sweep: SSL ниже для лонга / BSL выше для шорта
+  const sweepLevel = isLong
+    ? (nearestDown?.price ?? currentPrice - atr * 1.1)
+    : (nearestUp?.price ?? currentPrice + atr * 1.1)
+
+  const stopLevel =
+    options?.stopLoss ??
+    options?.invalidationPrice ??
+    (isLong ? currentPrice - atr * 1.5 : currentPrice + atr * 1.5)
+
+  const primaryColor = isLong ? COLORS.A : COLORS.A_SHORT
+  const altColor = isLong ? COLORS.B : COLORS.B_SHORT
+  const breakColor = COLORS.C
+
+  const riskA = Math.abs(target - currentPrice) / Math.max(Math.abs(currentPrice - stopLevel), atr * 0.5)
 
   const scenA: PriceScenario = {
     id: 'A',
     type: isLong ? 'LONG' : 'SHORT',
-    label: 'Основной сценарий',
-    probability: isLong ? longPct : shortPct,
-    color: isLong ? SCENARIO_COLORS.LONG : SCENARIO_COLORS.SHORT,
-    path: isLong
-      ? buildLongPath(currentPrice, upTarget, atr, candleSec)
-      : buildShortPath(currentPrice, downTarget, atr, candleSec),
+    label: 'Основной (тренд → OB)',
+    probability: pctA,
+    color: primaryColor,
+    path: buildPrimaryPath(currentPrice, target, atr, candleSec, isLong),
     entry: currentPrice,
-    target: isLong ? upTarget : downTarget,
-    invalidation: isLong ? currentPrice - atr * 1.5 : currentPrice + atr * 1.5,
+    target,
+    invalidation: stopLevel,
     liquidityTarget: {
-      price: isLong ? upTarget : downTarget,
-      type: (isLong ? nearestUp?.type : nearestDown?.type) ?? 'SWING_HIGH',
-      strength: (isLong ? nearestUp?.strength : nearestDown?.strength) ?? 5,
-      distancePercent: isLong
-        ? ((upTarget - currentPrice) / currentPrice) * 100
-        : ((currentPrice - downTarget) / currentPrice) * 100,
+      price: target,
+      type: (isLong ? nearestUp?.type : nearestDown?.type) ?? 'ORDER_BLOCK',
+      strength: (isLong ? nearestUp?.strength : nearestDown?.strength) ?? 7,
+      distancePercent: Math.abs(((target - currentPrice) / currentPrice) * 100),
       direction: isLong ? 'UP' : 'DOWN',
       label: isLong
-        ? (nearestUp?.label ?? 'Swing High')
-        : (nearestDown?.label ?? 'Swing Low'),
+        ? (nearestUp?.label ?? 'OB / Swing High')
+        : (nearestDown?.label ?? 'OB / Swing Low'),
     },
-    reasoning: buildReasoning(alignment, isLong),
+    reasoning: buildReasoning(alignment, isLong, 'A'),
     triggerCondition: isLong
-      ? 'Удержание выше EMA20 + ретест OB'
-      : 'Пробой поддержки + ретест снизу',
-    riskReward: Math.abs((isLong ? upTarget - currentPrice : currentPrice - downTarget) / atr),
-    atrMultiple: Math.abs((isLong ? upTarget - currentPrice : currentPrice - downTarget) / atr),
+      ? 'Удержание структуры + ретест бычьего OB'
+      : 'Удержание структуры + ретест медвежьего OB',
+    riskReward: Number(riskA.toFixed(2)),
+    atrMultiple: Math.abs(target - currentPrice) / atr,
   }
 
   const scenB: PriceScenario = {
     id: 'B',
-    type: isLong ? 'SHORT' : 'LONG',
-    label: 'Альтернативный сценарий',
-    probability: isLong ? shortPct : longPct,
-    color: isLong ? SCENARIO_COLORS.SHORT : SCENARIO_COLORS.LONG,
-    path: isLong
-      ? buildShortPath(currentPrice, downTarget, atr, candleSec)
-      : buildLongPath(currentPrice, upTarget, atr, candleSec),
+    type: isLong ? 'LONG' : 'SHORT',
+    label: 'Альтернатива (свип → продолжение)',
+    probability: pctB,
+    color: altColor,
+    path: buildSweepPath(
+      currentPrice,
+      target,
+      sweepLevel,
+      atr,
+      candleSec,
+      isLong
+    ),
     entry: currentPrice,
-    target: isLong ? downTarget : upTarget,
-    invalidation: isLong ? currentPrice + atr * 2 : currentPrice - atr * 2,
+    target: isLong ? target + atr * 0.8 : target - atr * 0.8,
+    invalidation: stopLevel,
     liquidityTarget: {
-      price: isLong ? downTarget : upTarget,
+      price: sweepLevel,
       type: (isLong ? nearestDown?.type : nearestUp?.type) ?? 'SWING_LOW',
-      strength: (isLong ? nearestDown?.strength : nearestUp?.strength) ?? 5,
-      distancePercent: Math.abs(
-        isLong
-          ? ((currentPrice - downTarget) / currentPrice) * 100
-          : ((upTarget - currentPrice) / currentPrice) * 100
-      ),
+      strength: 6,
+      distancePercent: Math.abs(((sweepLevel - currentPrice) / currentPrice) * 100),
       direction: isLong ? 'DOWN' : 'UP',
-      label: isLong
-        ? (nearestDown?.label ?? 'Swing Low')
-        : (nearestUp?.label ?? 'Swing High'),
+      label: isLong ? 'SSL Sweep' : 'BSL Sweep',
     },
-    reasoning: buildReasoning(alignment, !isLong),
+    reasoning: buildReasoning(alignment, isLong, 'B'),
     triggerCondition: isLong
-      ? 'Пробой поддержки + закрытие ниже'
-      : 'Пробой сопротивления + объём',
-    riskReward: 2,
-    atrMultiple: 2,
+      ? 'Прокол SSL → быстрый reclaim → лонг'
+      : 'Прокол BSL → reclaim → шорт',
+    riskReward: Number(
+      (
+        Math.abs((isLong ? target + atr * 0.8 : target - atr * 0.8) - currentPrice) /
+        Math.max(Math.abs(currentPrice - sweepLevel), atr * 0.3)
+      ).toFixed(2)
+    ),
+    atrMultiple: Math.abs(target - currentPrice) / atr + 0.8,
   }
+
+  const breakTarget = isLong
+    ? stopLevel - atr * 1.2
+    : stopLevel + atr * 1.2
 
   const scenC: PriceScenario = {
     id: 'C',
-    type: 'RANGE',
-    label: 'Консолидация',
-    probability: rangePct,
-    color: SCENARIO_COLORS.RANGE,
-    path: buildRangePath(
-      currentPrice,
-      currentPrice + atr * 1.5,
-      currentPrice - atr * 1.5,
-      candleSec
-    ),
+    type: isLong ? 'SHORT' : 'LONG',
+    label: 'Слом структуры (за стоп)',
+    probability: pctC,
+    color: breakColor,
+    path: buildBreakPath(currentPrice, stopLevel, atr, candleSec, isLong),
     entry: currentPrice,
-    target: currentPrice + (isLong ? atr : -atr),
-    invalidation: currentPrice + (isLong ? -atr * 2 : atr * 2),
+    target: breakTarget,
+    invalidation: isLong ? currentPrice + atr : currentPrice - atr,
     liquidityTarget: {
-      price: currentPrice,
-      type: 'POC',
-      strength: 5,
-      distancePercent: 0,
-      direction: 'UP',
-      label: 'Диапазон',
+      price: stopLevel,
+      type: 'SWING_LOW',
+      strength: 8,
+      distancePercent: Math.abs(((stopLevel - currentPrice) / currentPrice) * 100),
+      direction: isLong ? 'DOWN' : 'UP',
+      label: 'Invalidation / SL',
     },
-    reasoning: [
-      `MTF score: ${alignment.score}`,
-      '1D/4H/1H без чёткого согласования',
-      'Ожидание накопления перед движением',
-    ],
-    triggerCondition: 'Флэт с сжатием волатильности',
+    reasoning: buildReasoning(alignment, isLong, 'C'),
+    triggerCondition: isLong
+      ? 'Закрытие ниже стопа / микро-лоу → выход или BE'
+      : 'Закрытие выше стопа / микро-хая → выход или BE',
     riskReward: 1,
-    atrMultiple: 1.5,
+    atrMultiple: Math.abs(breakTarget - currentPrice) / atr,
   }
 
-  return [scenA, scenB, scenC].sort((a, b) => b.probability - a.probability)
+  // Не сортируем — порядок A→B→C важен для UI и «мышления вероятностями»
+  return [scenA, scenB, scenC]
 }

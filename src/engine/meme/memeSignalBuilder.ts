@@ -2,19 +2,43 @@ import type { CoinSignal, MarketContext, MemeSignal } from '../types'
 import type { TradeSide } from '../smc'
 
 function resolveMemeDirection(meme: MemeSignal): TradeSide | null {
+  // Elite setups first
+  if (meme.backside?.detected && !meme.shortBlocked) return 'SHORT'
+  if (
+    (meme.squeeze?.inProgress || meme.squeeze?.setup || meme.cvdTrap?.detected) &&
+    !meme.longBlocked
+  ) {
+    return 'LONG'
+  }
+  if (meme.flatline?.detected && !meme.longBlocked) return 'LONG'
+
+  if (meme.toxic?.entryBlocked) return null
+  if (meme.absorptionAlert?.type === 'DISTRIBUTION') return null
+
   if (meme.meanReversion.detected && meme.meanReversion.recommendedDirection) {
-    return meme.meanReversion.recommendedDirection
+    const d = meme.meanReversion.recommendedDirection
+    if (d === 'LONG' && meme.longBlocked) return null
+    if (d === 'SHORT' && meme.shortBlocked) return null
+    return d
   }
 
   if (meme.liquidityGap.detected && meme.liquidityGap.direction !== 'NEUTRAL') {
-    return meme.liquidityGap.direction === 'UP' ? 'LONG' : 'SHORT'
+    const d = meme.liquidityGap.direction === 'UP' ? 'LONG' : 'SHORT'
+    if (d === 'LONG' && meme.longBlocked) return null
+    if (d === 'SHORT' && meme.shortBlocked) return null
+    return d
   }
 
-  if (meme.spreadPressure.pressure === 'BUYERS') return 'LONG'
-  if (meme.spreadPressure.pressure === 'SELLERS') return 'SHORT'
+  if (meme.spreadPressure.pressure === 'BUYERS' && !meme.longBlocked) return 'LONG'
+  if (meme.spreadPressure.pressure === 'SELLERS' && !meme.shortBlocked) {
+    return 'SHORT'
+  }
 
   if (meme.volumeSpike.detected) {
-    return meme.volumeSpike.priceChangePct > 0 ? 'LONG' : 'SHORT'
+    const d = meme.volumeSpike.priceChangePct > 0 ? 'LONG' : 'SHORT'
+    if (d === 'LONG' && meme.longBlocked) return null
+    if (d === 'SHORT' && meme.shortBlocked) return null
+    return d
   }
 
   return null
@@ -22,6 +46,15 @@ function resolveMemeDirection(meme: MemeSignal): TradeSide | null {
 
 function buildMemeZones(meme: MemeSignal): string[] {
   const zones: string[] = []
+  if (meme.setupTag) zones.push(meme.setupTag)
+  if (meme.squeeze?.detected) zones.push(meme.squeeze.label)
+  if (meme.flatline?.detected) zones.push(meme.flatline.label)
+  if (meme.backside?.detected) zones.push(meme.backside.label)
+  if (meme.cvdTrap?.detected) zones.push(meme.cvdTrap.label)
+  if (meme.absorptionAlert?.detected) zones.push(meme.absorptionAlert.label)
+  if (meme.toxic?.detected) zones.push(meme.toxic.label)
+  if (meme.bidVoid?.detected) zones.push(meme.bidVoid.label)
+  if (meme.lifecycle) zones.push(meme.lifecycle.badge)
   if (meme.volumeSpike.detected) zones.push(meme.volumeSpike.label)
   if (meme.liquidityGap.detected) zones.push(meme.liquidityGap.label)
   if (meme.meanReversion.detected) zones.push(meme.meanReversion.label)
@@ -38,6 +71,34 @@ function calcMemeLevels(
 ): { sl: number | null; tp1: number | null; tp2: number | null } {
   if (!direction) {
     return { sl: null, tp1: null, tp2: null }
+  }
+
+  // Squeeze: TP за локальный хай (приблизительно + funding fuel move)
+  if (meme.squeeze?.setup || meme.squeeze?.inProgress) {
+    const tpPct = meme.squeeze.inProgress ? 8 : 5
+    return {
+      sl: price * 0.985,
+      tp1: price * (1 + tpPct / 100),
+      tp2: price * (1 + (tpPct * 1.8) / 100),
+    }
+  }
+
+  // Flatline ignition: микро-стоп за свечу, широкий потенциал
+  if (meme.flatline?.detected) {
+    return {
+      sl: price * 0.99,
+      tp1: price * 1.08,
+      tp2: price * 1.2,
+    }
+  }
+
+  // Backside short
+  if (meme.backside?.detected && direction === 'SHORT') {
+    return {
+      sl: price * 1.015,
+      tp1: price * 0.94,
+      tp2: price * 0.88,
+    }
   }
 
   const slPct = meme.meanReversion.detected ? 2 : 3
@@ -72,11 +133,17 @@ export function buildMemeCoinSignal(
 ): CoinSignal {
   const memeDirection = resolveMemeDirection(meme)
   const direction =
-    meme.heatScore >= 40 ? memeDirection ?? smc?.direction ?? null : smc?.direction ?? memeDirection
+    meme.heatScore >= 40
+      ? memeDirection ?? smc?.direction ?? null
+      : smc?.direction ?? memeDirection
   const levels = calcMemeLevels(meme.price, direction, meme)
   const memeZones = buildMemeZones(meme)
   const hasActiveSetup =
-    (meme.heatScore >= 50 && direction !== null) || (smc?.hasActiveSetup ?? false)
+    ((meme.heatScore >= 50 && direction !== null) ||
+      !!meme.squeeze?.inProgress ||
+      !!meme.backside?.detected ||
+      !!meme.flatline?.detected) &&
+    !meme.toxic?.entryBlocked
 
   const probabilityPct = Math.max(meme.heatScore, smc?.probabilityPct ?? 0)
   const score = Math.max(Math.round(meme.heatScore / 10), smc?.score ?? 0)
@@ -120,5 +187,6 @@ export function buildMemeCoinSignal(
     ltfChoCH: smc?.ltfChoCH,
     buyerAggression: smc?.buyerAggression,
     memePulse: meme,
+    tradeStyle: 'SCALP',
   }
 }

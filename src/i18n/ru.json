@@ -158,14 +158,18 @@
   "mtf_liq_targets": "Цели ликвидности",
   "mtf_liq_primary": "Основная",
   "mtf_liq_secondary": "Вторичная",
-  "scenario_dominant": "Основной сценарий",
-  "scenario_alternative": "Альтернативный",
-  "scenario_range": "Консолидация",
+  "scenario_dominant": "Основной (тренд → OB)",
+  "scenario_alternative": "Альтернатива (свип)",
+  "scenario_range": "Слом структуры",
+  "scenario_break": "Слом структуры",
   "scenario_trigger": "Условие",
   "scenario_invalidation": "Отмена",
   "scenario_entry": "Вход",
   "scenario_target": "Цель",
   "scenario_factors": "Факторы",
-  "forecast_toggle": "Прогноз цены",
-  "forecast_scenarios": "Сценарии прогноза"
+  "forecast_toggle": "Прогноз A/B/C",
+  "forecast_scenarios": "Сценарии (вероятности)",
+  "forecast_hint": "Цена не обязана идти по A. Смотри B и C.",
+  "chart_clean": "Чистый",
+  "chart_full": "Полный"
 }

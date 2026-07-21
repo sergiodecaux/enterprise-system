@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   createChart,
   type IChartApi,
@@ -19,6 +19,7 @@ import {
   type OhlcvCandle,
 } from '../../api/mexc'
 import type { CoinSignal } from '../../engine/types'
+import type { LiquidityZone } from '../../engine/indicators/types'
 import { logger } from '../../utils/logger'
 import { useChartIndicators } from '../../hooks/useChartIndicators'
 import { useChartZones } from '../../hooks/useChartZones'
@@ -31,6 +32,7 @@ import VolumePanel from './VolumePanel'
 import OscillatorPanel from './OscillatorPanel'
 import MultiTFPanel from './MultiTFPanel'
 import PredictionOverlay from './PredictionOverlay'
+import GhostPathOverlay from './GhostPathOverlay'
 import ScenarioLegend from './ScenarioLegend'
 import { useSessionData } from '../../hooks/useSessionData'
 import { SESSION_DEFINITIONS, getSessionAtHour } from '../../engine/sessions/sessionMap'
@@ -63,14 +65,17 @@ const INDICATOR_COLORS: Record<string, string> = {
   vwap: '#f97316',
 }
 
-const CHART_HEIGHT = 260
+const CHART_HEIGHT = 320
+const CHART_HEIGHT_CLEAN = 340
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
 
   const ticker = useAppStore((s) => s.liveTickets[flatSymbol])
   const chartPreferences = useAppStore((s) => s.chartPreferences)
+  const setChartPreferences = useAppStore((s) => s.setChartPreferences)
   const sessionSettings = useAppStore((s) => s.sessionSettings)
+  const setSessionSettings = useAppStore((s) => s.setSessionSettings)
   const eqLiquidityMap = useAppStore((s) => s.liquidityMaps[symbol] ?? null)
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -89,14 +94,73 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [chartReady, setChartReady] = useState(0)
   const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
   const [showForecast, setShowForecast] = useState(true)
+  /** По умолчанию только A — B/C включаются вручную, меньше каши */
   const [activeScenarios, setActiveScenarios] = useState<Set<string>>(
-    () => new Set(['A', 'B', 'C'])
+    () => new Set(['A'])
   )
+  const [cleanMode, setCleanMode] = useState(true)
 
   const currentPrice = signal?.price ?? ticker?.price ?? 0
 
   const indicators = useChartIndicators(candles, chartPreferences.indicators)
-  const { liquidityZones, priceLevels } = useChartZones(candles, chartPreferences.zones)
+  const { liquidityZones: baseZones, priceLevels } = useChartZones(
+    candles,
+    chartPreferences.zones
+  )
+
+  /** OTE Killzone Box + signal-linked zones */
+  const liquidityZones = useMemo((): LiquidityZone[] => {
+    if (cleanMode) {
+      // В чистом режиме — только OTE + сильнейший OB
+      const zones: LiquidityZone[] = []
+      const obs = baseZones
+        .filter((z) => z.type === 'ORDER_BLOCK')
+        .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
+        .slice(0, 1)
+      zones.push(...obs)
+      if (signal?.ote?.isActive && candles.length > 0) {
+        const start = candles[Math.max(0, candles.length - 40)]
+        const end = candles[candles.length - 1]
+        zones.push({
+          id: 'ote_killzone',
+          type: 'OTE',
+          side: signal.direction === 'SHORT' ? 'BEARISH' : 'BULLISH',
+          top: signal.ote.zoneTop,
+          bottom: signal.ote.zoneBottom,
+          startTime: (start[0] / 1000) as Time,
+          endTime: (end[0] / 1000) as Time,
+          strength: 12,
+          label: signal.ote.priceInZone
+            ? 'OTE — набирай сеткой'
+            : 'OTE Zone',
+        })
+      }
+      return zones
+    }
+
+    const zones = [...baseZones]
+    if (signal?.ote?.isActive && candles.length > 0) {
+      const start = candles[Math.max(0, candles.length - 40)]
+      const end = candles[candles.length - 1]
+      zones.push({
+        id: 'ote_killzone',
+        type: 'OTE',
+        side: signal.direction === 'SHORT' ? 'BEARISH' : 'BULLISH',
+        top: signal.ote.zoneTop,
+        bottom: signal.ote.zoneBottom,
+        startTime: (start[0] / 1000) as Time,
+        endTime: (end[0] / 1000) as Time,
+        strength: 12,
+        label: signal.ote.priceInZone
+          ? 'OTE — набирай сеткой'
+          : 'OTE Zone',
+      })
+    }
+    return zones
+  }, [baseZones, signal, candles, cleanMode])
+
+  const lastCandleTs =
+    candles.length > 0 ? Math.floor(candles[candles.length - 1][0] / 1000) : 0
 
   const { alignment, liquidityMap, isLoading: mtfLoading } = useMultiTFAnalysis(
     symbol,
@@ -110,7 +174,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     liquidityMap,
     currentPrice,
     symbol,
-    timeframe
+    timeframe,
+    signal?.sl ?? null,
+    signal?.invalidationPrice ?? null
   )
 
   const { sessions, weekends, news } = useSessionData(
@@ -359,6 +425,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     if (signal?.tpDaily != null) {
       addLine(signal.tpDaily, 'rgba(100, 200, 255, 0.7)', 'TP Daily')
     }
+    if (signal?.invalidationPrice != null) {
+      addLine(
+        signal.invalidationPrice,
+        'rgba(251, 191, 36, 0.95)',
+        '⚠ INVALIDATION',
+        1
+      )
+    }
   }, [priceLevels, chartPreferences.showLabels, chartReady, lwcData, signal])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
@@ -410,7 +484,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           color,
           lineWidth: level.strength === 'STRONG' ? 2 : 1,
           lineStyle,
-          axisLabelVisible: true,
+          axisLabelVisible: chartPreferences.showLabels,
           title,
         })
         liqLineRefs.current.push(line)
@@ -419,27 +493,70 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
-    for (const level of eqLiquidityMap.equalHighs) {
-      drawLiqLevel(level)
-    }
-    for (const level of eqLiquidityMap.equalLows) {
-      drawLiqLevel(level)
-    }
-  }, [eqLiquidityMap, chartPreferences.showLabels, chartReady, lwcData])
+    // Только ближайшие сильные уровни — иначе каша линий
+    const highs = [...eqLiquidityMap.equalHighs]
+      .filter((l) => l.strength !== 'WEAK')
+      .sort((a, b) => a.distancePct - b.distancePct)
+      .slice(0, cleanMode ? 1 : 2)
+    const lows = [...eqLiquidityMap.equalLows]
+      .filter((l) => l.strength !== 'WEAK')
+      .sort((a, b) => a.distancePct - b.distancePct)
+      .slice(0, cleanMode ? 1 : 2)
+
+    for (const level of highs) drawLiqLevel(level)
+    for (const level of lows) drawLiqLevel(level)
+  }, [eqLiquidityMap, chartPreferences.showLabels, chartReady, lwcData, cleanMode])
 
   const oscillators: Array<'rsi' | 'macd' | 'stochastic' | 'atr'> = []
-  if (chartPreferences.indicators.rsi) oscillators.push('rsi')
-  if (chartPreferences.indicators.macd) oscillators.push('macd')
-  if (chartPreferences.indicators.stochastic) oscillators.push('stochastic')
-  if (chartPreferences.indicators.atr) oscillators.push('atr')
+  if (!cleanMode) {
+    if (chartPreferences.indicators.rsi) oscillators.push('rsi')
+    if (chartPreferences.indicators.macd) oscillators.push('macd')
+    if (chartPreferences.indicators.stochastic) oscillators.push('stochastic')
+    if (chartPreferences.indicators.atr) oscillators.push('atr')
+  }
 
   const toggleScenario = (id: string) => {
     setActiveScenarios((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(id)) {
+        // Не даём выключить все — минимум A или хотя бы один
+        if (next.size > 1) next.delete(id)
+      } else {
+        next.add(id)
+      }
       return next
     })
+  }
+
+  const applyCleanMode = (enabled: boolean) => {
+    setCleanMode(enabled)
+    if (enabled) {
+      setActiveScenarios(new Set(['A']))
+      setSessionSettings({ enabled: false })
+      setChartPreferences({
+        opacity: 16,
+        showLabels: false,
+        zones: {
+          ...chartPreferences.zones,
+          fvg: false,
+          poc: false,
+          valueArea: false,
+          fibonacci: false,
+          dailyLevels: false,
+          orderBlocks: true,
+        },
+        indicators: {
+          ...chartPreferences.indicators,
+          ema200: false,
+          ema50: false,
+          bollingerBands: false,
+          rsi: false,
+          macd: false,
+          stochastic: false,
+          atr: false,
+        },
+      })
+    }
   }
 
   const liveSession = SESSION_DEFINITIONS[getSessionAtHour(new Date().getUTCHours())]
@@ -448,6 +565,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     'rgba($1, $2, $3, 0.9)'
   )
 
+  const chartHeight = cleanMode ? CHART_HEIGHT_CLEAN : CHART_HEIGHT
+  const showSessions = sessionSettings.enabled && !cleanMode
+  const showGhost =
+    !!signal?.hasActiveSetup && !showForecast && chartReady > 0 && lastCandleTs > 0
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -455,7 +577,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           <span className="font-mono text-xs uppercase tracking-wider text-holo/40">
             {t('chart_title')}
           </span>
-          {sessionSettings.enabled && (
+          {sessionSettings.enabled && !cleanMode && (
             <span
               className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-black"
               style={{ backgroundColor: liveSessionBg }}
@@ -467,6 +589,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => applyCleanMode(!cleanMode)}
+            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              cleanMode
+                ? 'border border-matrix/40 bg-matrix/15 text-matrix'
+                : 'border border-hull-border text-holo/40 hover:text-holo/70'
+            }`}
+            title="Чистый режим — меньше слоёв"
+          >
+            {cleanMode ? t('chart_clean') : t('chart_full')}
+          </button>
           {CHART_TIMEFRAMES.map((tf) => (
             <button
               key={tf.id}
@@ -506,7 +640,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
       <div
         className="relative w-full overflow-hidden rounded-lg border border-hull-border bg-hull"
-        style={{ height: CHART_HEIGHT }}
+        style={{ height: chartHeight }}
       >
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-hull/60 font-mono text-xs text-holo/40">
@@ -519,7 +653,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </div>
         )}
         <div ref={containerRef} className="h-full w-full" />
-        {chartReady > 0 && sessionSettings.enabled && (
+        {chartReady > 0 && showSessions && (
           <SessionOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -550,10 +684,20 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             containerRef={containerRef}
           />
         )}
+        {showGhost && (
+          <GhostPathOverlay
+            chart={chartRef.current}
+            series={candleRef.current}
+            signal={signal}
+            candles={candles}
+            containerRef={containerRef}
+            lastCandleTs={lastCandleTs}
+          />
+        )}
       </div>
 
       {chartPreferences.indicators.volume && indicators.volume.length > 0 && (
-        <VolumePanel volumeData={indicators.volume} height={50} />
+        <VolumePanel volumeData={indicators.volume} height={cleanMode ? 40 : 50} />
       )}
 
       {oscillators.map((mode) => (
@@ -564,11 +708,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           macdData={indicators.macd}
           stochasticData={indicators.stochastic}
           atrData={indicators.atr}
-          height={80}
+          height={60}
         />
       ))}
 
-      <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />
+      {!cleanMode && (
+        <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />
+      )}
 
       {showForecast && forecast && (
         <ScenarioLegend

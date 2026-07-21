@@ -30,6 +30,10 @@ function getZoneColors(zone: LiquidityZone, opacity: number) {
         bg: `rgba(148, 163, 184, ${op * 0.5})`,
         border: 'rgba(148, 163, 184, 0.3)',
       }
+    case 'OTE':
+      return zone.side === 'BEARISH'
+        ? { bg: `rgba(239, 68, 68, ${op * 0.7})`, border: 'rgba(239, 68, 68, 0.85)' }
+        : { bg: `rgba(34, 197, 94, ${op * 0.75})`, border: 'rgba(34, 197, 94, 0.9)' }
     default:
       return { bg: `rgba(100, 200, 255, ${op})`, border: 'rgba(100, 200, 255, 0.6)' }
   }
@@ -56,10 +60,10 @@ const ChartOverlay = ({
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
 
-      // Максимум 6 самых сильных зон — меньше визуального шума
+      // Максимум 4 зоны — меньше визуального шума
       const visibleZones = [...zones]
         .sort((a, b) => (b.strength ?? 5) - (a.strength ?? 5))
-        .slice(0, 6)
+        .slice(0, 4)
 
       for (const zone of visibleZones) {
         const colors = getZoneColors(zone, opacity)

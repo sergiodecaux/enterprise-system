@@ -1,35 +1,81 @@
 import type { TradeSide } from '../../engine/smc'
+import type { TradeStyle } from '../../engine/types'
+
+export type SniperStyleFilter = 'ALL' | TradeStyle
+export type SniperSideFilter = 'ALL' | TradeSide
 
 interface SniperFiltersProps {
-  activeFilter: 'ALL' | TradeSide
-  onFilterChange: (filter: 'ALL' | TradeSide) => void
+  activeFilter: SniperSideFilter
+  onFilterChange: (filter: SniperSideFilter) => void
+  styleFilter: SniperStyleFilter
+  onStyleFilterChange: (filter: SniperStyleFilter) => void
 }
 
-const SniperFilters = ({ activeFilter, onFilterChange }: SniperFiltersProps) => {
-  const filters: Array<{ id: 'ALL' | TradeSide; label: string; emoji: string }> =
-    [
-      { id: 'ALL', label: 'Все', emoji: '🎯' },
-      { id: 'LONG', label: 'Лонг', emoji: '📈' },
-      { id: 'SHORT', label: 'Шорт', emoji: '📉' },
-    ]
+const SniperFilters = ({
+  activeFilter,
+  onFilterChange,
+  styleFilter,
+  onStyleFilterChange,
+}: SniperFiltersProps) => {
+  const sideFilters: Array<{
+    id: SniperSideFilter
+    label: string
+    emoji: string
+  }> = [
+    { id: 'ALL', label: 'Все', emoji: '🎯' },
+    { id: 'LONG', label: 'Лонг', emoji: '📈' },
+    { id: 'SHORT', label: 'Шорт', emoji: '📉' },
+  ]
+
+  const styleFilters: Array<{
+    id: SniperStyleFilter
+    label: string
+  }> = [
+    { id: 'ALL', label: 'Все стили' },
+    { id: 'SCALP', label: '⚡️ SCALP [M5]' },
+    { id: 'INTRADAY', label: '🎯 INTRADAY [H1]' },
+  ]
 
   return (
-    <div className="flex gap-2">
-      {filters.map((filter) => (
-        <button
-          key={filter.id}
-          type="button"
-          onClick={() => onFilterChange(filter.id)}
-          className={`flex-1 rounded-lg px-3 py-2 font-mono text-xs font-bold uppercase tracking-wide transition-all ${
-            activeFilter === filter.id
-              ? 'border border-matrix/50 bg-matrix/20 text-matrix shadow-md'
-              : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
-          }`}
-        >
-          <span className="mr-1.5">{filter.emoji}</span>
-          {filter.label}
-        </button>
-      ))}
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        {styleFilters.map((filter) => (
+          <button
+            key={filter.id}
+            type="button"
+            onClick={() => onStyleFilterChange(filter.id)}
+            className={`flex-1 rounded-lg px-2 py-2 font-mono text-[10px] font-bold uppercase tracking-wide transition-all ${
+              styleFilter === filter.id
+                ? filter.id === 'SCALP'
+                  ? 'border border-yellow-400/50 bg-yellow-400/15 text-yellow-300 shadow-md'
+                  : filter.id === 'INTRADAY'
+                    ? 'border border-sky-400/50 bg-sky-400/15 text-sky-300 shadow-md'
+                    : 'border border-matrix/50 bg-matrix/20 text-matrix shadow-md'
+                : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
+            }`}
+          >
+            {filter.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        {sideFilters.map((filter) => (
+          <button
+            key={filter.id}
+            type="button"
+            onClick={() => onFilterChange(filter.id)}
+            className={`flex-1 rounded-lg px-3 py-2 font-mono text-xs font-bold uppercase tracking-wide transition-all ${
+              activeFilter === filter.id
+                ? 'border border-matrix/50 bg-matrix/20 text-matrix shadow-md'
+                : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
+            }`}
+          >
+            <span className="mr-1.5">{filter.emoji}</span>
+            {filter.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

@@ -2,5 +2,15 @@ name = "mexc-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-[vars]
-# No secrets needed — public market data only
+# Cron: 24/7 market scan → Telegram alerts (every 2 min)
+[triggers]
+crons = ["*/2 * * * *"]
+
+[[kv_namespaces]]
+binding = "SUBSCRIBERS"
+id = "71e923e3dfd14345be664ce6b7351b87"
+preview_id = "161ce13638eb4cd296886b26e37a35bb"
+
+# Secrets (CLI):
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler secret put ALERT_SECRET

@@ -11,12 +11,14 @@ import NewsStrip from './components/news/NewsStrip'
 import { useMexcScanner } from './hooks/useMexcScanner'
 import { useNewsIntelligence } from './hooks/useNewsIntelligence'
 import { useTelegramWebApp } from './hooks/useTelegramWebApp'
+import { useTelegramAlerts } from './hooks/useTelegramAlerts'
 import { useAppStore } from './store/useAppStore'
 
 type ActiveTab = 'sniper' | 'meme' | 'trades' | 'radar'
 
 function App() {
   useTelegramWebApp()
+  useTelegramAlerts()
   useMexcScanner()
   useNewsIntelligence()
 

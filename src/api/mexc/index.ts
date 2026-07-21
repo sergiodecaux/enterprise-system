@@ -25,6 +25,10 @@ export interface MexcTicker {
   high24h: number
   low24h: number
   timestamp: number
+  /** Open Interest (holdVol) — контракты */
+  openInterest?: number
+  /** Текущая ставка финансирования (доля, не %) */
+  fundingRate?: number
 }
 
 const TIMEFRAME_MAP: Record<MexcTimeframe, string> = {
@@ -141,6 +145,8 @@ interface MexcTickerRow {
   high24Price: number
   lower24Price: number
   timestamp: number
+  holdVol?: number
+  fundingRate?: number
 }
 
 interface MexcTickerResponse {
@@ -240,6 +246,8 @@ export async function fetchTickers(): Promise<MexcTicker[]> {
       high24h: Number(row.high24Price),
       low24h: Number(row.lower24Price),
       timestamp: Number(row.timestamp),
+      openInterest: row.holdVol != null ? Number(row.holdVol) : undefined,
+      fundingRate: row.fundingRate != null ? Number(row.fundingRate) : undefined,
     }))
 }
 
@@ -259,6 +267,58 @@ export async function fetchTicker(symbol: string): Promise<MexcTicker | null> {
     high24h: Number(row.high24Price),
     low24h: Number(row.lower24Price),
     timestamp: Number(row.timestamp),
+    openInterest: row.holdVol != null ? Number(row.holdVol) : undefined,
+    fundingRate: row.fundingRate != null ? Number(row.fundingRate) : undefined,
+  }
+}
+
+export interface MexcFundingRate {
+  symbol: string
+  fundingRate: number
+  maxFundingRate: number | null
+  minFundingRate: number | null
+  nextSettleTime: number | null
+  timestamp: number
+}
+
+/**
+ * Текущая ставка финансирования контракта.
+ * GET /api/v1/contract/funding_rate/{symbol}
+ */
+export async function fetchFundingRate(
+  symbol: string
+): Promise<MexcFundingRate | null> {
+  const apiSymbol = toApiSymbol(symbol)
+  try {
+    const json = await mexcGet<{
+      success: boolean
+      data: {
+        symbol: string
+        fundingRate: number
+        maxFundingRate?: number
+        minFundingRate?: number
+        nextSettleTime?: number
+        timestamp: number
+      }
+    }>(`/api/v1/contract/funding_rate/${apiSymbol}`)
+
+    if (!json.data) return null
+    return {
+      symbol: json.data.symbol,
+      fundingRate: Number(json.data.fundingRate),
+      maxFundingRate:
+        json.data.maxFundingRate != null
+          ? Number(json.data.maxFundingRate)
+          : null,
+      minFundingRate:
+        json.data.minFundingRate != null
+          ? Number(json.data.minFundingRate)
+          : null,
+      nextSettleTime: json.data.nextSettleTime ?? null,
+      timestamp: Number(json.data.timestamp ?? Date.now()),
+    }
+  } catch {
+    return null
   }
 }
 

@@ -16,9 +16,9 @@ interface Props {
 }
 
 const LINE_STYLE_MAP: Record<string, 0 | 1 | 2 | 3 | 4> = {
-  A: 1,
-  B: 2,
-  C: 3,
+  A: 0, // solid — основной
+  B: 2, // dashed — альтернатива
+  C: 3, // sparse — слом
 }
 
 function buildSeriesData(
@@ -46,7 +46,6 @@ const PredictionOverlay = ({
   const forecastSeriesRefs = useRef<Record<string, ISeriesApi<'Line'>>>({})
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  // Forecast as native LWC line series + rightOffset for future area
   useEffect(() => {
     if (!chart) return
 
@@ -65,29 +64,37 @@ const PredictionOverlay = ({
 
     if (!forecast) return
 
+    const active = forecast.scenarios.filter((sc) => activeScenarios.has(sc.id))
+    if (active.length === 0) return
+
     const maxOffsetSec = Math.max(
       0,
-      ...forecast.scenarios.flatMap((sc) => sc.path.map((pp) => pp.timeOffsetSeconds))
+      ...active.flatMap((sc) => sc.path.map((pp) => pp.timeOffsetSeconds))
     )
     const candleSec = Math.max(1, forecast.candleTimeframeSeconds)
-    const rightBars = Math.ceil(maxOffsetSec / candleSec) + 3
+    const rightBars = Math.ceil(maxOffsetSec / candleSec) + 4
 
     chart.timeScale().applyOptions({ rightOffset: rightBars })
 
-    for (const sc of forecast.scenarios) {
-      if (!activeScenarios.has(sc.id)) continue
+    // Рисуем C → B → A, чтобы A был сверху
+    const ordered = [...active].sort((x, y) => {
+      const rank = { C: 0, B: 1, A: 2 }
+      return rank[x.id] - rank[y.id]
+    })
 
+    for (const sc of ordered) {
       const data = buildSeriesData(sc, forecast.lastCandleTimestamp)
       if (data.length < 2) continue
 
+      const isPrimary = sc.id === 'A'
       const lineSeries = chart.addLineSeries({
-        color: sc.color,
-        lineWidth: sc.id === 'A' ? 2 : 1,
+        color: isPrimary ? sc.color : `${sc.color}99`,
+        lineWidth: isPrimary ? 2 : 1,
         lineStyle: LINE_STYLE_MAP[sc.id] ?? 1,
         crosshairMarkerVisible: false,
-        lastValueVisible: true,
+        lastValueVisible: isPrimary,
         priceLineVisible: false,
-        title: `${sc.id} ${sc.probability}%`,
+        title: isPrimary ? `A ${sc.probability}%` : `${sc.id}`,
       })
 
       lineSeries.setData(data)
@@ -106,14 +113,14 @@ const PredictionOverlay = ({
         }
       }
       try {
-        chart.timeScale().applyOptions({ rightOffset: 3 })
+        chart.timeScale().applyOptions({ rightOffset: 4 })
       } catch {
         /* ignore */
       }
     }
   }, [chart, forecast, activeScenarios])
 
-  // Canvas: probability cone fill + top liquidity levels
+  // Canvas: только мягкий конус для A — без badge-спама по ликвидности
   useEffect(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
@@ -135,103 +142,64 @@ const PredictionOverlay = ({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, W, H)
 
-      if (!forecast) return
+      if (!forecast || !activeScenarios.has('A')) return
+
+      const dominant = forecast.scenarios.find((s) => s.id === 'A')
+      if (!dominant) return
 
       const timeScale = chart.timeScale()
       const priceToY = (p: number) => series.priceToCoordinate(p)
       const timeToX = (ts: number) =>
         timeScale.timeToCoordinate(ts as Time) as number | null
 
-      const dominant = forecast.scenarios.find(
-        (s) => s.id === forecast.dominantScenario
+      const pts = dominant.path
+        .map((pp) => {
+          const ts = forecast.lastCandleTimestamp + pp.timeOffsetSeconds
+          const x = timeToX(ts)
+          const y = priceToY(pp.price)
+          return x !== null && y !== null
+            ? { x: x as number, y: y as number }
+            : null
+        })
+        .filter(Boolean) as Array<{ x: number; y: number }>
+
+      if (pts.length < 2) return
+
+      const priceTop = priceToY(forecast.currentPrice * 1.004)
+      const priceBottom = priceToY(forecast.currentPrice * 0.996)
+      const halfCone =
+        priceTop !== null && priceBottom !== null
+          ? Math.abs((priceBottom as number) - (priceTop as number)) / 2
+          : 6
+
+      const gradient = ctx.createLinearGradient(
+        pts[0].x,
+        0,
+        pts[pts.length - 1].x,
+        0
       )
-      if (dominant && activeScenarios.has(dominant.id)) {
-        const pts = dominant.path
-          .map((pp) => {
-            const ts = forecast.lastCandleTimestamp + pp.timeOffsetSeconds
-            const x = timeToX(ts)
-            const y = priceToY(pp.price)
-            return x !== null && y !== null ? { x: x as number, y: y as number } : null
-          })
-          .filter(Boolean) as Array<{ x: number; y: number }>
+      gradient.addColorStop(0, `${dominant.color}28`)
+      gradient.addColorStop(1, `${dominant.color}04`)
 
-        if (pts.length >= 2) {
-          const priceTop = priceToY(forecast.currentPrice * 1.003)
-          const priceBottom = priceToY(forecast.currentPrice * 0.997)
-          const halfCone =
-            priceTop !== null && priceBottom !== null
-              ? Math.abs((priceBottom as number) - (priceTop as number)) / 2
-              : 8
+      ctx.beginPath()
+      pts.forEach((p, i) => {
+        const spread = halfCone * (1 + i * 0.35)
+        if (i === 0) ctx.moveTo(p.x, p.y - spread)
+        else ctx.lineTo(p.x, p.y - spread)
+      })
+      ;[...pts].reverse().forEach((p, i) => {
+        const spread = halfCone * (1 + (pts.length - 1 - i) * 0.35)
+        ctx.lineTo(p.x, p.y + spread)
+      })
+      ctx.closePath()
+      ctx.fillStyle = gradient
+      ctx.fill()
 
-          const gradient = ctx.createLinearGradient(
-            pts[0].x,
-            0,
-            pts[pts.length - 1].x,
-            0
-          )
-          gradient.addColorStop(0, `${dominant.color}40`)
-          gradient.addColorStop(1, `${dominant.color}05`)
-
-          ctx.beginPath()
-          pts.forEach((p, i) => {
-            const spread = halfCone * (1 + i * 0.4)
-            if (i === 0) ctx.moveTo(p.x, p.y - spread)
-            else ctx.lineTo(p.x, p.y - spread)
-          })
-          ;[...pts].reverse().forEach((p, i) => {
-            const spread = halfCone * (1 + (pts.length - 1 - i) * 0.4)
-            ctx.lineTo(p.x, p.y + spread)
-          })
-          ctx.closePath()
-          ctx.fillStyle = gradient
-          ctx.fill()
-        }
-      }
-
-      const topLiquidity = forecast.liquidityMap
-        .filter((l) => Math.abs(l.distancePercent) > 0.1)
-        .slice(0, 4)
-
-      for (const liq of topLiquidity) {
-        const y = priceToY(liq.price)
-        if (y === null || (y as number) < 2 || (y as number) > H - 2) continue
-
-        const isBuy = liq.side === 'BUY_SIDE'
-        const color = isBuy ? '#22c55e' : '#ef4444'
-        const yNum = y as number
-
-        ctx.beginPath()
-        ctx.setLineDash([4, 8])
-        ctx.strokeStyle = `${color}40`
-        ctx.lineWidth = 1
-        ctx.moveTo(0, yNum)
-        ctx.lineTo(W * 0.7, yNum)
-        ctx.stroke()
-        ctx.setLineDash([])
-
-        const badgeText = liq.label.split(' ').slice(0, 2).join(' ')
-        ctx.font = '8px monospace'
-        const tw = ctx.measureText(badgeText).width + 6
-        const bx = 4
-        const by = Math.max(2, yNum - 9)
-        const bh = 12
-
-        ctx.fillStyle = `${color}22`
-        ctx.strokeStyle = `${color}60`
-        ctx.lineWidth = 0.5
-        ctx.beginPath()
-        if (typeof ctx.roundRect === 'function') {
-          ctx.roundRect(bx, by, tw, bh, 2)
-        } else {
-          ctx.rect(bx, by, tw, bh)
-        }
-        ctx.fill()
-        ctx.stroke()
-
-        ctx.fillStyle = `${color}cc`
-        ctx.textAlign = 'left'
-        ctx.fillText(badgeText, bx + 3, by + 9)
-      }
+      // Метка вероятности у конца A
+      const last = pts[pts.length - 1]
+      ctx.font = 'bold 9px monospace'
+      ctx.fillStyle = `${dominant.color}cc`
+      ctx.fillText(`A ${dominant.probability}%`, last.x - 28, last.y - 8)
     }
 
     redraw()
