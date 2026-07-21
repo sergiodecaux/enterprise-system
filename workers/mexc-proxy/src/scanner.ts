@@ -37,12 +37,26 @@ const BLUE_CHIPS = new Set([
   'TON_USDT',
 ])
 
+export interface TradePlanPayload {
+  side: 'LONG' | 'SHORT'
+  symbol: string
+  setup: string
+  signalPrice: number
+  entryIdeal: number
+  zoneLow: number
+  zoneHigh: number
+  invalidate: number
+  sl: number
+  tp: number
+}
+
 export interface ScanAlert {
   type: 'SNIPER' | 'MEME'
   title: string
   text: string
   dedupeKey: string
   score: number
+  tradePlan?: TradePlanPayload
 }
 
 interface TickerRow {
@@ -594,6 +608,18 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
         text: msg.text,
         dedupeKey,
         score,
+        tradePlan: {
+          side,
+          symbol: t.symbol,
+          setup,
+          signalPrice: plan.signalPrice,
+          entryIdeal: plan.entryIdeal,
+          zoneLow: plan.zoneLow,
+          zoneHigh: plan.zoneHigh,
+          invalidate: plan.invalidate,
+          sl: plan.sl,
+          tp: plan.tp,
+        },
       })
     }
 

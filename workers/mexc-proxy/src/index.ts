@@ -13,6 +13,12 @@
  */
 
 import { runMarketScan } from './scanner'
+import {
+  createPaperTradeFromPlan,
+  formatTradesStatus,
+  listPaperTrades,
+  monitorPaperTrades,
+} from './paperTrades'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 
@@ -304,15 +310,17 @@ async function runCronScan(env: Env): Promise<{
   sent: number
   skipped: number
   heartbeat: number
+  paperComments: number
 }> {
   if (!env.TELEGRAM_BOT_TOKEN) {
-    return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0 }
+    return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
   }
 
   const heartbeat = await maybeHeartbeat(env)
   const alerts = await runMarketScan()
   let sent = 0
   let skipped = 0
+  let paperComments = 0
 
   for (const a of alerts) {
     const r = await broadcastAlert(env, {
@@ -321,11 +329,43 @@ async function runCronScan(env: Env): Promise<{
       text: a.text,
       dedupeKey: a.dedupeKey,
     })
-    if (r.skipped) skipped++
-    else sent += r.sent
+    if (r.skipped) {
+      skipped++
+      continue
+    }
+    sent += r.sent
+
+    // Open paper companion only when signal actually went out
+    if (r.sent > 0 && a.tradePlan) {
+      const paper = await createPaperTradeFromPlan(env, {
+        ...a.tradePlan,
+        alertType: a.type,
+      })
+      if (paper.comment) {
+        const cr = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          title: paper.comment.title,
+          text: paper.comment.text,
+          dedupeKey: paper.comment.dedupeKey,
+        })
+        paperComments += cr.sent
+      }
+    }
   }
 
-  return { alerts: alerts.length, sent, skipped, heartbeat }
+  // Narrate open / waiting paper trades
+  const comments = await monitorPaperTrades(env)
+  for (const c of comments) {
+    const cr = await broadcastAlert(env, {
+      type: 'SYSTEM',
+      title: c.title,
+      text: c.text,
+      dedupeKey: c.dedupeKey,
+    })
+    paperComments += cr.sent
+  }
+
+  return { alerts: alerts.length, sent, skipped, heartbeat, paperComments }
 }
 
 // ── Subscribers KV ───────────────────────────────────────────────────────────
@@ -435,7 +475,7 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
     await tgSend(
       env,
       chatId,
-      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7 включена.\nСейчас пришлю тестовый сигнал…\n\nКоманды:\n/test — ещё один тест\n/status — статус\n/scan — сканер сейчас\n/ping — проверка связи\n/stop — отписаться'
+      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7 включена.\nСканер шлёт сигналы, я веду бумажные сделки и пишу комментарии (вход / BE / TP / SL).\n\nКоманды:\n/test — тест\n/trades — мои бумажные сделки\n/status — статус\n/scan — сканер сейчас\n/ping — связь\n/stop — отписаться'
     )
     await sendDemoSignal(env, chatId)
     return
@@ -458,9 +498,21 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
     await tgSend(
       env,
       chatId,
-      `🏓 <b>PONG</b>\nБот онлайн · chatId <code>${chatId}</code>\nРежим 24/7 · cron */2`
+      `🏓 <b>PONG</b>\nБот онлайн · chatId <code>${chatId}</code>\nРежим 24/7 · cron */2 · paper companion ON`
     )
     await sendDemoSignal(env, chatId)
+    return
+  }
+
+  if (cmd === 'trades') {
+    const list = await listSubscribers(env)
+    const me = list.find((s) => s.chatId === chatId)
+    if (!me) {
+      await tgSend(env, chatId, 'Сначала /start')
+      return
+    }
+    const papers = await listPaperTrades(env)
+    await tgSend(env, chatId, formatTradesStatus(papers))
     return
   }
 
@@ -477,13 +529,13 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
       await tgSend(
         env,
         chatId,
-        `✅ Скан завершён: сильных сетапов сейчас нет.\nОтправлено: ${result.sent} · дедуп: ${result.skipped}\n\nБот жив — жди следующий cron (≤2 мин) или /test`
+        `✅ Скан завершён: сильных сетапов сейчас нет.\nОтправлено: ${result.sent} · дедуп: ${result.skipped}\nКомментарии по сделкам: ${result.paperComments}\n\nБот жив — жди следующий cron (≤2 мин) или /test`
       )
     } else {
       await tgSend(
         env,
         chatId,
-        `✅ Скан: найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}`
+        `✅ Скан: найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}\nСопровождение: ${result.paperComments} сообщений`
       )
     }
     return
@@ -496,10 +548,14 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
       await tgSend(env, chatId, 'Вы не подписаны. Нажмите /start')
       return
     }
+    const papers = await listPaperTrades(env)
+    const live = papers.filter(
+      (t) => t.status === 'WAITING' || t.status === 'OPEN'
+    ).length
     await tgSend(
       env,
       chatId,
-      `📊 Статус @Enterprisesystem_bot\nРежим: 24/7 (cron */2)\nSniper: ${me.sniper ? 'ON' : 'OFF'}\nMeme: ${me.meme ? 'ON' : 'OFF'}\nПодписчиков: ${list.length}\nchatId: <code>${chatId}</code>`
+      `📊 Статус @Enterprisesystem_bot\nРежим: 24/7 (cron */2)\nPaper companion: ON\nСделок в работе: ${live}\nSniper: ${me.sniper ? 'ON' : 'OFF'}\nMeme: ${me.meme ? 'ON' : 'OFF'}\nПодписчиков: ${list.length}\nchatId: <code>${chatId}</code>\n\n/trades — детали`
     )
     return
   }
@@ -531,10 +587,15 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
 }
 
 function formatAlertMessage(payload: AlertPayload): string {
+  // Companion / system titles already carry their own emoji
   const icon =
-    payload.type === 'SNIPER' ? '🎯' : payload.type === 'MEME' ? '🚀' : 'ℹ️'
+    payload.type === 'SNIPER'
+      ? '🎯 '
+      : payload.type === 'MEME'
+        ? '🚀 '
+        : ''
   const title = payload.title ? `<b>${escapeHtml(payload.title)}</b>\n` : ''
-  return `${icon} ${title}${escapeHtml(payload.text)}`
+  return `${icon}${title}${escapeHtml(payload.text)}`
 }
 
 function escapeHtml(s: string): string {
