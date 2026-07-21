@@ -138,7 +138,9 @@ const SniperCard = ({ signal }: SniperCardProps) => {
                 className={`rounded-md px-2 py-0.5 font-mono text-[10px] font-bold ${
                   signal.tradeStyle === 'SCALP'
                     ? 'border border-yellow-400/40 bg-yellow-400/10 text-yellow-300'
-                    : 'border border-sky-400/40 bg-sky-400/10 text-sky-300'
+                    : signal.tradeStyle === 'SWING'
+                      ? 'border border-violet-400/40 bg-violet-400/10 text-violet-300'
+                      : 'border border-sky-400/40 bg-sky-400/10 text-sky-300'
                 }`}
               >
                 {signal.tradeStyle === 'SCALP'
