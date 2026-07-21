@@ -59,9 +59,13 @@ export const useTelegramWebApp = () => {
       webApp.ready()
       webApp.expand()
 
-      // Set theme colors
-      webApp.setHeaderColor('#0a0a0a')
-      webApp.setBackgroundColor('#0a0a0a')
+      // Theme colors — only if client supports them (not available in WebApp 6.0)
+      try {
+        webApp.setHeaderColor('#0a0a0a')
+        webApp.setBackgroundColor('#0a0a0a')
+      } catch {
+        /* older Telegram clients */
+      }
 
       // Extract user language
       const lang = webApp.initDataUnsafe?.user?.language_code || 'en'

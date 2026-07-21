@@ -23,5 +23,7 @@ Locally, Vite proxies `/mexc` → `https://contract.mexc.com` (see root `vite.co
 
 ## Paths
 
-Client requests: `{BASE}/api/v1/contract/...`  
+Client requests: `{VITE_MEXC_PROXY_URL}/mexc/api/v1/contract/...`  
 Worker forwards to: `https://contract.mexc.com/api/v1/contract/...`
+
+News: `{VITE_MEXC_PROXY_URL}/news/panic/...`, `/news/fg/...`, `/news/rss?url=...`

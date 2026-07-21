@@ -74,7 +74,8 @@ export const LITE_WATCHLIST = CORE_WATCHLIST
 export function getMexcBaseUrl(): string {
   const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
   if (envUrl && envUrl.trim()) {
-    return envUrl.replace(/\/$/, '')
+    // Worker routes MEXC under /mexc → contract.mexc.com
+    return `${envUrl.replace(/\/$/, '')}/mexc`
   }
   // Dev: Vite proxy; prod without worker still tries relative /mexc (will fail CORS unless proxied)
   return '/mexc'
