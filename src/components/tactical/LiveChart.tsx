@@ -34,8 +34,11 @@ import MultiTFPanel from './MultiTFPanel'
 import PredictionOverlay from './PredictionOverlay'
 import GhostPathOverlay from './GhostPathOverlay'
 import ScenarioLegend from './ScenarioLegend'
+import MacroOutlookPanel from './MacroOutlookPanel'
 import { useSessionData } from '../../hooks/useSessionData'
 import { SESSION_DEFINITIONS, getSessionAtHour } from '../../engine/sessions/sessionMap'
+import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
+import { buildMacroContext } from '../../engine/prediction/macroOutlook'
 
 interface LiveChartProps {
   symbol: string
@@ -94,6 +97,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [chartReady, setChartReady] = useState(0)
   const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
   const [showForecast, setShowForecast] = useState(true)
+  /** INTRA = текущий ТФ · MACRO = недельная картина A/B/C */
+  const [forecastHorizon, setForecastHorizon] = useState<ForecastHorizon>('INTRA')
   /** По умолчанию только A — B/C включаются вручную, меньше каши */
   const [activeScenarios, setActiveScenarios] = useState<Set<string>>(
     () => new Set(['A'])
@@ -101,6 +106,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [cleanMode, setCleanMode] = useState(true)
 
   const currentPrice = signal?.price ?? ticker?.price ?? 0
+  const baseSym = flatSymbol.replace(/USDT$/i, '').replace(/_USDT$/i, '')
+  const coinSentiment = useAppStore(
+    (s) => s.newsIntel.coinSentiments[baseSym] ?? null
+  )
+  const newsBias =
+    coinSentiment?.label === 'BULLISH' || coinSentiment?.label === 'BEARISH'
+      ? coinSentiment.label
+      : ('NEUTRAL' as const)
+  const newsScore = coinSentiment?.score ?? 0
 
   const indicators = useChartIndicators(candles, chartPreferences.indicators)
   const { liquidityZones: baseZones, priceLevels } = useChartZones(
@@ -162,7 +176,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const lastCandleTs =
     candles.length > 0 ? Math.floor(candles[candles.length - 1][0] / 1000) : 0
 
-  const { alignment, liquidityMap, isLoading: mtfLoading } = useMultiTFAnalysis(
+  const { alignment, liquidityMap, candles1d, isLoading: mtfLoading } = useMultiTFAnalysis(
     symbol,
     currentPrice,
     true
@@ -176,8 +190,34 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     symbol,
     timeframe,
     signal?.sl ?? null,
-    signal?.invalidationPrice ?? null
+    signal?.invalidationPrice ?? null,
+    forecastHorizon,
+    candles1d,
+    newsBias,
+    newsScore
   )
+
+  const macroCtx = useMemo(() => {
+    if (forecastHorizon !== 'MACRO' || !alignment || candles1d.length < 20) {
+      return null
+    }
+    return buildMacroContext(
+      candles1d,
+      alignment,
+      liquidityMap,
+      currentPrice,
+      newsBias,
+      newsScore
+    )
+  }, [
+    forecastHorizon,
+    alignment,
+    candles1d,
+    liquidityMap,
+    currentPrice,
+    newsBias,
+    newsScore,
+  ])
 
   const { sessions, weekends, news } = useSessionData(
     chartInstance,
@@ -617,6 +657,32 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           ))}
           <button
             type="button"
+            onClick={() => {
+              setShowForecast(true)
+              setForecastHorizon((h) => {
+                const next = h === 'INTRA' ? 'MACRO' : 'INTRA'
+                if (
+                  next === 'MACRO' &&
+                  (timeframe === '1m' ||
+                    timeframe === '5m' ||
+                    timeframe === '15m')
+                ) {
+                  setTimeframe('4h')
+                }
+                return next
+              })
+            }}
+            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              showForecast && forecastHorizon === 'MACRO'
+                ? 'border border-cyan-400/50 bg-cyan-500/15 text-cyan-300'
+                : 'border border-hull-border text-holo/40 hover:text-holo/70'
+            }`}
+            title="Недельная картина: ликвидность, новости, A/B/C"
+          >
+            {forecastHorizon === 'MACRO' ? 'WEEK' : 'INTRA'}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowForecast((v) => !v)}
             className={`rounded-lg p-1.5 transition-colors ${
               showForecast
@@ -717,12 +783,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       )}
 
       {showForecast && forecast && (
-        <ScenarioLegend
-          scenarios={forecast.scenarios}
-          dominantId={forecast.dominantScenario}
-          activeScenarios={activeScenarios}
-          onToggle={toggleScenario}
-        />
+        <>
+          <ScenarioLegend
+            scenarios={forecast.scenarios}
+            dominantId={forecast.dominantScenario}
+            activeScenarios={activeScenarios}
+            onToggle={toggleScenario}
+          />
+          {forecastHorizon === 'MACRO' && (
+            <MacroOutlookPanel
+              summary={forecast.macroSummary}
+              scenarios={forecast.scenarios}
+              macro={macroCtx}
+            />
+          )}
+        </>
       )}
 
       <ChartSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />

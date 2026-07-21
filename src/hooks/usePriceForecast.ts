@@ -6,6 +6,11 @@ import type {
   LiquidityLevel,
 } from '../engine/prediction/types'
 import { buildScenarios } from '../engine/prediction/scenarioBuilder'
+import {
+  buildMacroContext,
+  buildMacroScenarios,
+  type ForecastHorizon,
+} from '../engine/prediction/macroOutlook'
 
 function getCandleSeconds(tf: string): number {
   const map: Record<string, number> = {
@@ -34,13 +39,53 @@ export function usePriceForecast(
   symbol: string,
   activeTimeframe: string,
   stopLoss?: number | null,
-  invalidationPrice?: number | null
+  invalidationPrice?: number | null,
+  horizon: ForecastHorizon = 'INTRA',
+  candles1d: OhlcvCandle[] = [],
+  newsBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL',
+  newsScore = 0
 ): PriceForecast | null {
   return useMemo(() => {
-    if (!alignment || candles.length < 20 || currentPrice === 0) return null
+    if (!alignment || currentPrice === 0) return null
 
+    if (horizon === 'MACRO') {
+      const daily = candles1d.length >= 20 ? candles1d : candles
+      if (daily.length < 20) return null
+
+      const lastCandleTs = getLastCandleTimestamp(daily)
+      const scenarios = buildMacroScenarios(
+        daily,
+        alignment,
+        liquidityMap,
+        currentPrice,
+        newsBias
+      )
+      const ctx = buildMacroContext(
+        daily,
+        alignment,
+        liquidityMap,
+        currentPrice,
+        newsBias,
+        newsScore
+      )
+
+      return {
+        symbol,
+        currentPrice,
+        scenarios,
+        mtfAlignment: alignment,
+        liquidityMap,
+        dominantScenario: 'A' as const,
+        generatedAt: Date.now(),
+        candleTimeframeSeconds: 86_400,
+        lastCandleTimestamp: lastCandleTs,
+        horizon: 'MACRO' as const,
+        macroSummary: ctx.summary,
+      }
+    }
+
+    if (candles.length < 20) return null
     const lastCandleTs = getLastCandleTimestamp(candles)
-
     const scenarios = buildScenarios(
       candles,
       alignment,
@@ -61,9 +106,11 @@ export function usePriceForecast(
       generatedAt: Date.now(),
       candleTimeframeSeconds: getCandleSeconds(activeTimeframe),
       lastCandleTimestamp: lastCandleTs,
+      horizon: 'INTRA' as const,
     }
   }, [
     candles,
+    candles1d,
     alignment,
     liquidityMap,
     currentPrice,
@@ -71,5 +118,8 @@ export function usePriceForecast(
     activeTimeframe,
     stopLoss,
     invalidationPrice,
+    horizon,
+    newsBias,
+    newsScore,
   ])
 }

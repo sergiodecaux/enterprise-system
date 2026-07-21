@@ -23,7 +23,9 @@ const ScenarioLegend = ({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <div className="font-mono text-[10px] uppercase text-holo/50">
-          {t('forecast_scenarios')}
+          {scenarios.some((s) => s.label.toLowerCase().includes('неделя'))
+            ? 'Сценарии · неделя'
+            : t('forecast_scenarios')}
         </div>
         <div className="font-mono text-[9px] text-holo/35">{t('forecast_hint')}</div>
       </div>

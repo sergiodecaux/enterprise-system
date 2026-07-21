@@ -71,7 +71,7 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
 
   const getSignalText = (): string => {
     if (!signal.direction) {
-      return signal.currentRSI === null ? t('signal_waiting') : t('signal_neutral')
+      return signal.currentRSI === null ? t('signal_waiting') : '—'
     }
     const prefix = signal.hasActiveSetup ? '⚡' : ''
     return `${prefix}${signal.direction === 'LONG' ? t('signal_long') : t('signal_short')}`
@@ -79,15 +79,15 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
 
   return (
     <div
-      className="flex cursor-pointer items-center gap-3 border-b border-hull-border/50 px-4 py-3 transition-colors duration-200 hover:bg-hull-light/50"
+      className="flex cursor-pointer items-center gap-2 border-b border-hull-border/50 px-4 py-3 transition-colors duration-200 hover:bg-hull-light/50 sm:gap-3"
       onClick={onClick}
     >
-      <div className="w-6 text-right font-mono text-xs text-holo/30">
+      <div className="w-6 shrink-0 text-right font-mono text-xs text-holo/30">
         {String(rank).padStart(2, '0')}
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 items-center gap-1.5">
           <div className="truncate font-mono text-sm font-bold text-holo">
             {signal.displayName}
           </div>
@@ -104,7 +104,8 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
       </div>
 
       <div
-        className={`rounded border px-2 py-0.5 font-mono text-xs uppercase ${getSignalBadgeClass()}`}
+        className={`max-w-[4.5rem] shrink-0 truncate rounded border px-1.5 py-0.5 text-center font-mono text-[10px] uppercase sm:max-w-none sm:px-2 sm:text-xs ${getSignalBadgeClass()}`}
+        title={getSignalText()}
       >
         {getSignalText()}
       </div>

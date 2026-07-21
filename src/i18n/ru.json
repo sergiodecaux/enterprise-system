@@ -19,7 +19,7 @@
   "column_action": "ДЕЙСТВИЕ",
   "signal_long": "ЛОНГ",
   "signal_short": "ШОРТ",
-  "signal_neutral": "НЕЙТРАЛЬНО",
+  "signal_neutral": "—",
   "signal_waiting": "КАЛИБРОВКА...",
   "signal_setup": "СЕТАП",
   "tactical_title": "ТАКТИЧЕСКИЙ ДИСПЛЕЙ",

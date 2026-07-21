@@ -42,7 +42,9 @@ const SpreadPressureBar = ({ pressure }: SpreadPressureBarProps) => {
 
       <div className="flex justify-between font-mono text-[9px] text-holo/40">
         <span>ПРОДАВЦЫ</span>
-        <span style={{ color }}>{label}</span>
+        <span className="max-w-[40%] truncate text-center" style={{ color }}>
+          {pressure.pressure === 'NEUTRAL' ? '—' : label}
+        </span>
         <span>ПОКУПАТЕЛИ</span>
       </div>
     </div>

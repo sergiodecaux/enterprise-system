@@ -122,4 +122,7 @@ export interface PriceForecast {
   candleTimeframeSeconds: number
   /** Unix seconds — якорь пути (закрытая свеча) */
   lastCandleTimestamp: number
+  /** INTRA = текущий ТФ · MACRO = недельная картина */
+  horizon?: 'INTRA' | 'MACRO'
+  macroSummary?: string
 }

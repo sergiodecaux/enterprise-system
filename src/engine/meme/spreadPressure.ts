@@ -20,7 +20,7 @@ const pressureRu = (p: SpreadPressureResult['pressure']): string => {
     case 'SELLERS':
       return 'продавцы'
     default:
-      return 'нейтрально'
+      return '—'
   }
 }
 
