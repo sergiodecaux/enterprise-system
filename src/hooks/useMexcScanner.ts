@@ -189,6 +189,8 @@ export const useMexcScanner = () => {
           await sleep(COIN_DELAY_MS)
           const ohlcv4h = await fetchOhlcv(symbol, '4h', 100)
           await sleep(200)
+          const ohlcv1d = await fetchOhlcv(symbol, '1d', 120)
+          await sleep(150)
           const ohlcv1h = await fetchOhlcv(symbol, '1h', 720)
           await sleep(200)
           const ohlcv15m = await fetchOhlcv(symbol, '15m', 50)
@@ -248,6 +250,7 @@ export const useMexcScanner = () => {
             ohlcv4h,
             ohlcv1h,
             ohlcv15m,
+            ohlcv1d: ohlcv1d.length >= 20 ? ohlcv1d : undefined,
             priceChange24h: tickerMap.get(symbol) ?? 0,
             dailyBias,
             btcTrend,

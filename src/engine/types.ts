@@ -130,6 +130,15 @@ export interface CoinSignal {
   /** Ghost path / ATR realism warning */
   ghostPathWarning?: string | null
   unrealisticTp?: boolean
+  /** Global Fibonacci HTF reaction context */
+  globalFib?: {
+    impulse: 'UP' | 'DOWN'
+    entryBias: 'LONG' | 'SHORT' | null
+    activeLabel: string | null
+    swingHigh: number
+    swingLow: number
+    inReactionZone: boolean
+  } | null
 }
 
 export interface MarketContext {

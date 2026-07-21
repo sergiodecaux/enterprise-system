@@ -113,7 +113,7 @@ export const DEFAULT_CHART_PREFERENCES: ChartPreferences = {
   zones: {
     orderBlocks: true,
     fvg: false,
-    fibonacci: false,
+    fibonacci: true,
     poc: false,
     valueArea: false,
     dailyLevels: false,

@@ -84,10 +84,11 @@ const CoinSearch = () => {
       })
 
       // One-shot SMC analysis so coin appears immediately
-      const [c1d, c4h, c1h, c15m] = await Promise.all([
+      const [btc1d, coin1d, c4h, c1h, c15m] = await Promise.all([
         marketContext?.dailyAnalysis
           ? Promise.resolve(null)
           : fetchOhlcv(BTC, '1d', 60),
+        fetchOhlcv(ticker.symbol, '1d', 120),
         fetchOhlcv(ticker.symbol, '4h', 100),
         fetchOhlcv(ticker.symbol, '1h', 100),
         fetchOhlcv(ticker.symbol, '15m', 50),
@@ -102,8 +103,8 @@ const CoinSearch = () => {
         dailyLevels: marketContext?.dailyLevels ?? null,
       }
 
-      if (c1d) {
-        dailyBias = resolveDailyBias(c1d)
+      if (btc1d) {
+        dailyBias = resolveDailyBias(btc1d)
       }
 
       let btcTrend = marketContext?.btcTrend ?? 'RANGING'
@@ -121,6 +122,7 @@ const CoinSearch = () => {
         ohlcv4h: c4h,
         ohlcv1h: c1h,
         ohlcv15m: c15m,
+        ohlcv1d: coin1d.length >= 20 ? coin1d : undefined,
         priceChange24h: ticker.priceChangePercent,
         dailyBias,
         btcTrend,

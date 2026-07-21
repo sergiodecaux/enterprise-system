@@ -37,6 +37,8 @@ export async function loadMemeCoinAnalysis(
     await sleep(120)
     const ohlcv4h = await fetchOhlcv(internalSymbol, '4h', 100)
     await sleep(120)
+    const ohlcv1d = await fetchOhlcv(internalSymbol, '1d', 120)
+    await sleep(120)
     const ohlcv1h = await fetchOhlcv(internalSymbol, '1h', 720)
     await sleep(120)
     const ohlcv15m = await fetchOhlcv(internalSymbol, '15m', 50)
@@ -118,6 +120,7 @@ export async function loadMemeCoinAnalysis(
       ohlcv4h,
       ohlcv1h,
       ohlcv15m,
+      ohlcv1d: ohlcv1d.length >= 20 ? ohlcv1d : undefined,
       priceChange24h: meme.priceChange24h,
       dailyBias,
       btcTrend: marketContext?.btcTrend ?? 'RANGING',

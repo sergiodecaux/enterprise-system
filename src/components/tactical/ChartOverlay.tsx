@@ -34,6 +34,10 @@ function getZoneColors(zone: LiquidityZone, opacity: number) {
       return zone.side === 'BEARISH'
         ? { bg: `rgba(239, 68, 68, ${op * 0.7})`, border: 'rgba(239, 68, 68, 0.85)' }
         : { bg: `rgba(34, 197, 94, ${op * 0.75})`, border: 'rgba(34, 197, 94, 0.9)' }
+    case 'FIBONACCI':
+      return zone.side === 'BULLISH'
+        ? { bg: `rgba(251, 191, 36, ${op * 0.55})`, border: 'rgba(251, 191, 36, 0.9)' }
+        : { bg: `rgba(168, 85, 247, ${op * 0.5})`, border: 'rgba(168, 85, 247, 0.85)' }
     default:
       return { bg: `rgba(100, 200, 255, ${op})`, border: 'rgba(100, 200, 255, 0.6)' }
   }
@@ -60,10 +64,10 @@ const ChartOverlay = ({
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
 
-      // Максимум 4 зоны — меньше визуального шума
+      // До 6 зон — fib reaction + OB/OTE
       const visibleZones = [...zones]
         .sort((a, b) => (b.strength ?? 5) - (a.strength ?? 5))
-        .slice(0, 4)
+        .slice(0, 6)
 
       for (const zone of visibleZones) {
         const colors = getZoneColors(zone, opacity)

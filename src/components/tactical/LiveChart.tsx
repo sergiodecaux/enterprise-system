@@ -37,6 +37,7 @@ import ScenarioLegend from './ScenarioLegend'
 import MacroOutlookPanel from './MacroOutlookPanel'
 import { useSessionData } from '../../hooks/useSessionData'
 import { SESSION_DEFINITIONS, getSessionAtHour } from '../../engine/sessions/sessionMap'
+import { buildGlobalFibonacci } from '../../engine/zones/globalFibonacci'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
 
@@ -117,21 +118,47 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const newsScore = coinSentiment?.score ?? 0
 
   const indicators = useChartIndicators(candles, chartPreferences.indicators)
-  const { liquidityZones: baseZones, priceLevels } = useChartZones(
+  const { liquidityZones: baseZones, priceLevels: basePriceLevels } = useChartZones(
     candles,
     chartPreferences.zones
   )
 
-  /** OTE Killzone Box + signal-linked zones */
+  const lastCandleTs =
+    candles.length > 0 ? Math.floor(candles[candles.length - 1][0] / 1000) : 0
+
+  const { alignment, liquidityMap, candles1d, isLoading: mtfLoading } = useMultiTFAnalysis(
+    symbol,
+    currentPrice,
+    true
+  )
+
+  const globalFib = useMemo(
+    () =>
+      buildGlobalFibonacci(
+        candles1d.length >= 20 ? candles1d : candles,
+        currentPrice
+      ),
+    [candles1d, candles, currentPrice]
+  )
+
+  /** OTE Killzone Box + signal-linked zones + global Fib reaction */
   const liquidityZones = useMemo((): LiquidityZone[] => {
+    const fibZones = globalFib?.chartZones ?? []
+
     if (cleanMode) {
-      // В чистом режиме — только OTE + сильнейший OB
+      // В чистом режиме — OTE + сильнейший OB + активные Fib-зоны
       const zones: LiquidityZone[] = []
       const obs = baseZones
         .filter((z) => z.type === 'ORDER_BLOCK')
         .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
         .slice(0, 1)
       zones.push(...obs)
+      zones.push(...fibZones.filter((z) => (z.label ?? '').includes('◎')).slice(0, 2))
+      if (fibZones.length && !zones.some((z) => z.type === 'FIBONACCI')) {
+        zones.push(
+          ...[...fibZones].sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0)).slice(0, 1)
+        )
+      }
       if (signal?.ote?.isActive && candles.length > 0) {
         const start = candles[Math.max(0, candles.length - 40)]
         const end = candles[candles.length - 1]
@@ -152,7 +179,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       return zones
     }
 
-    const zones = [...baseZones]
+    const zones = [...baseZones, ...fibZones]
     if (signal?.ote?.isActive && candles.length > 0) {
       const start = candles[Math.max(0, candles.length - 40)]
       const end = candles[candles.length - 1]
@@ -171,16 +198,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       })
     }
     return zones
-  }, [baseZones, signal, candles, cleanMode])
+  }, [baseZones, signal, candles, globalFib, cleanMode])
 
-  const lastCandleTs =
-    candles.length > 0 ? Math.floor(candles[candles.length - 1][0] / 1000) : 0
-
-  const { alignment, liquidityMap, candles1d, isLoading: mtfLoading } = useMultiTFAnalysis(
-    symbol,
-    currentPrice,
-    true
-  )
+  const priceLevels = useMemo(() => {
+    const fibLines = globalFib?.priceLevels ?? []
+    if (!fibLines.length) return basePriceLevels
+    // Prefer global HTF fib grid over local candle fib duplicates
+    const withoutLocalFib = basePriceLevels.filter(
+      (l) => !l.id.startsWith('fib_')
+    )
+    return [...withoutLocalFib, ...fibLines]
+  }, [basePriceLevels, globalFib])
 
   const forecast = usePriceForecast(
     candles,
@@ -659,7 +687,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             type="button"
             onClick={() => {
               setShowForecast(true)
-              setForecastHorizon((h) => {
+              setForecastHorizon((h: ForecastHorizon) => {
                 const next = h === 'INTRA' ? 'MACRO' : 'INTRA'
                 if (
                   next === 'MACRO' &&

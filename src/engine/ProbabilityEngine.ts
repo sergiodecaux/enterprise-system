@@ -58,6 +58,7 @@ import {
 import { detectCvdDivergence } from './orderflow'
 import { calculateDynamicInvalidation } from './confidence/invalidation'
 import { buildGhostPath } from './prediction/ghostPath'
+import { buildGlobalFibonacci } from './zones/globalFibonacci'
 
 export const CONFLUENCE_THRESHOLD = 5
 export const COOLDOWN_MS = 180 * 60 * 1000
@@ -67,6 +68,8 @@ export interface AnalyzeSymbolInput {
   ohlcv4h: OhlcvCandle[]
   ohlcv1h: OhlcvCandle[]
   ohlcv15m: OhlcvCandle[]
+  /** Daily candles for global Fibonacci (falls back to 4h) */
+  ohlcv1d?: OhlcvCandle[]
   priceChange24h: number
   dailyBias: DailyBiasResult
   btcTrend: TrendDirection
@@ -485,6 +488,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     ohlcv4h,
     ohlcv1h,
     ohlcv15m,
+    ohlcv1d,
     priceChange24h,
     dailyBias,
     btcTrend,
@@ -562,6 +566,11 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const closes1h = ohlcv1h.map((c) => c[4])
   const currentPrice = closes1h[closes1h.length - 1] ?? 0
   const rsi = closes1h.length ? calculateRsi(closes1h) : null
+
+  const globalFib = buildGlobalFibonacci(
+    ohlcv1d && ohlcv1d.length >= 20 ? ohlcv1d : ohlcv4h,
+    currentPrice
+  )
 
   // ── BTC Divergence ────────────────────────────────────────────────────────
   const divergence: BtcDivergenceResult =
@@ -700,6 +709,21 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       z.push(`OTE_${direction}: ${ote.label}`)
       oteResult = ote
       logger.info(`[PE] ${internalSymbol} OTE boost: +${ote.scoreBoost}`)
+    }
+
+    // Global Fib reaction zone — price at HTF bounce level → hunt entry this side
+    if (
+      globalFib?.activeZone &&
+      globalFib.activeZone.bias === direction
+    ) {
+      const fibBoost = globalFib.activeZone.strength >= 10 ? 1.2 : 0.8
+      s = Math.min(s + fibBoost, 10)
+      z.push(
+        `GLOBAL_FIB_${direction}: ${globalFib.activeZone.label} (impulse ${globalFib.impulse})`
+      )
+      logger.info(
+        `[PE] ${internalSymbol} Global Fib boost: +${fibBoost} | ${globalFib.activeZone.label}`
+      )
     }
 
     return { score: s, zones: z, mss: mssResult, raid: raidResult, ote: oteResult }
@@ -892,6 +916,16 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       absorption: _absorption.detected ? _absorption : null,
       ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
       buyerAggression: null,
+      globalFib: globalFib
+        ? {
+            impulse: globalFib.impulse,
+            entryBias: globalFib.entryBias,
+            activeLabel: globalFib.activeZone?.label ?? null,
+            swingHigh: globalFib.swingHigh,
+            swingLow: globalFib.swingLow,
+            inReactionZone: Boolean(globalFib.activeZone),
+          }
+        : null,
     }
 
     const enriched = enrichSignal(signal, {
@@ -908,19 +942,49 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     return { signal: enriched, triggered: enriched.hasActiveSetup }
   }
 
-  if (longAllowed) {
-    const longResult = trySide('LONG')
-    if (longResult) return longResult
-  }
-  if (shortAllowed) {
-    const shortResult = trySide('SHORT')
-    if (shortResult) return shortResult
+  // Prefer side matching global fib reaction when price is in the zone
+  const fibBias = globalFib?.entryBias
+  const tryOrder: TradeSide[] =
+    fibBias === 'SHORT'
+      ? ['SHORT', 'LONG']
+      : fibBias === 'LONG'
+        ? ['LONG', 'SHORT']
+        : ['LONG', 'SHORT']
+
+  for (const side of tryOrder) {
+    if (side === 'LONG' && !longAllowed) continue
+    if (side === 'SHORT' && !shortAllowed) continue
+    const result = trySide(side)
+    if (result) return result
   }
 
   // No full trigger — still show best confluence as soft probability for radar
   let softScore = 0
   let softDirection: TradeSide | null = null
   let softZones: string[] = []
+
+  // If price is in a global fib reaction zone, soft-bias that side first
+  if (globalFib?.entryBias === 'LONG' && longAllowed) {
+    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
+    softScore = c.score + (globalFib.activeZone ? 1.5 : 0)
+    softDirection = 'LONG'
+    softZones = [
+      ...c.zones,
+      ...(globalFib.activeZone
+        ? [`GLOBAL_FIB_WATCH: ${globalFib.activeZone.label} → ищем LONG`]
+        : []),
+    ]
+  } else if (globalFib?.entryBias === 'SHORT' && shortAllowed) {
+    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
+    softScore = c.score + (globalFib.activeZone ? 1.5 : 0)
+    softDirection = 'SHORT'
+    softZones = [
+      ...c.zones,
+      ...(globalFib.activeZone
+        ? [`GLOBAL_FIB_WATCH: ${globalFib.activeZone.label} → ищем SHORT`]
+        : []),
+    ]
+  }
 
   if (longAllowed) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
@@ -1001,6 +1065,16 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     absorption: _absorption.detected ? _absorption : null,
     ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
     buyerAggression: null,
+    globalFib: globalFib
+      ? {
+          impulse: globalFib.impulse,
+          entryBias: globalFib.entryBias,
+          activeLabel: globalFib.activeZone?.label ?? null,
+          swingHigh: globalFib.swingHigh,
+          swingLow: globalFib.swingLow,
+          inReactionZone: Boolean(globalFib.activeZone),
+        }
+      : null,
   }
 
   const enrichedSoft =
