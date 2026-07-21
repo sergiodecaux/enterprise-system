@@ -716,7 +716,14 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       globalFib?.activeZone &&
       globalFib.activeZone.bias === direction
     ) {
-      const fibBoost = globalFib.activeZone.strength >= 10 ? 1.2 : 0.8
+      const is141 =
+        globalFib.activeZone.id.includes('141') ||
+        globalFib.activeZone.ratios[0] === 1.414
+      const fibBoost = is141
+        ? 1.6
+        : globalFib.activeZone.strength >= 10
+          ? 1.2
+          : 0.8
       s = Math.min(s + fibBoost, 10)
       z.push(
         `GLOBAL_FIB_${direction}: ${globalFib.activeZone.label} (impulse ${globalFib.impulse})`
@@ -966,7 +973,10 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   // If price is in a global fib reaction zone, soft-bias that side first
   if (globalFib?.entryBias === 'LONG' && longAllowed) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
-    softScore = c.score + (globalFib.activeZone ? 1.5 : 0)
+    const is141 =
+      globalFib.activeZone?.id.includes('141') ||
+      globalFib.activeZone?.ratios[0] === 1.414
+    softScore = c.score + (globalFib.activeZone ? (is141 ? 2.2 : 1.5) : 0)
     softDirection = 'LONG'
     softZones = [
       ...c.zones,
@@ -976,7 +986,10 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     ]
   } else if (globalFib?.entryBias === 'SHORT' && shortAllowed) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
-    softScore = c.score + (globalFib.activeZone ? 1.5 : 0)
+    const is141 =
+      globalFib.activeZone?.id.includes('141') ||
+      globalFib.activeZone?.ratios[0] === 1.414
+    softScore = c.score + (globalFib.activeZone ? (is141 ? 2.2 : 1.5) : 0)
     softDirection = 'SHORT'
     softZones = [
       ...c.zones,

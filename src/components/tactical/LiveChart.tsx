@@ -153,7 +153,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
         .slice(0, 1)
       zones.push(...obs)
-      zones.push(...fibZones.filter((z) => (z.label ?? '').includes('◎')).slice(0, 2))
+      // Prefer 141 magnet / 141–161 band when active
+      const fib141 = fibZones.filter(
+        (z) =>
+          (z.id ?? '').includes('141') || (z.label ?? '').includes('141')
+      )
+      zones.push(...fib141.slice(0, 2))
+      if (!fib141.length) {
+        zones.push(...fibZones.filter((z) => (z.label ?? '').includes('◎')).slice(0, 2))
+      }
       if (fibZones.length && !zones.some((z) => z.type === 'FIBONACCI')) {
         zones.push(
           ...[...fibZones].sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0)).slice(0, 1)
