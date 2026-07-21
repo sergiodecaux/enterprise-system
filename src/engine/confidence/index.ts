@@ -27,8 +27,8 @@ export interface ConfidenceScoreResult {
   passedFactors: number
   approved: boolean
   recommendation: string
-  /** SCALP | INTRADAY — какой алгоритм использован */
-  tradeStyle: 'SCALP' | 'INTRADAY'
+  /** SCALP | INTRADAY | SWING — какой алгоритм использован */
+  tradeStyle: 'SCALP' | 'INTRADAY' | 'SWING'
 }
 
 export function calculateConfidenceScore(
@@ -40,6 +40,28 @@ export function calculateConfidenceScore(
 
   if (style === 'SCALP') {
     return calculateScalpConfidenceScore(signal, orderBookMetrics)
+  }
+  if (style === 'SWING') {
+    const base = calculateIntradayConfidenceScore(signal, orderBookMetrics)
+    const fibBoost =
+      signal.globalFib?.inReactionZone &&
+      signal.globalFib.entryBias === signal.direction
+        ? signal.globalFib.activeLabel?.includes('141')
+          ? 6
+          : 3
+        : 0
+    const totalScore = Math.min(base.totalScore + fibBoost, 98)
+    return {
+      ...base,
+      totalScore,
+      tradeStyle: 'SWING',
+      recommendation:
+        totalScore >= 88
+          ? `🕯 SWING ELITE ${totalScore}%. Fib/HTF структура, держим дни.`
+          : totalScore >= 70
+            ? `🕯 SWING ${totalScore}%. Сетап на 4H–1D.`
+            : `🕯 SWING ${totalScore}%. Ждём подтверждение у зоны.`,
+    }
   }
   return calculateIntradayConfidenceScore(signal, orderBookMetrics)
 }

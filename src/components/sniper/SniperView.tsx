@@ -137,7 +137,7 @@ const SniperView = () => {
               </span>
             </div>
             <p className="font-mono text-xs leading-relaxed text-holo/60">
-              ⚡️ SCALP и 🎯 INTRADAY считают Confidence по разным правилам.
+              ⚡️ SCALP · 🎯 INTRADAY · 🕯 SWING — разные правила Confidence.
               Цифра — Confidence Score сетапа в моменте, не historical Win Rate.
               Вход сеткой в OTE-зоне, SL — закон.
             </p>

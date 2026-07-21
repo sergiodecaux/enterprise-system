@@ -32,8 +32,9 @@ const SniperFilters = ({
     label: string
   }> = [
     { id: 'ALL', label: 'Все стили' },
-    { id: 'SCALP', label: '⚡️ SCALP [M5]' },
-    { id: 'INTRADAY', label: '🎯 INTRADAY [H1]' },
+    { id: 'SCALP', label: '⚡️ SCALP' },
+    { id: 'INTRADAY', label: '🎯 INTRA' },
+    { id: 'SWING', label: '🕯 SWING' },
   ]
 
   return (
@@ -50,7 +51,9 @@ const SniperFilters = ({
                   ? 'border border-yellow-400/50 bg-yellow-400/15 text-yellow-300 shadow-md'
                   : filter.id === 'INTRADAY'
                     ? 'border border-sky-400/50 bg-sky-400/15 text-sky-300 shadow-md'
-                    : 'border border-matrix/50 bg-matrix/20 text-matrix shadow-md'
+                    : filter.id === 'SWING'
+                      ? 'border border-violet-400/50 bg-violet-400/15 text-violet-300 shadow-md'
+                      : 'border border-matrix/50 bg-matrix/20 text-matrix shadow-md'
                 : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
             }`}
           >

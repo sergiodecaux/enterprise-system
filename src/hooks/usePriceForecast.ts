@@ -31,6 +31,13 @@ export function getLastCandleTimestamp(candles: OhlcvCandle[]): number {
   return Math.floor(lastClosed[0] / 1000)
 }
 
+function normalizeHorizon(
+  horizon: ForecastHorizon
+): 'SCALP' | 'INTRA' | 'SWING' | 'MACRO' {
+  if (horizon === 'MACRO') return 'SWING'
+  return horizon
+}
+
 export function usePriceForecast(
   candles: OhlcvCandle[],
   alignment: MultiTFAlignment | null,
@@ -43,12 +50,15 @@ export function usePriceForecast(
   horizon: ForecastHorizon = 'INTRA',
   candles1d: OhlcvCandle[] = [],
   newsBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL',
-  newsScore = 0
+  newsScore = 0,
+  fearGreed: number | null = null
 ): PriceForecast | null {
   return useMemo(() => {
     if (!alignment || currentPrice === 0) return null
 
-    if (horizon === 'MACRO') {
+    const mode = normalizeHorizon(horizon)
+
+    if (mode === 'SWING' || horizon === 'MACRO') {
       const daily = candles1d.length >= 20 ? candles1d : candles
       if (daily.length < 20) return null
 
@@ -58,7 +68,8 @@ export function usePriceForecast(
         alignment,
         liquidityMap,
         currentPrice,
-        newsBias
+        newsBias,
+        fearGreed
       )
       const ctx = buildMacroContext(
         daily,
@@ -79,13 +90,14 @@ export function usePriceForecast(
         generatedAt: Date.now(),
         candleTimeframeSeconds: 86_400,
         lastCandleTimestamp: lastCandleTs,
-        horizon: 'MACRO' as const,
+        horizon: horizon === 'MACRO' ? ('MACRO' as const) : ('SWING' as const),
         macroSummary: ctx.summary,
       }
     }
 
     if (candles.length < 20) return null
     const lastCandleTs = getLastCandleTimestamp(candles)
+    const pathTimeScale = mode === 'SCALP' ? 0.45 : 1
     const scenarios = buildScenarios(
       candles,
       alignment,
@@ -93,7 +105,14 @@ export function usePriceForecast(
       currentPrice,
       activeTimeframe,
       lastCandleTs,
-      { stopLoss, invalidationPrice }
+      {
+        stopLoss,
+        invalidationPrice,
+        newsBias,
+        fearGreed,
+        horizon: mode,
+        pathTimeScale,
+      }
     )
 
     return {
@@ -106,7 +125,7 @@ export function usePriceForecast(
       generatedAt: Date.now(),
       candleTimeframeSeconds: getCandleSeconds(activeTimeframe),
       lastCandleTimestamp: lastCandleTs,
-      horizon: 'INTRA' as const,
+      horizon: mode,
     }
   }, [
     candles,
@@ -121,5 +140,6 @@ export function usePriceForecast(
     horizon,
     newsBias,
     newsScore,
+    fearGreed,
   ])
 }

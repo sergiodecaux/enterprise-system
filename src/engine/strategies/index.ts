@@ -1,4 +1,5 @@
 export * from './types'
 export * from './scalp'
 export * from './intraday'
+export * from './swing'
 export * from './classify'

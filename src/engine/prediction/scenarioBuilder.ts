@@ -7,6 +7,10 @@ import type {
 } from './types'
 import { calculateAtr } from '../smc'
 import { findNearestLiquidity } from './liquidityMap'
+import {
+  calcScenarioProbabilities,
+  type NewsBias,
+} from './scenarioProbabilities'
 
 /** A основной · B свип · C слом */
 const COLORS = {
@@ -148,28 +152,28 @@ function buildBreakPath(
   ]
 }
 
-function calcFixedProbabilities(alignment: MultiTFAlignment): {
+function calcFixedProbabilities(
+  alignment: MultiTFAlignment,
+  isLong: boolean,
+  extras?: {
+    newsBias?: NewsBias
+    fearGreed?: number | null
+    bookImbalance?: number | null
+    horizon?: 'SCALP' | 'INTRA' | 'SWING' | 'MACRO'
+  }
+): {
   a: number
   b: number
   c: number
 } {
-  // База 70 / 20 / 10; лёгкая коррекция по силе MTF (сумма = 100)
-  let a = 70
-  let b = 20
-  let c = 10
-
-  const abs = Math.abs(alignment.score)
-  if (abs >= 4 && alignment.agreement) {
-    a = 78
-    b = 15
-    c = 7
-  } else if (abs <= 1) {
-    a = 55
-    b = 28
-    c = 17
-  }
-
-  return { a, b, c }
+  return calcScenarioProbabilities({
+    alignment,
+    isLong,
+    newsBias: extras?.newsBias,
+    fearGreed: extras?.fearGreed,
+    bookImbalance: extras?.bookImbalance,
+    horizon: extras?.horizon ?? 'INTRA',
+  })
 }
 
 function buildReasoning(
@@ -204,13 +208,19 @@ function buildReasoning(
 export interface BuildScenariosOptions {
   stopLoss?: number | null
   invalidationPrice?: number | null
+  newsBias?: NewsBias
+  fearGreed?: number | null
+  bookImbalance?: number | null
+  horizon?: 'SCALP' | 'INTRA' | 'SWING' | 'MACRO'
+  /** Scale path time offsets (scalp < 1, swing > 1) */
+  pathTimeScale?: number
 }
 
 /**
  * Три вероятностных сценария:
- * A ~70% — основной тренд в OB
- * B ~20% — пересвип ликвидности, затем продолжение
- * C ~10% — слом структуры ниже/выше стопа
+ * A — основной тренд в OB
+ * B — пересвип ликвидности, затем продолжение
+ * C — слом структуры ниже/выше стопа
  */
 export function buildScenarios(
   candles: OhlcvCandle[],
@@ -223,15 +233,27 @@ export function buildScenarios(
 ): PriceScenario[] {
   const atr = calculateAtr(candles, 14) ?? currentPrice * 0.005
   const candleSec = candleSeconds(activeTimeframe)
-  const { a: pctA, b: pctB, c: pctC } = calcFixedProbabilities(alignment)
+  const timeScale = options?.pathTimeScale ?? 1
+  const scaledSec = candleSec * timeScale
 
   const nearestUp = findNearestLiquidity(liquidityMap, 'UP', 0.3)
   const nearestDown = findNearestLiquidity(liquidityMap, 'DOWN', 0.3)
 
   const isLong = alignment.dominantBias !== 'SHORT'
+  const { a: pctA, b: pctB, c: pctC } = calcFixedProbabilities(alignment, isLong, {
+    newsBias: options?.newsBias,
+    fearGreed: options?.fearGreed,
+    bookImbalance: options?.bookImbalance,
+    horizon: options?.horizon,
+  })
+
+  // Scalp aims closer magnets; swing aims farther
+  const atrMult =
+    options?.horizon === 'SCALP' ? 1.4 : options?.horizon === 'SWING' ? 3.2 : 2.5
+
   const target = isLong
-    ? nearestUp?.price ?? currentPrice + atr * 2.5
-    : nearestDown?.price ?? currentPrice - atr * 2.5
+    ? nearestUp?.price ?? currentPrice + atr * atrMult
+    : nearestDown?.price ?? currentPrice - atr * atrMult
 
   // Sweep: SSL ниже для лонга / BSL выше для шорта
   const sweepLevel = isLong
@@ -249,13 +271,20 @@ export function buildScenarios(
 
   const riskA = Math.abs(target - currentPrice) / Math.max(Math.abs(currentPrice - stopLevel), atr * 0.5)
 
+  const horizonTag =
+    options?.horizon === 'SCALP'
+      ? 'скальп'
+      : options?.horizon === 'SWING'
+        ? 'свинг'
+        : 'интра'
+
   const scenA: PriceScenario = {
     id: 'A',
     type: isLong ? 'LONG' : 'SHORT',
-    label: 'Основной (тренд → OB)',
+    label: `Основной (${horizonTag} → OB)`,
     probability: pctA,
     color: primaryColor,
-    path: buildPrimaryPath(currentPrice, target, atr, candleSec, isLong),
+    path: buildPrimaryPath(currentPrice, target, atr, scaledSec, isLong),
     entry: currentPrice,
     target,
     invalidation: stopLevel,
@@ -288,7 +317,7 @@ export function buildScenarios(
       target,
       sweepLevel,
       atr,
-      candleSec,
+      scaledSec,
       isLong
     ),
     entry: currentPrice,
@@ -325,7 +354,7 @@ export function buildScenarios(
     label: 'Слом структуры (за стоп)',
     probability: pctC,
     color: breakColor,
-    path: buildBreakPath(currentPrice, stopLevel, atr, candleSec, isLong),
+    path: buildBreakPath(currentPrice, stopLevel, atr, scaledSec, isLong),
     entry: currentPrice,
     target: breakTarget,
     invalidation: isLong ? currentPrice + atr : currentPrice - atr,

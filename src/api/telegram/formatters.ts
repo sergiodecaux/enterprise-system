@@ -103,7 +103,12 @@ export function formatSniperTelegramMessage(signal: SniperSignal): {
   dedupeKey: string
 } {
   const direction = signal.direction === 'SHORT' ? 'SHORT' : 'LONG'
-  const style = signal.tradeStyle === 'SCALP' ? 'SCALP' : 'INTRADAY'
+  const style =
+    signal.tradeStyle === 'SCALP'
+      ? 'SCALP'
+      : signal.tradeStyle === 'SWING'
+        ? 'SWING'
+        : 'INTRADAY'
   const icon = direction === 'LONG' ? '🟢' : '🔴'
   const contract = mexcContract(signal.symbol)
   const title = `${icon} ${direction} ${signal.displayName} · ${style}`
@@ -287,7 +292,12 @@ export async function pushCoinSignalAlert(
   )
   const contract = check.apiSymbol
   const icon = direction === 'LONG' ? '🟢' : '🔴'
-  const style = signal.tradeStyle === 'SCALP' ? 'SCALP' : 'INTRADAY'
+  const style =
+    signal.tradeStyle === 'SCALP'
+      ? 'SCALP'
+      : signal.tradeStyle === 'SWING'
+        ? 'SWING'
+        : 'INTRADAY'
 
   await sendTelegramAlert({
     type: 'SNIPER',

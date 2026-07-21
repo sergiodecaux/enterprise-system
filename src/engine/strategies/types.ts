@@ -1,8 +1,8 @@
 import type { TradeSide } from '../smc'
 import type { CoinSignal } from '../types'
 
-/** Горизонт сделки: скальп vs внутридневной */
-export type TradeStyle = 'SCALP' | 'INTRADAY'
+/** Горизонт сделки: скальп / интрадей / свинг */
+export type TradeStyle = 'SCALP' | 'INTRADAY' | 'SWING'
 
 export interface StyleRiskModel {
   /** Макс. допустимый стоп в % от цены */

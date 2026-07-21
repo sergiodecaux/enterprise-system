@@ -143,7 +143,9 @@ const SniperCard = ({ signal }: SniperCardProps) => {
               >
                 {signal.tradeStyle === 'SCALP'
                   ? '⚡️ SCALP [M5]'
-                  : '🎯 INTRADAY [H1]'}
+                  : signal.tradeStyle === 'SWING'
+                    ? '🕯 SWING [4H–1D]'
+                    : '🎯 INTRADAY [H1]'}
               </span>
             </div>
             <div className="font-mono text-sm text-holo/60">

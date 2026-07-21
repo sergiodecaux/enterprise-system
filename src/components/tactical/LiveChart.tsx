@@ -141,9 +141,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     [candles1d, candles, currentPrice]
   )
 
+  const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
+
   /** OTE Killzone Box + signal-linked zones + global Fib reaction */
   const liquidityZones = useMemo((): LiquidityZone[] => {
-    const fibZones = globalFib?.chartZones ?? []
+    const visibleStart =
+      candles.length > 0
+        ? (Math.floor(candles[0][0] / 1000) as Time)
+        : ((Date.now() / 1000) as Time)
+    const visibleEnd =
+      candles.length > 0
+        ? ((Math.floor(candles[candles.length - 1][0] / 1000) + 86400) as Time)
+        : ((Date.now() / 1000 + 86400) as Time)
+
+    const fibZones = (globalFib?.chartZones ?? []).map((z) => ({
+      ...z,
+      // Anchor fib bands to visible chart range so overlay can draw them
+      startTime: visibleStart,
+      endTime: visibleEnd,
+    }))
 
     if (cleanMode) {
       // В чистом режиме — OTE + сильнейший OB + активные Fib-зоны
@@ -230,11 +246,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     forecastHorizon,
     candles1d,
     newsBias,
-    newsScore
+    newsScore,
+    fearGreedValue
   )
 
   const macroCtx = useMemo(() => {
-    if (forecastHorizon !== 'MACRO' || !alignment || candles1d.length < 20) {
+    if (
+      (forecastHorizon !== 'MACRO' && forecastHorizon !== 'SWING') ||
+      !alignment ||
+      candles1d.length < 20
+    ) {
       return null
     }
     return buildMacroContext(
@@ -474,16 +495,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       price: number,
       color: string,
       title: string,
-      lineStyle: 0 | 1 | 2 | 3 | 4 = 2
+      lineStyle: 0 | 1 | 2 | 3 | 4 = 2,
+      lineWidth: 1 | 2 | 3 | 4 = 1
     ) => {
       try {
         const line = series.createPriceLine({
           price,
           color,
-          lineWidth: 1,
+          lineWidth,
           lineStyle,
           axisLabelVisible: true,
-          title: chartPreferences.showLabels ? title : '',
+          title,
         })
         priceLineRefs.current.push(line)
       } catch {
@@ -492,7 +514,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     }
 
     for (const level of priceLevels) {
-      addLine(level.price, level.color, level.label, level.lineStyle ?? 2)
+      const is141 = level.label === '141' || level.id.includes('1.414')
+      const title =
+        is141 || chartPreferences.showLabels ? level.label : ''
+      addLine(
+        level.price,
+        level.color,
+        title,
+        level.lineStyle ?? 2,
+        is141 ? 2 : 1
+      )
     }
 
     if (signal?.sl != null) addLine(signal.sl, 'rgba(239, 68, 68, 0.8)', 'SL')
@@ -696,26 +727,40 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             onClick={() => {
               setShowForecast(true)
               setForecastHorizon((h: ForecastHorizon) => {
-                const next = h === 'INTRA' ? 'MACRO' : 'INTRA'
+                const order: ForecastHorizon[] = ['SCALP', 'INTRA', 'SWING']
+                const idx = order.indexOf(h === 'MACRO' ? 'SWING' : h)
+                const next = order[(idx + 1) % order.length]
                 if (
-                  next === 'MACRO' &&
+                  next === 'SWING' &&
                   (timeframe === '1m' ||
                     timeframe === '5m' ||
                     timeframe === '15m')
                 ) {
                   setTimeframe('4h')
                 }
+                if (
+                  next === 'SCALP' &&
+                  (timeframe === '4h' || timeframe === '1d')
+                ) {
+                  setTimeframe('5m')
+                }
                 return next
               })
             }}
             className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showForecast && forecastHorizon === 'MACRO'
-                ? 'border border-cyan-400/50 bg-cyan-500/15 text-cyan-300'
+              showForecast
+                ? forecastHorizon === 'SCALP'
+                  ? 'border border-amber-400/50 bg-amber-500/15 text-amber-300'
+                  : forecastHorizon === 'SWING' || forecastHorizon === 'MACRO'
+                    ? 'border border-cyan-400/50 bg-cyan-500/15 text-cyan-300'
+                    : 'border border-matrix/50 bg-matrix/15 text-matrix'
                 : 'border border-hull-border text-holo/40 hover:text-holo/70'
             }`}
-            title="Недельная картина: ликвидность, новости, A/B/C"
+            title="Горизонт прогноза: SCALP → INTRA → SWING"
           >
-            {forecastHorizon === 'MACRO' ? 'WEEK' : 'INTRA'}
+            {forecastHorizon === 'MACRO'
+              ? 'SWING'
+              : forecastHorizon}
           </button>
           <button
             type="button"
@@ -755,6 +800,36 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </div>
         )}
         <div ref={containerRef} className="h-full w-full" />
+        {globalFib?.activeZone && (
+          <div className="pointer-events-none absolute left-2 top-2 z-20 max-w-[85%] rounded border border-amber-400/40 bg-black/75 px-2 py-1 font-mono text-[10px] text-amber-200 shadow-lg">
+            <span className="font-bold text-amber-300">
+              {globalFib.activeZone.label.includes('141')
+                ? 'FIB 141'
+                : 'FIB ZONE'}
+            </span>
+            {' · '}
+            {globalFib.activeZone.label}
+            {' · '}
+            <span className="text-white">
+              ищем {globalFib.activeZone.bias}
+            </span>
+            <span className="mt-0.5 block text-[9px] text-holo/50">
+              {globalFib.impulse === 'UP' ? 'Импульс ↑' : 'Импульс ↓'} · F141 @{' '}
+              {globalFib.levels
+                .find((l) => l.ratio === 1.414)
+                ?.price.toPrecision(6) ?? '—'}
+            </span>
+          </div>
+        )}
+        {!globalFib?.activeZone && globalFib && (
+          <div className="pointer-events-none absolute left-2 top-2 z-20 rounded border border-hull-border/60 bg-black/60 px-2 py-1 font-mono text-[9px] text-holo/45">
+            Fib grid · F141 @{' '}
+            {globalFib.levels
+              .find((l) => l.ratio === 1.414)
+              ?.price.toPrecision(6) ?? '—'}
+            {' · вне зоны'}
+          </div>
+        )}
         {chartReady > 0 && showSessions && (
           <SessionOverlay
             chart={chartInstance}
@@ -826,7 +901,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             activeScenarios={activeScenarios}
             onToggle={toggleScenario}
           />
-          {forecastHorizon === 'MACRO' && (
+          {(forecastHorizon === 'MACRO' || forecastHorizon === 'SWING') && (
             <MacroOutlookPanel
               summary={forecast.macroSummary}
               scenarios={forecast.scenarios}

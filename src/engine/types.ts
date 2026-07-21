@@ -67,8 +67,8 @@ export interface LiveTicker {
   timestamp: number
 }
 
-/** Горизонт сделки — жёсткое разделение логики SCALP / INTRADAY */
-export type TradeStyle = 'SCALP' | 'INTRADAY'
+/** Горизонт сделки — жёсткое разделение логики SCALP / INTRADAY / SWING */
+export type TradeStyle = 'SCALP' | 'INTRADAY' | 'SWING'
 
 export interface CoinSignal {
   symbol: string // flat BTCUSDT

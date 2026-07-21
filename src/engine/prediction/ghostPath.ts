@@ -28,7 +28,9 @@ export interface GhostPathResult {
 }
 
 function horizonSeconds(style: TradeStyle): number {
-  return style === 'SCALP' ? 45 * 60 : 8 * 3600
+  if (style === 'SCALP') return 45 * 60
+  if (style === 'SWING') return 3 * 86400
+  return 8 * 3600
 }
 
 /**

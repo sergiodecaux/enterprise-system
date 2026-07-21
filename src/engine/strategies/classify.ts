@@ -2,15 +2,18 @@ import type { CoinSignal } from '../types'
 import type { StyleClassification, TradeStyle } from './types'
 import { SCALP_PROFILE } from './scalp'
 import { INTRADAY_PROFILE, isKillzoneActive } from './intraday'
+import { SWING_PROFILE } from './swing'
 
 /**
- * Классифицирует сетап как SCALP или INTRADAY по доминирующим триггерам.
+ * Классифицирует сетап как SCALP / INTRADAY / SWING по доминирующим триггерам.
  * Скальп: свежий sweep + tape/absorption + микро-структура.
  * Интрадей: HTF bias + killzone + OB/OTE.
+ * Свинг: daily/global Fib 141 + структурный стоп + HTF alignment.
  */
 export function classifyTradeStyle(signal: CoinSignal): StyleClassification {
   let scalpPts = 0
   let intraPts = 0
+  let swingPts = 0
   const reasons: string[] = []
 
   const freshRaid =
@@ -46,7 +49,8 @@ export function classifyTradeStyle(signal: CoinSignal): StyleClassification {
     (signal.direction === 'SHORT' && signal.dailyBias === 'BEARISH')
   if (dailyAligned) {
     intraPts += 3
-    reasons.push('Daily bias aligned → INTRADAY')
+    swingPts += 2
+    reasons.push('Daily bias aligned → INTRADAY/SWING')
   }
 
   if (
@@ -54,11 +58,13 @@ export function classifyTradeStyle(signal: CoinSignal): StyleClassification {
     (signal.direction === 'SHORT' && signal.coinTrend === 'BEARISH')
   ) {
     intraPts += 2
-    reasons.push('HTF trend aligned → INTRADAY')
+    swingPts += 2
+    reasons.push('HTF trend aligned')
   }
 
   if (signal.ote?.priceInZone) {
     intraPts += 2
+    swingPts += 1
     reasons.push('Price in OTE → INTRADAY')
   }
 
@@ -80,31 +86,53 @@ export function classifyTradeStyle(signal: CoinSignal): StyleClassification {
     reasons.push(`Killzone: ${kz.label}`)
   }
 
-  // Микро-стоп → скальп
+  // Global Fib 141 / reaction → SWING magnet
+  const fib = signal.globalFib
+  if (fib?.inReactionZone && fib.entryBias === signal.direction) {
+    swingPts += 3
+    intraPts += 1
+    const lbl = fib.activeLabel ?? 'Fib zone'
+    reasons.push(`Global Fib ${lbl} → SWING`)
+    if (lbl.includes('141')) {
+      swingPts += 2
+      reasons.push('Зона 141 — приоритетный разворот')
+    }
+  }
+
+  // Микро-стоп → скальп; широкий → свинг
   if (signal.sl != null && signal.price > 0) {
     const stopPct = (Math.abs(signal.price - signal.sl) / signal.price) * 100
     if (stopPct <= 0.9) {
       scalpPts += 2
       reasons.push(`Micro SL ${stopPct.toFixed(2)}% → SCALP`)
+    } else if (stopPct >= 2.5) {
+      swingPts += 2
+      reasons.push(`Wide SL ${stopPct.toFixed(2)}% → SWING`)
     } else if (stopPct >= 1.2) {
       intraPts += 1
       reasons.push(`Structural SL ${stopPct.toFixed(2)}% → INTRADAY`)
     }
   }
 
-  const style: TradeStyle =
-    scalpPts > intraPts ? 'SCALP' : scalpPts < intraPts ? 'INTRADAY' : 'INTRADAY'
+  const ranked: Array<{ style: TradeStyle; pts: number }> = [
+    { style: 'SCALP' as const, pts: scalpPts },
+    { style: 'INTRADAY' as const, pts: intraPts },
+    { style: 'SWING' as const, pts: swingPts },
+  ].sort((a, b) => b.pts - a.pts)
 
-  const total = scalpPts + intraPts || 1
-  const confidence = Math.round(
-    (Math.max(scalpPts, intraPts) / total) * 100
-  )
+  const style: TradeStyle =
+    ranked[0].pts > 0 ? ranked[0].style : 'INTRADAY'
+
+  const total = scalpPts + intraPts + swingPts || 1
+  const confidence = Math.round((Math.max(scalpPts, intraPts, swingPts) / total) * 100)
 
   if (reasons.length === 0) {
     reasons.push(
       style === 'SCALP'
         ? 'Default scalp profile (order-flow weighted)'
-        : 'Default intraday profile (structure weighted)'
+        : style === 'SWING'
+          ? 'Default swing profile (HTF structure)'
+          : 'Default intraday profile (structure weighted)'
     )
   }
 
@@ -112,5 +140,7 @@ export function classifyTradeStyle(signal: CoinSignal): StyleClassification {
 }
 
 export function getStyleProfile(style: TradeStyle) {
-  return style === 'SCALP' ? SCALP_PROFILE : INTRADAY_PROFILE
+  if (style === 'SCALP') return SCALP_PROFILE
+  if (style === 'SWING') return SWING_PROFILE
+  return INTRADAY_PROFILE
 }

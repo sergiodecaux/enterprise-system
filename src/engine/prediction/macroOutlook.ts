@@ -14,6 +14,7 @@ import type {
   TFBias,
 } from './types'
 import { findNearestLiquidity } from './liquidityMap'
+import { calcScenarioProbabilities } from './scenarioProbabilities'
 
 const COLORS = {
   A: '#22c55e',
@@ -23,7 +24,7 @@ const COLORS = {
   B_SHORT: '#a78bfa',
 }
 
-export type ForecastHorizon = 'INTRA' | 'MACRO'
+export type ForecastHorizon = 'SCALP' | 'INTRA' | 'SWING' | 'MACRO'
 
 export interface MacroOutlookContext {
   horizon: 'MACRO'
@@ -146,42 +147,16 @@ function buildMacroBreak(
 function macroProbabilities(
   alignment: MultiTFAlignment,
   newsBias: MacroOutlookContext['newsBias'],
-  isLong: boolean
+  isLong: boolean,
+  fearGreed?: number | null
 ): { a: number; b: number; c: number } {
-  let a = 62
-  let b = 23
-  let c = 15
-
-  if (alignment.agreement) {
-    a += 8
-    c -= 4
-    b -= 4
-  }
-  if (alignment.strength === 'STRONG_LONG' || alignment.strength === 'STRONG_SHORT') {
-    a += 5
-    c -= 3
-  }
-
-  const newsWith =
-    (isLong && newsBias === 'BULLISH') || (!isLong && newsBias === 'BEARISH')
-  const newsAgainst =
-    (isLong && newsBias === 'BEARISH') || (!isLong && newsBias === 'BULLISH')
-  if (newsWith) {
-    a += 5
-    c -= 3
-  } else if (newsAgainst) {
-    a -= 8
-    c += 6
-    b += 2
-  }
-
-  // normalize
-  const sum = a + b + c
-  return {
-    a: Math.round((a / sum) * 100),
-    b: Math.round((b / sum) * 100),
-    c: Math.max(5, 100 - Math.round((a / sum) * 100) - Math.round((b / sum) * 100)),
-  }
+  return calcScenarioProbabilities({
+    alignment,
+    isLong,
+    newsBias,
+    fearGreed,
+    horizon: 'SWING',
+  })
 }
 
 export function buildMacroContext(
@@ -263,7 +238,8 @@ export function buildMacroScenarios(
   alignment: MultiTFAlignment,
   liquidityMap: LiquidityLevel[],
   currentPrice: number,
-  newsBias: MacroOutlookContext['newsBias'] = 'NEUTRAL'
+  newsBias: MacroOutlookContext['newsBias'] = 'NEUTRAL',
+  fearGreed: number | null = null
 ): PriceScenario[] {
   const atr =
     calculateAtr(candles1d, 14) ?? currentPrice * 0.025
@@ -271,7 +247,8 @@ export function buildMacroScenarios(
   const { a: pctA, b: pctB, c: pctC } = macroProbabilities(
     alignment,
     newsBias,
-    isLong
+    isLong,
+    fearGreed
   )
 
   const nearestUp = findNearestLiquidity(liquidityMap, 'UP', 0.2)

@@ -50,6 +50,13 @@ export function isSniperQuality(signal: CoinSignal): boolean {
     if (signal.cvdDivergence?.detected) strengthFilters++
     if (signal.liquidationContext?.swept) strengthFilters++
     if (signal.ltfChoCH?.detected) strengthFilters++
+  } else if (style === 'SWING') {
+    if (signal.ote?.priceInZone) strengthFilters++
+    if (signal.mss?.detected) strengthFilters++
+    if (signal.globalFib?.inReactionZone) strengthFilters++
+    if (signal.globalFib?.activeLabel?.includes('141')) strengthFilters++
+    if (signal.volumeProfile?.obPocConfluence) strengthFilters++
+    if (signal.ltfChoCH?.detected) strengthFilters++
   } else {
     if (signal.absorption?.detected) strengthFilters++
     if (signal.ltfChoCH?.detected) strengthFilters++
@@ -64,7 +71,7 @@ export function isSniperQuality(signal: CoinSignal): boolean {
   if (strengthFilters < profile.minStrengthFilters) return false
 
   const dailyDir = signal.dailyBias
-  if (style === 'INTRADAY') {
+  if (style === 'INTRADAY' || style === 'SWING') {
     if (signal.direction === 'LONG' && dailyDir === 'BEARISH') return false
     if (signal.direction === 'SHORT' && dailyDir === 'BULLISH') return false
   }
@@ -112,6 +119,12 @@ function calculateCalibratedWinRate(signal: CoinSignal): number {
     if (signal.liquidationContext?.swept && signal.liquidationContext.fresh) {
       winRate += 8
     }
+  } else if (style === 'SWING') {
+    if (signal.globalFib?.inReactionZone) winRate += 6
+    if (signal.globalFib?.activeLabel?.includes('141')) winRate += 4
+    if (signal.ote?.priceInZone) winRate += 3
+    if (signal.mss?.detected) winRate += 4
+    if (signal.volumeProfile?.obPocConfluence) winRate += 3
   } else {
     if (signal.ltfChoCH?.detected) {
       winRate += signal.ltfChoCH.surgicalEntryDetected ? 6 : 4
