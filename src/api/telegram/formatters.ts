@@ -41,21 +41,53 @@ function tradeBlock(opts: {
   winPct: number
   reason: string
   extras?: string[]
+  /** Pullback-limit mode (memes / fast markets) */
+  pullback?: {
+    signalPrice: number
+    zoneLow: number
+    zoneHigh: number
+    invalidate: number
+  }
 }): string {
   const lines = [
     `Биржа: MEXC Futures`,
     `Контракт: ${opts.contract}`,
+  ]
+
+  if (opts.pullback) {
+    const chase =
+      opts.side === 'LONG'
+        ? `Не входить / не догонять выше ${fmt(opts.pullback.invalidate)}`
+        : `Не входить / не догонять ниже ${fmt(opts.pullback.invalidate)}`
+    lines.push(
+      '',
+      `Цена сигнала: ${fmt(opts.pullback.signalPrice)} (уже могла уйти)`,
+      `Тип входа: ЛИМИТ на откат — не маркет-chase`,
+      `Зона входа: ${fmt(opts.pullback.zoneLow)} – ${fmt(opts.pullback.zoneHigh)}`,
+      `Лимитка (ориентир): ${fmt(opts.entry)}`,
+      chase
+    )
+  } else {
+    lines.push('', `Вход: ${fmt(opts.entry)}`)
+  }
+
+  lines.push(
     '',
-    `Вход: ${fmt(opts.entry)}`,
     `Стоп: ${fmt(opts.sl)} (${pct(opts.entry, opts.sl)})`,
     `Цель: ${fmt(opts.tp)} (${pct(opts.entry, opts.tp)})`,
     `Победа: ${opts.winPct}%`,
     `R:R ${rrLabel(opts.entry, opts.sl, opts.tp)}`,
     '',
-    `Причина: ${opts.reason}`,
-  ]
+    `Причина: ${opts.reason}`
+  )
   if (opts.extras?.length) {
     lines.push('', ...opts.extras)
+  }
+  if (opts.pullback) {
+    lines.push(
+      '',
+      '⚠️ Мем/импульс: если цена уже вне зоны — пропуск, жди откат или следующий сигнал.'
+    )
   }
   lines.push(
     '',
@@ -111,17 +143,48 @@ function inferMemeSide(meme: MemeSignal): 'LONG' | 'SHORT' {
   return 'LONG'
 }
 
-function memeLevels(
+function memeEntryPlan(
   side: 'LONG' | 'SHORT',
-  price: number,
+  signalPrice: number,
   volScore: number
-): { sl: number; tp: number } {
-  const riskPct = Math.min(0.035, Math.max(0.01, 0.012 + volScore / 4000))
+): {
+  entryIdeal: number
+  zoneLow: number
+  zoneHigh: number
+  invalidate: number
+  sl: number
+  tp: number
+} {
+  const pullPct = Math.min(0.025, Math.max(0.008, 0.01 + volScore / 8000))
+  const chasePct = pullPct * 0.45
+  const riskPct = Math.min(0.035, Math.max(0.012, pullPct * 1.6))
   const rewardPct = riskPct * 2.2
+
   if (side === 'LONG') {
-    return { sl: price * (1 - riskPct), tp: price * (1 + rewardPct) }
+    const zoneLow = signalPrice * (1 - pullPct)
+    const zoneHigh = signalPrice * (1 + chasePct * 0.25)
+    const entryIdeal = (zoneLow + signalPrice) / 2
+    return {
+      entryIdeal,
+      zoneLow,
+      zoneHigh,
+      invalidate: signalPrice * (1 + chasePct),
+      sl: entryIdeal * (1 - riskPct),
+      tp: entryIdeal * (1 + rewardPct),
+    }
   }
-  return { sl: price * (1 + riskPct), tp: price * (1 - rewardPct) }
+
+  const zoneHigh = signalPrice * (1 + pullPct)
+  const zoneLow = signalPrice * (1 - chasePct * 0.25)
+  const entryIdeal = (zoneHigh + signalPrice) / 2
+  return {
+    entryIdeal,
+    zoneLow,
+    zoneHigh,
+    invalidate: signalPrice * (1 - chasePct),
+    sl: entryIdeal * (1 + riskPct),
+    tp: entryIdeal * (1 - rewardPct),
+  }
 }
 
 export function formatMemeTelegramMessage(meme: MemeSignal): {
@@ -135,7 +198,7 @@ export function formatMemeTelegramMessage(meme: MemeSignal): {
   const contract = mexcContract(meme.symbol)
   const title = `${icon} ${side} ${meme.displayName} · ${setup}`
 
-  const { sl, tp } = memeLevels(side, meme.price, meme.volatility?.gauge ?? 40)
+  const plan = memeEntryPlan(side, meme.price, meme.volatility?.gauge ?? 40)
   const winPct = Math.round(
     Math.min(82, Math.max(55, 50 + meme.heatScore * 0.28))
   )
@@ -155,11 +218,17 @@ export function formatMemeTelegramMessage(meme: MemeSignal): {
   const text = tradeBlock({
     side,
     contract,
-    entry: meme.price,
-    sl,
-    tp,
+    entry: plan.entryIdeal,
+    sl: plan.sl,
+    tp: plan.tp,
     winPct,
     reason: reasons.slice(0, 3).join('; '),
+    pullback: {
+      signalPrice: meme.price,
+      zoneLow: plan.zoneLow,
+      zoneHigh: plan.zoneHigh,
+      invalidate: plan.invalidate,
+    },
     extras: [
       `Heat/Fuel: ${meme.heatScore}/100`,
       `24h: ${meme.priceChange24h >= 0 ? '+' : ''}${meme.priceChange24h.toFixed(2)}%`,

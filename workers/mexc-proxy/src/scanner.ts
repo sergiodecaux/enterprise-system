@@ -372,6 +372,43 @@ function buildLevels(
   return { sl: entry + risk, tp: entry - reward }
 }
 
+/**
+ * Не «вход по рынку сейчас», а зона лимита на откат.
+ * К моменту Telegram цена на мемах уже другая — chase запрещён.
+ */
+function buildEntryPlan(
+  side: Side,
+  signalPrice: number,
+  atr: number
+): {
+  signalPrice: number
+  entryIdeal: number
+  zoneLow: number
+  zoneHigh: number
+  invalidate: number
+  sl: number
+  tp: number
+} {
+  const pull = Math.max(atr * 0.7, signalPrice * 0.008)
+  const chase = Math.max(atr * 0.35, signalPrice * 0.005)
+
+  if (side === 'LONG') {
+    const zoneLow = signalPrice - pull
+    const zoneHigh = signalPrice + chase * 0.2
+    const entryIdeal = (zoneLow + Math.min(signalPrice, zoneHigh)) / 2
+    const invalidate = signalPrice + chase
+    const { sl, tp } = buildLevels('LONG', entryIdeal, atr)
+    return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
+  }
+
+  const zoneHigh = signalPrice + pull
+  const zoneLow = signalPrice - chase * 0.2
+  const entryIdeal = (zoneHigh + Math.max(signalPrice, zoneLow)) / 2
+  const invalidate = signalPrice - chase
+  const { sl, tp } = buildLevels('SHORT', entryIdeal, atr)
+  return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
+}
+
 /** Map raw score → display win% (calibrated band, not historical WR) */
 function winPctFromScore(score: number): number {
   return Math.round(Math.min(82, Math.max(55, 48 + score * 0.35)))
@@ -380,7 +417,11 @@ function winPctFromScore(score: number): number {
 function formatTradeAlert(opts: {
   side: Side
   symbol: string
-  entry: number
+  signalPrice: number
+  entryIdeal: number
+  zoneLow: number
+  zoneHigh: number
+  invalidate: number
   sl: number
   tp: number
   winPct: number
@@ -391,24 +432,36 @@ function formatTradeAlert(opts: {
   const name = opts.symbol.replace('_USDT', '/USDT')
   const icon = opts.side === 'LONG' ? '🟢' : '🔴'
   const rr =
-    Math.abs(opts.entry - opts.sl) > 0
-      ? Math.abs(opts.tp - opts.entry) / Math.abs(opts.entry - opts.sl)
+    Math.abs(opts.entryIdeal - opts.sl) > 0
+      ? Math.abs(opts.tp - opts.entryIdeal) / Math.abs(opts.entryIdeal - opts.sl)
       : 0
+  const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+  const chaseRule =
+    opts.side === 'LONG'
+      ? `Не входить / не догонять выше ${fmt(opts.invalidate)}`
+      : `Не входить / не догонять ниже ${fmt(opts.invalidate)}`
 
   const title = `${icon} ${opts.side} ${name} · ${opts.setup}`
   const text = [
     `Биржа: MEXC Futures`,
     `Контракт: ${opts.symbol}`,
+    `Сигнал @ ${now}`,
     '',
-    `Вход: ${fmt(opts.entry)}`,
-    `Стоп: ${fmt(opts.sl)} (${pct(opts.entry, opts.sl)})`,
-    `Цель: ${fmt(opts.tp)} (${pct(opts.entry, opts.tp)})`,
+    `Цена сигнала: ${fmt(opts.signalPrice)} (уже могла уйти)`,
+    `Тип входа: ЛИМИТ на откат — не маркет-chase`,
+    `Зона входа: ${fmt(opts.zoneLow)} – ${fmt(opts.zoneHigh)}`,
+    `Лимитка (ориентир): ${fmt(opts.entryIdeal)}`,
+    chaseRule,
+    '',
+    `Стоп: ${fmt(opts.sl)} (${pct(opts.entryIdeal, opts.sl)})`,
+    `Цель: ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
     `Победа: ${opts.winPct}%`,
     `R:R 1:${rr.toFixed(1)}`,
     '',
     `Причина: ${opts.reason}`,
     ...(opts.extras?.length ? ['', ...opts.extras] : []),
     '',
+    '⚠️ Мем/импульс: если цена уже вне зоны — пропуск, жди откат или следующий сигнал.',
     'Ищи в MEXC → Фьючерсы → USDT-M → точное имя контракта выше.',
   ].join('\n')
 
@@ -513,14 +566,18 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
       // Final live check — detail + book + funding endpoint
       if (!(await isSymbolTradableNow(t.symbol, minVol))) return
 
-      const { sl, tp } = buildLevels(side, price, atr)
+      const plan = buildEntryPlan(side, price, atr)
       const winPct = winPctFromScore(score)
       const msg = formatTradeAlert({
         side,
         symbol: t.symbol,
-        entry: price,
-        sl,
-        tp,
+        signalPrice: plan.signalPrice,
+        entryIdeal: plan.entryIdeal,
+        zoneLow: plan.zoneLow,
+        zoneHigh: plan.zoneHigh,
+        invalidate: plan.invalidate,
+        sl: plan.sl,
+        tp: plan.tp,
         winPct,
         reason,
         setup,
