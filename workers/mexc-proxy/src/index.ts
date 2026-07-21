@@ -392,15 +392,21 @@ async function sendDemoSignal(env: Env, chatId: number): Promise<void> {
     env,
     chatId,
     [
-      '🎯 <b>TEST SIGNAL — бот работает</b>',
+      '🟢 <b>LONG BTC/USDT · TEST</b>',
       '',
-      'Symbol: BTC_USDT (demo)',
-      'Setup: SMOKE TEST',
-      'Side: LONG',
+      'Биржа: MEXC Futures',
+      'Контракт: BTC_USDT',
+      '',
+      'Вход: 95000.00',
+      'Стоп: 94100.00 (−0.95%)',
+      'Цель: 96800.00 (+1.89%)',
+      'Победа: 68%',
+      'R:R 1:2.0',
+      '',
+      'Причина: DEMO — проверка доставки. Не торговать.',
       `Time: ${now}`,
       '',
-      'Если видишь это сообщение — доставка OK.',
-      'Живые сигналы: сканер каждые 2 мин + /scan',
+      'Ищи в MEXC → Фьючерсы → USDT-M → BTC_USDT',
     ].join('\n')
   )
 }

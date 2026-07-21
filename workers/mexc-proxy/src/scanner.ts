@@ -1,9 +1,14 @@
 /**
  * 24/7 lightweight scanner for MEXC futures → Telegram alerts.
+ * Only emits symbols that are active/tradeable on MEXC contract API.
  * Runs on Cloudflare Cron (every 2 minutes).
  */
 
 const MEXC = 'https://contract.mexc.com'
+
+/** Min 24h quote volume (USDT) — skip illiquid / hard-to-find RF listings */
+const MIN_MEME_QUOTE_VOL = 250_000
+const MIN_MOVER_QUOTE_VOL = 2_000_000
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -46,7 +51,20 @@ interface TickerRow {
   lower24Price?: number
 }
 
+interface ContractDetail {
+  symbol: string
+  state?: number
+  isHidden?: boolean
+  apiAllowed?: boolean
+  quoteCoin?: string
+  futureType?: number
+  preMarket?: boolean
+  maxVol?: number
+  minVol?: number
+}
+
 type Candle = [number, number, number, number, number, number]
+type Side = 'LONG' | 'SHORT'
 
 async function mexcGet<T>(path: string): Promise<T | null> {
   try {
@@ -58,6 +76,32 @@ async function mexcGet<T>(path: string): Promise<T | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * Active USDT perpetuals only — state=0, visible, API-allowed, not pre-market.
+ * Prevents alerts on delisted / hidden / untradeable tickers.
+ */
+async function fetchTradableSymbols(): Promise<Set<string>> {
+  const json = await mexcGet<{ data: ContractDetail | ContractDetail[] }>(
+    '/api/v1/contract/detail'
+  )
+  if (!json?.data) return new Set()
+  const rows = Array.isArray(json.data) ? json.data : [json.data]
+  const out = new Set<string>()
+  for (const c of rows) {
+    if (!c?.symbol?.endsWith('_USDT')) continue
+    if (c.state !== 0) continue
+    if (c.isHidden) continue
+    if (c.apiAllowed === false) continue
+    if (c.preMarket) continue
+    if (c.quoteCoin && c.quoteCoin !== 'USDT') continue
+    // futureType 1 = perpetual (skip odd delivery if present)
+    if (c.futureType != null && c.futureType !== 1) continue
+    if (c.maxVol != null && c.maxVol <= 0) continue
+    out.add(c.symbol)
+  }
+  return out
 }
 
 async function fetchTickers(): Promise<TickerRow[]> {
@@ -100,6 +144,20 @@ async function fetchKlines(
   return out
 }
 
+/** Double-check single contract still tradeable before emitting alert */
+async function isSymbolTradableNow(symbol: string): Promise<boolean> {
+  const json = await mexcGet<{ data: ContractDetail }>(
+    `/api/v1/contract/detail?symbol=${symbol}`
+  )
+  const c = json?.data
+  if (!c?.symbol) return false
+  if (c.state !== 0) return false
+  if (c.isHidden) return false
+  if (c.apiAllowed === false) return false
+  if (c.preMarket) return false
+  return true
+}
+
 function calcRsi(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50
   let gains = 0
@@ -114,6 +172,22 @@ function calcRsi(closes: number[], period = 14): number {
   if (al === 0) return 100
   const rs = ag / al
   return 100 - 100 / (1 + rs)
+}
+
+function calcAtr(candles: Candle[], period = 14): number {
+  if (candles.length < period + 1) return 0
+  let sum = 0
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const c = candles[i]
+    const prev = candles[i - 1]
+    const tr = Math.max(
+      c[2] - c[3],
+      Math.abs(c[2] - prev[4]),
+      Math.abs(c[3] - prev[4])
+    )
+    sum += tr
+  }
+  return sum / period
 }
 
 function volumeSpike(candles: Candle[]): {
@@ -205,40 +279,110 @@ function lowerHighAndBreak(candles: Candle[]): boolean {
 }
 
 function fmt(p: number): string {
+  if (!Number.isFinite(p) || p <= 0) return '—'
+  if (p >= 1000) return p.toFixed(2)
   if (p >= 1) return p.toFixed(4)
+  if (p >= 0.01) return p.toFixed(6)
   return p.toFixed(8)
 }
 
-function isMemeCandidate(t: TickerRow): boolean {
-  if (!t.symbol?.endsWith('_USDT')) return false
+function pct(from: number, to: number): string {
+  if (!from) return '—'
+  const p = ((to - from) / from) * 100
+  return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`
+}
+
+function quoteVol(t: TickerRow): number {
+  return Number(t.amount24 ?? 0) || Number(t.volume24 ?? 0) * Number(t.lastPrice || 0)
+}
+
+function buildLevels(
+  side: Side,
+  entry: number,
+  atr: number
+): { sl: number; tp: number } {
+  const risk = Math.max(atr * 1.4, entry * 0.008)
+  const reward = Math.max(atr * 2.4, entry * 0.015)
+  if (side === 'LONG') {
+    return { sl: entry - risk, tp: entry + reward }
+  }
+  return { sl: entry + risk, tp: entry - reward }
+}
+
+/** Map raw score → display win% (calibrated band, not historical WR) */
+function winPctFromScore(score: number): number {
+  return Math.round(Math.min(82, Math.max(55, 48 + score * 0.35)))
+}
+
+function formatTradeAlert(opts: {
+  side: Side
+  symbol: string
+  entry: number
+  sl: number
+  tp: number
+  winPct: number
+  reason: string
+  setup: string
+  extras?: string[]
+}): { title: string; text: string } {
+  const name = opts.symbol.replace('_USDT', '/USDT')
+  const icon = opts.side === 'LONG' ? '🟢' : '🔴'
+  const rr =
+    Math.abs(opts.entry - opts.sl) > 0
+      ? Math.abs(opts.tp - opts.entry) / Math.abs(opts.entry - opts.sl)
+      : 0
+
+  const title = `${icon} ${opts.side} ${name} · ${opts.setup}`
+  const text = [
+    `Биржа: MEXC Futures`,
+    `Контракт: ${opts.symbol}`,
+    '',
+    `Вход: ${fmt(opts.entry)}`,
+    `Стоп: ${fmt(opts.sl)} (${pct(opts.entry, opts.sl)})`,
+    `Цель: ${fmt(opts.tp)} (${pct(opts.entry, opts.tp)})`,
+    `Победа: ${opts.winPct}%`,
+    `R:R 1:${rr.toFixed(1)}`,
+    '',
+    `Причина: ${opts.reason}`,
+    ...(opts.extras?.length ? ['', ...opts.extras] : []),
+    '',
+    'Ищи в MEXC → Фьючерсы → USDT-M → точное имя контракта выше.',
+  ].join('\n')
+
+  return { title, text }
+}
+
+function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
+  if (!tradable.has(t.symbol)) return false
+  if (!t.symbol.endsWith('_USDT')) return false
   if (BLUE_CHIPS.has(t.symbol)) return false
   const price = Number(t.lastPrice)
-  const vol = Number(t.amount24 ?? t.volume24 ?? 0)
-  return price > 0 && price <= 15 && vol >= 5000
+  const vol = quoteVol(t)
+  return price > 0 && price <= 25 && vol >= MIN_MEME_QUOTE_VOL
 }
 
 /**
  * Full 24/7 scan cycle. Returns alerts to broadcast.
  */
 export async function runMarketScan(): Promise<ScanAlert[]> {
-  const tickers = await fetchTickers()
-  if (!tickers.length) return []
+  const [tradable, tickers] = await Promise.all([
+    fetchTradableSymbols(),
+    fetchTickers(),
+  ])
+  if (!tickers.length || tradable.size === 0) return []
 
   const memes = tickers
-    .filter(isMemeCandidate)
-    .sort(
-      (a, b) =>
-        Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
-    )
-    .slice(0, 12)
+    .filter((t) => isMemeCandidate(t, tradable))
+    .sort((a, b) => quoteVol(b) - quoteVol(a))
+    .slice(0, 10)
 
-  // Also top movers among larger caps for sniper-style
   const movers = tickers
     .filter(
       (t) =>
-        t.symbol?.endsWith('_USDT') &&
+        tradable.has(t.symbol) &&
+        t.symbol.endsWith('_USDT') &&
         !t.symbol.includes('USDC') &&
-        Number(t.amount24 ?? t.volume24 ?? 0) >= 500_000
+        quoteVol(t) >= MIN_MOVER_QUOTE_VOL
     )
     .sort(
       (a, b) =>
@@ -252,17 +396,22 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
   const analyze = async (t: TickerRow, preferMeme: boolean) => {
     if (seen.has(t.symbol)) return
     seen.add(t.symbol)
+    if (!tradable.has(t.symbol)) return
 
     const candles = await fetchKlines(t.symbol, 'Min1', 120)
+    // No candles = not really tradeable / bad symbol
     if (candles.length < 40) return
 
     if (toxicChop(candles)) return
 
     const price = Number(t.lastPrice)
+    if (!(price > 0)) return
+
     const chg = Number(t.riseFallRate) * 100
     const funding = Number(t.fundingRate ?? 0)
     const fundingPct = funding * 100
-    const name = t.symbol.replace('_USDT', '/USDT')
+    const atr = calcAtr(candles)
+    if (!(atr > 0)) return
 
     const spike = volumeSpike(candles)
     const ignition = flatlineIgnition(candles)
@@ -270,88 +419,114 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
     const closes = candles.map((c) => c[4])
     const rsi = calcRsi(closes)
     const backside = lowerHighAndBreak(candles) && rsi > 70
+    const volUsd = quoteVol(t)
 
-    // ── SHORT SQUEEZE ──────────────────────────────────────────────
+    const push = async (
+      side: Side,
+      setup: string,
+      score: number,
+      reason: string,
+      extras: string[],
+      type: 'SNIPER' | 'MEME',
+      dedupeKey: string
+    ) => {
+      // Final live check — avoid delisted mid-scan
+      if (!(await isSymbolTradableNow(t.symbol))) return
+
+      const { sl, tp } = buildLevels(side, price, atr)
+      const winPct = winPctFromScore(score)
+      const msg = formatTradeAlert({
+        side,
+        symbol: t.symbol,
+        entry: price,
+        sl,
+        tp,
+        winPct,
+        reason,
+        setup,
+        extras: [
+          ...extras,
+          `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M`,
+          `RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
+        ],
+      })
+      alerts.push({
+        type,
+        title: msg.title,
+        text: msg.text,
+        dedupeKey,
+        score,
+      })
+    }
+
+    // ── SHORT SQUEEZE → LONG ───────────────────────────────────────
     const deeplyNeg = fundingPct <= -0.05 || fundingPct * 3 <= -0.15
     if (deeplyNeg && highBroken && (spike.detected || chg >= 8)) {
-      alerts.push({
-        type: 'MEME',
-        title: `🚀 SHORT SQUEEZE ${name}`,
-        text: [
-          `Funding: ${fundingPct.toFixed(3)}%`,
-          `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`,
-          `Price: ${fmt(price)}`,
-          spike.detected
-            ? `Vol spike ×${spike.mult.toFixed(1)}`
-            : 'Local high broken',
-          '',
-          'Толпа в шортах — ММ тащит вверх. 24/7 Scanner',
-        ].join('\n'),
-        dedupeKey: `cron:squeeze:${t.symbol}`,
-        score: 90,
-      })
+      await push(
+        'LONG',
+        'SQUEEZE',
+        90,
+        `Short squeeze: funding ${fundingPct.toFixed(3)}%, пробой локального хая${
+          spike.detected ? `, объём ×${spike.mult.toFixed(1)}` : ''
+        }. Толпа в шортах — давление вверх.`,
+        [],
+        'MEME',
+        `cron:squeeze:${t.symbol}`
+      )
       return
     }
 
-    // ── IGNITION ───────────────────────────────────────────────────
+    // ── IGNITION → LONG ────────────────────────────────────────────
     if (ignition.detected) {
-      alerts.push({
-        type: 'MEME',
-        title: `🔥 IGNITION ${name}`,
-        text: [
-          `Vol ×${ignition.mult.toFixed(0)} hourly avg`,
-          `Move: ${ignition.movePct.toFixed(1)}%`,
-          `Price: ${fmt(price)} · 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`,
-          '',
-          'Flatline breakout — вход с микро-стопом. 24/7 Scanner',
-        ].join('\n'),
-        dedupeKey: `cron:ignition:${t.symbol}`,
-        score: 85,
-      })
+      await push(
+        'LONG',
+        'IGNITION',
+        85,
+        `Flatline ignition: объём ×${ignition.mult.toFixed(0)} от часовой базы, импульс ${ignition.movePct.toFixed(1)}% после сжатия.`,
+        [],
+        'MEME',
+        `cron:ignition:${t.symbol}`
+      )
       return
     }
 
     // ── VOLUME PUMP / DUMP ─────────────────────────────────────────
     if (spike.detected && spike.mult >= 4 && Math.abs(spike.movePct) >= 2) {
-      const dir = spike.movePct > 0 ? 'PUMP' : 'DUMP'
-      alerts.push({
-        type: preferMeme ? 'MEME' : 'SNIPER',
-        title: `${dir === 'PUMP' ? '⚡️' : '📉'} ${dir} ${name}`,
-        text: [
-          `Vol ×${spike.mult.toFixed(1)} · Δ ${spike.movePct >= 0 ? '+' : ''}${spike.movePct.toFixed(2)}% (1m)`,
-          `Price: ${fmt(price)} · 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`,
-          `RSI: ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
-          '',
-          '24/7 Scanner · ENTERPRISE SYSTEM',
-        ].join('\n'),
-        dedupeKey: `cron:spike:${t.symbol}:${dir}`,
-        score: Math.min(95, 55 + spike.mult * 5),
-      })
+      const isLong = spike.movePct > 0
+      await push(
+        isLong ? 'LONG' : 'SHORT',
+        isLong ? 'PUMP' : 'DUMP',
+        Math.min(95, 55 + spike.mult * 5),
+        `Всплеск объёма ×${spike.mult.toFixed(1)} за 1м, движение ${
+          spike.movePct >= 0 ? '+' : ''
+        }${spike.movePct.toFixed(2)}%.`,
+        [],
+        preferMeme ? 'MEME' : 'SNIPER',
+        `cron:spike:${t.symbol}:${isLong ? 'PUMP' : 'DUMP'}`
+      )
       return
     }
 
     // ── BACKSIDE SHORT ─────────────────────────────────────────────
     if (backside && chg >= 25) {
-      alerts.push({
-        type: preferMeme ? 'MEME' : 'SNIPER',
-        title: `🎯 BACKSIDE SHORT ${name}`,
-        text: [
-          `24h +${chg.toFixed(0)}% · RSI ${rsi.toFixed(0)}`,
-          `Lower High + structure break`,
-          `Price: ${fmt(price)}`,
+      await push(
+        'SHORT',
+        'BACKSIDE',
+        80,
+        `Backside short: +${chg.toFixed(0)}% за 24ч, RSI ${rsi.toFixed(
+          0
+        )}, lower high + слом структуры. Топливо сквиза выгорает.`,
+        [
           fundingPct > -0.01
-            ? 'Funding нормализовался — топливо сквиза кончилось'
+            ? 'Funding нормализовался'
             : `FR ещё ${fundingPct.toFixed(3)}% — осторожно`,
-          '',
-          '24/7 Scanner · The Backside',
-        ].join('\n'),
-        dedupeKey: `cron:backside:${t.symbol}`,
-        score: 80,
-      })
+        ],
+        preferMeme ? 'MEME' : 'SNIPER',
+        `cron:backside:${t.symbol}`
+      )
     }
   }
 
-  // Sequential with small delay to respect rate limits
   for (const t of memes) {
     await analyze(t, true)
     await new Promise((r) => setTimeout(r, 120))
@@ -361,5 +536,5 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
     await new Promise((r) => setTimeout(r, 120))
   }
 
-  return alerts.sort((a, b) => b.score - a.score).slice(0, 8)
+  return alerts.sort((a, b) => b.score - a.score).slice(0, 5)
 }
