@@ -1,6 +1,7 @@
 import type { CoinSignal, MemeSignal } from '../../engine/types'
 import type { SniperSignal } from '../../engine/sniperMode'
 import { sendTelegramAlert } from '../../api/telegram/alerts'
+import { assertUsdtPerpetual } from '../../api/mexc/perpetualGuard'
 
 function fmt(price: number): string {
   if (!(price > 0)) return '—'
@@ -175,6 +176,8 @@ export function formatMemeTelegramMessage(meme: MemeSignal): {
 }
 
 export async function pushSniperAlert(signal: SniperSignal): Promise<void> {
+  const check = await assertUsdtPerpetual(signal.symbol)
+  if (!check.ok) return
   const msg = formatSniperTelegramMessage(signal)
   await sendTelegramAlert({
     type: 'SNIPER',
@@ -185,6 +188,8 @@ export async function pushSniperAlert(signal: SniperSignal): Promise<void> {
 }
 
 export async function pushMemeAlert(meme: MemeSignal): Promise<void> {
+  const check = await assertUsdtPerpetual(meme.symbol)
+  if (!check.ok) return
   const msg = formatMemeTelegramMessage(meme)
   await sendTelegramAlert({
     type: 'MEME',
@@ -200,6 +205,9 @@ export async function pushCoinSignalAlert(
 ): Promise<void> {
   if (!signal.direction || signal.sl == null || signal.tp1 == null) return
 
+  const check = await assertUsdtPerpetual(signal.symbol)
+  if (!check.ok) return
+
   const direction = signal.direction
   const entry = signal.ltfChoCH?.surgicalEntryPrice ?? signal.price
   const winPct = Math.round(
@@ -208,7 +216,7 @@ export async function pushCoinSignalAlert(
       signal.probabilityPct ??
       60
   )
-  const contract = mexcContract(signal.symbol)
+  const contract = check.apiSymbol
   const icon = direction === 'LONG' ? '🟢' : '🔴'
   const style = signal.tradeStyle === 'SCALP' ? 'SCALP' : 'INTRADAY'
 

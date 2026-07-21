@@ -6,9 +6,15 @@
 
 const MEXC = 'https://contract.mexc.com'
 
-/** Min 24h quote volume (USDT) — skip illiquid / hard-to-find RF listings */
-const MIN_MEME_QUOTE_VOL = 250_000
-const MIN_MOVER_QUOTE_VOL = 2_000_000
+/**
+ * Liquidity floors — obscure / region-missing listings rarely sit in top volume.
+ * RF MEXC search usually shows liquid USDT-M perps only.
+ */
+const MIN_MEME_QUOTE_VOL = 1_000_000
+const MIN_MOVER_QUOTE_VOL = 5_000_000
+const MIN_OPEN_INTEREST = 5_000
+/** Only alert from top-N liquid USDT perps by 24h quote volume */
+const TOP_LIQUID_PERPS = 120
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -49,24 +55,35 @@ interface TickerRow {
   fundingRate?: number
   high24Price?: number
   lower24Price?: number
+  bid1?: number
+  ask1?: number
+  fairPrice?: number
+  indexPrice?: number
 }
 
 interface ContractDetail {
   symbol: string
+  displayNameEn?: string
   state?: number
   isHidden?: boolean
   apiAllowed?: boolean
   quoteCoin?: string
+  settleCoin?: string
   futureType?: number
+  type?: number
   preMarket?: boolean
   maxVol?: number
   minVol?: number
+  openingTime?: number
+  appraisal?: number
+  automaticDelivery?: number
+  showBeforeOpen?: boolean
 }
 
 type Candle = [number, number, number, number, number, number]
 type Side = 'LONG' | 'SHORT'
 
-async function mexcGet<T>(path: string): Promise<T | null> {
+async function mexcJson<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${MEXC}${path}`, {
       headers: { Accept: 'application/json', 'User-Agent': 'EnterpriseSystem/2.0' },
@@ -78,38 +95,98 @@ async function mexcGet<T>(path: string): Promise<T | null> {
   }
 }
 
+function isStrictPerpetualContract(c: ContractDetail | null | undefined): boolean {
+  if (!c?.symbol?.endsWith('_USDT')) return false
+  if (c.state !== 0) return false
+  if (c.isHidden) return false
+  if (c.apiAllowed === false) return false
+  if (c.preMarket) return false
+  if (c.quoteCoin && c.quoteCoin !== 'USDT') return false
+  if (c.settleCoin && c.settleCoin !== 'USDT') return false
+  if (c.futureType != null && c.futureType !== 1) return false
+  if (c.type != null && c.type !== 1) return false
+  if (c.maxVol != null && c.maxVol <= 0) return false
+  if (c.appraisal) return false
+  if (c.automaticDelivery) return false
+  const opening = Number(c.openingTime ?? 0)
+  if (opening > Date.now()) return false
+  const name = String(c.displayNameEn ?? '').toUpperCase()
+  // Must be labeled perpetual (excludes delivery / odd products)
+  if (!name.includes('PERPETUAL')) return false
+  return true
+}
+
 /**
- * Active USDT perpetuals only — state=0, visible, API-allowed, not pre-market.
- * Prevents alerts on delisted / hidden / untradeable tickers.
+ * Active USDT-M perpetuals from contract detail catalog.
  */
 async function fetchTradableSymbols(): Promise<Set<string>> {
-  const json = await mexcGet<{ data: ContractDetail | ContractDetail[] }>(
+  const json = await mexcJson<{ data: ContractDetail | ContractDetail[] }>(
     '/api/v1/contract/detail'
   )
   if (!json?.data) return new Set()
   const rows = Array.isArray(json.data) ? json.data : [json.data]
   const out = new Set<string>()
   for (const c of rows) {
-    if (!c?.symbol?.endsWith('_USDT')) continue
-    if (c.state !== 0) continue
-    if (c.isHidden) continue
-    if (c.apiAllowed === false) continue
-    if (c.preMarket) continue
-    if (c.quoteCoin && c.quoteCoin !== 'USDT') continue
-    // futureType 1 = perpetual (skip odd delivery if present)
-    if (c.futureType != null && c.futureType !== 1) continue
-    if (c.maxVol != null && c.maxVol <= 0) continue
-    out.add(c.symbol)
+    if (isStrictPerpetualContract(c)) out.add(c.symbol)
   }
   return out
 }
 
 async function fetchTickers(): Promise<TickerRow[]> {
-  const json = await mexcGet<{ data: TickerRow | TickerRow[] }>(
+  const json = await mexcJson<{ data: TickerRow | TickerRow[] }>(
     '/api/v1/contract/ticker'
   )
   if (!json?.data) return []
   return Array.isArray(json.data) ? json.data : [json.data]
+}
+
+/**
+ * Live gate: detail + ticker book + funding rate endpoint.
+ * Funding rate exists only for real perpetuals that are open for trading.
+ */
+async function isSymbolTradableNow(
+  symbol: string,
+  minQuoteVol: number
+): Promise<boolean> {
+  const [detailJson, tickerJson, fundingJson] = await Promise.all([
+    mexcJson<{ data: ContractDetail }>(
+      `/api/v1/contract/detail?symbol=${symbol}`
+    ),
+    mexcJson<{ data: TickerRow | TickerRow[] }>(
+      `/api/v1/contract/ticker?symbol=${symbol}`
+    ),
+    mexcJson<{ data: { symbol?: string; fundingRate?: number } }>(
+      `/api/v1/contract/funding_rate/${symbol}`
+    ),
+  ])
+
+  if (!isStrictPerpetualContract(detailJson?.data)) return false
+
+  const row = Array.isArray(tickerJson?.data)
+    ? tickerJson?.data[0]
+    : tickerJson?.data
+  if (!row || row.symbol !== symbol) return false
+
+  const price = Number(row.lastPrice)
+  const bid = Number(row.bid1 ?? 0)
+  const ask = Number(row.ask1 ?? 0)
+  const amount = Number(row.amount24 ?? 0)
+  const oi = Number(row.holdVol ?? 0)
+
+  if (!(price > 0)) return false
+  if (!(bid > 0) || !(ask > 0)) return false
+  if (ask < bid) return false
+  if (amount < minQuoteVol) return false
+  if (oi < MIN_OPEN_INTEREST) return false
+  // fundingRate field must be present on perpetual ticker
+  if (row.fundingRate == null || Number.isNaN(Number(row.fundingRate))) {
+    return false
+  }
+
+  const fr = fundingJson?.data
+  if (!fr || fr.symbol !== symbol || fr.fundingRate == null) return false
+
+  return true
 }
 
 async function fetchKlines(
@@ -117,7 +194,7 @@ async function fetchKlines(
   interval: string,
   limit: number
 ): Promise<Candle[]> {
-  const json = await mexcGet<{
+  const json = await mexcJson<{
     data: {
       time: number[]
       open: number[]
@@ -142,20 +219,6 @@ async function fetchKlines(
     ])
   }
   return out
-}
-
-/** Double-check single contract still tradeable before emitting alert */
-async function isSymbolTradableNow(symbol: string): Promise<boolean> {
-  const json = await mexcGet<{ data: ContractDetail }>(
-    `/api/v1/contract/detail?symbol=${symbol}`
-  )
-  const c = json?.data
-  if (!c?.symbol) return false
-  if (c.state !== 0) return false
-  if (c.isHidden) return false
-  if (c.apiAllowed === false) return false
-  if (c.preMarket) return false
-  return true
 }
 
 function calcRsi(closes: number[], period = 14): number {
@@ -371,19 +434,35 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
   ])
   if (!tickers.length || tradable.size === 0) return []
 
-  const memes = tickers
-    .filter((t) => isMemeCandidate(t, tradable))
+  // Liquid USDT-M perps only (top by quote volume) — matches what RF search shows
+  const liquidUniverse = tickers
+    .filter((t) => {
+      if (!tradable.has(t.symbol)) return false
+      if (!t.symbol.endsWith('_USDT')) return false
+      if (t.symbol.includes('USDC')) return false
+      const price = Number(t.lastPrice)
+      const bid = Number(t.bid1 ?? 0)
+      const ask = Number(t.ask1 ?? 0)
+      const oi = Number(t.holdVol ?? 0)
+      const vol = quoteVol(t)
+      if (!(price > 0)) return false
+      if (!(bid > 0) || !(ask > 0)) return false
+      if (t.fundingRate == null) return false
+      if (oi < MIN_OPEN_INTEREST) return false
+      if (vol < MIN_MEME_QUOTE_VOL) return false
+      return true
+    })
     .sort((a, b) => quoteVol(b) - quoteVol(a))
-    .slice(0, 10)
+    .slice(0, TOP_LIQUID_PERPS)
 
-  const movers = tickers
-    .filter(
-      (t) =>
-        tradable.has(t.symbol) &&
-        t.symbol.endsWith('_USDT') &&
-        !t.symbol.includes('USDC') &&
-        quoteVol(t) >= MIN_MOVER_QUOTE_VOL
-    )
+  const liquidSet = new Set(liquidUniverse.map((t) => t.symbol))
+
+  const memes = liquidUniverse
+    .filter((t) => isMemeCandidate(t, liquidSet))
+    .slice(0, 8)
+
+  const movers = liquidUniverse
+    .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
     .sort(
       (a, b) =>
         Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
@@ -396,7 +475,7 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
   const analyze = async (t: TickerRow, preferMeme: boolean) => {
     if (seen.has(t.symbol)) return
     seen.add(t.symbol)
-    if (!tradable.has(t.symbol)) return
+    if (!liquidSet.has(t.symbol)) return
 
     const candles = await fetchKlines(t.symbol, 'Min1', 120)
     // No candles = not really tradeable / bad symbol
@@ -420,6 +499,7 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
     const rsi = calcRsi(closes)
     const backside = lowerHighAndBreak(candles) && rsi > 70
     const volUsd = quoteVol(t)
+    const minVol = preferMeme ? MIN_MEME_QUOTE_VOL : MIN_MOVER_QUOTE_VOL
 
     const push = async (
       side: Side,
@@ -430,8 +510,8 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
       type: 'SNIPER' | 'MEME',
       dedupeKey: string
     ) => {
-      // Final live check — avoid delisted mid-scan
-      if (!(await isSymbolTradableNow(t.symbol))) return
+      // Final live check — detail + book + funding endpoint
+      if (!(await isSymbolTradableNow(t.symbol, minVol))) return
 
       const { sl, tp } = buildLevels(side, price, atr)
       const winPct = winPctFromScore(score)
@@ -448,6 +528,7 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
           ...extras,
           `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M`,
           `RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
+          `MEXC USDT-M Perpetual ✓ (top ${TOP_LIQUID_PERPS} by volume)`,
         ],
       })
       alerts.push({

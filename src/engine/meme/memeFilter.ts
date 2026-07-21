@@ -131,8 +131,8 @@ const BLUE_CHIP_BASES = new Set([
   'USTC',
 ])
 
-/** Минимальный 24h объём (USD) — отсекаем мёртвые пары */
-const MIN_VOLUME_USD = 5_000
+/** Минимальный 24h объём (USD) — только ликвидные USDT-M, видимые в поиске */
+const MIN_VOLUME_USD = 1_000_000
 
 /** Макс. цена — мемы редко дороже */
 const MAX_MEME_PRICE = 15
@@ -153,6 +153,11 @@ export function isMemeTicker(ticker: MexcTicker): boolean {
   if (isBlueChip(ticker)) return false
   if (ticker.lastPrice <= 0 || ticker.lastPrice > MAX_MEME_PRICE) return false
   if (ticker.volume24h < MIN_VOLUME_USD) return false
+  // Real perpetual markers from MEXC contract ticker
+  if (ticker.fundingRate == null || Number.isNaN(ticker.fundingRate)) return false
+  if ((ticker.openInterest ?? 0) < 5_000) return false
+  if (!ticker.apiSymbol.endsWith('_USDT')) return false
+  if (ticker.apiSymbol.includes('USDC')) return false
   return true
 }
 
