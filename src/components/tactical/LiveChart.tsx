@@ -801,7 +801,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
         <div ref={containerRef} className="h-full w-full" />
         {globalFib?.activeZone && (
-          <div className="pointer-events-none absolute left-2 top-2 z-20 max-w-[85%] rounded border border-amber-400/40 bg-black/75 px-2 py-1 font-mono text-[10px] text-amber-200 shadow-lg">
+          <div className="pointer-events-none absolute left-2 top-2 z-20 max-w-[90%] rounded border border-amber-400/40 bg-black/75 px-2 py-1 font-mono text-[10px] text-amber-200 shadow-lg">
             <span className="font-bold text-amber-300">
               {globalFib.activeZone.label.includes('141')
                 ? 'FIB 141'
@@ -813,8 +813,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             <span className="text-white">
               ищем {globalFib.activeZone.bias}
             </span>
-            <span className="mt-0.5 block text-[9px] text-holo/50">
-              {globalFib.impulse === 'UP' ? 'Импульс ↑' : 'Импульс ↓'} · F141 @{' '}
+            <span className="mt-0.5 block text-[9px] text-holo/55">
+              Цена зоны{' '}
+              {globalFib.activeZone.bottom.toPrecision(5)}–
+              {globalFib.activeZone.top.toPrecision(5)}
+              {' · '}
+              {globalFib.impulse === 'UP' ? 'Импульс ↑' : 'Импульс ↓'}
+              {' · F141 @ '}
               {globalFib.levels
                 .find((l) => l.ratio === 1.414)
                 ?.price.toPrecision(6) ?? '—'}

@@ -196,7 +196,7 @@ function buildReactionZones(
   const r2618 = byRatio(2.618)
   const r3 = byRatio(3)
 
-  // Golden pocket / OTE — pullback with trend
+  // Golden pocket / OTE — pullback with trend (ratios %, not prices)
   if (r618 != null && r786 != null) {
     zones.push(
       mk(
@@ -204,7 +204,7 @@ function buildReactionZones(
         impulse === 'UP' ? 'LONG' : 'SHORT',
         r618,
         r786,
-        'Golden Pocket 61.8–78.6',
+        'Golden Pocket 61.8%–78.6%',
         11,
         [0.618, 0.786]
       )
@@ -218,7 +218,7 @@ function buildReactionZones(
         impulse === 'UP' ? 'LONG' : 'SHORT',
         r5,
         r618,
-        'Fib mid 50–61.8',
+        'Fib mid 50%–61.8%',
         8,
         [0.5, 0.618]
       )
@@ -232,7 +232,7 @@ function buildReactionZones(
         impulse === 'UP' ? 'LONG' : 'SHORT',
         r382,
         r5,
-        'Fib 38.2–50',
+        'Fib 38.2%–50%',
         6,
         [0.382, 0.5]
       )
