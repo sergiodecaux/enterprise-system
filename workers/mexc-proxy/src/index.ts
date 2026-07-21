@@ -475,7 +475,7 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
     await tgSend(
       env,
       chatId,
-      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7 включена.\nСканер шлёт сигналы, я веду бумажные сделки и пишу комментарии (вход / BE / TP / SL).\n\nКоманды:\n/test — тест\n/trades — мои бумажные сделки\n/status — статус\n/scan — сканер сейчас\n/ping — связь\n/stop — отписаться'
+      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7.\nСигналы + <b>пример сделки</b> с комментариями по рынку (давление, объём, вероятность успеха).\nМемы ≈каждые 2 мин · альты ≈каждые 5 мин.\n\nКоманды:\n/test — тест\n/trades — примеры сделок\n/status — статус\n/scan — сканер\n/ping — связь\n/stop — стоп'
     )
     await sendDemoSignal(env, chatId)
     return

@@ -1,13 +1,17 @@
 /**
- * Paper trades for Telegram companion commentary.
- * Bot "enters" on limit zone touch and narrates BE / TP / SL / trail / pulse.
+ * Example (paper) trades + live market companion commentary.
+ * Memes: commentary ≥ every 2 min. Alts: ≥ every 5 min.
+ * Comments cover pressure / structure / updated win probability — not fluff.
  */
 
 const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 5
 const WAITING_TTL_MS = 45 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
-const PULSE_MS = 20 * 60_000
+/** Meme setups — comment at least every cron cycle (~2 min) */
+const PULSE_MEME_MS = 2 * 60_000
+/** Regular alts / sniper — every ~5 min */
+const PULSE_ALT_MS = 5 * 60_000
 const MEXC = 'https://contract.mexc.com'
 
 export type PaperSide = 'LONG' | 'SHORT'
@@ -55,6 +59,8 @@ export interface PaperTrade {
   tpSent: boolean
   trailMovedSent: boolean
   waitingAnnounced: boolean
+  /** Last published success probability 0–100 */
+  lastWinPct: number | null
 }
 
 export interface PaperComment {
@@ -72,6 +78,22 @@ interface TickerSnap {
   last: number
   high: number
   low: number
+  bid1: number
+  ask1: number
+  fundingRate: number | null
+  amount24: number
+}
+
+interface MarketBrief {
+  buyShare: number
+  sellShare: number
+  pressure: 'BUYERS' | 'SELLERS' | 'MIXED'
+  pressureLabel: string
+  candleBias: 'UP' | 'DOWN' | 'CHOP'
+  volMult: number
+  move1mPct: number
+  spreadBps: number
+  fundingPct: number | null
 }
 
 const memoryPapers: PaperTrade[] = []
@@ -100,6 +122,14 @@ function riskUnit(t: PaperTrade): number {
   return Math.abs(entry - t.sl)
 }
 
+function pulseMs(t: PaperTrade): number {
+  return t.alertType === 'MEME' ? PULSE_MEME_MS : PULSE_ALT_MS
+}
+
+function isMemeTrade(t: PaperTrade): boolean {
+  return t.alertType === 'MEME'
+}
+
 async function mexcJson<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${MEXC}${path}`, {
@@ -117,15 +147,18 @@ async function fetchTickerSnap(symbol: string): Promise<TickerSnap | null> {
     data:
       | {
           lastPrice?: number
-          high24Price?: number
-          lower24Price?: number
           bid1?: number
           ask1?: number
+          fundingRate?: number
+          amount24?: number
+          volume24?: number
         }
       | Array<{
           lastPrice?: number
-          high24Price?: number
-          lower24Price?: number
+          bid1?: number
+          ask1?: number
+          fundingRate?: number
+          amount24?: number
         }>
   }>(`/api/v1/contract/ticker?symbol=${symbol}`)
 
@@ -134,7 +167,6 @@ async function fetchTickerSnap(symbol: string): Promise<TickerSnap | null> {
   const last = Number(row.lastPrice)
   if (!(last > 0)) return null
 
-  // Prefer 1m candle range for intrabar touch; fallback to last±tiny
   const k = await mexcJson<{
     data: { high: number[]; low: number[]; close: number[] }
   }>(`/api/v1/contract/kline/${symbol}?interval=Min1&limit=3`)
@@ -148,7 +180,300 @@ async function fetchTickerSnap(symbol: string): Promise<TickerSnap | null> {
     low = Math.min(...ls.map(Number), last)
   }
 
-  return { last, high, low }
+  return {
+    last,
+    high,
+    low,
+    bid1: Number(row.bid1 ?? last),
+    ask1: Number(row.ask1 ?? last),
+    fundingRate:
+      row.fundingRate != null && !Number.isNaN(Number(row.fundingRate))
+        ? Number(row.fundingRate)
+        : null,
+    amount24: Number(row.amount24 ?? row.volume24 ?? 0),
+  }
+}
+
+async function fetchMarketBrief(
+  symbol: string,
+  snap: TickerSnap
+): Promise<MarketBrief> {
+  const [klines, deals] = await Promise.all([
+    mexcJson<{
+      data: {
+        open: number[]
+        high: number[]
+        low: number[]
+        close: number[]
+        vol: number[]
+      }
+    }>(`/api/v1/contract/kline/${symbol}?interval=Min1&limit=20`),
+    mexcJson<{
+      data: Array<{ p: number; v: number; T: number; O?: number }>
+    }>(`/api/v1/contract/deals/${symbol}?limit=60`),
+  ])
+
+  const o = klines?.data?.open?.map(Number) ?? []
+  const c = klines?.data?.close?.map(Number) ?? []
+  const v = klines?.data?.vol?.map(Number) ?? []
+
+  let up = 0
+  let down = 0
+  for (let i = Math.max(0, c.length - 8); i < c.length; i++) {
+    if (c[i] >= o[i]) up++
+    else down++
+  }
+  const candleBias: MarketBrief['candleBias'] =
+    up >= down + 2 ? 'UP' : down >= up + 2 ? 'DOWN' : 'CHOP'
+
+  const recent = v.slice(-5)
+  const base = v.slice(-15, -5)
+  const avgBase =
+    base.length > 0 ? base.reduce((s, x) => s + x, 0) / base.length : 0
+  const avgRecent =
+    recent.length > 0 ? recent.reduce((s, x) => s + x, 0) / recent.length : 0
+  const volMult = avgBase > 0 ? avgRecent / avgBase : 1
+
+  const lastO = o[o.length - 1] ?? snap.last
+  const lastC = c[c.length - 1] ?? snap.last
+  const move1mPct = lastO > 0 ? ((lastC - lastO) / lastO) * 100 : 0
+
+  // MEXC deals: T=1 taker buy, T=2 taker sell (common); O sometimes side
+  let buyVol = 0
+  let sellVol = 0
+  const rows = deals?.data ?? []
+  for (const d of rows) {
+    const vol = Number(d.v ?? 0) * Number(d.p ?? 0)
+    const side = d.T ?? d.O
+    if (side === 1 || side === 2) {
+      // T: 1 buy / 2 sell on many MEXC docs; if inverted still relative
+      if (side === 1) buyVol += vol
+      else sellVol += vol
+    } else {
+      // fallback: compare to mid
+      if (Number(d.p) >= snap.last) buyVol += vol
+      else sellVol += vol
+    }
+  }
+  const tot = buyVol + sellVol
+  const buyShare = tot > 0 ? buyVol / tot : 0.5
+  const sellShare = 1 - buyShare
+
+  let pressure: MarketBrief['pressure'] = 'MIXED'
+  if (buyShare >= 0.58) pressure = 'BUYERS'
+  else if (sellShare >= 0.58) pressure = 'SELLERS'
+
+  const pressureLabel =
+    pressure === 'BUYERS'
+      ? `Покупатели давят (${(buyShare * 100).toFixed(0)}% taker buy)`
+      : pressure === 'SELLERS'
+        ? `Продавцы давят (${(sellShare * 100).toFixed(0)}% taker sell)`
+        : `Баланс сил (~${(buyShare * 100).toFixed(0)}/${(sellShare * 100).toFixed(0)} buy/sell)`
+
+  const mid = (snap.bid1 + snap.ask1) / 2
+  const spreadBps = mid > 0 ? ((snap.ask1 - snap.bid1) / mid) * 10_000 : 0
+
+  return {
+    buyShare,
+    sellShare,
+    pressure,
+    pressureLabel,
+    candleBias,
+    volMult,
+    move1mPct,
+    spreadBps,
+    fundingPct: snap.fundingRate != null ? snap.fundingRate * 100 : null,
+  }
+}
+
+/**
+ * Live success probability for the example trade (calibrated band, not historical WR).
+ */
+function computeWinPct(
+  t: PaperTrade,
+  price: number,
+  brief: MarketBrief
+): { winPct: number; factors: string[] } {
+  let score = 58
+  const factors: string[] = []
+  const entry = t.fillPrice ?? t.entryIdeal
+  const risk = Math.abs(entry - t.sl)
+  const reward = Math.abs(t.tp - entry)
+
+  // Path progress: how much of risk/reward path used
+  if (risk > 0) {
+    const towardTp =
+      t.side === 'LONG'
+        ? (price - entry) / reward
+        : (entry - price) / reward
+    const towardSl =
+      t.side === 'LONG'
+        ? (entry - price) / risk
+        : (price - entry) / risk
+
+    if (towardTp > 0.15) {
+      const bump = Math.min(18, towardTp * 22)
+      score += bump
+      factors.push(`к цели ${(towardTp * 100).toFixed(0)}% пути`)
+    }
+    if (towardSl > 0.2) {
+      const pen = Math.min(22, towardSl * 28)
+      score -= pen
+      factors.push(`к стопу ${(towardSl * 100).toFixed(0)}% риска`)
+    }
+  }
+
+  // Order-flow alignment
+  const flowWithUs =
+    (t.side === 'LONG' && brief.pressure === 'BUYERS') ||
+    (t.side === 'SHORT' && brief.pressure === 'SELLERS')
+  const flowAgainst =
+    (t.side === 'LONG' && brief.pressure === 'SELLERS') ||
+    (t.side === 'SHORT' && brief.pressure === 'BUYERS')
+
+  if (flowWithUs) {
+    score += 8
+    factors.push('поток с нами')
+  } else if (flowAgainst) {
+    score -= 10
+    factors.push('поток против')
+  } else {
+    factors.push('поток нейтрален')
+  }
+
+  // Candle structure
+  if (
+    (t.side === 'LONG' && brief.candleBias === 'UP') ||
+    (t.side === 'SHORT' && brief.candleBias === 'DOWN')
+  ) {
+    score += 5
+    factors.push('структура 1м за нас')
+  } else if (
+    (t.side === 'LONG' && brief.candleBias === 'DOWN') ||
+    (t.side === 'SHORT' && brief.candleBias === 'UP')
+  ) {
+    score -= 6
+    factors.push('структура 1м против')
+  }
+
+  // Volume expansion
+  if (brief.volMult >= 1.8 && flowWithUs) {
+    score += 5
+    factors.push(`объём ×${brief.volMult.toFixed(1)}`)
+  } else if (brief.volMult >= 2.2 && flowAgainst) {
+    score -= 7
+    factors.push(`объём против ×${brief.volMult.toFixed(1)}`)
+  }
+
+  // Funding
+  if (brief.fundingPct != null) {
+    if (t.side === 'LONG' && brief.fundingPct <= -0.02) {
+      score += 4
+      factors.push('funding в шортах — топливо лонга')
+    } else if (t.side === 'SHORT' && brief.fundingPct >= 0.03) {
+      score += 3
+      factors.push('funding перегрет лонгами')
+    } else if (t.side === 'LONG' && brief.fundingPct >= 0.05) {
+      score -= 4
+      factors.push('funding против лонга')
+    }
+  }
+
+  // Spread stress (memes)
+  if (brief.spreadBps > 25) {
+    score -= 3
+    factors.push(`широкий спред ${brief.spreadBps.toFixed(0)}bps`)
+  }
+
+  // WAITING: slightly lower until filled
+  if (t.status === 'WAITING') {
+    score -= 4
+    factors.push('ещё не в сделке — только зона')
+  }
+
+  if (t.beSent) {
+    score += 4
+    factors.push('стоп уже в BE')
+  }
+
+  const winPct = Math.round(Math.min(88, Math.max(22, score)))
+  return { winPct, factors: factors.slice(0, 5) }
+}
+
+function buildCommentary(opts: {
+  t: PaperTrade
+  price: number
+  brief: MarketBrief
+  winPct: number
+  prevWin: number | null
+  factors: string[]
+  phase: 'WAITING' | 'OPEN'
+}): PaperComment {
+  const { t, price, brief, winPct, prevWin, factors, phase } = opts
+  const entry = t.fillPrice ?? t.entryIdeal
+  const unreal =
+    phase === 'OPEN' && t.fillPrice != null
+      ? pnlPct(t.side, t.fillPrice, price)
+      : null
+  const delta =
+    prevWin != null ? winPct - prevWin : 0
+  const deltaStr =
+    prevWin == null
+      ? ''
+      : delta > 0
+        ? `↑ +${delta}`
+        : delta < 0
+          ? `↓ ${delta}`
+          : '→ 0'
+
+  const distTp =
+    t.side === 'LONG'
+      ? ((t.tp - price) / price) * 100
+      : ((price - t.tp) / price) * 100
+  const distSl =
+    t.side === 'LONG'
+      ? ((price - t.sl) / price) * 100
+      : ((t.sl - price) / price) * 100
+
+  const actionHint =
+    winPct >= 70
+      ? 'План держу. Вероятность в мою пользу.'
+      : winPct >= 50
+        ? 'Пока ок, но без догона — только по плану.'
+        : winPct >= 35
+          ? 'Осторожно: преимущество тает. Ближе к стопу — без усреднения.'
+          : 'Сценарий слабый. Если выбьет стоп — ок, риск уже заложен.'
+
+  const title =
+    phase === 'WAITING'
+      ? `👁 Пример ${nameOf(t.symbol)} · жду зону`
+      : `📡 Пример ${t.side} ${nameOf(t.symbol)}`
+
+  const lines = [
+    `Учебная (бумажная) сделка · ${t.setup} · ${isMemeTrade(t) ? 'MEME 2м' : 'ALT 5м'}`,
+    phase === 'WAITING'
+      ? `Статус: жду лимитку ${fmt(t.zoneLow)}–${fmt(t.zoneHigh)}`
+      : `Вход ${fmt(entry)} · сейчас ${fmt(price)} · uPnL ${unreal != null && unreal >= 0 ? '+' : ''}${unreal?.toFixed(2) ?? '—'}%`,
+    '',
+    `🎯 Вероятность успеха: ${winPct}%${deltaStr ? ` (${deltaStr} п.п.)` : ''}`,
+    `Факторы: ${factors.join('; ') || '—'}`,
+    '',
+    brief.pressureLabel,
+    `1м: ${brief.move1mPct >= 0 ? '+' : ''}${brief.move1mPct.toFixed(2)}% · свечи ${brief.candleBias} · vol ×${brief.volMult.toFixed(1)}`,
+    brief.fundingPct != null
+      ? `Funding: ${brief.fundingPct.toFixed(3)}% · спред ~${brief.spreadBps.toFixed(0)} bps`
+      : `Спред ~${brief.spreadBps.toFixed(0)} bps`,
+    `До цели ~${distTp.toFixed(2)}% · до стопа ~${distSl.toFixed(2)}%`,
+    '',
+    actionHint,
+  ]
+
+  return {
+    alertType: 'SYSTEM',
+    title,
+    text: lines.join('\n'),
+    dedupeKey: `paper:pulse:${t.id}:${Math.floor(Date.now() / pulseMs(t))}`,
+  }
 }
 
 export async function listPaperTrades(env: PaperEnv): Promise<PaperTrade[]> {
@@ -183,7 +508,6 @@ export async function createPaperTradeFromPlan(
   const list = await listPaperTrades(env)
   const now = Date.now()
 
-  // Drop very old closed from storage (keep last 30)
   const pruned = list
     .filter((t) => {
       if (t.status !== 'CLOSED') return true
@@ -230,24 +554,26 @@ export async function createPaperTradeFromPlan(
     tpSent: false,
     trailMovedSent: false,
     waitingAnnounced: true,
+    lastWinPct: null,
   }
 
   pruned.push(trade)
   await savePaperTrades(env, pruned)
 
   const icon = plan.side === 'LONG' ? '🟢' : '🔴'
+  const cadence = plan.alertType === 'MEME' ? 'каждые ~2 мин' : 'каждые ~5 мин'
   const comment: PaperComment = {
     alertType: 'SYSTEM',
-    title: `${icon} Беру в работу ${nameOf(plan.symbol)}`,
+    title: `${icon} Пример: беру ${nameOf(plan.symbol)} в работу`,
     text: [
-      `Я в сделку ещё не вошёл — жду лимитку.`,
+      `Это учебная (бумажная) сделка — как если бы я вошёл по плану.`,
       `Сторона: ${plan.side} · ${plan.setup}`,
-      `Зона: ${fmt(plan.zoneLow)} – ${fmt(plan.zoneHigh)}`,
-      `Ориентир: ${fmt(plan.entryIdeal)}`,
+      `Зона лимитки: ${fmt(plan.zoneLow)} – ${fmt(plan.zoneHigh)}`,
+      `Ориентир: ${fmt(plan.entryIdeal)} · SL ${fmt(plan.sl)} · TP ${fmt(plan.tp)}`,
       plan.side === 'LONG'
-        ? `Если улетит выше ${fmt(plan.invalidate)} без отката — пропускаю.`
-        : `Если улетит ниже ${fmt(plan.invalidate)} без отката — пропускаю.`,
-      `Стоп план: ${fmt(plan.sl)} · Цель: ${fmt(plan.tp)}`,
+        ? `Инвалидация выше ${fmt(plan.invalidate)} — не догоняю.`
+        : `Инвалидация ниже ${fmt(plan.invalidate)} — не догоняю.`,
+      `Дальше пишу, что происходит с монетой (${cadence}): давление, объём, вероятность успеха.`,
     ].join('\n'),
     dedupeKey: `paper:wait:${trade.id}`,
   }
@@ -256,7 +582,6 @@ export async function createPaperTradeFromPlan(
 }
 
 function touchesZone(t: PaperTrade, snap: TickerSnap): boolean {
-  // Any overlap between candle range and entry zone
   return snap.low <= t.zoneHigh && snap.high >= t.zoneLow
 }
 
@@ -269,7 +594,7 @@ function invalidatedWithoutFill(t: PaperTrade, snap: TickerSnap): boolean {
   return snap.low <= t.invalidate && !touchesZone(t, snap)
 }
 
-function hitTp(t: PaperTrade, snap: TickerSnap, fill: number): boolean {
+function hitTp(t: PaperTrade, snap: TickerSnap): boolean {
   if (t.side === 'LONG') return snap.high >= t.tp
   return snap.low <= t.tp
 }
@@ -306,15 +631,13 @@ function updateTrail(t: PaperTrade, price: number): {
 function trailHit(t: PaperTrade, snap: TickerSnap): boolean {
   if (t.trailingStop == null || t.fillPrice == null || t.peak == null) return false
   if (t.side === 'LONG') {
-    return (
-      snap.low <= t.trailingStop && t.peak > t.fillPrice * 1.03
-    )
+    return snap.low <= t.trailingStop && t.peak > t.fillPrice * 1.03
   }
   return snap.high >= t.trailingStop && t.peak < t.fillPrice * 0.97
 }
 
 /**
- * Monitor all paper trades; return companion comments to broadcast.
+ * Monitor example trades; emit market commentary + milestones.
  */
 export async function monitorPaperTrades(
   env: PaperEnv
@@ -327,7 +650,6 @@ export async function monitorPaperTrades(
   for (const t of list) {
     if (t.status === 'CLOSED') continue
 
-    // Expire
     if (now > t.expiresAt) {
       const wasWaiting = t.status === 'WAITING' || !t.fillPrice
       t.status = 'CLOSED'
@@ -337,11 +659,11 @@ export async function monitorPaperTrades(
       comments.push({
         alertType: 'SYSTEM',
         title: wasWaiting
-          ? `⏱ Не дождался входа ${nameOf(t.symbol)}`
-          : `⏱ Закрываю по времени ${nameOf(t.symbol)}`,
+          ? `⏱ Пример закрыт: нет входа ${nameOf(t.symbol)}`
+          : `⏱ Пример закрыт по времени ${nameOf(t.symbol)}`,
         text: wasWaiting
-          ? `Зона ${fmt(t.zoneLow)}–${fmt(t.zoneHigh)} так и не дала откат. Переключаюсь на следующий сетап.`
-          : `Держал слишком долго. Выхожу из бумажной позиции ${t.side} ${nameOf(t.symbol)}.`,
+          ? `Зона не дали — учебная сделка отменена. Жду следующий сетап.`
+          : `Держал пример слишком долго — закрываю бумажную позицию.`,
         dedupeKey: `paper:expire:${t.id}`,
       })
       continue
@@ -349,6 +671,9 @@ export async function monitorPaperTrades(
 
     const snap = await fetchTickerSnap(t.symbol)
     if (!snap) continue
+
+    const brief = await fetchMarketBrief(t.symbol, snap)
+    const { winPct, factors } = computeWinPct(t, snap.last, brief)
 
     if (t.status === 'WAITING') {
       if (invalidatedWithoutFill(t, snap)) {
@@ -358,11 +683,12 @@ export async function monitorPaperTrades(
         dirty = true
         comments.push({
           alertType: 'SYSTEM',
-          title: `⏭ Пропуск ${nameOf(t.symbol)}`,
+          title: `⏭ Пример: пропуск ${nameOf(t.symbol)}`,
           text: [
-            `Цена ушла без отката в мою зону — не догоняю.`,
-            `Инвалидация: ${fmt(t.invalidate)} · сейчас ${fmt(snap.last)}`,
-            `Жду следующий чистый сетап.`,
+            `Цена ушла без отката в зону — учебный вход отменяю.`,
+            brief.pressureLabel,
+            `Вероятность на момент отмены: ${winPct}%`,
+            `Сейчас ${fmt(snap.last)} · инвалидация ${fmt(t.invalidate)}`,
           ].join('\n'),
           dedupeKey: `paper:skip:${t.id}`,
         })
@@ -376,25 +702,48 @@ export async function monitorPaperTrades(
         t.openedAt = now
         t.expiresAt = now + OPEN_TTL_MS
         t.peak = fill
-        t.trailingStop =
-          t.side === 'LONG' ? fill * 0.98 : fill * 1.02
+        t.trailingStop = t.side === 'LONG' ? fill * 0.98 : fill * 1.02
+        t.lastWinPct = winPct
+        t.lastPulseAt = now
         dirty = true
         comments.push({
           alertType: 'SYSTEM',
-          title: `✅ Вошёл ${t.side} ${nameOf(t.symbol)}`,
+          title: `✅ Пример: вошёл ${t.side} ${nameOf(t.symbol)}`,
           text: [
-            `Лимитка исполнилась. Я в позиции.`,
-            `Вход: ${fmt(fill)}`,
-            `Стоп: ${fmt(t.sl)} · Цель: ${fmt(t.tp)}`,
-            `Дальше веду как свою сделку — отпишусь на BE / TP / SL.`,
+            `Лимитка в зоне исполнилась (бумажно).`,
+            `Вход: ${fmt(fill)} · SL ${fmt(t.sl)} · TP ${fmt(t.tp)}`,
+            `Стартовая вероятность успеха: ${winPct}%`,
+            brief.pressureLabel,
+            `Дальше веду комментарии по рынку ${isMemeTrade(t) ? '≈каждые 2 мин' : '≈каждые 5 мин'}.`,
           ].join('\n'),
           dedupeKey: `paper:fill:${t.id}`,
         })
+        continue
+      }
+
+      // Waiting commentary on cadence
+      const lastPulse = t.lastPulseAt ?? t.createdAt
+      if (now - lastPulse >= pulseMs(t)) {
+        const prevWin = t.lastWinPct
+        t.lastPulseAt = now
+        t.lastWinPct = winPct
+        dirty = true
+        comments.push(
+          buildCommentary({
+            t,
+            price: snap.last,
+            brief,
+            winPct,
+            prevWin,
+            factors,
+            phase: 'WAITING',
+          })
+        )
       }
       continue
     }
 
-    // OPEN
+    // OPEN milestones + commentary
     const fill = t.fillPrice!
     const trail = updateTrail(t, snap.last)
     if (trail.peak !== t.peak || trail.trailingStop !== t.trailingStop) {
@@ -403,57 +752,59 @@ export async function monitorPaperTrades(
       dirty = true
     }
 
+    const prevWin = t.lastWinPct
+    const r = riskUnit(t)
+    const unreal = pnlPct(t.side, fill, snap.last)
+    const favorR =
+      r > 0 ? (Math.abs(snap.last - fill) / r) * (unreal >= 0 ? 1 : -1) : 0
+
     if (trail.moved && !t.trailMovedSent) {
       t.trailMovedSent = true
       dirty = true
       comments.push({
         alertType: 'SYSTEM',
-        title: `📈 Трейл двигаю ${nameOf(t.symbol)}`,
+        title: `📈 Пример: трейл ${nameOf(t.symbol)}`,
         text: [
-          `Пик/дно обновилось — подтягиваю тень стопа.`,
-          `Trail ≈ ${fmt(trail.trailingStop)} · цена ${fmt(snap.last)}`,
-          `uPnL: ${pnlPct(t.side, fill, snap.last).toFixed(2)}%`,
+          `Пик обновился — подтягиваю тень стопа ≈ ${fmt(trail.trailingStop)}.`,
+          `uPnL ${unreal.toFixed(2)}% · вероятность ${winPct}%`,
+          brief.pressureLabel,
         ].join('\n'),
-        dedupeKey: `paper:trail:${t.id}:${Math.floor(now / 600_000)}`,
+        dedupeKey: `paper:trail:${t.id}:${Math.floor(now / 300_000)}`,
       })
     }
 
-    const r = riskUnit(t)
-    const unreal = pnlPct(t.side, fill, snap.last)
-    const favorR = r > 0 ? (Math.abs(snap.last - fill) / r) * (unreal >= 0 ? 1 : -1) : 0
-
-    // Move SL to BE around +0.6R
     if (!t.beSent && favorR >= 0.6) {
       t.beSent = true
       t.sl = fill
       dirty = true
       comments.push({
         alertType: 'SYSTEM',
-        title: `🛡 Безубыток ${nameOf(t.symbol)}`,
+        title: `🛡 Пример: BE ${nameOf(t.symbol)}`,
         text: [
-          `Движение в мою сторону — стоп перевожу в BE.`,
-          `Новый стоп: ${fmt(fill)} · цена ${fmt(snap.last)}`,
-          `uPnL: ${unreal.toFixed(2)}% · цель всё ещё ${fmt(t.tp)}`,
+          `Есть +0.6R — в примере стоп перевожу в безубыток (${fmt(fill)}).`,
+          `Вероятность ${winPct}% · ${brief.pressureLabel}`,
+          `Цель всё ещё ${fmt(t.tp)}.`,
         ].join('\n'),
         dedupeKey: `paper:be:${t.id}`,
       })
     }
 
-    if (hitTp(t, snap, fill) && !t.tpSent) {
+    if (hitTp(t, snap) && !t.tpSent) {
       t.tpSent = true
       t.status = 'CLOSED'
       t.closedAt = now
       t.closeReason = 'tp'
       dirty = true
-      const exit = t.side === 'LONG' ? Math.max(snap.last, t.tp) : Math.min(snap.last, t.tp)
+      const exit =
+        t.side === 'LONG' ? Math.max(snap.last, t.tp) : Math.min(snap.last, t.tp)
       comments.push({
         alertType: 'SYSTEM',
-        title: `🎯 Цель взята ${nameOf(t.symbol)}`,
+        title: `🎯 Пример: цель ${nameOf(t.symbol)}`,
         text: [
-          `Закрываю бумажную позицию по цели.`,
-          `Вход ${fmt(fill)} → выход ~${fmt(exit)}`,
-          `Результат: ${pnlPct(t.side, fill, exit).toFixed(2)}% · ${t.setup}`,
-          `Хороший сетап. Ищу следующий.`,
+          `Учебная сделка закрыта по TP.`,
+          `Вход ${fmt(fill)} → ~${fmt(exit)} · ${pnlPct(t.side, fill, exit).toFixed(2)}%`,
+          `Финальная вероятность перед выходом была ${winPct}%`,
+          brief.pressureLabel,
         ].join('\n'),
         dedupeKey: `paper:tp:${t.id}`,
       })
@@ -468,11 +819,11 @@ export async function monitorPaperTrades(
       const exit = t.trailingStop ?? snap.last
       comments.push({
         alertType: 'SYSTEM',
-        title: `🚨 Трейл сработал ${nameOf(t.symbol)}`,
+        title: `🚨 Пример: трейл-выход ${nameOf(t.symbol)}`,
         text: [
-          `Тень стопа пробита — фиксирую.`,
-          `Вход ${fmt(fill)} → выход ~${fmt(exit)}`,
-          `Результат: ${pnlPct(t.side, fill, exit).toFixed(2)}%`,
+          `Тень стопа пробита — фиксирую пример.`,
+          `Результат ${pnlPct(t.side, fill, exit).toFixed(2)}% · win% был ${winPct}%`,
+          brief.pressureLabel,
         ].join('\n'),
         dedupeKey: `paper:trailhit:${t.id}`,
       })
@@ -486,35 +837,34 @@ export async function monitorPaperTrades(
       dirty = true
       comments.push({
         alertType: 'SYSTEM',
-        title: `🛑 Стоп ${nameOf(t.symbol)}`,
+        title: `🛑 Пример: стоп ${nameOf(t.symbol)}`,
         text: [
-          `Стоп поймали — выхожу без догона.`,
-          `Вход ${fmt(fill)} · стоп ${fmt(t.sl)} · цена ${fmt(snap.last)}`,
-          `Результат: ${pnlPct(t.side, fill, t.sl).toFixed(2)}%`,
-          `Риск отработан. Жду следующий сетап.`,
+          `Стоп по учебному плану. Без догона.`,
+          `Результат ${pnlPct(t.side, fill, t.sl).toFixed(2)}% · win% перед стопом ${winPct}%`,
+          brief.pressureLabel,
+          `Риск отработан — жду следующий сетап.`,
         ].join('\n'),
         dedupeKey: `paper:sl:${t.id}`,
       })
       continue
     }
 
-    // Pulse every ~20 min
     const lastPulse = t.lastPulseAt ?? t.openedAt ?? t.createdAt
-    if (now - lastPulse >= PULSE_MS) {
+    if (now - lastPulse >= pulseMs(t)) {
       t.lastPulseAt = now
+      t.lastWinPct = winPct
       dirty = true
-      comments.push({
-        alertType: 'SYSTEM',
-        title: `📡 Держу ${nameOf(t.symbol)}`,
-        text: [
-          `${t.side} · ${t.setup}`,
-          `Вход ${fmt(fill)} · сейчас ${fmt(snap.last)}`,
-          `uPnL: ${unreal >= 0 ? '+' : ''}${unreal.toFixed(2)}%`,
-          `Стоп ${fmt(t.sl)} · Цель ${fmt(t.tp)}`,
-          `Пока без событий — сижу спокойно.`,
-        ].join('\n'),
-        dedupeKey: `paper:pulse:${t.id}:${Math.floor(now / PULSE_MS)}`,
-      })
+      comments.push(
+        buildCommentary({
+          t,
+          price: snap.last,
+          brief,
+          winPct,
+          prevWin,
+          factors,
+          phase: 'OPEN',
+        })
+      )
     }
   }
 
@@ -525,14 +875,16 @@ export async function monitorPaperTrades(
 export function formatTradesStatus(list: PaperTrade[]): string {
   const live = list.filter((t) => t.status === 'WAITING' || t.status === 'OPEN')
   if (!live.length) {
-    return 'Сейчас бумажных сделок нет.\nЖду следующий сигнал сканера.'
+    return 'Сейчас учебных (бумажных) сделок нет.\nЖду следующий сигнал сканера.'
   }
-  const lines = ['Мои бумажные сделки:', '']
+  const lines = ['Примеры сделок (бумажные):', '']
   for (const t of live) {
     const st = t.status === 'WAITING' ? '⏳ жду вход' : '✅ в позиции'
     const fill = t.fillPrice != null ? ` @ ${fmt(t.fillPrice)}` : ''
+    const cad = t.alertType === 'MEME' ? '2м' : '5м'
+    const win = t.lastWinPct != null ? ` · P≈${t.lastWinPct}%` : ''
     lines.push(
-      `${st} · ${t.side} ${nameOf(t.symbol)} · ${t.setup}${fill}`,
+      `${st} · ${t.side} ${nameOf(t.symbol)} · ${t.setup} · ${cad}${fill}${win}`,
       `  зона ${fmt(t.zoneLow)}–${fmt(t.zoneHigh)} · SL ${fmt(t.sl)} · TP ${fmt(t.tp)}`
     )
   }
