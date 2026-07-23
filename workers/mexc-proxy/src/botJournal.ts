@@ -485,7 +485,7 @@ export function deriveAdaptiveGates(
 ): BotAdaptiveGates {
   const blocked: string[] = []
   const boosted: string[] = []
-  let minMemeScore = 78
+  let minMemeScore = 72
   let minSniperScore = 82
 
   for (const s of analytics.bySetup) {
@@ -503,9 +503,10 @@ export function deriveAdaptiveGates(
 
   const meme = analytics.byAlertType.find((x) => x.alertType === 'MEME')
   if (meme && meme.wins + meme.losses >= 8) {
-    if (meme.winRate < 42) minMemeScore = 88
-    else if (meme.winRate < 50) minMemeScore = 84
-    else if (meme.winRate >= 60) minMemeScore = 74
+    // Cap adaptive floor — otherwise journal cold streak silences all memes
+    if (meme.winRate < 42) minMemeScore = 82
+    else if (meme.winRate < 50) minMemeScore = 78
+    else if (meme.winRate >= 60) minMemeScore = 70
   }
 
   const sniper = analytics.byAlertType.find((x) => x.alertType === 'SNIPER')

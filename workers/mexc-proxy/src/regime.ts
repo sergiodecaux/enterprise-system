@@ -70,28 +70,33 @@ export function regimeAllows(
   regime: MarketRegime,
   style: 'SCALP' | 'INTRADAY' | 'SWING',
   align: 'WITH_TREND' | 'COUNTER',
-  score: number
+  score: number,
+  /** Memes: allow more scalps in range/chop — otherwise almost never emit */
+  softForMeme = false
 ): { ok: boolean; reason?: string; scoreAdj: number } {
   let scoreAdj = score
 
   if (regime === 'VOLATILE_CHOP') {
-    if (style === 'SCALP') {
+    if (style === 'SCALP' && !softForMeme) {
       return { ok: false, reason: 'regime:chop_blocks_scalp', scoreAdj }
     }
-    if (align === 'COUNTER' && score < 90) {
+    if (style === 'SCALP' && softForMeme && score < 80) {
+      return { ok: false, reason: 'regime:chop_meme_scalp_weak', scoreAdj }
+    }
+    if (align === 'COUNTER' && score < (softForMeme ? 84 : 90)) {
       return { ok: false, reason: 'regime:chop_blocks_counter', scoreAdj }
     }
-    scoreAdj += 4 // need stronger confluence to clear 60% later
+    scoreAdj += softForMeme ? 2 : 4
   }
 
   if (regime === 'RANGING') {
-    if (style === 'SCALP' && align === 'COUNTER') {
+    if (style === 'SCALP' && align === 'COUNTER' && !softForMeme) {
       return { ok: false, reason: 'regime:range_blocks_scalp_counter', scoreAdj }
     }
-    if (style === 'SCALP' && score < 86) {
+    if (style === 'SCALP' && score < (softForMeme ? 78 : 86)) {
       return { ok: false, reason: 'regime:range_tight_scalp', scoreAdj }
     }
-    if (align === 'COUNTER' && score < 88) {
+    if (align === 'COUNTER' && score < (softForMeme ? 82 : 88)) {
       return { ok: false, reason: 'regime:range_blocks_weak_counter', scoreAdj }
     }
   }

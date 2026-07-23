@@ -474,27 +474,7 @@ async function runCronScan(env: Env): Promise<{
     return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
   }
 
-  // Watches FIRST — must not be starved by heavy market scan CPU/time limits
-  let watchAlerts = 0
-  try {
-    const wa = await monitorWatchedSetups(env)
-    for (const a of wa) {
-      const r = await broadcastAlert(env, {
-        type: 'SETUP_WATCH',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-        chatId: a.chatId,
-      })
-      watchAlerts += r.sent
-      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
-        await markChatDigestSent(env, a.chatId)
-      }
-    }
-  } catch (err) {
-    console.error('[cron] watch monitor failed', err)
-  }
-
+  // Market scan FIRST (memes/snipers), then watches — avoid silencing signals on CPU timeout
   const heartbeat = await maybeHeartbeat(env)
   const gates = await getAdaptiveGates(env)
   const alerts = await runMarketScan(gates)
@@ -543,6 +523,26 @@ async function runCronScan(env: Env): Promise<{
         paperComments += cr.sent
       }
     }
+  }
+
+  let watchAlerts = 0
+  try {
+    const wa = await monitorWatchedSetups(env)
+    for (const a of wa) {
+      const r = await broadcastAlert(env, {
+        type: 'SETUP_WATCH',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+        chatId: a.chatId,
+      })
+      watchAlerts += r.sent
+      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
+        await markChatDigestSent(env, a.chatId)
+      }
+    }
+  } catch (err) {
+    console.error('[cron] watch monitor failed', err)
   }
 
   // Narrate open / waiting paper trades

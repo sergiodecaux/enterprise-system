@@ -546,7 +546,8 @@ function applyBookAndStrength(
   score: number,
   bookImb: number | null,
   rs: number | null,
-  isBtc: boolean
+  isBtc: boolean,
+  softForMeme = false
 ): { score: number; note: string } | null {
   let s = score
   const notes: string[] = []
@@ -555,9 +556,9 @@ function applyBookAndStrength(
     const aligned =
       (side === 'LONG' && bookImb >= 18) || (side === 'SHORT' && bookImb <= -18)
     const against =
-      (side === 'LONG' && bookImb <= -25) || (side === 'SHORT' && bookImb >= 25)
+      (side === 'LONG' && bookImb <= (softForMeme ? -32 : -25)) ||
+      (side === 'SHORT' && bookImb >= (softForMeme ? 32 : 25))
     if (against) {
-      // Hard veto — стакан против входа
       return null
     }
     if (aligned) {
@@ -571,25 +572,26 @@ function applyBookAndStrength(
   }
 
   if (!isBtc && rs != null) {
+    const weakCut = softForMeme ? -10 : -6
+    const strongCut = softForMeme ? 10 : 6
     if (side === 'LONG') {
-      if (rs <= -6) return null // weak alt — no long
+      if (rs <= weakCut) return null
       if (rs >= 3) {
         s += Math.min(8, 3 + rs * 0.4)
         notes.push(coinStrengthLabel(rs, false))
       } else if (rs < -1.5) {
-        s -= 4
+        s -= softForMeme ? 2 : 4
         notes.push(coinStrengthLabel(rs, false))
       } else {
         notes.push(coinStrengthLabel(rs, false))
       }
     } else {
-      // SHORT prefers weak / lagging alts
-      if (rs >= 6) return null // strong alt — no short
+      if (rs >= strongCut) return null
       if (rs <= -3) {
         s += Math.min(8, 3 + Math.abs(rs) * 0.4)
         notes.push(coinStrengthLabel(rs, false))
       } else if (rs > 1.5) {
-        s -= 4
+        s -= softForMeme ? 2 : 4
         notes.push(coinStrengthLabel(rs, false))
       } else {
         notes.push(coinStrengthLabel(rs, false))
@@ -692,7 +694,8 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
   if (BLUE_CHIPS.has(t.symbol)) return false
   const price = Number(t.lastPrice)
   const vol = quoteVol(t)
-  return price > 0 && price <= 25 && vol >= MIN_MEME_QUOTE_VOL
+  // Memes / micro-caps: allow up to $50 (was $25 — cut many liquid names)
+  return price > 0 && price <= 50 && vol >= MIN_MEME_QUOTE_VOL
 }
 
 /**
@@ -733,7 +736,11 @@ export async function runMarketScan(
 
   const memes = liquidUniverse
     .filter((t) => isMemeCandidate(t, liquidSet))
-    .slice(0, 8)
+    .sort(
+      (a, b) =>
+        Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
+    )
+    .slice(0, 14)
 
   const movers = liquidUniverse
     .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
@@ -835,11 +842,24 @@ export async function runMarketScan(
         scoreAdj = Math.min(99, scoreAdj + 4) // HTF trend + LTF pullback
       }
 
-      const regimeGate = regimeAllows(btcRegime, style, align, scoreAdj)
+      const regimeGate = regimeAllows(
+        btcRegime,
+        style,
+        align,
+        scoreAdj,
+        type === 'MEME'
+      )
       if (!regimeGate.ok) return
       scoreAdj = regimeGate.scoreAdj
 
-      const gated = applyBookAndStrength(side, scoreAdj, bookImb, rs, isBtc)
+      const gated = applyBookAndStrength(
+        side,
+        scoreAdj,
+        bookImb,
+        rs,
+        isBtc,
+        type === 'MEME'
+      )
       if (!gated) return
       scoreAdj = gated.score
 
@@ -854,7 +874,15 @@ export async function runMarketScan(
 
       const priorWin = winPctFromScore(scoreAdj, align, style)
       const cal = calibrateWinPct(priorWin, composite, winCal)
-      const winPct = cal.winPct
+      // Journal cold streak was pulling meme win% under 60 and silencing all alerts
+      let winPct = cal.winPct
+      if (
+        winPct < MIN_WIN_PCT &&
+        priorWin >= MIN_WIN_PCT &&
+        scoreAdj >= (type === 'MEME' ? 76 : 84)
+      ) {
+        winPct = MIN_WIN_PCT
+      }
       if (winPct < MIN_WIN_PCT) return
 
       // Final live check — detail + book + funding endpoint
@@ -975,8 +1003,8 @@ export async function runMarketScan(
     }
 
     // ── VOLUME PUMP / DUMP · SCALP ─────────────────────────────────
-    const spikeMultMin = isMajor && !preferMeme ? 2.8 : 4
-    const spikeMoveMin = isMajor && !preferMeme ? 1.2 : 2
+    const spikeMultMin = preferMeme ? 3.2 : isMajor ? 2.8 : 4
+    const spikeMoveMin = preferMeme ? 1.5 : isMajor ? 1.2 : 2
     if (
       spike.detected &&
       spike.mult >= spikeMultMin &&
@@ -986,7 +1014,10 @@ export async function runMarketScan(
       const side: Side = isLong ? 'LONG' : 'SHORT'
       const align = classifyAlign(side, bias15 !== 'FLAT' ? bias15 : htfBias)
       // Counter scalp needs stronger spike
-      const baseScore = Math.min(95, 58 + spike.mult * 5)
+      const baseScore = Math.min(
+        95,
+        (preferMeme ? 62 : 58) + spike.mult * 5
+      )
       const score = align === 'COUNTER' ? baseScore + 6 : baseScore
       await push(
         side,

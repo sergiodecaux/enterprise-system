@@ -96,6 +96,8 @@ export function useTelegramAlerts() {
     if (!settings.enabled || !settings.meme) return
     if (!isTelegramAlertsConfigured()) return
 
+    const chatId = resolveChatId() ?? undefined
+
     for (const meme of memeSignals) {
       if (meme.heatScore < settings.minMemeHeat) continue
       if (
@@ -110,9 +112,15 @@ export function useTelegramAlerts() {
       if (sentMemeRef.current.has(key)) continue
       sentMemeRef.current.add(key)
 
-      void pushMemeAlert(meme).then(() => {
+      void pushMemeAlert(meme, chatId).then(() => {
         logger.info(`[TG] Meme alert ${key}`)
       })
     }
-  }, [memeSignals, settings.enabled, settings.meme, settings.minMemeHeat])
+  }, [
+    memeSignals,
+    settings.enabled,
+    settings.meme,
+    settings.minMemeHeat,
+    resolveChatId,
+  ])
 }

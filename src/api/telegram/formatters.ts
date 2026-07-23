@@ -326,7 +326,10 @@ export async function pushSniperAlert(signal: SniperSignal): Promise<void> {
   })
 }
 
-export async function pushMemeAlert(meme: MemeSignal): Promise<void> {
+export async function pushMemeAlert(
+  meme: MemeSignal,
+  chatId?: number
+): Promise<void> {
   const check = await assertUsdtPerpetual(meme.symbol)
   if (!check.ok) return
   const msg = formatMemeTelegramMessage(meme)
@@ -335,6 +338,7 @@ export async function pushMemeAlert(meme: MemeSignal): Promise<void> {
     title: msg.title,
     text: msg.text,
     dedupeKey: msg.dedupeKey,
+    chatId,
   })
 }
 
