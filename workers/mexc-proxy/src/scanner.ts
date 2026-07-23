@@ -13,6 +13,18 @@ import {
 } from './botJournal'
 import { detectMarketRegime, regimeAllows, type MarketRegime } from './regime'
 import { assessBookToxicity } from './bookToxicity'
+import {
+  assessZoneFuel,
+  buildLiquidityMap,
+  findSmartZone,
+  zoneProbabilityAdj,
+  type SmartZonePlan,
+} from './liquidityZones'
+import {
+  contextProbabilityAdj,
+  getMarketContext,
+  type MarketContext,
+} from './marketContext'
 
 const MEXC = 'https://contract.mexc.com'
 
@@ -58,6 +70,12 @@ export interface TradePlanPayload {
   invalidate: number
   sl: number
   tp: number
+  /** SSL / BSL / ATR — same vocabulary as Mini App */
+  zoneSource?: 'SSL' | 'BSL' | 'SWING' | 'ATR'
+  zoneStrength?: number
+  zoneTouches?: number
+  targetLabel?: string
+  zonePhase?: 'FAR' | 'APPROACH' | 'TOUCH'
 }
 
 export interface ScanAlert {
@@ -658,6 +676,10 @@ function computeSetupProbability(opts: {
   isBtc: boolean
   rsi: number
   side: Side
+  zone?: SmartZonePlan | null
+  zoneFuelAdj?: number
+  zoneFactors?: string[]
+  marketCtx?: MarketContext | null
 }): { winPct: number; factors: string[] } {
   const factors: string[] = []
   // Base from raw setup score (58→~65%, 90→~78%)
@@ -668,7 +690,6 @@ function computeSetupProbability(opts: {
     p += opts.style === 'SCALP' ? 4 : 6
     factors.push(`+${opts.style === 'SCALP' ? 4 : 6}% по тренду`)
   } else {
-    // Counter can still clear 60% with strong score / exhaustion
     p -= opts.style === 'SCALP' ? 2 : 1
     factors.push(`−${opts.style === 'SCALP' ? 2 : 1}% контртренд (нужен сильный setup)`)
   }
@@ -761,8 +782,29 @@ function computeSetupProbability(opts: {
     }
   }
 
+  // Mini App–parity: SSL/BSL strength + fuel
+  if (opts.zoneFactors?.length) {
+    p += opts.zoneFuelAdj ?? 0
+    factors.push(...opts.zoneFactors)
+  } else {
+    const z = zoneProbabilityAdj(opts.zone ?? null, null)
+    p += z.adj
+    factors.push(...z.factors)
+  }
+
+  // Fear&Greed / news / BTC.D
+  if (opts.marketCtx) {
+    const cx = contextProbabilityAdj({
+      side: opts.side,
+      isBtc: opts.isBtc,
+      ctx: opts.marketCtx,
+    })
+    p += cx.adj
+    factors.push(...cx.factors)
+  }
+
   const winPct = Math.round(Math.min(88, Math.max(0, p)))
-  return { winPct, factors: factors.slice(0, 7) }
+  return { winPct, factors: factors.slice(0, 10) }
 }
 
 function styleHashTag(
@@ -795,6 +837,7 @@ function formatTradeAlert(opts: {
   contextLines: string[]
   probFactors: string[]
   chased: boolean
+  zoneLines?: string[]
   extras?: string[]
 }): { title: string; text: string } {
   const name = opts.symbol.replace('_USDT', '/USDT')
@@ -821,7 +864,7 @@ function formatTradeAlert(opts: {
         `Бот ставит авто-watch на откат (оповещу при касании).`,
       ]
     : [
-        `Тип входа: ЛИМИТ на откат — не маркет-chase`,
+        `Тип входа: ЛИМИТ на зону ликвидности — не маркет-chase`,
         `Зона входа: ${fmt(opts.zoneLow)} – ${fmt(opts.zoneHigh)}`,
         `Лимитка (ориентир): ${fmt(opts.entryIdeal)}`,
         chaseRule,
@@ -834,6 +877,9 @@ function formatTradeAlert(opts: {
     `Вероятность: ${opts.winPct}% (порог ${MIN_WIN_PCT}%) · R:R 1:${rr.toFixed(1)}`,
     `Сигнал @ ${now}`,
     '',
+    ...(opts.zoneLines?.length
+      ? ['Анализ зоны (как в приложении):', ...opts.zoneLines.map((l) => `• ${l}`), '']
+      : []),
     'Как посчитана вероятность:',
     ...opts.probFactors.map((l) => `• ${l}`),
     '',
@@ -844,7 +890,7 @@ function formatTradeAlert(opts: {
     ...entryBlock,
     '',
     `Стоп: ${fmt(opts.sl)} (${pct(opts.entryIdeal, opts.sl)})`,
-    `Цель: ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
+    `Цель (ближ. ликвидность): ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
     '',
     `Причина: ${opts.reason}`,
     '',
@@ -854,7 +900,7 @@ function formatTradeAlert(opts: {
     '',
     opts.chased
       ? '⏳ Только лимит в зоне. Вне зоны — пропуск.'
-      : '⚠️ Если цена выйдет из зоны до входа — не догонять, ждать откат.',
+      : '⚠️ Подход → реакция/стакан → топливо до цели. Не догонять вне зоны.',
   ].join('\n')
 
   return { title, text }
@@ -935,6 +981,7 @@ export async function runMarketScan(
   const btc1h = await fetchKlines('BTC_USDT', 'Min60', 48)
   const btcRegime: MarketRegime = detectMarketRegime(btc1h)
   const winCal: WinPctCalibrationEntry[] = gates?.winPctBySetup ?? []
+  const marketCtx = await getMarketContext()
 
   const analyze = async (t: TickerRow, preferMeme: boolean) => {
     if (seen.has(t.symbol)) return
@@ -982,6 +1029,7 @@ export async function runMarketScan(
 
     const bookImb = await fetchBookImbalance(t.symbol)
     const rs = isBtc ? null : relStrengthVsBtc(c1h, btc1h)
+    const liqMap = buildLiquidityMap(c1h.length >= 30 ? c1h : candles, price)
     const toxCache = new Map<Side, Awaited<ReturnType<typeof assessBookToxicity>>>()
 
     const spike = volumeSpike(candles)
@@ -1061,17 +1109,39 @@ export async function runMarketScan(
         if (scoreAdj < min + boost) return
       }
 
+      // Prefer Mini App SSL/BSL zone; ATR only as fallback
+      const smart = findSmartZone(side, price, liqMap, atr)
+      const fuel = smart
+        ? assessZoneFuel({
+            side,
+            price,
+            zoneLow: smart.zoneLow,
+            zoneHigh: smart.zoneHigh,
+            candles1m: candles,
+            bookImb,
+          })
+        : null
+      if (smart && liqMap.liquidityBoost > 0) {
+        scoreAdj = Math.min(99, scoreAdj + Math.round(liqMap.liquidityBoost * 2))
+      }
+      if (fuel) scoreAdj = Math.max(0, Math.min(99, scoreAdj + fuel.scoreAdj))
+
+      const zAdj = zoneProbabilityAdj(smart, fuel)
       const prior = computeSetupProbability({
         score: scoreAdj,
         align,
         style,
         regime: btcRegime,
-        pullback: ctx.pullback,
+        pullback: ctx.pullback || smart?.phase === 'APPROACH',
         bookImb,
         rs,
         isBtc,
         rsi,
         side,
+        zone: smart,
+        zoneFuelAdj: zAdj.adj,
+        zoneFactors: zAdj.factors,
+        marketCtx,
       })
       const cal = calibrateWinPct(prior.winPct, composite, winCal)
       // Soft floor: cold streak must not silence healthy high-score tags
@@ -1088,7 +1158,18 @@ export async function runMarketScan(
       // Final live check — detail + book + funding endpoint
       if (!(await isSymbolTradableNow(t.symbol, minVol))) return
 
-      const plan = buildEntryPlan(side, price, atr, style)
+      const atrPlan = buildEntryPlan(side, price, atr, style)
+      const plan = smart
+        ? {
+            signalPrice: price,
+            entryIdeal: smart.limitEntry,
+            zoneLow: smart.zoneLow,
+            zoneHigh: smart.zoneHigh,
+            invalidate: smart.invalidate,
+            sl: smart.invalidate,
+            tp: smart.target,
+          }
+        : atrPlan
       const chased = isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
 
       const obiStr =
@@ -1102,12 +1183,25 @@ export async function runMarketScan(
             : 'n/a'
           : `${rs >= 0 ? '+' : ''}${rs.toFixed(1)}pp vs BTC 24h`
 
+      const zoneLines = smart
+        ? [
+            ...smart.reasoning,
+            ...(fuel?.lines ?? []),
+            `Цель полёта: ${smart.targetLabel}`,
+          ]
+        : ['Сильной SSL/BSL не найдено — ATR pullback fallback']
+
       const whyNow: string[] = [
-        reason.length > 140 ? `${reason.slice(0, 137)}…` : reason,
+        smart
+          ? `${smart.source} ${smart.phase}: ${smart.reasoning[0] ?? reason}`
+          : reason.length > 140
+            ? `${reason.slice(0, 137)}…`
+            : reason,
         `Bias 1h ${bias1h} / 4h ${bias4h} · режим BTC ${btcRegime}`,
-        ctx.pullback
-          ? `Локальный откат 15m (${bias15}) в глобальный ${ctx.global} — зона лимитки.`
-          : `Сигнал ${align === 'WITH_TREND' ? 'по тренду' : 'контртренд'} · стиль ${styleLabel(style)}.`,
+        marketCtx.lines[0] ??
+          (ctx.pullback
+            ? `Локальный откат 15m (${bias15}) в глобальный ${ctx.global}.`
+            : `Сигнал ${align === 'WITH_TREND' ? 'по тренду' : 'контртренд'} · ${styleLabel(style)}.`),
       ].slice(0, 3)
 
       const probFactors = [
@@ -1121,10 +1215,14 @@ export async function runMarketScan(
         `1h bias: ${bias1h} · 4h bias: ${bias4h} · 15m: ${bias15}`,
         `OBI: ${obiStr} · RS: ${rsStr}`,
         `Режим рынка: ${btcRegime}`,
+        ...marketCtx.lines,
         gated.note,
         `Тренд: глобальный ${ctx.global} · локальный ${ctx.local}${
           ctx.pullback ? ' · откат в тренд' : ''
         }`,
+        `Ликвидность: SSL ${liqMap.nearestSSL ? `×${liqMap.nearestSSL.touches}` : '—'} · BSL ${
+          liqMap.nearestBSL ? `×${liqMap.nearestBSL.touches}` : '—'
+        } · boost ${liqMap.liquidityBoost.toFixed(2)}`,
         `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M · RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
         ...tox.notes,
         ...extras,
@@ -1149,6 +1247,7 @@ export async function runMarketScan(
         whyNow,
         contextLines,
         probFactors,
+        zoneLines,
         chased,
       })
       alerts.push({
@@ -1160,7 +1259,7 @@ export async function runMarketScan(
         winPct,
         style,
         align,
-        needsPullbackWatch: chased,
+        needsPullbackWatch: chased || smart?.phase === 'FAR' || smart?.phase === 'APPROACH',
         tradePlan: {
           side,
           symbol: t.symbol,
@@ -1172,6 +1271,11 @@ export async function runMarketScan(
           invalidate: plan.invalidate,
           sl: plan.sl,
           tp: plan.tp,
+          zoneSource: smart?.source ?? 'ATR',
+          zoneStrength: smart?.strength,
+          zoneTouches: smart?.touches,
+          targetLabel: smart?.targetLabel,
+          zonePhase: smart?.phase,
         },
       })
     }

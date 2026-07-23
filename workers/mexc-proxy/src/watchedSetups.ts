@@ -3,6 +3,12 @@
  * Portable (no imports from frontend src).
  */
 
+import {
+  assessZoneFuel,
+  buildLiquidityMap,
+  findSmartZone,
+} from './liquidityZones'
+
 export type SetupStatus =
   | 'HYPOTHESIS'
   | 'ARMED'
@@ -122,6 +128,22 @@ async function fetchKlines(
   return out
 }
 
+async function fetchBookImbalance(symbol: string): Promise<number | null> {
+  const json = await mexcJson<{
+    data?: { asks?: [number, number, number][]; bids?: [number, number, number][] }
+  }>(`/api/v1/contract/depth/${symbol}?limit=20`)
+  const asks = json?.data?.asks ?? []
+  const bids = json?.data?.bids ?? []
+  if (!asks.length || !bids.length) return null
+  let askVol = 0
+  let bidVol = 0
+  for (const a of asks) askVol += Number(a[1] ?? 0)
+  for (const b of bids) bidVol += Number(b[1] ?? 0)
+  const tot = askVol + bidVol
+  if (!(tot > 0)) return null
+  return ((bidVol - askVol) / tot) * 100
+}
+
 function toMexcSymbol(internalOrFlat: string): string {
   const s = (internalOrFlat || '').trim().toUpperCase()
   if (!s) return 'UNKNOWN_USDT'
@@ -223,7 +245,8 @@ export function evaluateWatchSnapshot(
   price: number,
   ohlcv1m: Candle[],
   ohlcv1h: Candle[],
-  ohlcv4h: Candle[]
+  ohlcv4h: Candle[],
+  bookImb: number | null = null
 ): WatchEvalSnapshot {
   const zoneMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
   const inside = inZone(price, setup.entryZone)
@@ -266,6 +289,15 @@ export function evaluateWatchSnapshot(
     }
   }
 
+  const fuel = assessZoneFuel({
+    side: setup.side,
+    price,
+    zoneLow: setup.entryZone.bottom,
+    zoneHigh: setup.entryZone.top,
+    candles1m: ohlcv1m,
+    bookImb,
+  })
+
   const pre = setup.preconditions.map((p) => ({ ...p }))
   for (const p of pre) {
     if (p.id === 'touch' || p.id === 'zone' || p.id === 'limit' || p.id === 'entry') {
@@ -276,44 +308,69 @@ export function evaluateWatchSnapshot(
         ? 'MET'
         : p.status
     }
-    if (p.id === 'reject' || p.id === 'confirm' || p.id === 'flip' || p.id === 'book') {
-      const swept = pre.find(
-        (x) =>
-          x.id === 'sweep' ||
-          x.id === 'stop_hunt' ||
-          x.id === 'touch' ||
-          x.id === 'zone'
-      )
-      if (swept?.status === 'MET' && inside) {
-        if (p.id !== 'book') p.status = 'MET'
+    if (p.id === 'book') {
+      if (fuel.bookOk) p.status = 'MET'
+      else if (
+        bookImb != null &&
+        ((setup.side === 'LONG' && bookImb <= -18) ||
+          (setup.side === 'SHORT' && bookImb >= 18))
+      ) {
+        p.status = 'FAILED'
+      } else {
+        p.status = 'PENDING'
       }
     }
+    if (p.id === 'reject' || p.id === 'confirm' || p.id === 'flip' || p.id === 'fuel') {
+      if (fuel.reactionOk) p.status = 'MET'
+      else if (inside) p.status = p.status === 'MET' ? 'MET' : 'PENDING'
+    }
+  }
+
+  // Ensure book/confirm exist for zone watches
+  if (!pre.some((p) => p.id === 'book')) {
+    pre.push({
+      id: 'book',
+      label: 'Стакан / топливо',
+      status: fuel.bookOk ? 'MET' : 'PENDING',
+    })
+  }
+  if (!pre.some((p) => p.id === 'confirm')) {
+    pre.push({
+      id: 'confirm',
+      label: 'Реакция зоны',
+      status: fuel.reactionOk ? 'MET' : 'PENDING',
+    })
   }
 
   let status: SetupStatus = 'HYPOTHESIS'
   if (pre.some((p) => p.status === 'FAILED')) status = 'INVALIDATED'
   else if (pre.length > 0 && pre.every((p) => p.status === 'MET')) status = 'READY'
-  else if (setup.kind.startsWith('FORECAST') && inside) status = 'READY'
+  else if (setup.kind.startsWith('FORECAST') && inside && fuel.fuelOk) status = 'READY'
+  else if (inside && fuel.reactionOk && fuel.bookOk) status = 'READY'
   else if (pre.some((p) => p.status === 'MET')) status = 'ARMED'
 
   const met = pre.filter((p) => p.status === 'MET').length
   const pending = pre.filter((p) => p.status === 'PENDING').length
+  const approach = !inside && Math.abs(distToZonePct) < 0.45
+
   let narrative: string
   if (status === 'READY') {
-    narrative = 'Все условия MET — можно входить по лимиту'
+    narrative = `READY: зона + реакция + топливо → цель ${setup.target}`
   } else if (status === 'ARMED') {
     narrative = inside
-      ? `В зоне · условий ${met}/${pre.length} · ждём подтверждение`
-      : `Частично готово (${met} MET, ${pending} PENDING)`
+      ? `TOUCH · ${fuel.reactionNote} · ${fuel.fuelNote} · ${met}/${pre.length}`
+      : approach
+        ? `APPROACH · до зоны ${distToZonePct.toFixed(2)}% · ждём касание`
+        : `Частично (${met} MET, ${pending} PENDING)`
   } else if (inside) {
-    narrative = 'Цена в зоне — ждём реакцию / reclaim'
-  } else if (Math.abs(distToZonePct) < 0.35) {
-    narrative = `Почти у зоны (${distToZonePct >= 0 ? '+' : ''}${distToZonePct.toFixed(2)}%)`
+    narrative = `TOUCH — ${fuel.reactionNote}`
+  } else if (approach) {
+    narrative = `APPROACH (${distToZonePct >= 0 ? '+' : ''}${distToZonePct.toFixed(2)}%) — смотрим закрепление`
   } else {
     narrative =
       distToZonePct > 0
-        ? `Выше зоны на ${distToZonePct.toFixed(2)}% — ждём подход`
-        : `Ниже зоны на ${Math.abs(distToZonePct).toFixed(2)}% — ждём подход`
+        ? `FAR · выше зоны на ${distToZonePct.toFixed(2)}%`
+        : `FAR · ниже зоны на ${Math.abs(distToZonePct).toFixed(2)}%`
   }
 
   return {
@@ -664,7 +721,7 @@ function pullbackStaleReason(
 }
 
 /**
- * Rebuild bounce/pullback levels from fresh 15m/1h swings.
+ * Rebuild bounce/pullback levels — prefer Mini App SSL/BSL map, else swing/Fib.
  */
 function rebuildPullbackSetup(
   setup: ConditionalSetupPayload,
@@ -674,6 +731,46 @@ function rebuildPullbackSetup(
 ): ConditionalSetupPayload | null {
   const swingSrc = c15.length >= 10 ? c15 : c1h
   if (swingSrc.length < 8 || !(price > 0)) return null
+
+  const last = swingSrc[swingSrc.length - 1]
+  const atrApprox = Math.max((last[2] - last[3]) * 2, price * 0.006)
+  const map = buildLiquidityMap(c1h.length >= 30 ? c1h : swingSrc, price)
+  const smart = findSmartZone(setup.side, price, map, atrApprox)
+
+  if (smart) {
+    const oldMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
+    if (Math.abs(smart.mid - oldMid) / price < 0.0015) return null
+    const inZoneNow =
+      price >= smart.zoneLow * 0.997 && price <= smart.zoneHigh * 1.003
+    return {
+      ...setup,
+      kind: setup.side === 'LONG' ? 'BOUNCE_SSL' : 'BOUNCE_BSL',
+      title: `↗ ${smart.source} ×${smart.touches} · ${smart.phase}`,
+      probability: Math.round(
+        Math.min(
+          78,
+          Math.max(48, 55 + smart.strength + (smart.phase === 'APPROACH' ? 6 : 0))
+        )
+      ),
+      preconditions: [
+        {
+          id: 'touch',
+          label: `Касание ${smart.source}`,
+          status: inZoneNow ? 'MET' : 'PENDING',
+        },
+        { id: 'book', label: 'Стакан / топливо', status: 'PENDING' },
+        { id: 'confirm', label: 'Реакция / reclaim', status: 'PENDING' },
+      ],
+      entryZone: { top: smart.zoneHigh, bottom: smart.zoneLow },
+      limitEntry: smart.limitEntry,
+      target: smart.target,
+      invalidation: smart.invalidate,
+      triggerSummary: `${smart.source} → ${smart.targetLabel} · фаза ${smart.phase}`,
+      reasoning: smart.reasoning,
+      status: inZoneNow ? 'ARMED' : 'HYPOTHESIS',
+      createdAt: setup.createdAt,
+    }
+  }
 
   const swingLow = recentSwing(swingSrc, 'low')
   const swingHigh = recentSwing(swingSrc, 'high')
@@ -685,7 +782,6 @@ function rebuildPullbackSetup(
   let kind = setup.kind
 
   if (setup.side === 'LONG') {
-    // Prefer SSL under price; else 61.8% pullback of range under price
     const fib618 = swingHigh - range * 0.618
     mid =
       swingLow < price * 0.999
@@ -712,7 +808,6 @@ function rebuildPullbackSetup(
   }
 
   const band = zoneBand(mid, 0.0038)
-  // Don't rebuild to almost the same place
   const oldMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
   if (Math.abs(mid - oldMid) / price < 0.0015) return null
 
@@ -722,8 +817,8 @@ function rebuildPullbackSetup(
   const risk = Math.abs(limitEntry - invalidation)
   const target =
     setup.side === 'LONG'
-      ? limitEntry + Math.max(risk * 2.1, price * 0.008)
-      : limitEntry - Math.max(risk * 2.1, price * 0.008)
+      ? map.nearestBSL?.price ?? limitEntry + Math.max(risk * 2.1, price * 0.008)
+      : map.nearestSSL?.price ?? limitEntry - Math.max(risk * 2.1, price * 0.008)
 
   const distPct = ((mid - price) / price) * 100
   const probability = Math.round(
@@ -739,34 +834,33 @@ function rebuildPullbackSetup(
     )
   )
 
-  const inZone = price >= band.bottom * 0.997 && price <= band.top * 1.003
-  const preconditions = [
-    {
-      id: 'touch',
-      label: `Касание зоны ${label}`,
-      status: inZone ? 'MET' : 'PENDING',
-    },
-    { id: 'book', label: 'Стакан за отскок', status: 'PENDING' },
-    { id: 'confirm', label: 'Реакция / reclaim', status: 'PENDING' },
-  ]
+  const inZoneNow = price >= band.bottom * 0.997 && price <= band.top * 1.003
 
   return {
     ...setup,
     kind,
     title: `↗ Отскок · ${label}`,
     probability,
-    preconditions,
+    preconditions: [
+      {
+        id: 'touch',
+        label: `Касание зоны ${label}`,
+        status: inZoneNow ? 'MET' : 'PENDING',
+      },
+      { id: 'book', label: 'Стакан / топливо', status: 'PENDING' },
+      { id: 'confirm', label: 'Реакция / reclaim', status: 'PENDING' },
+    ],
     entryZone: { top: band.top, bottom: band.bottom },
     limitEntry,
     target,
     invalidation,
     triggerSummary: `Обновлено 10м: лимит ${limitEntry.toPrecision(6)} → TP ${target.toPrecision(6)} · ~${probability}%`,
     reasoning: [
-      'Уровни пересчитаны по свежим свингам 15m/1h',
-      `Было далеко/устарело · новая дистанция ${distPct.toFixed(2)}%`,
+      'SSL/BSL map пуст — swing/Fib fallback',
+      `Дистанция ${distPct.toFixed(2)}% · цель opposite liquidity`,
       `SL @ ${invalidation.toPrecision(6)}`,
     ],
-    status: inZone ? 'ARMED' : 'HYPOTHESIS',
+    status: inZoneNow ? 'ARMED' : 'HYPOTHESIS',
     createdAt: setup.createdAt,
   }
 }
@@ -815,11 +909,12 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   }
 
   for (const [mexcSym, watches] of bySymbol) {
-    const [c1m, c15, c1h, c4h] = await Promise.all([
+    const [c1m, c15, c1h, c4h, bookImb] = await Promise.all([
       fetchKlines(mexcSym, 'Min1', 60),
       fetchKlines(mexcSym, 'Min15', 64),
       fetchKlines(mexcSym, 'Min60', 60),
       fetchKlines(mexcSym, 'Hour4', 40),
+      fetchBookImbalance(mexcSym),
     ])
     const price =
       c1m[c1m.length - 1]?.[4] ??
@@ -895,7 +990,8 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
           price,
           c1m,
           c1h,
-          c4h
+          c4h,
+          bookImb
         )
       }
 

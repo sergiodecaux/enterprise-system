@@ -478,35 +478,47 @@ function planToPullbackWatch(
   const top = Math.max(plan.zoneLow, plan.zoneHigh)
   const bottom = Math.min(plan.zoneLow, plan.zoneHigh)
   const id = `pb_${plan.symbol}_${plan.setup}_${Math.floor(Date.now() / 60_000)}`
+  const src = plan.zoneSource ?? 'ATR'
+  const phase = plan.zonePhase ?? 'FAR'
   return {
     id,
     kind: plan.side === 'LONG' ? 'BOUNCE_SSL' : 'BOUNCE_BSL',
     side: plan.side,
-    title: `Откат в зону · ${plan.setup}`,
+    title: `${src} · ${phase} · ${plan.setup}`,
     probability: winPct,
     preconditions: [
       {
-        id: 'pullback',
+        id: 'touch',
         label: `Ждём касание зоны ${bottom}–${top}`,
+        status: phase === 'TOUCH' ? 'MET' : 'PENDING',
+      },
+      {
+        id: 'book',
+        label: 'Стакан / топливо за сторону',
         status: 'PENDING',
       },
       {
-        id: 'no_chase',
-        label: `Не догонять за ${plan.invalidate}`,
-        status: 'MET',
+        id: 'confirm',
+        label: 'Реакция / reclaim в зоне',
+        status: 'PENDING',
       },
     ],
     entryZone: { top, bottom },
     limitEntry: plan.entryIdeal,
     target: plan.tp,
     invalidation: plan.invalidate,
-    triggerSummary: `${alertType}: цена вне зоны — лимит на откат`,
+    triggerSummary:
+      plan.targetLabel ??
+      `${alertType}: ${src} → цель ${plan.tp} · фаза ${phase}`,
     reasoning: [
-      'Сигнал уже ушёл от зоны — не догоняем.',
+      src === 'ATR'
+        ? 'SSL/BSL не найдена — ATR pullback + watch'
+        : `Зона ${src} ×${plan.zoneTouches ?? '?'} (сила ${plan.zoneStrength ?? '?'}) — как в приложении`,
+      `Фаза ${phase}: подход → касание → реакция → топливо → полёт к ликвидности`,
       `Лимитка ${plan.entryIdeal} · стоп ${plan.sl} · цель ${plan.tp}`,
-      `Инвалидация: ${plan.invalidate}`,
+      plan.targetLabel ? `Ближ. ликвидность: ${plan.targetLabel}` : `Инвалидация: ${plan.invalidate}`,
     ],
-    status: 'HYPOTHESIS',
+    status: phase === 'TOUCH' ? 'ARMED' : 'HYPOTHESIS',
     symbol: plan.symbol,
     internalSymbol: plan.symbol,
     createdAt: Date.now(),
