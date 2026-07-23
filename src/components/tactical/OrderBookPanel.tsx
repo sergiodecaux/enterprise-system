@@ -434,25 +434,19 @@ const OrderBookPanel = ({ symbol }: Props) => {
 
   return (
     <div className="space-y-3">
-      {activeWhaleAlerts.length > 0 && (
-        <div className="space-y-2">
-          {activeWhaleAlerts.map((alert) => (
-            <WhaleAlertBanner key={alert.id} alert={alert} />
-          ))}
-        </div>
-      )}
-
-      {activeAlerts.length > 0 && (
-        <div className="space-y-2">
-          {activeAlerts.map((event, i) => (
-            <WallAlert
-              key={`${event.timestamp}-${event.wall.id}-${i}`}
-              event={event}
-              onDismiss={() => handleDismissAlert(i)}
-            />
-          ))}
-        </div>
-      )}
+      {/* Fixed slot — alerts don't push chart layout above */}
+      <div className="max-h-28 min-h-0 space-y-2 overflow-y-auto overscroll-contain">
+        {activeWhaleAlerts.map((alert) => (
+          <WhaleAlertBanner key={alert.id} alert={alert} />
+        ))}
+        {activeAlerts.map((event, i) => (
+          <WallAlert
+            key={`${event.timestamp}-${event.wall.id}-${i}`}
+            event={event}
+            onDismiss={() => handleDismissAlert(i)}
+          />
+        ))}
+      </div>
 
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-mono text-sm font-bold uppercase text-holo">

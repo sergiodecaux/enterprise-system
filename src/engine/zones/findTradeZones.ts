@@ -16,6 +16,7 @@ import { buildGlobalFibonacci } from './globalFibonacci'
 import type { ConditionalSetup, SetupPrecondition } from '../setups/types'
 import { buildConditionalSetups } from '../setups/buildConditionalSetups'
 import type { PriceForecast } from '../prediction/types'
+import { buildZoneTradeVariants } from './zoneScenarios'
 
 export interface FoundTradeZone {
   id: string
@@ -83,85 +84,6 @@ function statusFromPre(pre: SetupPrecondition[]): ConditionalSetup['status'] {
   if (pre.length && pre.every((p) => p.status === 'MET')) return 'READY'
   if (pre.some((p) => p.status === 'MET')) return 'ARMED'
   return 'HYPOTHESIS'
-}
-
-function zoneToSetup(
-  z: FoundTradeZone,
-  price: number,
-  signal: CoinSignal | null,
-  bookImbalance: number | null
-): ConditionalSetup {
-  const inZone =
-    price >= z.bottom * 0.998 && price <= z.top * 1.002
-  const bookOk =
-    bookImbalance == null
-      ? 'PENDING'
-      : (z.side === 'LONG' && bookImbalance >= 12) ||
-          (z.side === 'SHORT' && bookImbalance <= -12)
-        ? 'MET'
-        : (z.side === 'LONG' && bookImbalance <= -20) ||
-            (z.side === 'SHORT' && bookImbalance >= 20)
-          ? 'FAILED'
-          : 'PENDING'
-
-  const pre: SetupPrecondition[] = [
-    {
-      id: 'touch',
-      label: `Цена в зоне ${z.bottom.toPrecision(5)}–${z.top.toPrecision(5)}`,
-      status: inZone ? 'MET' : 'PENDING',
-    },
-    {
-      id: 'book',
-      label:
-        z.side === 'LONG'
-          ? 'Стакан за LONG (OBI ≥ +12%)'
-          : 'Стакан за SHORT (OBI ≤ −12%)',
-      status: bookOk,
-    },
-    {
-      id: 'confirm',
-      label: 'Реакция / reclaim / absorption',
-      status:
-        signal?.absorption?.detected ||
-        signal?.ltfChoCH?.detected ||
-        (signal?.surgicalEntry && signal.surgicalEntry.status === 'READY')
-          ? 'MET'
-          : 'PENDING',
-    },
-  ]
-
-  const kind =
-    z.source === 'SSL'
-      ? 'BOUNCE_SSL'
-      : z.source === 'BSL'
-        ? 'BOUNCE_BSL'
-        : 'SURGICAL'
-
-  return {
-    id: z.id,
-    kind,
-    side: z.side,
-    title: `💎 ${z.label}`,
-    probability: Math.min(
-      78,
-      42 + z.strength * 4 + (inZone ? 8 : 0) + (bookOk === 'MET' ? 10 : 0)
-    ),
-    preconditions: pre,
-    entryZone: { top: z.top, bottom: z.bottom },
-    limitEntry: z.limitEntry,
-    target: z.target,
-    invalidation: z.invalidation,
-    triggerSummary: `${z.side} от зоны ${z.source}: лимит ${z.limitEntry.toPrecision(6)}, TP ${z.target.toPrecision(6)}, SL ${z.invalidation.toPrecision(6)}`,
-    reasoning: [
-      `Источник: ${z.source}`,
-      `Дистанция ${z.distancePct.toFixed(2)}%`,
-      'Слежение: зона + стакан + реакция → ювелирный вход в бот',
-    ],
-    status: statusFromPre(pre),
-    symbol: signal?.symbol,
-    internalSymbol: signal?.internalSymbol,
-    createdAt: Date.now(),
-  }
 }
 
 /**
@@ -372,8 +294,13 @@ export function findTradeZones(input: {
   const zones = [...longs.slice(0, 2), ...shorts.slice(0, 2)]
   const chartZones = zones.map((z) => z.chartZone)
 
-  const zoneSetups = zones.map((z) =>
-    zoneToSetup(z, price, input.signal ?? null, input.bookImbalance ?? null)
+  // Bounce + break variants with chart paths
+  const zoneSetups = buildZoneTradeVariants(
+    zones,
+    price,
+    input.bookImbalance ?? null,
+    input.signal?.symbol ?? input.flatSymbol,
+    input.signal?.internalSymbol ?? input.symbol
   )
 
   let extra: ConditionalSetup[] = []
@@ -387,14 +314,11 @@ export function findTradeZones(input: {
       price,
     }).filter(
       (s) =>
-        s.kind === 'BOUNCE_SSL' ||
-        s.kind === 'BOUNCE_BSL' ||
         s.kind === 'SURGICAL' ||
         s.kind === 'MM_HUNT'
     )
   }
 
-  // Dedupe by side+rough entry
   const setups = [...zoneSetups]
   for (const s of extra) {
     const dup = setups.some(

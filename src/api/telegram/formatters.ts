@@ -382,6 +382,53 @@ export async function pushCoinSignalAlert(
   })
 }
 
+/** Ack: бот начал следить за зонами — ждите ювелирный сигнал */
+export async function pushZoneWatchAck(opts: {
+  symbol: string
+  displayName?: string
+  price: number
+  zones: {
+    side: 'LONG' | 'SHORT'
+    label: string
+    mid: number
+    limitEntry: number
+    target: number
+    invalidation: number
+  }[]
+  setupsCount: number
+  chatId?: number
+}): Promise<void> {
+  const check = await assertUsdtPerpetual(opts.symbol)
+  if (!check.ok) return
+  const name = opts.displayName ?? opts.symbol.replace('_USDT', '/USDT')
+  const lines = opts.zones.slice(0, 6).map((z) => {
+    const icon = z.side === 'LONG' ? '🟢' : '🔴'
+    return `${icon} ${z.side} · ${z.label}\n   зона @ ${fmt(z.mid)} · лимит ${fmt(z.limitEntry)}\n   SL ${fmt(z.invalidation)} · TP ${fmt(z.target)}`
+  })
+
+  await sendTelegramAlert({
+    type: 'SETUP_WATCH',
+    title: `👁 Слежу за зонами · ${name}`,
+    text: [
+      `Монета: ${name} (${check.apiSymbol})`,
+      `Цена сейчас: ${fmt(opts.price)}`,
+      `Вариантов сделок: ${opts.setupsCount}`,
+      '',
+      'Зоны под наблюдением:',
+      ...lines,
+      '',
+      'Жди сигнал «💎 Ювелирный LONG/SHORT» когда:',
+      '• цена войдёт в зону',
+      '• стакан подтвердит сторону',
+      '• будет реакция / reclaim',
+      '',
+      'Не входи заранее — только по READY.',
+    ].join('\n'),
+    dedupeKey: `zone_watch:${check.apiSymbol}:${Math.floor(Date.now() / 60_000)}`,
+    chatId: opts.chatId,
+  })
+}
+
 /** Ювелирный вход из найденной зоны ликвидности */
 export async function pushJewelEntryAlert(opts: {
   setup: ConditionalSetup

@@ -260,9 +260,9 @@ const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
         )}
       </div>
 
-      {/* Активные алерты */}
+      {/* Активные алерты — фиксированный слот, без прыжка вёрстки */}
       {activeAlerts.length > 0 && (
-        <div className="mb-3 space-y-2">
+        <div className="mb-3 max-h-28 space-y-2 overflow-y-auto overscroll-contain">
           {activeAlerts.slice(0, 3).map((alert) => (
             <WhaleAlertBanner key={alert.id} alert={alert} />
           ))}

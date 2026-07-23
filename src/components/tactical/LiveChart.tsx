@@ -43,7 +43,9 @@ import {
   refreshZoneSetups,
   type FoundTradeZone,
 } from '../../engine/zones/findTradeZones'
-import { pushJewelEntryAlert } from '../../api/telegram/formatters'
+import { pushJewelEntryAlert, pushZoneWatchAck } from '../../api/telegram/formatters'
+import ZonePathOverlay from './ZonePathOverlay'
+import ZoneVariantsPanel from './ZoneVariantsPanel'
 import { buildGlobalFibonacci } from '../../engine/zones/globalFibonacci'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
@@ -86,8 +88,7 @@ const INDICATOR_COLORS: Record<string, string> = {
   vwap: '#f97316',
 }
 
-const CHART_HEIGHT = 320
-const CHART_HEIGHT_CLEAN = 340
+const CHART_HEIGHT = 340
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
@@ -414,13 +415,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     setPickedSetups(result.setups)
     setShowSetupPicker(true)
     setShowForecast(true)
-    setCleanMode(false)
+    if (result.setups[0]) setSelectedSetupId(result.setups[0].id)
     haptic.success()
 
     const chatId = resolveChatId()
-    const autoWatch = result.setups
-      .filter((s) => s.side === 'LONG' || s.side === 'SHORT')
-      .slice(0, 4)
+    const autoWatch = result.setups.slice(0, 6)
+
+    // Immediate ack in bot: "watching zones, wait for jewel signal"
+    if (chatId || isTelegramAlertsConfigured()) {
+      void pushZoneWatchAck({
+        symbol: flatSymbol,
+        displayName: signal?.displayName,
+        price: currentPrice,
+        zones: result.zones.map((z) => ({
+          side: z.side,
+          label: z.label,
+          mid: z.mid,
+          limitEntry: z.limitEntry,
+          target: z.target,
+          invalidation: z.invalidation,
+        })),
+        setupsCount: result.setups.length,
+        chatId: chatId ?? undefined,
+      })
+    }
 
     for (const setup of autoWatch) {
       if (chatId) {
@@ -471,14 +489,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const longZ = result.nearestLong
     const shortZ = result.nearestShort
     showAlert(
-      `Зоны: ${result.zones.length}` +
-        (longZ
-          ? ` · LONG @ ${longZ.mid.toPrecision(5)}`
-          : '') +
-        (shortZ
-          ? ` · SHORT @ ${shortZ.mid.toPrecision(5)}`
-          : '') +
-        (chatId ? ' · слежение в боте' : ' · подпишитесь на бота для алертов')
+      chatId
+        ? `👁 Бот следит · ${result.setups.length} вариантов · жди 💎 сигнал`
+        : `Зоны: ${result.zones.length}` +
+            (longZ ? ` · LONG @ ${longZ.mid.toPrecision(5)}` : '') +
+            (shortZ ? ` · SHORT @ ${shortZ.mid.toPrecision(5)}` : '') +
+            ' · подпишитесь на бота для алертов'
     )
   }, [
     currentPrice,
@@ -794,10 +810,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     const ro = new ResizeObserver((entries) => {
       if (!entries.length || !chartRef.current) return
-      const w = entries[0].contentRect.width
+      const w = Math.floor(entries[0].contentRect.width)
       if (w <= 0) return
-      // Don't fight user gesture
       if (userPanningRef.current) return
+      // Only width — fixed height prevents jump when panels below grow
       chart.applyOptions({
         width: w,
         height: CHART_HEIGHT,
@@ -1165,7 +1181,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     'rgba($1, $2, $3, 0.9)'
   )
 
-  const chartHeight = cleanMode ? CHART_HEIGHT_CLEAN : CHART_HEIGHT
+  const chartHeight = CHART_HEIGHT
   const showSessions = sessionSettings.enabled && !cleanMode
   const showGhost =
     !!signal?.direction &&
@@ -1410,10 +1426,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             lastCandleTs={lastCandleTs}
           />
         )}
+        {zonesMode && pickedSetups.some((s) => s.chartPath?.length) && chartReady > 0 && (
+          <ZonePathOverlay
+            chart={chartRef.current}
+            series={candleRef.current}
+            setups={pickedSetups}
+            selectedId={selectedSetupId}
+            lastCandleTs={
+              lastCandleTs || Math.floor(Date.now() / 1000)
+            }
+            containerRef={containerRef}
+          />
+        )}
       </div>
 
       {chartPreferences.indicators.volume && indicators.volume.length > 0 && (
-        <VolumePanel volumeData={indicators.volume} height={cleanMode ? 40 : 50} />
+        <VolumePanel volumeData={indicators.volume} height={40} />
       )}
 
       {oscillators.map((mode) => (
@@ -1452,7 +1480,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </>
       )}
 
-      {showSetupPicker && (
+      {zonesMode && (
+        <ZoneVariantsPanel
+          zones={foundZones}
+          setups={pickedSetups}
+          selectedId={selectedSetupId}
+          watchingIds={watchingIds}
+          busy={watchBusy}
+          onSelect={(s) => {
+            setSelectedSetupId(s.id)
+            haptic.impact()
+          }}
+          onWatch={(s) => void handleWatchSetup(s)}
+        />
+      )}
+
+      {showSetupPicker && !zonesMode && (
         <SetupPickerPanel
           setups={pickedSetups}
           selectedId={selectedSetupId}
