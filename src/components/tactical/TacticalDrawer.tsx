@@ -603,13 +603,14 @@ const TacticalDrawer = () => {
 
       <div
         ref={drawerRef}
-        className={`fixed bottom-0 left-0 right-0 w-full max-h-[85vh] bg-space border-t border-hull-border rounded-t-2xl overflow-y-auto z-50 transition-transform duration-400 ease-out ${
+        className={`fixed bottom-0 left-0 right-0 w-full max-h-[85vh] bg-space border-t border-hull-border rounded-t-2xl overflow-y-auto overscroll-contain z-50 transition-transform duration-400 ease-out ${
           isDrawerOpen
             ? 'translate-y-0 opacity-100'
             : 'translate-y-full opacity-0 pointer-events-none'
         }`}
         style={{
           transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
+          WebkitOverflowScrolling: 'touch',
         }}
       >
         <div className="flex justify-center my-3">

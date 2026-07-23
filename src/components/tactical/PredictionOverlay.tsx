@@ -72,9 +72,19 @@ const PredictionOverlay = ({
       ...active.flatMap((sc) => sc.path.map((pp) => pp.timeOffsetSeconds))
     )
     const candleSec = Math.max(1, forecast.candleTimeframeSeconds)
-    const rightBars = Math.ceil(maxOffsetSec / candleSec) + 4
+    const rightBars = Math.min(24, Math.ceil(maxOffsetSec / candleSec) + 4)
 
-    chart.timeScale().applyOptions({ rightOffset: rightBars })
+    // Only expand right offset — never yank the viewport on every forecast refresh
+    try {
+      const ts = chart.timeScale()
+      const opts = ts.options()
+      const current = opts.rightOffset ?? 6
+      if (rightBars > current + 2) {
+        ts.applyOptions({ rightOffset: rightBars })
+      }
+    } catch {
+      /* ignore */
+    }
 
     // Рисуем C → B → A, чтобы A был сверху
     const ordered = [...active].sort((x, y) => {
@@ -112,11 +122,7 @@ const PredictionOverlay = ({
           delete forecastSeriesRefs.current[id]
         }
       }
-      try {
-        chart.timeScale().applyOptions({ rightOffset: 4 })
-      } catch {
-        /* ignore */
-      }
+      // Do not reset rightOffset — avoids jump when forecast toggles
     }
   }, [chart, forecast, activeScenarios])
 

@@ -102,6 +102,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const lineRefs = useRef<Record<string, ISeriesApi<'Line'>>>({})
   const priceLineRefs = useRef<IPriceLine[]>([])
   const liqLineRefs = useRef<IPriceLine[]>([])
+  /** Skip fitContent after first successful load for this symbol/tf */
+  const fittedKeyRef = useRef<string>('')
+  const userPanningRef = useRef(false)
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [candles, setCandles] = useState<OhlcvCandle[]>([])
@@ -123,6 +126,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [pickedSetups, setPickedSetups] = useState<ConditionalSetup[]>([])
   const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
+  const [fibPanelOpen, setFibPanelOpen] = useState(false)
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -174,14 +178,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     true
   )
 
-  const globalFib = useMemo(
-    () =>
-      buildGlobalFibonacci(
-        candles1d.length >= 20 ? candles1d : candles,
-        currentPrice
-      ),
-    [candles1d, candles, currentPrice]
-  )
+  const globalFib = useMemo(() => {
+    // Chart TF first: last swing H/L on what user sees; daily only if too few bars
+    const src =
+      candles.length >= 40
+        ? candles
+        : candles1d.length >= 20
+          ? candles1d
+          : candles
+    // Stabilize vs ticker noise — round to ~0.02% so fib doesn't rebuild every tick
+    const px =
+      currentPrice > 0
+        ? Number(currentPrice.toPrecision(6))
+        : currentPrice
+    return buildGlobalFibonacci(src, px || 0)
+  }, [candles, candles1d, currentPrice])
 
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
 
@@ -522,10 +533,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         borderColor: '#2a2a2a',
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 6,
+        lockVisibleTimeRangeOnResize: true,
       },
-      rightPriceScale: { borderColor: '#2a2a2a' },
+      rightPriceScale: {
+        borderColor: '#2a2a2a',
+        scaleMargins: { top: 0.08, bottom: 0.12 },
+        autoScale: true,
+      },
       width: containerRef.current.clientWidth,
       height: CHART_HEIGHT,
+      // Mobile-first: pan freely, no kinetic jump-back, no vert drag fighting drawer
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -533,9 +551,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         vertTouchDrag: false,
       },
       handleScale: {
-        axisPressedMouseMove: true,
+        axisPressedMouseMove: { time: true, price: true },
         mouseWheel: true,
         pinch: true,
+        axisDoubleClickReset: false,
+      },
+      kineticScroll: {
+        touch: false,
+        mouse: false,
       },
     })
 
@@ -546,6 +569,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       borderDownColor: '#ff003c',
       wickUpColor: '#00ff4180',
       wickDownColor: '#ff003c80',
+      lastValueVisible: true,
+      priceLineVisible: false,
     })
 
     chartRef.current = chart
@@ -553,10 +578,29 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     setChartInstance(chart)
     setChartReady((n) => n + 1)
 
+    const onTouchStart = () => {
+      userPanningRef.current = true
+    }
+    const onTouchEnd = () => {
+      window.setTimeout(() => {
+        userPanningRef.current = false
+      }, 400)
+    }
+    containerRef.current.addEventListener('touchstart', onTouchStart, {
+      passive: true,
+    })
+    containerRef.current.addEventListener('touchend', onTouchEnd, {
+      passive: true,
+    })
+
     const ro = new ResizeObserver((entries) => {
-      if (!entries.length) return
+      if (!entries.length || !chartRef.current) return
+      const w = entries[0].contentRect.width
+      if (w <= 0) return
+      // Don't fight user gesture
+      if (userPanningRef.current) return
       chart.applyOptions({
-        width: entries[0].contentRect.width,
+        width: w,
         height: CHART_HEIGHT,
       })
     })
@@ -564,6 +608,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     return () => {
       ro.disconnect()
+      containerRef.current?.removeEventListener('touchstart', onTouchStart)
+      containerRef.current?.removeEventListener('touchend', onTouchEnd)
       Object.values(lineRefs.current).forEach((s) => {
         try {
           chart.removeSeries(s)
@@ -583,17 +629,23 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   useEffect(() => {
     if (!candleRef.current || !lwcData.length) return
+    const key = `${symbol}|${timeframe}`
+    const needFit = fittedKeyRef.current !== key
     candleRef.current.setData(lwcData)
-    chartRef.current?.timeScale().fitContent()
-  }, [lwcData])
+    if (needFit) {
+      chartRef.current?.timeScale().fitContent()
+      fittedKeyRef.current = key
+    }
+  }, [lwcData, symbol, timeframe])
 
   useEffect(() => {
     if (!candleRef.current || !ticker || !lwcData.length) return
     if (timeframe === '4h' || timeframe === '1d') return
+    if (userPanningRef.current) return
 
     const last = lwcData[lwcData.length - 1]
     const p = ticker.price
-    if (Math.abs(last.close - p) < Number.EPSILON) return
+    if (Math.abs(last.close - p) / Math.max(p, 1e-12) < 0.00005) return
 
     candleRef.current.update({
       ...last,
@@ -675,20 +727,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     }
     priceLineRefs.current = []
 
+    const fmt = (p: number) => {
+      if (p >= 1000) return p.toFixed(2)
+      if (p >= 1) return p.toFixed(4)
+      return p.toPrecision(5)
+    }
+
     const addLine = (
       price: number,
       color: string,
       title: string,
-      lineStyle: 0 | 1 | 2 | 3 | 4 = 2,
-      lineWidth: 1 | 2 | 3 | 4 = 1
+      opts?: {
+        lineStyle?: 0 | 1 | 2 | 3 | 4
+        lineWidth?: 1 | 2 | 3 | 4
+        axisLabel?: boolean
+      }
     ) => {
       try {
         const line = series.createPriceLine({
           price,
           color,
-          lineWidth,
-          lineStyle,
-          axisLabelVisible: true,
+          lineWidth: opts?.lineWidth ?? 1,
+          lineStyle: opts?.lineStyle ?? 2,
+          // Fib: no axis label (не путает с SL/TP справа)
+          axisLabelVisible: opts?.axisLabel ?? false,
           title,
         })
         priceLineRefs.current.push(line)
@@ -697,38 +759,82 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
+    // Fib first — without right-axis price tags
     for (const level of priceLevels) {
       const is141 = level.label === '141' || level.id.includes('1.414')
-      const title =
-        is141 || chartPreferences.showLabels ? level.label : ''
-      addLine(
-        level.price,
-        level.color,
-        title,
-        level.lineStyle ?? 2,
-        is141 ? 2 : 1
-      )
+      if (cleanMode && !is141 && level.label !== '161' && level.label !== '100%') {
+        continue
+      }
+      addLine(level.price, level.color, is141 ? 'F141' : level.label, {
+        lineStyle: level.lineStyle ?? 2,
+        lineWidth: is141 ? 2 : 1,
+        axisLabel: false,
+      })
     }
 
-    if (signal?.sl != null) addLine(signal.sl, 'rgba(239, 68, 68, 0.8)', 'SL')
-    if (signal?.tp1 != null) addLine(signal.tp1, 'rgba(34, 197, 94, 0.8)', 'TP1')
-    if (signal?.tp2 != null) addLine(signal.tp2, 'rgba(34, 197, 94, 0.6)', 'TP2')
+    // Trade levels last — clear titles + axis labels on the right
+    const entry =
+      signal?.surgicalEntry?.status === 'READY' &&
+      signal.surgicalEntry.limitEntry != null
+        ? signal.surgicalEntry.limitEntry
+        : null
+    if (entry != null) {
+      addLine(entry, 'rgba(56, 189, 248, 0.95)', `IN ${fmt(entry)}`, {
+        lineStyle: 0,
+        lineWidth: 2,
+        axisLabel: true,
+      })
+    }
+    if (signal?.sl != null) {
+      addLine(signal.sl, 'rgba(239, 68, 68, 0.95)', `SL ${fmt(signal.sl)}`, {
+        lineStyle: 0,
+        lineWidth: 2,
+        axisLabel: true,
+      })
+    }
+    if (signal?.tp1 != null) {
+      addLine(signal.tp1, 'rgba(34, 197, 94, 0.95)', `TP1 ${fmt(signal.tp1)}`, {
+        lineStyle: 0,
+        lineWidth: 2,
+        axisLabel: true,
+      })
+    }
+    if (signal?.tp2 != null) {
+      addLine(signal.tp2, 'rgba(34, 197, 94, 0.65)', `TP2 ${fmt(signal.tp2)}`, {
+        lineStyle: 2,
+        lineWidth: 1,
+        axisLabel: true,
+      })
+    }
     if (signal?.tpDaily != null) {
-      addLine(signal.tpDaily, 'rgba(100, 200, 255, 0.7)', 'TP Daily')
+      addLine(
+        signal.tpDaily,
+        'rgba(100, 200, 255, 0.7)',
+        `TPd ${fmt(signal.tpDaily)}`,
+        { lineStyle: 2, lineWidth: 1, axisLabel: false }
+      )
     }
     if (signal?.invalidationPrice != null) {
+      const invTitle = signal.invalidationMessage?.includes('4H')
+        ? 'Inv4H'
+        : signal.invalidationMessage?.includes('1H')
+          ? 'Inv1H'
+          : 'Inv'
       addLine(
         signal.invalidationPrice,
         'rgba(251, 191, 36, 0.95)',
-        signal.invalidationMessage?.includes('4H')
-          ? 'Inv 4H'
-          : signal.invalidationMessage?.includes('1H')
-            ? 'Inv 1H'
-            : '⚠ Inv HTF',
-        1
+        `${invTitle} ${fmt(signal.invalidationPrice)}`,
+        { lineStyle: 1, lineWidth: 1, axisLabel: true }
       )
     }
-  }, [priceLevels, chartPreferences.showLabels, chartReady, lwcData, signal])
+  }, [
+    priceLevels,
+    chartPreferences.showLabels,
+    chartReady,
+    lwcData,
+    signal,
+    cleanMode,
+  ])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
   useEffect(() => {
@@ -992,7 +1098,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
       <div
         className="relative w-full overflow-hidden rounded-lg border border-hull-border bg-hull"
-        style={{ height: chartHeight }}
+        style={{ height: chartHeight, touchAction: 'pan-x pinch-zoom' }}
+        onTouchStart={(e) => e.stopPropagation()}
       >
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-hull/60 font-mono text-xs text-holo/40">
@@ -1004,46 +1111,43 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             {error}
           </div>
         )}
-        <div ref={containerRef} className="h-full w-full" />
+        <div
+          ref={containerRef}
+          className="h-full w-full"
+          style={{ touchAction: 'pan-x pinch-zoom' }}
+        />
         {globalFib && (
-          <div
-            className={`pointer-events-none absolute left-2 top-2 z-20 max-w-[92%] rounded border bg-black/80 px-2 py-1 font-mono text-[10px] shadow-lg ${
+          <button
+            type="button"
+            onClick={() => setFibPanelOpen((v) => !v)}
+            className={`absolute left-2 top-2 z-20 max-w-[68%] rounded border bg-black/75 px-2 py-1 text-left font-mono text-[9px] shadow-lg ${
               globalFib.in141 || globalFib.near141
-                ? 'border-amber-400/60 text-amber-200'
-                : 'border-amber-400/30 text-amber-100/90'
+                ? 'border-amber-400/50 text-amber-200'
+                : 'border-amber-400/25 text-amber-100/80'
             }`}
           >
-            <span className="font-bold text-amber-300">FIB 141</span>
+            <span className="font-bold text-amber-300">
+              FIB {globalFib.impulse === 'UP' ? '↑' : '↓'}
+            </span>
             {' · '}
-            {globalFib.impulse === 'UP' ? (
-              <span>импульс ↑ · шорт от 141</span>
-            ) : (
-              <span>импульс ↓ · лонг от 141</span>
+            <span>
+              →{globalFib.entryBias ?? '—'} · 141{' '}
+              {globalFib.price141?.toPrecision(5) ?? '—'}
+            </span>
+            {fibPanelOpen && (
+              <span className="mt-0.5 block text-[8px] leading-snug text-holo/50">
+                H {globalFib.swingHigh.toPrecision(5)} · L{' '}
+                {globalFib.swingLow.toPrecision(5)} · от последнего свинга
+                {globalFib.distTo141Pct != null && (
+                  <>
+                    {' · Δ'}
+                    {globalFib.distTo141Pct >= 0 ? '+' : ''}
+                    {globalFib.distTo141Pct.toFixed(1)}%
+                  </>
+                )}
+              </span>
             )}
-            {' · '}
-            <span className="text-white">
-              {globalFib.in141
-                ? `◎ в зоне · ищем ${globalFib.zone141?.bias ?? globalFib.entryBias}`
-                : globalFib.near141
-                  ? `рядом · готовим ${globalFib.zone141?.bias ?? globalFib.entryBias}`
-                  : `ждём касания · ${globalFib.zone141?.bias ?? '—'}`}
-            </span>
-            <span className="mt-0.5 block text-[9px] text-holo/55">
-              0%={globalFib.fib0.toPrecision(5)} · 100%=
-              {globalFib.fib100.toPrecision(5)}
-              {' · '}
-              141%={globalFib.price141?.toPrecision(6) ?? '—'}
-              {' · '}
-              161%={globalFib.price161?.toPrecision(6) ?? '—'}
-              {globalFib.distTo141Pct != null && (
-                <>
-                  {' · Δ'}
-                  {globalFib.distTo141Pct >= 0 ? '+' : ''}
-                  {globalFib.distTo141Pct.toFixed(1)}%
-                </>
-              )}
-            </span>
-          </div>
+          </button>
         )}
         {chartReady > 0 && showSessions && (
           <SessionOverlay

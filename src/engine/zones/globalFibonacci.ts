@@ -93,6 +93,10 @@ export function levelPrice(
   return swingHigh - diff * ratio
 }
 
+/**
+ * Последний подтверждённый swing high + swing low (пивоты), не сырой max/min окна.
+ * Импульс = от более раннего пивота к более позднему → extension «куда пойдёт» дальше.
+ */
 export function findMajorSwing(candles: OhlcvCandle[]): {
   swingHigh: number
   swingLow: number
@@ -100,26 +104,91 @@ export function findMajorSwing(candles: OhlcvCandle[]): {
   lowIdx: number
   impulse: 'UP' | 'DOWN'
 } | null {
-  if (candles.length < 20) return null
-  const window = candles.slice(-90)
-  let highIdx = 0
-  let lowIdx = 0
-  let swingHigh = -Infinity
-  let swingLow = Infinity
+  if (candles.length < 25) return null
 
-  for (let i = 0; i < window.length; i++) {
-    if (window[i][2] >= swingHigh) {
-      swingHigh = window[i][2]
-      highIdx = i
+  const window = candles.slice(-120)
+  const pivotR = 2
+  const highs: Array<{ i: number; price: number }> = []
+  const lows: Array<{ i: number; price: number }> = []
+
+  for (let i = pivotR; i < window.length - pivotR; i++) {
+    const h = window[i][2]
+    const l = window[i][3]
+    let isHigh = true
+    let isLow = true
+    for (let k = 1; k <= pivotR; k++) {
+      if (h < window[i - k][2] || h < window[i + k][2]) isHigh = false
+      if (l > window[i - k][3] || l > window[i + k][3]) isLow = false
     }
-    if (window[i][3] <= swingLow) {
-      swingLow = window[i][3]
-      lowIdx = i
+    if (isHigh) highs.push({ i, price: h })
+    if (isLow) lows.push({ i, price: l })
+  }
+
+  if (highs.length < 1 || lows.length < 1) {
+    // Fallback: raw extrema in last 40 bars (still «recent»)
+    const recent = window.slice(-40)
+    let highIdx = 0
+    let lowIdx = 0
+    let swingHigh = -Infinity
+    let swingLow = Infinity
+    for (let i = 0; i < recent.length; i++) {
+      if (recent[i][2] >= swingHigh) {
+        swingHigh = recent[i][2]
+        highIdx = i
+      }
+      if (recent[i][3] <= swingLow) {
+        swingLow = recent[i][3]
+        lowIdx = i
+      }
+    }
+    if (!(swingHigh > swingLow) || swingLow <= 0) return null
+    if ((swingHigh - swingLow) / swingLow < 0.008) return null
+    const base = window.length - recent.length
+    return {
+      swingHigh,
+      swingLow,
+      highIdx: base + highIdx,
+      lowIdx: base + lowIdx,
+      impulse: highIdx > lowIdx ? 'UP' : 'DOWN',
     }
   }
 
-  if (!(swingHigh > swingLow) || swingHigh <= 0) return null
-  if ((swingHigh - swingLow) / swingLow < 0.03) return null
+  // Prefer the most recent high and most recent low that form a meaningful range
+  const lastHigh = highs[highs.length - 1]
+  const lastLow = lows[lows.length - 1]
+
+  // If they are too close in time, walk back to get a cleaner impulse leg
+  let hi = lastHigh
+  let lo = lastLow
+  const minSep = 3
+  if (Math.abs(hi.i - lo.i) < minSep) {
+    if (hi.i >= lo.i && lows.length >= 2) lo = lows[lows.length - 2]
+    else if (lo.i > hi.i && highs.length >= 2) hi = highs[highs.length - 2]
+  }
+
+  // Also prefer the swing pair spanning the last impulse (later pivot = end)
+  let swingHigh = hi.price
+  let swingLow = lo.price
+  let highIdx = hi.i
+  let lowIdx = lo.i
+
+  // If last high is after last low but there was a higher high earlier in the leg, keep last pair
+  // Ensure high > low
+  if (!(swingHigh > swingLow)) {
+    // pick max of last 3 highs / min of last 3 lows
+    const hs = highs.slice(-3)
+    const ls = lows.slice(-3)
+    const bestH = hs.reduce((a, b) => (a.price >= b.price ? a : b))
+    const bestL = ls.reduce((a, b) => (a.price <= b.price ? a : b))
+    swingHigh = bestH.price
+    swingLow = bestL.price
+    highIdx = bestH.i
+    lowIdx = bestL.i
+  }
+
+  if (!(swingHigh > swingLow) || swingLow <= 0) return null
+  const rangePct = ((swingHigh - swingLow) / swingLow) * 100
+  if (rangePct < 0.8) return null
 
   const impulse: 'UP' | 'DOWN' = highIdx > lowIdx ? 'UP' : 'DOWN'
   return { swingHigh, swingLow, highIdx, lowIdx, impulse }
@@ -286,7 +355,8 @@ function toChartZones(
 }
 
 function toPriceLevels(levels: GlobalFibLevel[]): PriceLevel[] {
-  const highlight = new Set([0, 0.5, 0.618, 0.786, 1, 1.414, 1.618, 2, 2.618, 3])
+  // Fewer lines on chart — only key magnets (avoids crowding SL/TP axis labels)
+  const highlight = new Set([0, 0.618, 1, 1.414, 1.618, 2])
   return levels
     .filter((l) => highlight.has(l.ratio))
     .map((l) => {
@@ -303,8 +373,8 @@ function toPriceLevels(levels: GlobalFibLevel[]): PriceLevel[] {
           : is161
             ? 'rgba(251, 191, 36, 0.8)'
             : isExt
-              ? 'rgba(168, 85, 247, 0.6)'
-              : 'rgba(148, 163, 184, 0.45)',
+              ? 'rgba(168, 85, 247, 0.55)'
+              : 'rgba(148, 163, 184, 0.4)',
         lineStyle: (is141 || is161 ? 0 : 2) as 0 | 1 | 2,
       }
     })
