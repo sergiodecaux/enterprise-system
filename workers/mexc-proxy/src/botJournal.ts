@@ -491,27 +491,31 @@ export function deriveAdaptiveGates(
   for (const s of analytics.bySetup) {
     const n = s.wins + s.losses
     if (n < 5) continue
-    const base = parseBotSetup(s.setup).base
+    const parsed = parseBotSetup(s.setup)
+    // Block only the specific composite tag — never the whole base family
     if (s.winRate < 38 || s.expectancyR < -0.15) {
-      blocked.push(s.setup)
-      if (base && !blocked.includes(base)) blocked.push(base)
+      if (!blocked.includes(s.setup)) blocked.push(s.setup)
+      // Also block BASE_STYLE_ALIGN if journal stored bare-ish keys
+      if (parsed.style && parsed.align) {
+        const tag = `${parsed.base}_${parsed.style}_${parsed.align}`
+        if (!blocked.includes(tag)) blocked.push(tag)
+      }
     } else if (s.winRate >= 62 && s.expectancyR >= 0.25) {
-      boosted.push(s.setup)
-      if (base && !boosted.includes(base)) boosted.push(base)
+      if (!boosted.includes(s.setup)) boosted.push(s.setup)
     }
   }
 
   const meme = analytics.byAlertType.find((x) => x.alertType === 'MEME')
   if (meme && meme.wins + meme.losses >= 8) {
-    // Cap adaptive floor — otherwise journal cold streak silences all memes
-    if (meme.winRate < 42) minMemeScore = 82
-    else if (meme.winRate < 50) minMemeScore = 78
+    // Soft floor only — cold streak must not silence healthy tags
+    if (meme.winRate < 42) minMemeScore = 80
+    else if (meme.winRate < 50) minMemeScore = 76
     else if (meme.winRate >= 60) minMemeScore = 70
   }
 
   const sniper = analytics.byAlertType.find((x) => x.alertType === 'SNIPER')
   if (sniper && sniper.wins + sniper.losses >= 6) {
-    if (sniper.winRate < 45) minSniperScore = 88
+    if (sniper.winRate < 45) minSniperScore = 86
     else if (sniper.winRate >= 60) minSniperScore = 78
   }
 
@@ -610,13 +614,21 @@ export function isSetupBlocked(
   setupBase: string,
   compositeSetup: string
 ): boolean {
-  return gates.blockedSetups.some(
-    (b) =>
-      b === setupBase ||
-      b === compositeSetup ||
-      compositeSetup.startsWith(`${b}_`) ||
-      b.startsWith(`${setupBase}_`)
-  )
+  // Only block specific tags (e.g. PUMP_SCALP_COUNTER), never blanket-silence a base like PUMP
+  return gates.blockedSetups.some((b) => {
+    if (b === compositeSetup) return true
+    const pb = parseBotSetup(b)
+    const pc = parseBotSetup(compositeSetup)
+    if (!pb.style || !pc.style) return false
+    if (pb.base !== pc.base || pb.base !== setupBase) return false
+    // Same base+style+align
+    if (pb.align && pc.align && pb.style === pc.style && pb.align === pc.align) {
+      return true
+    }
+    // Blocked as BASE_STYLE (all aligns of that style)
+    if (!pb.align && pb.style === pc.style) return true
+    return false
+  })
 }
 
 export function isSetupBoosted(
@@ -624,13 +636,16 @@ export function isSetupBoosted(
   setupBase: string,
   compositeSetup: string
 ): boolean {
-  return gates.boostedSetups.some(
-    (b) =>
-      b === setupBase ||
-      b === compositeSetup ||
-      compositeSetup.startsWith(`${b}_`) ||
-      b.startsWith(`${setupBase}_`)
-  )
+  return gates.boostedSetups.some((b) => {
+    if (b === compositeSetup) return true
+    const pb = parseBotSetup(b)
+    const pc = parseBotSetup(compositeSetup)
+    if (pb.base !== setupBase && b !== setupBase) return false
+    if (pb.base === pc.base && pb.style && pc.style && pb.style === pc.style) {
+      if (!pb.align || pb.align === pc.align) return true
+    }
+    return b === setupBase
+  })
 }
 
 

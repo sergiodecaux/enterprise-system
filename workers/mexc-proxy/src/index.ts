@@ -12,7 +12,7 @@
  *   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<worker>/telegram/webhook"
  */
 
-import { runMarketScan } from './scanner'
+import { runMarketScan, type TradePlanPayload } from './scanner'
 import {
   createPaperTradeFromPlan,
   formatTradesStatus,
@@ -468,6 +468,51 @@ async function maybeHeartbeat(env: Env): Promise<number> {
   return r.sent
 }
 
+// ── Pullback auto-watch from scanner alerts ──────────────────────────────────
+
+function planToPullbackWatch(
+  plan: TradePlanPayload,
+  winPct: number,
+  alertType: 'SNIPER' | 'MEME'
+): ConditionalSetupPayload {
+  const top = Math.max(plan.zoneLow, plan.zoneHigh)
+  const bottom = Math.min(plan.zoneLow, plan.zoneHigh)
+  const id = `pb_${plan.symbol}_${plan.setup}_${Math.floor(Date.now() / 60_000)}`
+  return {
+    id,
+    kind: plan.side === 'LONG' ? 'BOUNCE_SSL' : 'BOUNCE_BSL',
+    side: plan.side,
+    title: `Откат в зону · ${plan.setup}`,
+    probability: winPct,
+    preconditions: [
+      {
+        id: 'pullback',
+        label: `Ждём касание зоны ${bottom}–${top}`,
+        status: 'PENDING',
+      },
+      {
+        id: 'no_chase',
+        label: `Не догонять за ${plan.invalidate}`,
+        status: 'MET',
+      },
+    ],
+    entryZone: { top, bottom },
+    limitEntry: plan.entryIdeal,
+    target: plan.tp,
+    invalidation: plan.invalidate,
+    triggerSummary: `${alertType}: цена вне зоны — лимит на откат`,
+    reasoning: [
+      'Сигнал уже ушёл от зоны — не догоняем.',
+      `Лимитка ${plan.entryIdeal} · стоп ${plan.sl} · цель ${plan.tp}`,
+      `Инвалидация: ${plan.invalidate}`,
+    ],
+    status: 'HYPOTHESIS',
+    symbol: plan.symbol,
+    internalSymbol: plan.symbol,
+    createdAt: Date.now(),
+  }
+}
+
 async function runCronScan(env: Env): Promise<{
   alerts: number
   sent: number
@@ -548,6 +593,27 @@ async function runCronScan(env: Env): Promise<{
           dedupeKey: paper.comment.dedupeKey,
         })
         paperComments += cr.sent
+      }
+
+      // Price already left zone → auto watch pullback for matching subscribers
+      if (a.needsPullbackWatch) {
+        try {
+          const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
+          const subs = await listSubscribers(env)
+          for (const sub of subs) {
+            if (a.type === 'SNIPER' && !sub.sniper) continue
+            if (a.type === 'MEME' && !sub.meme) continue
+            await createWatchesBatch(env, {
+              chatId: sub.chatId,
+              symbol: a.tradePlan.symbol,
+              internalSymbol: a.tradePlan.symbol,
+              setups: [setup],
+              ttlHours: 12,
+            })
+          }
+        } catch (err) {
+          console.error('[cron] pullback watch failed', err)
+        }
       }
     }
   }

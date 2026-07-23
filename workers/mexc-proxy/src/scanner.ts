@@ -12,6 +12,7 @@ import {
   type WinPctCalibrationEntry,
 } from './botJournal'
 import { detectMarketRegime, regimeAllows, type MarketRegime } from './regime'
+import { assessBookToxicity } from './bookToxicity'
 
 const MEXC = 'https://contract.mexc.com'
 
@@ -69,6 +70,8 @@ export interface ScanAlert {
   winPct: number
   style: 'SCALP' | 'INTRADAY' | 'SWING' | 'OTHER'
   tradePlan?: TradePlanPayload
+  /** Price already left zone — auto-create pullback watches for subscribers */
+  needsPullbackWatch?: boolean
 }
 
 interface TickerRow {
@@ -417,22 +420,35 @@ function buildEntryPlan(
 } {
   const pull = Math.max(atr * 0.7, signalPrice * 0.008)
   const chase = Math.max(atr * 0.35, signalPrice * 0.005)
+  // Zone is a true pullback area — current print is intentionally outside
+  const cushion = Math.max(atr * 0.12, signalPrice * 0.0015)
 
   if (side === 'LONG') {
+    const zoneHigh = signalPrice - cushion
     const zoneLow = signalPrice - pull
-    const zoneHigh = signalPrice + chase * 0.2
-    const entryIdeal = (zoneLow + Math.min(signalPrice, zoneHigh)) / 2
+    const entryIdeal = (zoneLow + zoneHigh) / 2
     const invalidate = signalPrice + chase
     const { sl, tp } = buildLevels('LONG', entryIdeal, atr)
     return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
   }
 
+  const zoneLow = signalPrice + cushion
   const zoneHigh = signalPrice + pull
-  const zoneLow = signalPrice - chase * 0.2
-  const entryIdeal = (zoneHigh + Math.max(signalPrice, zoneLow)) / 2
+  const entryIdeal = (zoneLow + zoneHigh) / 2
   const invalidate = signalPrice - chase
   const { sl, tp } = buildLevels('SHORT', entryIdeal, atr)
   return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
+}
+
+/** Price already left the limit zone → do not chase, wait pullback */
+function isPriceChased(
+  side: Side,
+  price: number,
+  zoneLow: number,
+  zoneHigh: number
+): boolean {
+  if (side === 'LONG') return price > zoneHigh
+  return price < zoneLow
 }
 
 /** Hard floor — bot only emits setups with win% ≥ 60 */
@@ -634,6 +650,16 @@ function winPctFromScore(
   return Math.round(Math.min(88, Math.max(0, base)))
 }
 
+function styleHashTag(
+  style: TradeStyle,
+  type: 'SNIPER' | 'MEME'
+): string {
+  if (type === 'MEME') return '#MEME'
+  if (style === 'SCALP') return '#SCALP'
+  if (style === 'SWING') return '#SWING'
+  return '#INTRA'
+}
+
 function formatTradeAlert(opts: {
   side: Side
   symbol: string
@@ -649,10 +675,15 @@ function formatTradeAlert(opts: {
   setup: string
   style: TradeStyle
   align: TrendAlign
+  type: 'SNIPER' | 'MEME'
+  whyNow: string[]
+  contextLines: string[]
+  chased: boolean
   extras?: string[]
 }): { title: string; text: string } {
   const name = opts.symbol.replace('_USDT', '/USDT')
   const icon = opts.side === 'LONG' ? '🟢' : '🔴'
+  const tag = styleHashTag(opts.style, opts.type)
   const rr =
     Math.abs(opts.entryIdeal - opts.sl) > 0
       ? Math.abs(opts.tp - opts.entryIdeal) / Math.abs(opts.entryIdeal - opts.sl)
@@ -663,29 +694,47 @@ function formatTradeAlert(opts: {
       ? `Не входить / не догонять выше ${fmt(opts.invalidate)}`
       : `Не входить / не догонять ниже ${fmt(opts.invalidate)}`
 
-  const title = `${icon} ${opts.side} ${name} · ${styleLabel(opts.style)} · ${opts.setup}`
+  const title = `${tag} ${icon} ${opts.side} ${name} · ${styleLabel(opts.style)} · ${opts.setup}`
+
+  const entryBlock = opts.chased
+    ? [
+        `⚠️ Цена УЖЕ ушла от зоны — НЕ ДОГОНЯТЬ.`,
+        `Жди откат в зону: ${fmt(opts.zoneLow)} – ${fmt(opts.zoneHigh)}`,
+        `Лимитка: ${fmt(opts.entryIdeal)} · ${chaseRule}`,
+        `Бот ставит авто-watch на откат (оповещу при касании).`,
+      ]
+    : [
+        `Тип входа: ЛИМИТ на откат — не маркет-chase`,
+        `Зона входа: ${fmt(opts.zoneLow)} – ${fmt(opts.zoneHigh)}`,
+        `Лимитка (ориентир): ${fmt(opts.entryIdeal)}`,
+        chaseRule,
+      ]
+
   const text = [
-    `Биржа: MEXC Futures`,
-    `Контракт: ${opts.symbol}`,
-    `Стиль: ${styleLabel(opts.style)} · ${alignLabel(opts.align)}`,
+    tag,
+    `Биржа: MEXC Futures · ${opts.symbol}`,
+    `Стиль: ${styleLabel(opts.style)} · ${alignLabel(opts.align)} · ${opts.type}`,
     `Сигнал @ ${now}`,
     '',
-    `Цена сигнала: ${fmt(opts.signalPrice)} (уже могла уйти)`,
-    `Тип входа: ЛИМИТ на откат — не маркет-chase`,
-    `Зона входа: ${fmt(opts.zoneLow)} – ${fmt(opts.zoneHigh)}`,
-    `Лимитка (ориентир): ${fmt(opts.entryIdeal)}`,
-    chaseRule,
+    'Почему сейчас:',
+    ...opts.whyNow.map((l) => `• ${l}`),
+    '',
+    `Цена сигнала: ${fmt(opts.signalPrice)}`,
+    ...entryBlock,
     '',
     `Стоп: ${fmt(opts.sl)} (${pct(opts.entryIdeal, opts.sl)})`,
     `Цель: ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
-    `Победа: ${opts.winPct}% (мин. ${MIN_WIN_PCT}%)`,
-    `R:R 1:${rr.toFixed(1)}`,
+    `Победа: ${opts.winPct}% (мин. ${MIN_WIN_PCT}%) · R:R 1:${rr.toFixed(1)}`,
     '',
     `Причина: ${opts.reason}`,
+    '',
+    'Контекст:',
+    ...opts.contextLines.map((l) => `· ${l}`),
     ...(opts.extras?.length ? ['', ...opts.extras] : []),
     '',
-    '⚠️ Если цена уже вне зоны — пропуск, жди откат или следующий сигнал.',
-    'Ищи в MEXC → Фьючерсы → USDT-M → точное имя контракта выше.',
+    opts.chased
+      ? '⏳ Только лимит в зоне. Вне зоны — пропуск.'
+      : '⚠️ Если цена выйдет из зоны до входа — не догонять, ждать откат.',
   ].join('\n')
 
   return { title, text }
@@ -813,6 +862,7 @@ export async function runMarketScan(
 
     const bookImb = await fetchBookImbalance(t.symbol)
     const rs = isBtc ? null : relStrengthVsBtc(c1h, btc1h)
+    const toxCache = new Map<Side, Awaited<ReturnType<typeof assessBookToxicity>>>()
 
     const spike = volumeSpike(candles)
     const ignition = flatlineIgnition(candles)
@@ -866,7 +916,23 @@ export async function runMarketScan(
       if (!gated) return
       scoreAdj = gated.score
 
-      // Adaptive gates from bot journal outcomes
+      // Spoof / iceberg — veto toxic books, soft-penalize warnings
+      let tox = toxCache.get(side)
+      if (!tox) {
+        tox = await assessBookToxicity({
+          symbol: t.symbol,
+          side,
+          mid: price,
+          mexcJson,
+        })
+        toxCache.set(side, tox)
+      }
+      if (tox.toxic) return
+      if (tox.scorePenalty > 0) {
+        scoreAdj = Math.max(0, scoreAdj - tox.scorePenalty)
+      }
+
+      // Adaptive gates from bot journal — block weak tags only, not whole families
       if (gates) {
         if (isSetupBlocked(gates, setup, composite) && scoreAdj < 95) return
         const min =
@@ -877,7 +943,7 @@ export async function runMarketScan(
 
       const priorWin = winPctFromScore(scoreAdj, align, style)
       const cal = calibrateWinPct(priorWin, composite, winCal)
-      // Journal cold streak was pulling meme win% under 60 and silencing all alerts
+      // Soft floor: cold streak must not silence healthy high-score tags
       let winPct = cal.winPct
       if (
         winPct < MIN_WIN_PCT &&
@@ -892,13 +958,43 @@ export async function runMarketScan(
       if (!(await isSymbolTradableNow(t.symbol, minVol))) return
 
       const plan = buildEntryPlan(side, price, atr)
-      const trendLine = `Тренд: глобальный ${ctx.global} (4h/1h) · локальный ${ctx.local} (15m)${
-        ctx.pullback ? ' · откат в тренд' : ''
-      }`
-      const calLine =
+      const chased = isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
+
+      const obiStr =
+        bookImb == null
+          ? 'n/a'
+          : `${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%`
+      const rsStr =
+        isBtc || rs == null
+          ? isBtc
+            ? 'BTC (база)'
+            : 'n/a'
+          : `${rs >= 0 ? '+' : ''}${rs.toFixed(1)}pp vs BTC 24h`
+
+      const whyNow: string[] = [
+        reason.length > 140 ? `${reason.slice(0, 137)}…` : reason,
+        `Bias 1h ${bias1h} / 4h ${bias4h} · режим BTC ${btcRegime}`,
+        ctx.pullback
+          ? `Локальный откат 15m (${bias15}) в глобальный ${ctx.global} — зона лимитки.`
+          : `Сигнал ${align === 'WITH_TREND' ? 'по тренду' : 'контртренд'} · стиль ${styleLabel(style)}.`,
+      ].slice(0, 3)
+
+      const contextLines = [
+        `1h bias: ${bias1h} · 4h bias: ${bias4h} · 15m: ${bias15}`,
+        `OBI: ${obiStr} · RS: ${rsStr}`,
+        `Режим рынка: ${btcRegime}`,
+        gated.note,
+        `Тренд: глобальный ${ctx.global} · локальный ${ctx.local}${
+          ctx.pullback ? ' · откат в тренд' : ''
+        }`,
         cal.source === 'PRIOR'
           ? `Win% модель ${priorWin}% (журнал: мало данных)`
-          : `Win% ${winPct}% = модель ${priorWin}% ⊕ журнал ${cal.sampleN} сделок (${cal.source})`
+          : `Win% ${winPct}% = модель ${priorWin}% ⊕ журнал ${cal.sampleN} (${cal.source})`,
+        `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M · RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
+        ...tox.notes,
+        ...extras,
+      ]
+
       const msg = formatTradeAlert({
         side,
         symbol: t.symbol,
@@ -914,17 +1010,10 @@ export async function runMarketScan(
         setup,
         style,
         align,
-        extras: [
-          ...extras,
-          trendLine,
-          `Режим рынка BTC: ${btcRegime}`,
-          gated.note,
-          calLine,
-          `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M`,
-          `RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
-          `Bias 15m/1h/4h: ${bias15}/${bias1h}/${bias4h}`,
-          `MEXC USDT-M Perpetual ✓ (top ${TOP_LIQUID_PERPS} by volume)`,
-        ],
+        type,
+        whyNow,
+        contextLines,
+        chased,
       })
       alerts.push({
         type,
@@ -934,6 +1023,7 @@ export async function runMarketScan(
         score: scoreAdj,
         winPct,
         style,
+        needsPullbackWatch: chased,
         tradePlan: {
           side,
           symbol: t.symbol,
