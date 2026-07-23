@@ -311,18 +311,31 @@ export async function listWatchesForChat(
 
 function formatReady(w: WatchedSetupRecord, price: number): WatchAlert {
   const s = w.setup
+  const icon = s.side === 'LONG' ? '🟢' : '🔴'
+  const isJewel =
+    s.title.includes('💎') ||
+    s.kind === 'BOUNCE_SSL' ||
+    s.kind === 'BOUNCE_BSL' ||
+    s.kind === 'SURGICAL' ||
+    s.kind === 'MM_HUNT'
   return {
     chatId: w.chatId,
-    title: `🎯 Вход возможен · ${w.symbol}`,
+    title: isJewel
+      ? `💎 ${icon} Ювелирный ${s.side} · ${w.symbol}`
+      : `🎯 Вход возможен · ${w.symbol}`,
     text: [
       `${s.side} ${w.symbol} · ${s.title}`,
       `Статус: READY`,
       `Цена сейчас: ${price}`,
-      `Лимит: ${s.limitEntry}`,
+      '',
+      `Лимит (вход): ${s.limitEntry}`,
       `Зона: ${s.entryZone.bottom} – ${s.entryZone.top}`,
-      `SL / Inv: ${s.invalidation}`,
-      `TP: ${s.target}`,
+      `Стоп / Inv: ${s.invalidation}`,
+      `Цель (TP): ${s.target}`,
+      `Вероятность: ~${Math.round(s.probability)}%`,
+      '',
       `Условие: ${s.triggerSummary}`,
+      ...(s.reasoning?.slice(0, 3) ?? []),
     ].join('\n'),
     dedupeKey: `watch:${w.watchId}:READY`,
   }

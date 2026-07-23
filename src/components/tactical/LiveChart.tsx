@@ -38,6 +38,12 @@ import MacroOutlookPanel from './MacroOutlookPanel'
 import SetupPickerPanel from './SetupPickerPanel'
 import { useSessionData } from '../../hooks/useSessionData'
 import { SESSION_DEFINITIONS, getSessionAtHour } from '../../engine/sessions/sessionMap'
+import {
+  findTradeZones,
+  refreshZoneSetups,
+  type FoundTradeZone,
+} from '../../engine/zones/findTradeZones'
+import { pushJewelEntryAlert } from '../../api/telegram/formatters'
 import { buildGlobalFibonacci } from '../../engine/zones/globalFibonacci'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
@@ -95,6 +101,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const sessionSettings = useAppStore((s) => s.sessionSettings)
   const setSessionSettings = useAppStore((s) => s.setSessionSettings)
   const eqLiquidityMap = useAppStore((s) => s.liquidityMaps[symbol] ?? null)
+  const setLiquidityMap = useAppStore((s) => s.setLiquidityMap)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -127,6 +134,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
   const [fibPanelOpen, setFibPanelOpen] = useState(false)
+  const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
+  const [foundChartZones, setFoundChartZones] = useState<LiquidityZone[]>([])
+  const [zonesMode, setZonesMode] = useState(false)
+  const jewelSentRef = useRef<Set<string>>(new Set())
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -258,6 +269,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             : 'OTE Zone',
         })
       }
+      if (zonesMode && foundChartZones.length) {
+        return [...foundChartZones, ...zones]
+      }
       return zones
     }
 
@@ -279,8 +293,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           : 'OTE Zone',
       })
     }
+    if (zonesMode && foundChartZones.length) {
+      return [...foundChartZones, ...zones]
+    }
     return zones
-  }, [baseZones, signal, candles, globalFib, cleanMode])
+  }, [baseZones, signal, candles, globalFib, cleanMode, zonesMode, foundChartZones])
 
   const priceLevels = useMemo(() => {
     const fibLines = globalFib?.priceLevels ?? []
@@ -338,6 +355,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     newsScore,
   ])
 
+  const resolveChatId = useCallback((): number | null => {
+    const manual = telegramSettings.manualChatId.trim()
+    if (manual && /^-?\d+$/.test(manual)) return Number(manual)
+    if (telegramSettings.subscribedChatId) return telegramSettings.subscribedChatId
+    return null
+  }, [telegramSettings])
+
   const handlePickSetups = useCallback(() => {
     if (!signal) {
       showAlert('Нет сигнала по монете — подождите скан')
@@ -365,12 +389,114 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     haptic,
   ])
 
-  const resolveChatId = useCallback((): number | null => {
-    const manual = telegramSettings.manualChatId.trim()
-    if (manual && /^-?\d+$/.test(manual)) return Number(manual)
-    if (telegramSettings.subscribedChatId) return telegramSettings.subscribedChatId
-    return null
-  }, [telegramSettings])
+  const handleFindZones = useCallback(async () => {
+    if (!(currentPrice > 0) || candles.length < 20) {
+      showAlert('Нужны свечи и цена — подождите загрузку графика')
+      return
+    }
+    jewelSentRef.current = new Set()
+    const result = findTradeZones({
+      candles,
+      candles1d,
+      symbol,
+      flatSymbol,
+      price: currentPrice,
+      signal,
+      mmIntent: mmSnap,
+      forecast,
+      liquidityMap: eqLiquidityMap,
+      bookImbalance: orderBookMetrics?.imbalance ?? null,
+    })
+    setFoundZones(result.zones)
+    setFoundChartZones(result.chartZones)
+    setZonesMode(true)
+    setLiquidityMap(symbol, result.liquidityMap)
+    setPickedSetups(result.setups)
+    setShowSetupPicker(true)
+    setShowForecast(true)
+    setCleanMode(false)
+    haptic.success()
+
+    const chatId = resolveChatId()
+    const autoWatch = result.setups
+      .filter((s) => s.side === 'LONG' || s.side === 'SHORT')
+      .slice(0, 4)
+
+    for (const setup of autoWatch) {
+      if (chatId) {
+        try {
+          if (isTelegramAlertsConfigured()) {
+            const watch = await createWatchedSetup({
+              chatId,
+              setup,
+              symbol: flatSymbol,
+              internalSymbol: symbol,
+              ttlHours: 48,
+            })
+            if (watch) upsertWatchedSetup(watch)
+          } else {
+            upsertWatchedSetup({
+              watchId: `local_${setup.id}`,
+              chatId,
+              symbol: flatSymbol,
+              internalSymbol: symbol,
+              setup,
+              createdAt: Date.now(),
+              expiresAt: Date.now() + 48 * 3600_000,
+              lastStatus: setup.status,
+              readyNotified: false,
+              invalidatedNotified: false,
+              updatedAt: Date.now(),
+            })
+          }
+        } catch {
+          /* ignore watch errors */
+        }
+      }
+    }
+
+    for (const ready of result.jewelReady) {
+      const key = `${ready.side}:${ready.limitEntry.toPrecision(6)}`
+      if (jewelSentRef.current.has(key)) continue
+      jewelSentRef.current.add(key)
+      void pushJewelEntryAlert({
+        setup: ready,
+        symbol: flatSymbol,
+        displayName: signal?.displayName,
+        price: currentPrice,
+        chatId: chatId ?? undefined,
+      })
+    }
+
+    const longZ = result.nearestLong
+    const shortZ = result.nearestShort
+    showAlert(
+      `Зоны: ${result.zones.length}` +
+        (longZ
+          ? ` · LONG @ ${longZ.mid.toPrecision(5)}`
+          : '') +
+        (shortZ
+          ? ` · SHORT @ ${shortZ.mid.toPrecision(5)}`
+          : '') +
+        (chatId ? ' · слежение в боте' : ' · подпишитесь на бота для алертов')
+    )
+  }, [
+    currentPrice,
+    candles,
+    candles1d,
+    symbol,
+    flatSymbol,
+    signal,
+    mmSnap,
+    forecast,
+    eqLiquidityMap,
+    orderBookMetrics,
+    setLiquidityMap,
+    upsertWatchedSetup,
+    showAlert,
+    haptic,
+    resolveChatId,
+  ])
 
   const watchingIds = useMemo(() => {
     const ids = new Set<string>()
@@ -463,6 +589,53 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     },
     [resolveChatId, watchedSetups, removeWatchedSetupLocal, haptic]
   )
+
+  // Zone watch: refresh readiness from price + book; push jewel when READY
+  useEffect(() => {
+    if (!zonesMode || pickedSetups.length === 0 || !(currentPrice > 0)) return
+    const refreshed = refreshZoneSetups(
+      pickedSetups,
+      currentPrice,
+      orderBookMetrics?.imbalance ?? null,
+      signal
+    )
+    const changed = refreshed.some(
+      (s, i) =>
+        s.status !== pickedSetups[i]?.status ||
+        s.probability !== pickedSetups[i]?.probability
+    )
+    if (changed) setPickedSetups(refreshed)
+
+    const chatId = resolveChatId()
+    for (const s of refreshed) {
+      if (s.status !== 'READY') continue
+      if (s.probability < 60) continue
+      const key = `${s.side}:${s.limitEntry.toPrecision(6)}`
+      if (jewelSentRef.current.has(key)) continue
+      jewelSentRef.current.add(key)
+      void pushJewelEntryAlert({
+        setup: s,
+        symbol: flatSymbol,
+        displayName: signal?.displayName,
+        price: currentPrice,
+        chatId: chatId ?? undefined,
+      })
+      haptic.success()
+      showAlert(`💎 Ювелирный ${s.side} → бот · TP ${s.target.toPrecision(5)}`)
+    }
+  }, [
+    zonesMode,
+    currentPrice,
+    orderBookMetrics?.imbalance,
+    signal,
+    ticker?.timestamp,
+    flatSymbol,
+    resolveChatId,
+    haptic,
+    showAlert,
+    // intentionally omit pickedSetups to avoid loop — use functional update path via changed check
+    pickedSetups,
+  ])
 
   const selectedSetup = pickedSetups.find((s) => s.id === selectedSetupId) ?? null
 
@@ -1086,6 +1259,27 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             {forecastHorizon === 'MACRO'
               ? 'SWING'
               : forecastHorizon}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (zonesMode) {
+                setZonesMode(false)
+                setFoundChartZones([])
+                setFoundZones([])
+                haptic.impact()
+                return
+              }
+              void handleFindZones()
+            }}
+            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              zonesMode
+                ? 'border border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
+                : 'border border-hull-border text-holo/40 hover:text-holo/70'
+            }`}
+            title="Найти зоны ликвидности LONG/SHORT и следить для ювелирного входа"
+          >
+            Зоны{foundZones.length > 0 ? ` · ${foundZones.length}` : ''}
           </button>
           <button
             type="button"

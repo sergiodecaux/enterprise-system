@@ -35,7 +35,17 @@ export interface VolumePoint {
 
 export interface LiquidityZone {
   id: string
-  type: 'ORDER_BLOCK' | 'FVG' | 'FIBONACCI' | 'POC' | 'VALUE_AREA' | 'DAILY' | 'OTE'
+  type:
+    | 'ORDER_BLOCK'
+    | 'FVG'
+    | 'FIBONACCI'
+    | 'POC'
+    | 'VALUE_AREA'
+    | 'DAILY'
+    | 'OTE'
+    | 'BSL'
+    | 'SSL'
+    | 'LIQ'
   side: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   top: number
   bottom: number

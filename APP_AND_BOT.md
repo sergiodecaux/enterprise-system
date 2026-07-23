@@ -382,4 +382,4 @@ Radar/Sniper/Meme → тап → Drawer → график + контекст.
 
 ---
 
-*Обновлено: SMC ProbabilityEngine, ScoreCard + Data Quality, Market Brief (MTF), стиль-сценарии SCALP/INTRA/SWING, bot majors SNIPER.*
+*Обновлено: SMC ProbabilityEngine, ScoreCard + Data Quality, Market Brief (MTF), стиль-сценарии SCALP/INTRA/SWING, bot majors SNIPER, journal win% + regime, WS стакан, кнопка «Зоны» + ювелирный вход в бот.*

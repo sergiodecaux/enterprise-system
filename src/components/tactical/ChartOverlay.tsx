@@ -38,6 +38,17 @@ function getZoneColors(zone: LiquidityZone, opacity: number) {
       return zone.side === 'BULLISH'
         ? { bg: `rgba(251, 191, 36, ${op * 0.55})`, border: 'rgba(251, 191, 36, 0.9)' }
         : { bg: `rgba(168, 85, 247, ${op * 0.5})`, border: 'rgba(168, 85, 247, 0.85)' }
+    case 'SSL':
+    case 'LIQ':
+      return {
+        bg: `rgba(16, 185, 129, ${op * 0.65})`,
+        border: 'rgba(16, 185, 129, 0.95)',
+      }
+    case 'BSL':
+      return {
+        bg: `rgba(244, 63, 94, ${op * 0.65})`,
+        border: 'rgba(244, 63, 94, 0.95)',
+      }
     default:
       return { bg: `rgba(100, 200, 255, ${op})`, border: 'rgba(100, 200, 255, 0.6)' }
   }
@@ -64,10 +75,10 @@ const ChartOverlay = ({
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
 
-      // До 6 зон — fib reaction + OB/OTE
+      // До 8 зон — найденные SSL/BSL/Fib + OB/OTE
       const visibleZones = [...zones]
         .sort((a, b) => (b.strength ?? 5) - (a.strength ?? 5))
-        .slice(0, 6)
+        .slice(0, 8)
 
       for (const zone of visibleZones) {
         const topY = series.priceToCoordinate(zone.top)

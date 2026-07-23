@@ -1,5 +1,6 @@
 import type { CoinSignal, MemeSignal } from '../../engine/types'
 import type { SniperSignal } from '../../engine/sniperMode'
+import type { ConditionalSetup } from '../../engine/setups/types'
 import { sendTelegramAlert } from '../../api/telegram/alerts'
 import { assertUsdtPerpetual } from '../../api/mexc/perpetualGuard'
 
@@ -377,6 +378,62 @@ export async function pushCoinSignalAlert(
         `Score ${signal.score}/10 · Prob ${signal.probabilityPct}%`,
       extras: signal.zones.slice(0, 4).map((z) => `• ${z}`),
     }),
-    dedupeKey: `setup:${signal.symbol}:${direction}:${Math.round(signal.score)}`,
+    dedupeKey: `coin:${signal.symbol}:${direction}:${Math.round(entry * 1000)}`,
+  })
+}
+
+/** Ювелирный вход из найденной зоны ликвидности */
+export async function pushJewelEntryAlert(opts: {
+  setup: ConditionalSetup
+  symbol: string
+  displayName?: string
+  price: number
+  chatId?: number
+}): Promise<void> {
+  const { setup, symbol, price } = opts
+  const check = await assertUsdtPerpetual(symbol)
+  if (!check.ok) return
+
+  const contract = check.apiSymbol
+  const name = opts.displayName ?? symbol.replace('_USDT', '/USDT')
+  const icon = setup.side === 'LONG' ? '🟢' : '🔴'
+  const winPct = Math.round(Math.min(88, Math.max(55, setup.probability)))
+  const title = `💎 ${icon} Ювелирный ${setup.side} · ${name}`
+
+  await sendTelegramAlert({
+    type: 'SETUP_WATCH',
+    title,
+    text: [
+      tradeBlock({
+        side: setup.side,
+        contract,
+        entry: setup.limitEntry,
+        sl: setup.invalidation,
+        tp: setup.target,
+        winPct,
+        reason: setup.triggerSummary,
+        extras: [
+          `Зона: ${fmt(setup.entryZone.bottom)} – ${fmt(setup.entryZone.top)}`,
+          `Сетап: ${setup.title}`,
+          `Статус: ${setup.status}`,
+          `Цена сейчас: ${fmt(price)}`,
+          ...setup.preconditions.map(
+            (p) => `${p.status === 'MET' ? '✓' : p.status === 'FAILED' ? '✗' : '·'} ${p.label}`
+          ),
+          ...setup.reasoning.slice(0, 3),
+        ],
+        pullback: {
+          signalPrice: price,
+          zoneLow: setup.entryZone.bottom,
+          zoneHigh: setup.entryZone.top,
+          invalidate:
+            setup.side === 'LONG'
+              ? setup.entryZone.top * 1.004
+              : setup.entryZone.bottom * 0.996,
+        },
+      }),
+    ].join('\n'),
+    dedupeKey: `jewel:${contract}:${setup.side}:${setup.limitEntry.toPrecision(6)}`,
+    chatId: opts.chatId,
   })
 }
