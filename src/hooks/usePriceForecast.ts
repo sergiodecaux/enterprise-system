@@ -118,7 +118,7 @@ export function usePriceForecast(
 
     if (candles.length < 20) return null
     const lastCandleTs = getLastCandleTimestamp(candles)
-    const pathTimeScale = mode === 'SCALP' ? 0.45 : 1
+    const pathTimeScale = mode === 'SCALP' ? 0.32 : 1.15
     const scenarios = buildScenarios(
       candles,
       alignment,

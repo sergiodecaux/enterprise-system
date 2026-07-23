@@ -36,15 +36,62 @@ function candleSeconds(tf: string): number {
 
 /**
  * A (70%): движение по тренду в OB / к цели — чистый импульс с лёгким ретестом.
+ * SCALP: короткий ретест + быстрый импульс. INTRA: классика. 
  */
 function buildPrimaryPath(
   entry: number,
   target: number,
   atr: number,
   candleSec: number,
-  isLong: boolean
+  isLong: boolean,
+  style: 'SCALP' | 'INTRA' | 'SWING' = 'INTRA'
 ): PathPoint[] {
   const sign = isLong ? 1 : -1
+  if (style === 'SCALP') {
+    return [
+      { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
+      {
+        timeOffsetSeconds: candleSec * 0.5,
+        price: entry - sign * atr * 0.12,
+        label: 'Микро-ретест',
+      },
+      {
+        timeOffsetSeconds: candleSec * 2,
+        price: entry + sign * atr * 0.55,
+        label: 'Импульс',
+        isKeyLevel: true,
+      },
+      {
+        timeOffsetSeconds: candleSec * 4,
+        price: target,
+        label: 'Скальп TP',
+        isKeyLevel: true,
+      },
+    ]
+  }
+  if (style === 'SWING') {
+    const mid = entry + sign * Math.abs(target - entry) * 0.4
+    return [
+      { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
+      {
+        timeOffsetSeconds: candleSec * 2,
+        price: entry - sign * atr * 0.35,
+        label: 'Набор позиции',
+      },
+      {
+        timeOffsetSeconds: candleSec * 6,
+        price: mid,
+        label: 'Удержание тренда',
+        isKeyLevel: true,
+      },
+      {
+        timeOffsetSeconds: candleSec * 12,
+        price: target,
+        label: 'Свинг-магнит',
+        isKeyLevel: true,
+      },
+    ]
+  }
   const obRetest = entry - sign * atr * 0.2
   const mid = entry + sign * Math.abs(target - entry) * 0.55
 
@@ -84,33 +131,39 @@ function buildSweepPath(
   sweepLevel: number,
   atr: number,
   candleSec: number,
-  isLong: boolean
+  isLong: boolean,
+  style: 'SCALP' | 'INTRA' | 'SWING' = 'INTRA'
 ): PathPoint[] {
   const sign = isLong ? 1 : -1
-  const extended = target + sign * atr * 0.8
+  const extended =
+    target + sign * atr * (style === 'SCALP' ? 0.35 : style === 'SWING' ? 1.2 : 0.8)
+  const t1 = style === 'SCALP' ? 1 : style === 'SWING' ? 3 : 1.5
+  const t2 = style === 'SCALP' ? 2 : style === 'SWING' ? 6 : 3
+  const t3 = style === 'SCALP' ? 3.5 : style === 'SWING' ? 10 : 5
+  const t4 = style === 'SCALP' ? 5 : style === 'SWING' ? 14 : 9
 
   return [
     { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
     {
-      timeOffsetSeconds: candleSec * 1.5,
+      timeOffsetSeconds: candleSec * t1,
       price: sweepLevel,
-      label: 'Liquidity Sweep',
+      label: style === 'SCALP' ? 'Быстрый sweep' : 'Liquidity Sweep',
       isKeyLevel: true,
     },
     {
-      timeOffsetSeconds: candleSec * 3,
+      timeOffsetSeconds: candleSec * t2,
       price: entry + sign * atr * 0.15,
       label: 'Reclaim',
     },
     {
-      timeOffsetSeconds: candleSec * 5,
+      timeOffsetSeconds: candleSec * t3,
       price: entry + sign * Math.abs(target - entry) * 0.4,
       label: 'Продолжение',
     },
     {
-      timeOffsetSeconds: candleSec * 9,
+      timeOffsetSeconds: candleSec * t4,
       price: extended,
-      label: 'Цель+',
+      label: style === 'SWING' ? 'Недельная цель+' : 'Цель+',
       isKeyLevel: true,
     },
   ]
@@ -124,11 +177,14 @@ function buildBreakPath(
   stopLevel: number,
   atr: number,
   candleSec: number,
-  isLong: boolean
+  isLong: boolean,
+  style: 'SCALP' | 'INTRA' | 'SWING' = 'INTRA'
 ): PathPoint[] {
   const sign = isLong ? 1 : -1
-  // После стопа — продолжение против тренда
-  const afterStop = stopLevel - sign * atr * 1.2
+  const afterStop =
+    stopLevel - sign * atr * (style === 'SWING' ? 2.0 : style === 'SCALP' ? 0.7 : 1.2)
+  const tStop = style === 'SCALP' ? 2 : style === 'SWING' ? 5 : 3
+  const tAfter = style === 'SCALP' ? 4 : style === 'SWING' ? 10 : 6
 
   return [
     { timeOffsetSeconds: 0, price: entry, label: 'Now', isKeyLevel: true },
@@ -138,15 +194,15 @@ function buildBreakPath(
       label: 'Слабость',
     },
     {
-      timeOffsetSeconds: candleSec * 3,
+      timeOffsetSeconds: candleSec * tStop,
       price: stopLevel,
       label: 'Слом / SL',
       isKeyLevel: true,
     },
     {
-      timeOffsetSeconds: candleSec * 6,
+      timeOffsetSeconds: candleSec * tAfter,
       price: afterStop,
-      label: 'Против тренда',
+      label: style === 'SWING' ? 'Смена недельного тренда' : 'Против тренда',
       isKeyLevel: true,
     },
   ]
@@ -272,8 +328,15 @@ export function buildScenarios(
   })
 
   // Scalp aims closer magnets; swing aims farther
+  const pathStyle: 'SCALP' | 'INTRA' | 'SWING' =
+    options?.horizon === 'SCALP'
+      ? 'SCALP'
+      : options?.horizon === 'SWING' || options?.horizon === 'MACRO'
+        ? 'SWING'
+        : 'INTRA'
+
   const atrMult =
-    options?.horizon === 'SCALP' ? 1.4 : options?.horizon === 'SWING' ? 3.2 : 2.5
+    pathStyle === 'SCALP' ? 1.15 : pathStyle === 'SWING' ? 3.8 : 2.5
 
   // Macro target = far liquidity; micro = stop hunt first
   const macroDefault = isLong
@@ -284,13 +347,15 @@ export function buildScenarios(
   const sweepLevel =
     hunt?.microTarget ??
     (isLong
-      ? nearestDown?.price ?? currentPrice - atr * 1.1
-      : nearestUp?.price ?? currentPrice + atr * 1.1)
+      ? nearestDown?.price ?? currentPrice - atr * (pathStyle === 'SCALP' ? 0.7 : 1.1)
+      : nearestUp?.price ?? currentPrice + atr * (pathStyle === 'SCALP' ? 0.7 : 1.1))
 
   const stopLevel =
     options?.stopLoss ??
     options?.invalidationPrice ??
-    (isLong ? currentPrice - atr * 1.5 : currentPrice + atr * 1.5)
+    (isLong
+      ? currentPrice - atr * (pathStyle === 'SCALP' ? 0.9 : pathStyle === 'SWING' ? 2.2 : 1.5)
+      : currentPrice + atr * (pathStyle === 'SCALP' ? 0.9 : pathStyle === 'SWING' ? 2.2 : 1.5))
 
   const primaryColor = isLong ? COLORS.A : COLORS.A_SHORT
   const altColor = isLong ? COLORS.B : COLORS.B_SHORT
@@ -299,11 +364,11 @@ export function buildScenarios(
   const riskA = Math.abs(target - currentPrice) / Math.max(Math.abs(currentPrice - stopLevel), atr * 0.5)
 
   const horizonTag =
-    options?.horizon === 'SCALP'
-      ? 'скальп'
-      : options?.horizon === 'SWING'
-        ? 'свинг'
-        : 'интра'
+    pathStyle === 'SCALP'
+      ? 'скальп · 5–45м'
+      : pathStyle === 'SWING'
+        ? 'свинг · дни–неделя'
+        : 'интра · 2–8ч'
 
   const huntPath =
     hunt?.microTarget != null &&
@@ -317,13 +382,13 @@ export function buildScenarios(
             isKeyLevel: true,
           },
           {
-            timeOffsetSeconds: scaledSec * 2,
+            timeOffsetSeconds: scaledSec * (pathStyle === 'SCALP' ? 1 : 2),
             price: hunt.microTarget,
             label: hunt.microIsStopHunt ? 'Sweep стопов' : 'Микро-цель',
             isKeyLevel: true,
           },
           {
-            timeOffsetSeconds: scaledSec * 6,
+            timeOffsetSeconds: scaledSec * (pathStyle === 'SCALP' ? 3.5 : pathStyle === 'SWING' ? 10 : 6),
             price: hunt.macroTarget,
             label: 'Магнит ликвидности',
             isKeyLevel: true,
@@ -335,11 +400,20 @@ export function buildScenarios(
     id: 'A',
     type: isLong ? 'LONG' : 'SHORT',
     label: huntPath
-      ? `MM Hunt (${horizonTag}): микро → ликвидность`
-      : `Основной (${horizonTag} → OB)`,
+      ? `MM Hunt (${horizonTag})`
+      : `Основной · ${horizonTag}`,
     probability: pctA,
     color: primaryColor,
-    path: huntPath ?? buildPrimaryPath(currentPrice, target, atr, scaledSec, isLong),
+    path:
+      huntPath ??
+      buildPrimaryPath(
+        currentPrice,
+        target,
+        atr,
+        scaledSec,
+        isLong,
+        pathStyle
+      ),
     entry: currentPrice,
     target,
     invalidation: stopLevel,
@@ -370,7 +444,12 @@ export function buildScenarios(
   const scenB: PriceScenario = {
     id: 'B',
     type: isLong ? 'LONG' : 'SHORT',
-    label: 'Альтернатива (свип → продолжение)',
+    label:
+      pathStyle === 'SCALP'
+        ? 'Альтернатива · быстрый свип'
+        : pathStyle === 'SWING'
+          ? 'Альтернатива · недельный свип'
+          : 'Альтернатива · свип → продолжение',
     probability: pctB,
     color: altColor,
     path: buildSweepPath(
@@ -379,10 +458,14 @@ export function buildScenarios(
       sweepLevel,
       atr,
       scaledSec,
-      isLong
+      isLong,
+      pathStyle
     ),
     entry: currentPrice,
-    target: isLong ? target + atr * 0.8 : target - atr * 0.8,
+    target:
+      isLong
+        ? target + atr * (pathStyle === 'SCALP' ? 0.35 : 0.8)
+        : target - atr * (pathStyle === 'SCALP' ? 0.35 : 0.8),
     invalidation: stopLevel,
     liquidityTarget: {
       price: sweepLevel,
@@ -406,16 +489,28 @@ export function buildScenarios(
   }
 
   const breakTarget = isLong
-    ? stopLevel - atr * 1.2
-    : stopLevel + atr * 1.2
+    ? stopLevel - atr * (pathStyle === 'SWING' ? 2.0 : pathStyle === 'SCALP' ? 0.7 : 1.2)
+    : stopLevel + atr * (pathStyle === 'SWING' ? 2.0 : pathStyle === 'SCALP' ? 0.7 : 1.2)
 
   const scenC: PriceScenario = {
     id: 'C',
     type: isLong ? 'SHORT' : 'LONG',
-    label: 'Слом структуры (за стоп)',
+    label:
+      pathStyle === 'SWING'
+        ? 'Слом · смена недельного тренда'
+        : pathStyle === 'SCALP'
+          ? 'Слом · быстрый выход'
+          : 'Слом структуры (за стоп)',
     probability: pctC,
     color: breakColor,
-    path: buildBreakPath(currentPrice, stopLevel, atr, scaledSec, isLong),
+    path: buildBreakPath(
+      currentPrice,
+      stopLevel,
+      atr,
+      scaledSec,
+      isLong,
+      pathStyle
+    ),
     entry: currentPrice,
     target: breakTarget,
     invalidation: isLong ? currentPrice + atr : currentPrice - atr,

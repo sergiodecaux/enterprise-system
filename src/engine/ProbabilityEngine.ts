@@ -459,7 +459,7 @@ function enrichSignal(
       atr,
       dailyAtrPct,
       style,
-      candleTimeframeSeconds: style === 'SCALP' ? 60 : 900,
+      candleTimeframeSeconds: style === 'SCALP' ? 60 : style === 'SWING' ? 14_400 : 900,
     })
     unrealisticTp = ghost.unrealisticTp
     ghostPathWarning = ghost.warning

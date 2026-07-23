@@ -382,4 +382,4 @@ Radar/Sniper/Meme → тап → Drawer → график + контекст.
 
 ---
 
-*Обновлено под состояние кодовой базы: SMC ProbabilityEngine, MM Intent, Surgical Entry, Conditional Setups, HTF invalidation, Setup Watch в Telegram.*
+*Обновлено: SMC ProbabilityEngine, ScoreCard + Data Quality, Market Brief (MTF), стиль-сценарии SCALP/INTRA/SWING, bot majors SNIPER.*

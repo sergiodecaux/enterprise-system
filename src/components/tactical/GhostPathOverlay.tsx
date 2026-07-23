@@ -50,7 +50,8 @@ const GhostPathOverlay = ({
       atr,
       dailyAtrPct: (dailyAtr / signal.price) * 100,
       style,
-      candleTimeframeSeconds: style === 'SCALP' ? 60 : 900,
+      candleTimeframeSeconds:
+        style === 'SCALP' ? 60 : style === 'SWING' ? 14_400 : 900,
     })
   }, [
     signal?.direction,

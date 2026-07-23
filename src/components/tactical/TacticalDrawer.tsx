@@ -34,6 +34,9 @@ import MemePulsePanel from '../meme/MemePulsePanel'
 import CompositeAnalysisPanel from '../composite/CompositeAnalysisPanel'
 import { buildCompositeAnalysis } from '../../engine/composite'
 import { useBuyerAggression } from '../../hooks/useBuyerAggression'
+import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
+import { buildMarketBrief } from '../../engine/brief'
+import MarketBriefPanel from './MarketBriefPanel'
 
 /** Панель дивергенции силы альта vs BTC */
 const BtcDivergencePanel = ({
@@ -532,6 +535,31 @@ const TacticalDrawer = () => {
 
   useBuyerAggression(isDrawerOpen && signal ? signal.internalSymbol : null)
 
+  const {
+    alignment: mtfAlignment,
+    liquidityMap: mtfLiq,
+    candles1d: brief1d,
+    candles4h: brief4h,
+    candles1h: brief1h,
+    isLoading: briefLoading,
+  } = useMultiTFAnalysis(
+    signal?.internalSymbol ?? '',
+    signal?.price ?? 0,
+    isDrawerOpen && !!signal
+  )
+
+  const marketBrief = useMemo(() => {
+    if (!signal) return null
+    return buildMarketBrief({
+      signal,
+      alignment: mtfAlignment,
+      liquidityMap: mtfLiq,
+      candles1d: brief1d,
+      candles4h: brief4h,
+      candles1h: brief1h,
+    })
+  }, [signal, mtfAlignment, mtfLiq, brief1d, brief4h, brief1h])
+
   useEffect(() => {
     if (isDrawerOpen && signal) {
       haptic.impact()
@@ -656,6 +684,10 @@ const TacticalDrawer = () => {
         </div>
 
         <div className="space-y-6 px-4 py-6">
+          {marketBrief && (
+            <MarketBriefPanel brief={marketBrief} loading={briefLoading} />
+          )}
+
           {compositeAnalysis && (
             <CompositeAnalysisPanel analysis={compositeAnalysis} />
           )}

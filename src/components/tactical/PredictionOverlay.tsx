@@ -97,14 +97,19 @@ const PredictionOverlay = ({
       if (data.length < 2) continue
 
       const isPrimary = sc.id === 'A'
+      const horizon = forecast.horizon ?? 'INTRA'
+      const widthByHorizon =
+        horizon === 'SCALP' ? (isPrimary ? 2 : 1) : horizon === 'SWING' || horizon === 'MACRO' ? (isPrimary ? 3 : 2) : (isPrimary ? 2 : 1)
       const lineSeries = chart.addLineSeries({
         color: isPrimary ? sc.color : `${sc.color}99`,
-        lineWidth: isPrimary ? 2 : 1,
+        lineWidth: widthByHorizon as 1 | 2 | 3 | 4,
         lineStyle: LINE_STYLE_MAP[sc.id] ?? 1,
         crosshairMarkerVisible: false,
         lastValueVisible: isPrimary,
         priceLineVisible: false,
-        title: isPrimary ? `A ${sc.probability}%` : `${sc.id}`,
+        title: isPrimary
+          ? `${horizon === 'SCALP' ? '⚡' : horizon === 'SWING' || horizon === 'MACRO' ? '🕯' : '🎯'} A ${sc.probability}%`
+          : `${sc.id}`,
       })
 
       lineSeries.setData(data)

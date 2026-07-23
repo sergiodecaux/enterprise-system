@@ -543,6 +543,12 @@ export async function runMarketScan(gates?: {
     )
     .slice(0, 8)
 
+  // Always scan majors (BTC + liquid alts) for SNIPER — not only when they
+  // appear in the top movers list (otherwise quiet BTC weeks = zero alerts).
+  const majors = liquidUniverse
+    .filter((t) => BLUE_CHIPS.has(t.symbol))
+    .slice(0, 12)
+
   const alerts: ScanAlert[] = []
   const seen = new Set<string>()
 
@@ -693,7 +699,14 @@ export async function runMarketScan(gates?: {
     }
 
     // ── VOLUME PUMP / DUMP ─────────────────────────────────────────
-    if (spike.detected && spike.mult >= 4 && Math.abs(spike.movePct) >= 2) {
+    const isMajor = BLUE_CHIPS.has(t.symbol)
+    const spikeMultMin = isMajor && !preferMeme ? 2.8 : 4
+    const spikeMoveMin = isMajor && !preferMeme ? 1.2 : 2
+    if (
+      spike.detected &&
+      spike.mult >= spikeMultMin &&
+      Math.abs(spike.movePct) >= spikeMoveMin
+    ) {
       const isLong = spike.movePct > 0
       await push(
         isLong ? 'LONG' : 'SHORT',
@@ -707,6 +720,32 @@ export async function runMarketScan(gates?: {
         `cron:spike:${t.symbol}:${isLong ? 'PUMP' : 'DUMP'}`
       )
       return
+    }
+
+    // ── MAJOR TREND PULSE (BTC / liquid alts) ───────────────────────
+    // Quieter markets: still emit SNIPER when 1m impulse + session move align
+    if (!preferMeme && isMajor) {
+      const impulse = Math.abs(spike.movePct)
+      const sessionMove = Math.abs(chg)
+      if (
+        (spike.detected && impulse >= 0.8 && sessionMove >= 2) ||
+        (sessionMove >= 4 && rsi > 62 && chg > 0) ||
+        (sessionMove >= 4 && rsi < 38 && chg < 0)
+      ) {
+        const isLong = chg >= 0
+        await push(
+          isLong ? 'LONG' : 'SHORT',
+          isLong ? 'TREND_LONG' : 'TREND_SHORT',
+          Math.min(88, 62 + sessionMove),
+          `Major pulse ${t.symbol}: 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%, RSI ${rsi.toFixed(0)}${
+            spike.detected ? `, объём ×${spike.mult.toFixed(1)}` : ''
+          }.`,
+          ['Blue-chip / liquid alt · SNIPER'],
+          'SNIPER',
+          `cron:major:${t.symbol}:${isLong ? 'L' : 'S'}`
+        )
+        return
+      }
     }
 
     // ── BACKSIDE SHORT ─────────────────────────────────────────────
@@ -732,6 +771,10 @@ export async function runMarketScan(gates?: {
   for (const t of memes) {
     await analyze(t, true)
     await new Promise((r) => setTimeout(r, 120))
+  }
+  for (const t of majors) {
+    await analyze(t, false)
+    await new Promise((r) => setTimeout(r, 100))
   }
   for (const t of movers) {
     await analyze(t, false)
