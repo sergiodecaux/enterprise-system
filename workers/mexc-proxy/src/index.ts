@@ -13,6 +13,7 @@
  */
 
 import { runMarketScan, type TradePlanPayload } from './scanner'
+import { BOT_ENGINE } from './botEngine'
 import {
   createPaperTradeFromPlan,
   formatTradesStatus,
@@ -166,6 +167,8 @@ async function handleTelegram(
     return json({
       ok: true,
       bot: 'Enterprisesystem_bot',
+      engine: BOT_ENGINE.id,
+      engineLabel: BOT_ENGINE.label,
       subscribers: subs.length,
       activeWatches: watches,
       hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
@@ -176,6 +179,7 @@ async function handleTelegram(
       idlePulseMin: 10,
       scalpTopN: 3,
       mode: '24/7',
+      note: BOT_ENGINE.deployedNote,
     })
   }
 
@@ -525,6 +529,46 @@ function planToPullbackWatch(
   }
 }
 
+// ── Engine one-shot announce ─────────────────────────────────────────────────
+
+const ENGINE_ANNOUNCE_KEY = 'telegram:engine_announced'
+
+async function maybeAnnounceEngine(env: Env): Promise<void> {
+  if (!env.TELEGRAM_BOT_TOKEN) return
+  const key = `${ENGINE_ANNOUNCE_KEY}:${BOT_ENGINE.id}`
+  if (env.SUBSCRIBERS) {
+    const done = await env.SUBSCRIBERS.get(key)
+    if (done) return
+  } else {
+    return
+  }
+  const subs = await listSubscribers(env)
+  const text = [
+    `<b>⚙ Обновление бота: ${BOT_ENGINE.id}</b>`,
+    BOT_ENGINE.label,
+    '',
+    BOT_ENGINE.deployedNote,
+    '',
+    'В каждом сигнале теперь:',
+    '· зона SSL/BSL с 4H или Daily + сила /10',
+    '· цель = ближайшая opposite HTF-ликвидность',
+    '· Fear&Greed · новости · BTC.D в вероятности',
+    '· фазы APPROACH → TOUCH → реакция → топливо',
+    '',
+    'Проверка: /status · ручной скан: /scan',
+  ].join('\n')
+  let sent = 0
+  for (const sub of subs) {
+    const ok = await tgSend(env, sub.chatId, text)
+    if (ok) sent++
+  }
+  if (sent > 0 || subs.length === 0) {
+    await env.SUBSCRIBERS.put(key, String(Date.now()), {
+      expirationTtl: 60 * 60 * 24 * 90,
+    })
+  }
+}
+
 async function runCronScan(env: Env): Promise<{
   alerts: number
   sent: number
@@ -559,6 +603,13 @@ async function runCronScan(env: Env): Promise<{
     }
   } catch (err) {
     console.error('[cron] watch monitor failed', err)
+  }
+
+  // One-shot announce when engine version changes (so chat shows the update)
+  try {
+    await maybeAnnounceEngine(env)
+  } catch (err) {
+    console.error('[cron] engine announce failed', err)
   }
 
   const heartbeat = await maybeHeartbeat(env)
@@ -862,13 +913,23 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
       await tgSend(
         env,
         chatId,
-        `✅ Скан завершён: сильных сетапов сейчас нет.\nОтправлено: ${result.sent} · дедуп: ${result.skipped}\nКомментарии по сделкам: ${result.paperComments}\n\nБот жив — жди следующий cron (≤2 мин) или /test`
+        [
+          `✅ Скан завершён: сильных HTF-сетапов сейчас нет.`,
+          `Отправлено: ${result.sent} · дедуп: ${result.skipped}`,
+          `Watches/digest: ${result.watchAlerts ?? 0} · idle: ${result.idlePulses ?? 0}`,
+          '',
+          `⚙ Движок: <code>${BOT_ENGINE.id}</code>`,
+          BOT_ENGINE.deployedNote,
+          '',
+          `Бот жив — жди зону 4H/Daily или следующий cron (≤2 мин).`,
+          `/status — версия · /test — пинг`,
+        ].join('\n')
       )
     } else {
       await tgSend(
         env,
         chatId,
-        `✅ Скан: найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}\nСопровождение: ${result.paperComments} сообщений`
+        `✅ Скан (${BOT_ENGINE.id}): найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}\nСопровождение: ${result.paperComments} сообщений`
       )
     }
     return
@@ -888,7 +949,22 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
     await tgSend(
       env,
       chatId,
-      `📊 Статус @Enterprisesystem_bot\nРежим: 24/7 (cron */2)\nPaper companion: ON\nСделок в работе: ${live}\nSniper: ${me.sniper ? 'ON' : 'OFF'}\nMeme: ${me.meme ? 'ON' : 'OFF'}\nПодписчиков: ${list.length}\nchatId: <code>${chatId}</code>\n\n/trades — детали`
+      [
+        `📊 Статус @Enterprisesystem_bot`,
+        `⚙ Движок: <code>${BOT_ENGINE.id}</code>`,
+        BOT_ENGINE.label,
+        BOT_ENGINE.deployedNote,
+        ``,
+        `Режим: 24/7 (cron */2)`,
+        `Paper companion: ON`,
+        `Сделок в работе: ${live}`,
+        `Sniper: ${me.sniper ? 'ON' : 'OFF'}`,
+        `Meme: ${me.meme ? 'ON' : 'OFF'}`,
+        `Подписчиков: ${list.length}`,
+        `chatId: <code>${chatId}</code>`,
+        ``,
+        `/scan — прогон · /trades — сделки`,
+      ].join('\n')
     )
     return
   }

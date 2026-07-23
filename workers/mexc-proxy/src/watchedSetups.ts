@@ -749,7 +749,7 @@ function rebuildPullbackSetup(
   })
   const smart = findSmartZone(setup.side, price, map, atrApprox)
 
-  if (!smart || smart.strength < 6) {
+  if (!smart || smart.strength < 5) {
     // Keep old levels rather than replacing with weak LTF noise
     return null
   }

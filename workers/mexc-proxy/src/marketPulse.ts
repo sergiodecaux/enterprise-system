@@ -174,8 +174,9 @@ export async function buildIdlePulseText(opts: {
       ...favLines,
       ...watchBlock,
       '',
-      'Когда появится сетап ≥60% win — пришлю сразу.',
-      'Скальп: топ-3 по win% (BTC+альты) · Интра до 2 · Свинг 1 · Мемы до 2.',
+      'Когда появится сетап ≥60% win на HTF-зоне 4H/D — пришлю сразу.',
+      'Коридоры: SCALP/INTRA × TREND/COUNTER · только с сильной SSL/BSL.',
+      '⚙ htf-zones-v2 · 15m = тайминг, не источник зоны.',
     ].join('\n'),
   }
 }

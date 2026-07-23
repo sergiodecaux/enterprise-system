@@ -375,9 +375,21 @@ export function findSmartZone(
           a.distancePct - b.distancePct
       )[0]
     if (!ssl) return null
-    // Reject "medium" that is too far or too thin
+    // Reject "medium" that is too far — but 4H ×2 touches IS a real pool
     if (ssl.distancePct > 6.5) return null
-    if (ssl.strength === 'MEDIUM' && ssl.confluence < 1 && ssl.touches < 3) {
+    if (
+      ssl.strength === 'MEDIUM' &&
+      ssl.tf === '4H' &&
+      ssl.touches < 2
+    ) {
+      return null
+    }
+    // Thin medium without any echo only if single touch (shouldn't happen)
+    if (
+      ssl.strength === 'MEDIUM' &&
+      ssl.confluence < 1 &&
+      ssl.touches < 2
+    ) {
       return null
     }
 
@@ -434,7 +446,10 @@ export function findSmartZone(
     )[0]
   if (!bsl) return null
   if (bsl.distancePct > 6.5) return null
-  if (bsl.strength === 'MEDIUM' && bsl.confluence < 1 && bsl.touches < 3) {
+  if (bsl.strength === 'MEDIUM' && bsl.tf === '4H' && bsl.touches < 2) {
+    return null
+  }
+  if (bsl.strength === 'MEDIUM' && bsl.confluence < 1 && bsl.touches < 2) {
     return null
   }
 

@@ -13,6 +13,7 @@ import {
 } from './botJournal'
 import { detectMarketRegime, regimeAllows, type MarketRegime } from './regime'
 import { assessBookToxicity } from './bookToxicity'
+import { BOT_ENGINE } from './botEngine'
 import {
   assessZoneFuel,
   buildHtfLiquidityMap,
@@ -901,6 +902,8 @@ function formatTradeAlert(opts: {
     opts.chased
       ? '⏳ Только лимит в зоне. Вне зоны — пропуск.'
       : '⚠️ Подход → реакция/стакан → топливо до цели. Не догонять вне зоны.',
+    '',
+    `⚙ ${BOT_ENGINE.id} · ${BOT_ENGINE.label}`,
   ].join('\n')
 
   return { title, text }
@@ -1134,8 +1137,8 @@ export async function runMarketScan(
           })
         : null
       if (smart) {
-        // Require meaningful HTF strength for sniper
-        if (type === 'SNIPER' && smart.strength < 6) return
+        // Require meaningful HTF strength for sniper (5+/10 = solid 4H MEDIUM)
+        if (type === 'SNIPER' && smart.strength < 5) return
         scoreAdj = Math.min(
           99,
           scoreAdj +
