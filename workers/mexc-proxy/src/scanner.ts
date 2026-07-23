@@ -37,11 +37,11 @@ const MEXC = 'https://contract.mexc.com'
  * Liquidity floors — obscure / region-missing listings rarely sit in top volume.
  * RF MEXC search usually shows liquid USDT-M perps only.
  */
-const MIN_MEME_QUOTE_VOL = 1_000_000
-const MIN_MOVER_QUOTE_VOL = 5_000_000
-const MIN_OPEN_INTEREST = 5_000
+const MIN_MEME_QUOTE_VOL = 750_000
+const MIN_MOVER_QUOTE_VOL = 3_000_000
+const MIN_OPEN_INTEREST = 4_000
 /** Only alert from top-N liquid USDT perps by 24h quote volume */
-const TOP_LIQUID_PERPS = 120
+const TOP_LIQUID_PERPS = 200
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -967,7 +967,7 @@ export async function runMarketScan(
       (a, b) =>
         Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
     )
-    .slice(0, 14)
+    .slice(0, 20)
 
   const movers = liquidUniverse
     .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
@@ -975,13 +975,13 @@ export async function runMarketScan(
       (a, b) =>
         Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
     )
-    .slice(0, 8)
+    .slice(0, 14)
 
   // Always scan majors (BTC + liquid alts) for SNIPER — not only when they
   // appear in the top movers list (otherwise quiet BTC weeks = zero alerts).
   const majors = liquidUniverse
     .filter((t) => BLUE_CHIPS.has(t.symbol))
-    .slice(0, 12)
+    .slice(0, 16)
 
   const alerts: ScanAlert[] = []
   const seen = new Set<string>()
