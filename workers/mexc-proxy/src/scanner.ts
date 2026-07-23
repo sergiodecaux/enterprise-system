@@ -15,7 +15,7 @@ import { detectMarketRegime, regimeAllows, type MarketRegime } from './regime'
 import { assessBookToxicity } from './bookToxicity'
 import {
   assessZoneFuel,
-  buildLiquidityMap,
+  buildHtfLiquidityMap,
   findSmartZone,
   zoneProbabilityAdj,
   type SmartZonePlan,
@@ -1005,31 +1005,38 @@ export async function runMarketScan(
     const atr = calcAtr(candles)
     if (!(atr > 0)) return
 
-    // Global (4h) + mid (1h) + local (15m) — always for majors/movers; memes get 15m+1h
+    // Bias: 15m/1h timing; Zones: ALWAYS 4H + Daily (never 15m as zone source)
     let bias15: 'BULL' | 'BEAR' | 'FLAT' = 'FLAT'
     let bias1h: 'BULL' | 'BEAR' | 'FLAT' = 'FLAT'
     let bias4h: 'BULL' | 'BEAR' | 'FLAT' = 'FLAT'
     let c1h: Candle[] = []
+    let c4h: Candle[] = []
+    let c1d: Candle[] = []
     {
-      const tasks: Promise<Candle[]>[] = [
+      const frames = await Promise.all([
         fetchKlines(t.symbol, 'Min15', 64),
         fetchKlines(t.symbol, 'Min60', 48),
-      ]
-      if (!preferMeme || isMajor) {
-        tasks.push(fetchKlines(t.symbol, 'Hour4', 42))
-      }
-      const frames = await Promise.all(tasks)
+        fetchKlines(t.symbol, 'Hour4', 90),
+        fetchKlines(t.symbol, 'Day1', 60),
+      ])
       bias15 = tfBias(frames[0])
       c1h = frames[1]
       bias1h = tfBias(c1h)
-      if (frames[2]) bias4h = tfBias(frames[2])
+      c4h = frames[2]
+      bias4h = tfBias(c4h)
+      c1d = frames[3]
     }
     const htfBias =
       bias4h !== 'FLAT' ? bias4h : bias1h !== 'FLAT' ? bias1h : bias15
 
     const bookImb = await fetchBookImbalance(t.symbol)
     const rs = isBtc ? null : relStrengthVsBtc(c1h, btc1h)
-    const liqMap = buildLiquidityMap(c1h.length >= 30 ? c1h : candles, price)
+    const liqMap = buildHtfLiquidityMap({
+      candles4h: c4h,
+      candles1d: c1d,
+      candles1h: c1h,
+      price,
+    })
     const toxCache = new Map<Side, Awaited<ReturnType<typeof assessBookToxicity>>>()
 
     const spike = volumeSpike(candles)
@@ -1109,8 +1116,13 @@ export async function runMarketScan(
         if (scoreAdj < min + boost) return
       }
 
-      // Prefer Mini App SSL/BSL zone; ATR only as fallback
+      // Prefer Mini App–parity HTF SSL/BSL (4H/D only). No LTF fake zones.
       const smart = findSmartZone(side, price, liqMap, atr)
+      // Without real HTF zone SNIPER is noise — skip entirely
+      if (!smart && type === 'SNIPER') return
+      // Meme without HTF zone: only allow very strong raw score
+      if (!smart && type === 'MEME' && scoreAdj < 88) return
+
       const fuel = smart
         ? assessZoneFuel({
             side,
@@ -1121,8 +1133,15 @@ export async function runMarketScan(
             bookImb,
           })
         : null
-      if (smart && liqMap.liquidityBoost > 0) {
-        scoreAdj = Math.min(99, scoreAdj + Math.round(liqMap.liquidityBoost * 2))
+      if (smart) {
+        // Require meaningful HTF strength for sniper
+        if (type === 'SNIPER' && smart.strength < 6) return
+        scoreAdj = Math.min(
+          99,
+          scoreAdj +
+            Math.round(liqMap.liquidityBoost * 3) +
+            (smart.tf === '1D' ? 4 : 2)
+        )
       }
       if (fuel) scoreAdj = Math.max(0, Math.min(99, scoreAdj + fuel.scoreAdj))
 
@@ -1189,11 +1208,14 @@ export async function runMarketScan(
             ...(fuel?.lines ?? []),
             `Цель полёта: ${smart.targetLabel}`,
           ]
-        : ['Сильной SSL/BSL не найдено — ATR pullback fallback']
+        : [
+            '⚠️ Нет HTF SSL/BSL 4H+ — только meme/ATR fallback',
+            '15m зона НЕ используется как источник сигнала',
+          ]
 
       const whyNow: string[] = [
         smart
-          ? `${smart.source} ${smart.phase}: ${smart.reasoning[0] ?? reason}`
+          ? `${smart.tf} ${smart.source} ${smart.phase} · сила ${smart.strength}/10`
           : reason.length > 140
             ? `${reason.slice(0, 137)}…`
             : reason,
@@ -1220,8 +1242,14 @@ export async function runMarketScan(
         `Тренд: глобальный ${ctx.global} · локальный ${ctx.local}${
           ctx.pullback ? ' · откат в тренд' : ''
         }`,
-        `Ликвидность: SSL ${liqMap.nearestSSL ? `×${liqMap.nearestSSL.touches}` : '—'} · BSL ${
-          liqMap.nearestBSL ? `×${liqMap.nearestBSL.touches}` : '—'
+        `Ликвидность HTF: SSL ${
+          liqMap.nearestSSL
+            ? `${liqMap.nearestSSL.tf} ×${liqMap.nearestSSL.touches} ${liqMap.nearestSSL.strength}`
+            : '—'
+        } · BSL ${
+          liqMap.nearestBSL
+            ? `${liqMap.nearestBSL.tf} ×${liqMap.nearestBSL.touches} ${liqMap.nearestBSL.strength}`
+            : '—'
         } · boost ${liqMap.liquidityBoost.toFixed(2)}`,
         `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M · RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
         ...tox.notes,

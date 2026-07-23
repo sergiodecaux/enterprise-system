@@ -5,7 +5,7 @@
 
 import {
   assessZoneFuel,
-  buildLiquidityMap,
+  buildHtfLiquidityMap,
   findSmartZone,
 } from './liquidityZones'
 
@@ -721,145 +721,75 @@ function pullbackStaleReason(
 }
 
 /**
- * Rebuild bounce/pullback levels — prefer Mini App SSL/BSL map, else swing/Fib.
+ * Rebuild bounce/pullback levels — HTF SSL/BSL (4H/D) only. 15m is never zone source.
  */
 function rebuildPullbackSetup(
   setup: ConditionalSetupPayload,
   price: number,
   c15: Candle[],
-  c1h: Candle[]
+  c1h: Candle[],
+  c4h: Candle[] = [],
+  c1d: Candle[] = []
 ): ConditionalSetupPayload | null {
-  const swingSrc = c15.length >= 10 ? c15 : c1h
-  if (swingSrc.length < 8 || !(price > 0)) return null
+  if (!(price > 0)) return null
 
-  const last = swingSrc[swingSrc.length - 1]
-  const atrApprox = Math.max((last[2] - last[3]) * 2, price * 0.006)
-  const map = buildLiquidityMap(c1h.length >= 30 ? c1h : swingSrc, price)
+  const htf = c4h.length >= 24 ? c4h : c1h.length >= 40 ? c1h : []
+  if (htf.length < 24 && c4h.length < 24) {
+    // No HTF → do not invent a 15m "zone"
+    return null
+  }
+
+  const last = (c4h[c4h.length - 1] ?? c1h[c1h.length - 1])!
+  const atrApprox = Math.max((last[2] - last[3]) * 2.5, price * 0.01)
+  const map = buildHtfLiquidityMap({
+    candles4h: c4h.length >= 24 ? c4h : htf,
+    candles1d: c1d,
+    candles1h: c1h,
+    price,
+  })
   const smart = findSmartZone(setup.side, price, map, atrApprox)
 
-  if (smart) {
-    const oldMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
-    if (Math.abs(smart.mid - oldMid) / price < 0.0015) return null
-    const inZoneNow =
-      price >= smart.zoneLow * 0.997 && price <= smart.zoneHigh * 1.003
-    return {
-      ...setup,
-      kind: setup.side === 'LONG' ? 'BOUNCE_SSL' : 'BOUNCE_BSL',
-      title: `↗ ${smart.source} ×${smart.touches} · ${smart.phase}`,
-      probability: Math.round(
-        Math.min(
-          78,
-          Math.max(48, 55 + smart.strength + (smart.phase === 'APPROACH' ? 6 : 0))
-        )
-      ),
-      preconditions: [
-        {
-          id: 'touch',
-          label: `Касание ${smart.source}`,
-          status: inZoneNow ? 'MET' : 'PENDING',
-        },
-        { id: 'book', label: 'Стакан / топливо', status: 'PENDING' },
-        { id: 'confirm', label: 'Реакция / reclaim', status: 'PENDING' },
-      ],
-      entryZone: { top: smart.zoneHigh, bottom: smart.zoneLow },
-      limitEntry: smart.limitEntry,
-      target: smart.target,
-      invalidation: smart.invalidate,
-      triggerSummary: `${smart.source} → ${smart.targetLabel} · фаза ${smart.phase}`,
-      reasoning: smart.reasoning,
-      status: inZoneNow ? 'ARMED' : 'HYPOTHESIS',
-      createdAt: setup.createdAt,
-    }
+  if (!smart || smart.strength < 6) {
+    // Keep old levels rather than replacing with weak LTF noise
+    return null
   }
 
-  const swingLow = recentSwing(swingSrc, 'low')
-  const swingHigh = recentSwing(swingSrc, 'high')
-  if (swingLow == null || swingHigh == null || swingHigh <= swingLow) return null
-
-  const range = swingHigh - swingLow
-  let mid: number
-  let label: string
-  let kind = setup.kind
-
-  if (setup.side === 'LONG') {
-    const fib618 = swingHigh - range * 0.618
-    mid =
-      swingLow < price * 0.999
-        ? swingLow
-        : fib618 < price * 0.999
-          ? fib618
-          : price * 0.994
-    label = swingLow < price * 0.999 ? 'SSL fresh' : 'Fib 0.618 fresh'
-    if (setup.kind.startsWith('BOUNCE') || setup.kind === 'SURGICAL') {
-      kind = 'BOUNCE_SSL'
-    }
-  } else {
-    const fib618 = swingLow + range * 0.618
-    mid =
-      swingHigh > price * 1.001
-        ? swingHigh
-        : fib618 > price * 1.001
-          ? fib618
-          : price * 1.006
-    label = swingHigh > price * 1.001 ? 'BSL fresh' : 'Fib 0.618 fresh'
-    if (setup.kind.startsWith('BOUNCE') || setup.kind === 'SURGICAL') {
-      kind = 'BOUNCE_BSL'
-    }
-  }
-
-  const band = zoneBand(mid, 0.0038)
   const oldMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
-  if (Math.abs(mid - oldMid) / price < 0.0015) return null
-
-  const limitEntry = setup.side === 'LONG' ? band.bottom * 1.0005 : band.top * 0.9995
-  const invalidation =
-    setup.side === 'LONG' ? band.bottom * 0.996 : band.top * 1.004
-  const risk = Math.abs(limitEntry - invalidation)
-  const target =
-    setup.side === 'LONG'
-      ? map.nearestBSL?.price ?? limitEntry + Math.max(risk * 2.1, price * 0.008)
-      : map.nearestSSL?.price ?? limitEntry - Math.max(risk * 2.1, price * 0.008)
-
-  const distPct = ((mid - price) / price) * 100
-  const probability = Math.round(
-    Math.min(
-      78,
-      Math.max(
-        42,
-        52 +
-          (Math.abs(distPct) < 0.8 ? 8 : 0) +
-          (Math.abs(distPct) < 0.35 ? 4 : 0) -
-          (Math.abs(distPct) > 1.5 ? 6 : 0)
-      )
-    )
-  )
-
-  const inZoneNow = price >= band.bottom * 0.997 && price <= band.top * 1.003
-
+  if (Math.abs(smart.mid - oldMid) / price < 0.0015) return null
+  const inZoneNow =
+    price >= smart.zoneLow * 0.997 && price <= smart.zoneHigh * 1.003
   return {
     ...setup,
-    kind,
-    title: `↗ Отскок · ${label}`,
-    probability,
+    kind: setup.side === 'LONG' ? 'BOUNCE_SSL' : 'BOUNCE_BSL',
+    title: `↗ ${smart.tf} ${smart.source} ×${smart.touches} · ${smart.strength}/10 · ${smart.phase}`,
+    probability: Math.round(
+      Math.min(
+        80,
+        Math.max(
+          55,
+          50 +
+            smart.strength +
+            (smart.tf === '1D' ? 4 : 0) +
+            (smart.phase === 'APPROACH' ? 5 : 0) +
+            smart.confluence * 2
+        )
+      )
+    ),
     preconditions: [
       {
         id: 'touch',
-        label: `Касание зоны ${label}`,
+        label: `Касание ${smart.tf} ${smart.source}`,
         status: inZoneNow ? 'MET' : 'PENDING',
       },
       { id: 'book', label: 'Стакан / топливо', status: 'PENDING' },
-      { id: 'confirm', label: 'Реакция / reclaim', status: 'PENDING' },
+      { id: 'confirm', label: '1m реакция на HTF-зоне', status: 'PENDING' },
     ],
-    entryZone: { top: band.top, bottom: band.bottom },
-    limitEntry,
-    target,
-    invalidation,
-    triggerSummary: `Обновлено 10м: лимит ${limitEntry.toPrecision(6)} → TP ${target.toPrecision(6)} · ~${probability}%`,
-    reasoning: [
-      'SSL/BSL map пуст — swing/Fib fallback',
-      `Дистанция ${distPct.toFixed(2)}% · цель opposite liquidity`,
-      `SL @ ${invalidation.toPrecision(6)}`,
-    ],
+    entryZone: { top: smart.zoneHigh, bottom: smart.zoneLow },
+    limitEntry: smart.limitEntry,
+    target: smart.target,
+    invalidation: smart.invalidate,
+    triggerSummary: `${smart.tf} ${smart.source} → ${smart.targetLabel}`,
+    reasoning: smart.reasoning,
     status: inZoneNow ? 'ARMED' : 'HYPOTHESIS',
     createdAt: setup.createdAt,
   }
@@ -909,11 +839,12 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   }
 
   for (const [mexcSym, watches] of bySymbol) {
-    const [c1m, c15, c1h, c4h, bookImb] = await Promise.all([
+    const [c1m, c15, c1h, c4h, c1d, bookImb] = await Promise.all([
       fetchKlines(mexcSym, 'Min1', 60),
       fetchKlines(mexcSym, 'Min15', 64),
       fetchKlines(mexcSym, 'Min60', 60),
-      fetchKlines(mexcSym, 'Hour4', 40),
+      fetchKlines(mexcSym, 'Hour4', 90),
+      fetchKlines(mexcSym, 'Day1', 60),
       fetchBookImbalance(mexcSym),
     ])
     const price =
@@ -925,30 +856,37 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     for (const w of watches) {
       let working = w
 
-      // Every 10 min: rebuild stale pullback / wrong-geometry setups
+      // Every 10 min: rebuild stale pullback from HTF SSL/BSL only
       if (price && dueForLevelsRefresh(w, now)) {
         const staleReason = pullbackStaleReason(w.setup, price, c1m)
-        // Also refresh bounce-like setups periodically even if not obviously stale,
-        // when fresh swing moved ≥0.25% from old mid
         let reason = staleReason
         if (!reason && isBounceLike(w.setup)) {
-          const swingSrc = c15.length >= 10 ? c15 : c1h
-          const swing =
-            w.setup.side === 'LONG'
-              ? recentSwing(swingSrc, 'low')
-              : recentSwing(swingSrc, 'high')
+          const map = buildHtfLiquidityMap({
+            candles4h: c4h,
+            candles1d: c1d,
+            candles1h: c1h,
+            price,
+          })
+          const smart = findSmartZone(w.setup.side, price, map, price * 0.01)
           const oldMid =
             (w.setup.entryZone.top + w.setup.entryZone.bottom) / 2
           if (
-            swing != null &&
-            Math.abs(swing - oldMid) / price >= 0.0025
+            smart &&
+            Math.abs(smart.mid - oldMid) / price >= 0.0025
           ) {
-            reason = 'структура сдвинулась — новая зона ликвидности'
+            reason = `HTF ${smart.tf} зона сдвинулась — обновляю SSL/BSL`
           }
         }
 
         if (reason) {
-          const rebuilt = rebuildPullbackSetup(w.setup, price, c15, c1h)
+          const rebuilt = rebuildPullbackSetup(
+            w.setup,
+            price,
+            c15,
+            c1h,
+            c4h,
+            c1d
+          )
           if (rebuilt) {
             const prev = {
               limit: w.setup.limitEntry,
