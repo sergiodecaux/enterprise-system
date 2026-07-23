@@ -19,7 +19,7 @@ interface MultiTFData {
   lastUpdate: number
 }
 
-const REFRESH_INTERVAL = 5 * 60 * 1000
+const REFRESH_INTERVAL = 90_000
 const empty: MultiTFData = {
   alignment: null,
   liquidityMap: [],

@@ -83,7 +83,7 @@ export function usePriceForecast(
       const daily = candles1d.length >= 20 ? candles1d : candles
       if (daily.length < 20) return null
 
-      const lastCandleTs = getLastCandleTimestamp(daily)
+      const lastCandleTs = Math.floor(Date.now() / 1000)
       const scenarios = buildMacroScenarios(
         daily,
         alignment,
@@ -117,7 +117,9 @@ export function usePriceForecast(
     }
 
     if (candles.length < 20) return null
-    const lastCandleTs = getLastCandleTimestamp(candles)
+    // Anchor paths to "now" so scenarios crawl forward instead of freezing
+    // on the last closed HTF bar for hours.
+    const lastCandleTs = Math.floor(Date.now() / 1000)
     const pathTimeScale = mode === 'SCALP' ? 0.32 : 1.15
     const scenarios = buildScenarios(
       candles,

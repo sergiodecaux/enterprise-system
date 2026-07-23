@@ -148,10 +148,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         preferredSide: mmSnap.preferredSide,
       }
     : null
+  // Re-anchor scenario paths every ~60s even if HTF candles are quiet
+  const [scenarioClock, setScenarioClock] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setScenarioClock((n) => n + 1), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
   const forecastRefreshKey =
     Math.round((ticker?.timestamp ?? 0) / 15_000) +
     Math.round((orderBookMetrics?.imbalance ?? 0) * 10) +
-    (mmSnap?.updatedAt ? Math.round(mmSnap.updatedAt / 15_000) : 0)
+    (mmSnap?.updatedAt ? Math.round(mmSnap.updatedAt / 15_000) : 0) +
+    scenarioClock
 
   const baseSym = flatSymbol.replace(/USDT$/i, '').replace(/_USDT$/i, '')
   const coinSentiment = useAppStore(
@@ -484,12 +491,29 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     setCandles([])
     setLwcData([])
 
-    const load = async () => {
+    const pollMs =
+      timeframe === '1m'
+        ? 15_000
+        : timeframe === '5m'
+          ? 25_000
+          : timeframe === '15m'
+            ? 40_000
+            : timeframe === '1h'
+              ? 60_000
+              : timeframe === '4h'
+                ? 120_000
+                : 180_000
+
+    const load = async (silent = false) => {
       try {
+        if (!silent) {
+          setLoading(true)
+          setError(null)
+        }
         const data = await fetchOhlcv(symbol, timeframe, CANDLE_LIMIT[timeframe])
         if (cancelled) return
         if (!data.length) {
-          setError(t('chart_empty'))
+          if (!silent) setError(t('chart_empty'))
           return
         }
 
@@ -504,15 +528,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         setLwcData(mapped)
       } catch (err) {
         logger.warn('LiveChart klines failed', err)
-        if (!cancelled) setError(t('chart_error'))
+        if (!cancelled && !silent) setError(t('chart_error'))
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && !silent) setLoading(false)
       }
     }
 
-    load()
+    void load(false)
+    const id = window.setInterval(() => void load(true), pollMs)
     return () => {
       cancelled = true
+      window.clearInterval(id)
     }
   }, [symbol, timeframe, t])
 
@@ -1219,6 +1245,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             dominantId={forecast.dominantScenario}
             activeScenarios={activeScenarios}
             onToggle={toggleScenario}
+            updatedAt={forecast.generatedAt}
+            horizon={forecast.horizon}
           />
           {(forecastHorizon === 'MACRO' || forecastHorizon === 'SWING') && (
             <MacroOutlookPanel

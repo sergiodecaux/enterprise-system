@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { PriceScenario } from '../../engine/prediction/types'
@@ -8,6 +8,9 @@ interface Props {
   dominantId: 'A' | 'B' | 'C'
   activeScenarios: Set<string>
   onToggle: (id: string) => void
+  /** Forecast generatedAt ms */
+  updatedAt?: number | null
+  horizon?: string | null
 }
 
 const ScenarioLegend = ({
@@ -15,19 +18,40 @@ const ScenarioLegend = ({
   dominantId,
   activeScenarios,
   onToggle,
+  updatedAt,
+  horizon,
 }: Props) => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [, setNowTick] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick((n) => n + 1), 5_000)
+    return () => window.clearInterval(id)
+  }, [])
+  const ageSec =
+    updatedAt != null
+      ? Math.max(0, Math.round((Date.now() - updatedAt) / 1000))
+      : null
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div className="font-mono text-[10px] uppercase text-holo/50">
-          {scenarios.some((s) => s.label.toLowerCase().includes('неделя'))
-            ? 'Сценарии · неделя'
-            : t('forecast_scenarios')}
+          {horizon === 'SWING' || horizon === 'MACRO'
+            ? 'Сценарии · свинг'
+            : horizon === 'SCALP'
+              ? 'Сценарии · скальп'
+              : scenarios.some((s) => s.label.toLowerCase().includes('неделя'))
+                ? 'Сценарии · неделя'
+                : t('forecast_scenarios')}
         </div>
-        <div className="font-mono text-[9px] text-holo/35">{t('forecast_hint')}</div>
+        <div className="font-mono text-[9px] text-holo/35">
+          {ageSec != null
+            ? ageSec < 60
+              ? `обновлено ${ageSec}с`
+              : `обновлено ${Math.floor(ageSec / 60)}м`
+            : t('forecast_hint')}
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-1.5">
