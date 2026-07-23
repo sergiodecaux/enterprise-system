@@ -65,7 +65,7 @@ export function detectMarketRegime(candles1h: Candle[]): MarketRegime {
   return 'RANGING'
 }
 
-/** Regime policy for scanner emit */
+/** Regime policy — allow SCALP/INTRA × TREND/COUNTER with score floors, not hard silence */
 export function regimeAllows(
   regime: MarketRegime,
   style: 'SCALP' | 'INTRADAY' | 'SWING',
@@ -77,32 +77,40 @@ export function regimeAllows(
   let scoreAdj = score
 
   if (regime === 'VOLATILE_CHOP') {
-    if (style === 'SCALP' && !softForMeme) {
-      return { ok: false, reason: 'regime:chop_blocks_scalp', scoreAdj }
+    // Scalp still allowed if score is solid; counter needs more
+    if (style === 'SCALP' && score < (softForMeme ? 76 : 82)) {
+      return { ok: false, reason: 'regime:chop_weak_scalp', scoreAdj }
     }
-    if (style === 'SCALP' && softForMeme && score < 80) {
-      return { ok: false, reason: 'regime:chop_meme_scalp_weak', scoreAdj }
+    if (align === 'COUNTER' && score < (softForMeme ? 80 : 86)) {
+      return { ok: false, reason: 'regime:chop_weak_counter', scoreAdj }
     }
-    if (align === 'COUNTER' && score < (softForMeme ? 84 : 90)) {
-      return { ok: false, reason: 'regime:chop_blocks_counter', scoreAdj }
-    }
-    scoreAdj += softForMeme ? 2 : 4
+    scoreAdj += softForMeme ? 1 : 2
   }
 
   if (regime === 'RANGING') {
-    if (style === 'SCALP' && align === 'COUNTER' && !softForMeme) {
-      return { ok: false, reason: 'regime:range_blocks_scalp_counter', scoreAdj }
+    if (style === 'SCALP' && align === 'COUNTER' && score < (softForMeme ? 80 : 86)) {
+      return { ok: false, reason: 'regime:range_weak_scalp_counter', scoreAdj }
     }
-    if (style === 'SCALP' && score < (softForMeme ? 78 : 86)) {
-      return { ok: false, reason: 'regime:range_tight_scalp', scoreAdj }
+    if (style === 'SCALP' && score < (softForMeme ? 74 : 80)) {
+      return { ok: false, reason: 'regime:range_weak_scalp', scoreAdj }
     }
-    if (align === 'COUNTER' && score < (softForMeme ? 82 : 88)) {
-      return { ok: false, reason: 'regime:range_blocks_weak_counter', scoreAdj }
+    if (align === 'COUNTER' && score < (softForMeme ? 78 : 84)) {
+      return { ok: false, reason: 'regime:range_weak_counter', scoreAdj }
+    }
+    // Mean-reversion friendly for intraday counter when score clears floor
+    if (align === 'COUNTER' && style === 'INTRADAY') {
+      scoreAdj = Math.min(99, scoreAdj + 2)
     }
   }
 
   if (regime === 'TRENDING_STRONG' && align === 'WITH_TREND') {
     scoreAdj = Math.min(99, scoreAdj + 3)
+  }
+  if (regime === 'TRENDING_STRONG' && align === 'COUNTER' && score < (softForMeme ? 82 : 88)) {
+    return { ok: false, reason: 'regime:strong_trend_blocks_weak_counter', scoreAdj }
+  }
+  if (regime === 'TRENDING_WEAK' && align === 'WITH_TREND') {
+    scoreAdj = Math.min(99, scoreAdj + 1)
   }
 
   return { ok: true, scoreAdj }

@@ -638,7 +638,7 @@ async function runCronScan(env: Env): Promise<{
                 ...lines,
                 '',
                 'Когда появится сетап ≥60% win — пришлю сразу.',
-                'Скальп: топ-3 по win% (BTC+альты) · Интра до 2 · Свинг 1 · Мемы до 2.',
+                'Коридоры: SCALP×TREND/COUNTER · INTRA×TREND/COUNTER · SWING · MEME — с явной вероятностью.',
               ].join('\n')
             : shared.text
         const r = await broadcastAlert(env, {

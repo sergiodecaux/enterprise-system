@@ -69,6 +69,7 @@ export interface ScanAlert {
   /** Display win probability used for ranking */
   winPct: number
   style: 'SCALP' | 'INTRADAY' | 'SWING' | 'OTHER'
+  align: 'WITH_TREND' | 'COUNTER'
   tradePlan?: TradePlanPayload
   /** Price already left zone — auto-create pullback watches for subscribers */
   needsPullbackWatch?: boolean
@@ -391,10 +392,16 @@ function quoteVol(t: TickerRow): number {
 function buildLevels(
   side: Side,
   entry: number,
-  atr: number
+  atr: number,
+  style: TradeStyle = 'INTRADAY'
 ): { sl: number; tp: number } {
-  const risk = Math.max(atr * 1.4, entry * 0.008)
-  const reward = Math.max(atr * 2.4, entry * 0.015)
+  // SCALP: tighter risk/reward; SWING: wider
+  const riskMult = style === 'SCALP' ? 0.9 : style === 'SWING' ? 1.8 : 1.4
+  const rewardMult = style === 'SCALP' ? 1.5 : style === 'SWING' ? 3.2 : 2.4
+  const riskFloor = style === 'SCALP' ? 0.004 : style === 'SWING' ? 0.012 : 0.008
+  const rewardFloor = style === 'SCALP' ? 0.007 : style === 'SWING' ? 0.022 : 0.015
+  const risk = Math.max(atr * riskMult, entry * riskFloor)
+  const reward = Math.max(atr * rewardMult, entry * rewardFloor)
   if (side === 'LONG') {
     return { sl: entry - risk, tp: entry + reward }
   }
@@ -408,7 +415,8 @@ function buildLevels(
 function buildEntryPlan(
   side: Side,
   signalPrice: number,
-  atr: number
+  atr: number,
+  style: TradeStyle = 'INTRADAY'
 ): {
   signalPrice: number
   entryIdeal: number
@@ -418,7 +426,9 @@ function buildEntryPlan(
   sl: number
   tp: number
 } {
-  const pull = Math.max(atr * 0.7, signalPrice * 0.008)
+  const pullMult = style === 'SCALP' ? 0.45 : style === 'SWING' ? 1.1 : 0.7
+  const pullFloor = style === 'SCALP' ? 0.004 : style === 'SWING' ? 0.012 : 0.008
+  const pull = Math.max(atr * pullMult, signalPrice * pullFloor)
   const chase = Math.max(atr * 0.35, signalPrice * 0.005)
   // Zone is a true pullback area — current print is intentionally outside
   const cushion = Math.max(atr * 0.12, signalPrice * 0.0015)
@@ -428,7 +438,7 @@ function buildEntryPlan(
     const zoneLow = signalPrice - pull
     const entryIdeal = (zoneLow + zoneHigh) / 2
     const invalidate = signalPrice + chase
-    const { sl, tp } = buildLevels('LONG', entryIdeal, atr)
+    const { sl, tp } = buildLevels('LONG', entryIdeal, atr, style)
     return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
   }
 
@@ -436,7 +446,7 @@ function buildEntryPlan(
   const zoneHigh = signalPrice + pull
   const entryIdeal = (zoneLow + zoneHigh) / 2
   const invalidate = signalPrice - chase
-  const { sl, tp } = buildLevels('SHORT', entryIdeal, atr)
+  const { sl, tp } = buildLevels('SHORT', entryIdeal, atr, style)
   return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
 }
 
@@ -634,20 +644,125 @@ function alignLabel(align: TrendAlign): string {
 }
 
 /**
- * Map raw score → display win% (calibrated band, not historical WR).
- * WITH_TREND gets a bump; COUNTER must earn a higher raw score to clear 60%.
+ * Explicit probability model for SCALP / INTRA / SWING × TREND / COUNTER.
+ * Returns win% + factor lines shown in Telegram so the number is auditable.
  */
-function winPctFromScore(
-  score: number,
-  align: TrendAlign = 'WITH_TREND',
-  style: TradeStyle = 'INTRADAY'
-): number {
-  let base = 42 + score * 0.4
-  if (align === 'WITH_TREND') base += 5
-  else base -= 3
-  if (style === 'SWING') base += 2
-  if (style === 'SCALP') base -= 1
-  return Math.round(Math.min(88, Math.max(0, base)))
+function computeSetupProbability(opts: {
+  score: number
+  align: TrendAlign
+  style: TradeStyle
+  regime: MarketRegime
+  pullback: boolean
+  bookImb: number | null
+  rs: number | null
+  isBtc: boolean
+  rsi: number
+  side: Side
+}): { winPct: number; factors: string[] } {
+  const factors: string[] = []
+  // Base from raw setup score (58→~65%, 90→~78%)
+  let p = 48 + opts.score * 0.32
+  factors.push(`база от score ${opts.score}: ${Math.round(p)}%`)
+
+  if (opts.align === 'WITH_TREND') {
+    p += opts.style === 'SCALP' ? 4 : 6
+    factors.push(`+${opts.style === 'SCALP' ? 4 : 6}% по тренду`)
+  } else {
+    // Counter can still clear 60% with strong score / exhaustion
+    p -= opts.style === 'SCALP' ? 2 : 1
+    factors.push(`−${opts.style === 'SCALP' ? 2 : 1}% контртренд (нужен сильный setup)`)
+  }
+
+  if (opts.style === 'SCALP') {
+    p -= 1
+    factors.push('−1% горизонт скальп (шумнее)')
+  } else if (opts.style === 'SWING') {
+    p += 2
+    factors.push('+2% горизонт свинг')
+  } else {
+    factors.push('интрадей: без штрафа горизонта')
+  }
+
+  if (opts.pullback && opts.align === 'WITH_TREND') {
+    p += 3
+    factors.push('+3% откат в тренд')
+  }
+
+  if (opts.regime === 'TRENDING_STRONG' && opts.align === 'WITH_TREND') {
+    p += 3
+    factors.push('+3% режим TRENDING_STRONG')
+  } else if (opts.regime === 'TRENDING_WEAK' && opts.align === 'WITH_TREND') {
+    p += 1
+    factors.push('+1% режим TRENDING_WEAK')
+  } else if (opts.regime === 'VOLATILE_CHOP') {
+    p -= opts.align === 'COUNTER' ? 4 : 2
+    factors.push(
+      opts.align === 'COUNTER' ? '−4% chop + контртренд' : '−2% режим VOLATILE_CHOP'
+    )
+  } else if (opts.regime === 'RANGING' && opts.style === 'SCALP') {
+    p -= 1
+    factors.push('−1% range + скальп')
+  }
+
+  if (opts.bookImb != null) {
+    const aligned =
+      (opts.side === 'LONG' && opts.bookImb >= 18) ||
+      (opts.side === 'SHORT' && opts.bookImb <= -18)
+    const against =
+      (opts.side === 'LONG' && opts.bookImb <= -12) ||
+      (opts.side === 'SHORT' && opts.bookImb >= 12)
+    if (aligned) {
+      p += 3
+      factors.push(`+3% OBI за вход (${opts.bookImb >= 0 ? '+' : ''}${opts.bookImb.toFixed(0)}%)`)
+    } else if (against) {
+      p -= 3
+      factors.push(`−3% OBI против (${opts.bookImb >= 0 ? '+' : ''}${opts.bookImb.toFixed(0)}%)`)
+    }
+  }
+
+  if (!opts.isBtc && opts.rs != null) {
+    if (opts.side === 'LONG' && opts.rs >= 3) {
+      p += Math.min(4, 1 + opts.rs * 0.25)
+      factors.push(`+RS vs BTC ${opts.rs.toFixed(1)}pp`)
+    } else if (opts.side === 'SHORT' && opts.rs <= -3) {
+      p += Math.min(4, 1 + Math.abs(opts.rs) * 0.25)
+      factors.push(`+RS слабость vs BTC ${opts.rs.toFixed(1)}pp`)
+    } else if (opts.side === 'LONG' && opts.rs <= -4) {
+      p -= 3
+      factors.push(`−3% слабый RS ${opts.rs.toFixed(1)}pp`)
+    } else if (opts.side === 'SHORT' && opts.rs >= 4) {
+      p -= 3
+      factors.push(`−3% сильный RS против шорта ${opts.rs.toFixed(1)}pp`)
+    }
+  }
+
+  // RSI confirmation / exhaustion
+  if (opts.align === 'WITH_TREND') {
+    if (opts.side === 'LONG' && opts.rsi >= 52 && opts.rsi <= 68) {
+      p += 2
+      factors.push(`+2% RSI в трендовой зоне (${opts.rsi.toFixed(0)})`)
+    } else if (opts.side === 'SHORT' && opts.rsi <= 48 && opts.rsi >= 32) {
+      p += 2
+      factors.push(`+2% RSI в трендовой зоне (${opts.rsi.toFixed(0)})`)
+    } else if (
+      (opts.side === 'LONG' && opts.rsi >= 78) ||
+      (opts.side === 'SHORT' && opts.rsi <= 22)
+    ) {
+      p -= 4
+      factors.push(`−4% RSI перегрет для тренда (${opts.rsi.toFixed(0)})`)
+    }
+  } else {
+    if (
+      (opts.side === 'SHORT' && opts.rsi >= 72) ||
+      (opts.side === 'LONG' && opts.rsi <= 28)
+    ) {
+      p += 4
+      factors.push(`+4% RSI exhaustion для контртренда (${opts.rsi.toFixed(0)})`)
+    }
+  }
+
+  const winPct = Math.round(Math.min(88, Math.max(0, p)))
+  return { winPct, factors: factors.slice(0, 7) }
 }
 
 function styleHashTag(
@@ -678,12 +793,14 @@ function formatTradeAlert(opts: {
   type: 'SNIPER' | 'MEME'
   whyNow: string[]
   contextLines: string[]
+  probFactors: string[]
   chased: boolean
   extras?: string[]
 }): { title: string; text: string } {
   const name = opts.symbol.replace('_USDT', '/USDT')
   const icon = opts.side === 'LONG' ? '🟢' : '🔴'
   const tag = styleHashTag(opts.style, opts.type)
+  const alignTag = opts.align === 'WITH_TREND' ? '#TREND' : '#COUNTER'
   const rr =
     Math.abs(opts.entryIdeal - opts.sl) > 0
       ? Math.abs(opts.tp - opts.entryIdeal) / Math.abs(opts.entryIdeal - opts.sl)
@@ -694,7 +811,7 @@ function formatTradeAlert(opts: {
       ? `Не входить / не догонять выше ${fmt(opts.invalidate)}`
       : `Не входить / не догонять ниже ${fmt(opts.invalidate)}`
 
-  const title = `${tag} ${icon} ${opts.side} ${name} · ${styleLabel(opts.style)} · ${opts.setup}`
+  const title = `${tag} ${alignTag} ${icon} ${opts.side} ${name} · ${opts.winPct}% · ${opts.setup}`
 
   const entryBlock = opts.chased
     ? [
@@ -711,10 +828,14 @@ function formatTradeAlert(opts: {
       ]
 
   const text = [
-    tag,
-    `Биржа: MEXC Futures · ${opts.symbol}`,
+    `${tag} ${alignTag}`,
+    `Сигнал: ${icon} ${opts.side} ${name}`,
     `Стиль: ${styleLabel(opts.style)} · ${alignLabel(opts.align)} · ${opts.type}`,
+    `Вероятность: ${opts.winPct}% (порог ${MIN_WIN_PCT}%) · R:R 1:${rr.toFixed(1)}`,
     `Сигнал @ ${now}`,
+    '',
+    'Как посчитана вероятность:',
+    ...opts.probFactors.map((l) => `• ${l}`),
     '',
     'Почему сейчас:',
     ...opts.whyNow.map((l) => `• ${l}`),
@@ -724,7 +845,6 @@ function formatTradeAlert(opts: {
     '',
     `Стоп: ${fmt(opts.sl)} (${pct(opts.entryIdeal, opts.sl)})`,
     `Цель: ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
-    `Победа: ${opts.winPct}% (мин. ${MIN_WIN_PCT}%) · R:R 1:${rr.toFixed(1)}`,
     '',
     `Причина: ${opts.reason}`,
     '',
@@ -941,13 +1061,24 @@ export async function runMarketScan(
         if (scoreAdj < min + boost) return
       }
 
-      const priorWin = winPctFromScore(scoreAdj, align, style)
-      const cal = calibrateWinPct(priorWin, composite, winCal)
+      const prior = computeSetupProbability({
+        score: scoreAdj,
+        align,
+        style,
+        regime: btcRegime,
+        pullback: ctx.pullback,
+        bookImb,
+        rs,
+        isBtc,
+        rsi,
+        side,
+      })
+      const cal = calibrateWinPct(prior.winPct, composite, winCal)
       // Soft floor: cold streak must not silence healthy high-score tags
       let winPct = cal.winPct
       if (
         winPct < MIN_WIN_PCT &&
-        priorWin >= MIN_WIN_PCT &&
+        prior.winPct >= MIN_WIN_PCT &&
         scoreAdj >= (type === 'MEME' ? 76 : 84)
       ) {
         winPct = MIN_WIN_PCT
@@ -957,7 +1088,7 @@ export async function runMarketScan(
       // Final live check — detail + book + funding endpoint
       if (!(await isSymbolTradableNow(t.symbol, minVol))) return
 
-      const plan = buildEntryPlan(side, price, atr)
+      const plan = buildEntryPlan(side, price, atr, style)
       const chased = isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
 
       const obiStr =
@@ -979,6 +1110,13 @@ export async function runMarketScan(
           : `Сигнал ${align === 'WITH_TREND' ? 'по тренду' : 'контртренд'} · стиль ${styleLabel(style)}.`,
       ].slice(0, 3)
 
+      const probFactors = [
+        ...prior.factors,
+        cal.source === 'PRIOR'
+          ? `журнал: мало данных → модель ${prior.winPct}%`
+          : `журнал ⊕ ${cal.sampleN} сделок (${cal.source}): ${prior.winPct}% → ${winPct}%`,
+      ]
+
       const contextLines = [
         `1h bias: ${bias1h} · 4h bias: ${bias4h} · 15m: ${bias15}`,
         `OBI: ${obiStr} · RS: ${rsStr}`,
@@ -987,9 +1125,6 @@ export async function runMarketScan(
         `Тренд: глобальный ${ctx.global} · локальный ${ctx.local}${
           ctx.pullback ? ' · откат в тренд' : ''
         }`,
-        cal.source === 'PRIOR'
-          ? `Win% модель ${priorWin}% (журнал: мало данных)`
-          : `Win% ${winPct}% = модель ${priorWin}% ⊕ журнал ${cal.sampleN} (${cal.source})`,
         `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M · RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
         ...tox.notes,
         ...extras,
@@ -1013,6 +1148,7 @@ export async function runMarketScan(
         type,
         whyNow,
         contextLines,
+        probFactors,
         chased,
       })
       alerts.push({
@@ -1023,6 +1159,7 @@ export async function runMarketScan(
         score: scoreAdj,
         winPct,
         style,
+        align,
         needsPullbackWatch: chased,
         tradePlan: {
           side,
@@ -1039,13 +1176,9 @@ export async function runMarketScan(
       })
     }
 
-    // ── SHORT SQUEEZE → LONG (INTRADAY / COUNTER to short bias) ────
+    // ── SHORT SQUEEZE → LONG (MEME / COUNTER) ──────────────────────
     const deeplyNeg = fundingPct <= -0.05 || fundingPct * 3 <= -0.15
-    if (
-      deeplyNeg &&
-      highBroken &&
-      (spike.detected || chg >= 8)
-    ) {
+    if (deeplyNeg && highBroken && (spike.detected || chg >= 8)) {
       await push(
         'LONG',
         'SQUEEZE',
@@ -1059,10 +1192,22 @@ export async function runMarketScan(
         'INTRADAY',
         'COUNTER'
       )
-      return
-    }
-    // Soft squeeze only if gates do not require high break
-    if (
+      // Also offer a scalp continuation if impulse is hot
+      if (spike.detected && spike.mult >= 3) {
+        await push(
+          'LONG',
+          'SQUEEZE',
+          88,
+          `Squeeze-скальп: объём ×${spike.mult.toFixed(1)}, funding ${fundingPct.toFixed(3)}%.`,
+          [],
+          'MEME',
+          `cron:squeeze_scalp:${t.symbol}`,
+          'SCALP',
+          'COUNTER'
+        )
+      }
+      if (preferMeme) return
+    } else if (
       deeplyNeg &&
       !highBroken &&
       (spike.detected || chg >= 10) &&
@@ -1079,10 +1224,10 @@ export async function runMarketScan(
         'INTRADAY',
         'COUNTER'
       )
-      return
+      if (preferMeme) return
     }
 
-    // ── IGNITION → LONG SCALP ──────────────────────────────────────
+    // ── IGNITION → SCALP (+ optional INTRA) ────────────────────────
     if (ignition.detected) {
       await push(
         'LONG',
@@ -1094,10 +1239,22 @@ export async function runMarketScan(
         `cron:ignition:${t.symbol}`,
         'SCALP'
       )
-      return
+      if (ignition.movePct >= 2.5) {
+        await push(
+          'LONG',
+          'IGNITION',
+          84,
+          `Ignition → интрадей продолжение: импульс ${ignition.movePct.toFixed(1)}%.`,
+          [],
+          'MEME',
+          `cron:ignition_intra:${t.symbol}`,
+          'INTRADAY'
+        )
+      }
+      if (preferMeme) return
     }
 
-    // ── VOLUME PUMP / DUMP · SCALP ─────────────────────────────────
+    // ── VOLUME PUMP / DUMP · SCALP (+ INTRA twin when strong) ──────
     const spikeMultMin = preferMeme ? 3.2 : isMajor ? 2.8 : 4
     const spikeMoveMin = preferMeme ? 1.5 : isMajor ? 1.2 : 2
     if (
@@ -1108,11 +1265,7 @@ export async function runMarketScan(
       const isLong = spike.movePct > 0
       const side: Side = isLong ? 'LONG' : 'SHORT'
       const align = classifyAlign(side, bias15 !== 'FLAT' ? bias15 : htfBias)
-      // Counter scalp needs stronger spike
-      const baseScore = Math.min(
-        95,
-        (preferMeme ? 62 : 58) + spike.mult * 5
-      )
+      const baseScore = Math.min(95, (preferMeme ? 62 : 58) + spike.mult * 5)
       const score = align === 'COUNTER' ? baseScore + 6 : baseScore
       await push(
         side,
@@ -1127,10 +1280,24 @@ export async function runMarketScan(
         'SCALP',
         align
       )
-      return
+      // Strong spike → also emit INTRADAY twin (same side/align)
+      if (spike.mult >= spikeMultMin + 1.2 && Math.abs(spike.movePct) >= spikeMoveMin + 0.8) {
+        await push(
+          side,
+          isLong ? 'PUMP' : 'DUMP',
+          Math.min(96, score + 2),
+          `Сильный импульс ×${spike.mult.toFixed(1)} → интрадей ${alignLabel(align)}.`,
+          [],
+          preferMeme ? 'MEME' : 'SNIPER',
+          `cron:spike_intra:${t.symbol}:${isLong ? 'PUMP' : 'DUMP'}`,
+          'INTRADAY',
+          align
+        )
+      }
+      if (preferMeme) return
     }
 
-    // ── MAJOR / ALT · INTRADAY WITH TREND ───────────────────────────
+    // ── MAJORS / LIQUID: explicit SCALP & INTRA × TREND / COUNTER ──
     if (!preferMeme && (isMajor || volUsd >= MIN_MOVER_QUOTE_VOL)) {
       const sessionMove = Math.abs(chg)
       const trendSide: Side | null =
@@ -1140,6 +1307,50 @@ export async function runMarketScan(
             ? 'SHORT'
             : null
 
+      // SCALP WITH_TREND — short impulse in direction of 15m/1h
+      if (
+        trendSide &&
+        ((trendSide === 'LONG' && bias15 === 'BULL' && rsi >= 50 && rsi <= 70) ||
+          (trendSide === 'SHORT' && bias15 === 'BEAR' && rsi <= 50 && rsi >= 30)) &&
+        (spike.detected || sessionMove >= 1.2)
+      ) {
+        await push(
+          trendSide,
+          trendSide === 'LONG' ? 'SCALP_LONG' : 'SCALP_SHORT',
+          Math.min(92, 70 + sessionMove * 1.5 + (spike.detected ? 4 : 0)),
+          `Скальп по тренду: 15m ${bias15}, 1h ${bias1h}, RSI ${rsi.toFixed(0)}, 24h ${
+            chg >= 0 ? '+' : ''
+          }${chg.toFixed(1)}%${spike.detected ? `, объём ×${spike.mult.toFixed(1)}` : ''}.`,
+          ['#SCALP #TREND'],
+          'SNIPER',
+          `cron:scalp_trend:${t.symbol}:${trendSide}`,
+          'SCALP',
+          'WITH_TREND'
+        )
+      }
+
+      // SCALP COUNTER — local exhaustion vs HTF
+      if (
+        htfBias !== 'FLAT' &&
+        sessionMove >= 2.5 &&
+        ((htfBias === 'BULL' && rsi >= 72 && chg > 0) ||
+          (htfBias === 'BEAR' && rsi <= 28 && chg < 0))
+      ) {
+        const side: Side = htfBias === 'BULL' ? 'SHORT' : 'LONG'
+        await push(
+          side,
+          'SCALP_FADE',
+          Math.min(93, 74 + sessionMove),
+          `Скальп против тренда: HTF ${htfBias}, RSI ${rsi.toFixed(0)} — локальный fade, не свинг.`,
+          ['#SCALP #COUNTER'],
+          'SNIPER',
+          `cron:scalp_counter:${t.symbol}:${side}`,
+          'SCALP',
+          'COUNTER'
+        )
+      }
+
+      // INTRADAY WITH_TREND
       if (
         trendSide &&
         sessionMove >= 1.8 &&
@@ -1153,21 +1364,20 @@ export async function runMarketScan(
           `Интрадей по тренду ${t.symbol}: 1h ${bias1h}, 15m ${bias15}, 24h ${
             chg >= 0 ? '+' : ''
           }${chg.toFixed(1)}%, RSI ${rsi.toFixed(0)}.`,
-          ['BTC/alt liquid · SNIPER · WITH_TREND'],
+          ['#INTRA #TREND'],
           'SNIPER',
           `cron:intra_trend:${t.symbol}:${trendSide}`,
           'INTRADAY',
           'WITH_TREND'
         )
-        return
       }
 
-      // ── INTRADAY COUNTER (exhaustion) ─────────────────────────────
+      // INTRADAY COUNTER (exhaustion)
       if (
         htfBias !== 'FLAT' &&
-        sessionMove >= 4 &&
-        ((htfBias === 'BULL' && rsi >= 74 && chg > 0) ||
-          (htfBias === 'BEAR' && rsi <= 26 && chg < 0))
+        sessionMove >= 3.5 &&
+        ((htfBias === 'BULL' && rsi >= 72 && chg > 0) ||
+          (htfBias === 'BEAR' && rsi <= 28 && chg < 0))
       ) {
         const side: Side = htfBias === 'BULL' ? 'SHORT' : 'LONG'
         await push(
@@ -1177,16 +1387,15 @@ export async function runMarketScan(
           `Интрадей против тренда: HTF ${htfBias}, RSI ${rsi.toFixed(
             0
           )}, 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% — перегрев / истощение.`,
-          ['COUNTER · только при win% ≥ 60'],
+          ['#INTRA #COUNTER'],
           'SNIPER',
           `cron:intra_counter:${t.symbol}:${side}`,
           'INTRADAY',
           'COUNTER'
         )
-        return
       }
 
-      // ── SWING WITH TREND (4h) ─────────────────────────────────────
+      // SWING WITH TREND (4h) — no early return; can coexist
       if (
         bias4h !== 'FLAT' &&
         sessionMove >= 2.2 &&
@@ -1201,16 +1410,15 @@ export async function runMarketScan(
           `Свинг по тренду 4h ${bias4h}: 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(
             1
           )}%, RSI ${rsi.toFixed(0)}.`,
-          ['SWING · WITH_TREND · majors/liquid alts'],
+          ['#SWING #TREND'],
           'SNIPER',
           `cron:swing_trend:${t.symbol}:${side}`,
           'SWING',
           'WITH_TREND'
         )
-        return
       }
 
-      // ── SWING COUNTER (mean reversion at extremes) ───────────────
+      // SWING COUNTER
       if (
         bias4h !== 'FLAT' &&
         sessionMove >= 6 &&
@@ -1223,19 +1431,22 @@ export async function runMarketScan(
           Math.min(93, 76 + sessionMove * 0.6),
           `Свинг против тренда: 4h ${bias4h}, экстремальный RSI ${rsi.toFixed(
             0
-          )}, ход ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% — fade только при высокой уверенности.`,
-          ['SWING · COUNTER'],
+          )}, ход ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%.`,
+          ['#SWING #COUNTER'],
           'SNIPER',
           `cron:swing_counter:${t.symbol}:${side}`,
           'SWING',
           'COUNTER'
         )
-        return
       }
     }
 
-    // ── LEGACY MAJOR PULSE (fallback) ──────────────────────────────
-    if (!preferMeme && isMajor) {
+    // ── LEGACY MAJOR PULSE (fallback if nothing else fired for symbol) ─
+    if (
+      !preferMeme &&
+      isMajor &&
+      !alerts.some((a) => a.tradePlan?.symbol === t.symbol)
+    ) {
       const impulse = Math.abs(spike.movePct)
       const sessionMove = Math.abs(chg)
       if (
@@ -1245,6 +1456,7 @@ export async function runMarketScan(
       ) {
         const isLong = chg >= 0
         const side: Side = isLong ? 'LONG' : 'SHORT'
+        const align = classifyAlign(side, htfBias)
         await push(
           side,
           isLong ? 'TREND_LONG' : 'TREND_SHORT',
@@ -1252,16 +1464,16 @@ export async function runMarketScan(
           `Major pulse ${t.symbol}: 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%, RSI ${rsi.toFixed(0)}${
             spike.detected ? `, объём ×${spike.mult.toFixed(1)}` : ''
           }.`,
-          ['Blue-chip / liquid alt · SNIPER'],
+          ['Blue-chip fallback'],
           'SNIPER',
           `cron:major:${t.symbol}:${isLong ? 'L' : 'S'}`,
-          'INTRADAY'
+          'INTRADAY',
+          align
         )
-        return
       }
     }
 
-    // ── BACKSIDE SHORT · SCALP/INTRA COUNTER ───────────────────────
+    // ── BACKSIDE SHORT · INTRA / SWING COUNTER ─────────────────────
     if (backside && chg >= 25) {
       await push(
         'SHORT',
@@ -1280,6 +1492,19 @@ export async function runMarketScan(
         chg >= 40 ? 'SWING' : 'INTRADAY',
         'COUNTER'
       )
+      if (chg >= 30 && rsi >= 75) {
+        await push(
+          'SHORT',
+          'BACKSIDE',
+          80,
+          `Backside-скальп: локальный fade после +${chg.toFixed(0)}%.`,
+          [],
+          preferMeme ? 'MEME' : 'SNIPER',
+          `cron:backside_scalp:${t.symbol}`,
+          'SCALP',
+          'COUNTER'
+        )
+      }
     }
   }
 
@@ -1300,11 +1525,11 @@ export async function runMarketScan(
 }
 
 /**
- * Pick best actionable set:
- * - Top 3 SCALP by win% on BTC+alts (SNIPER)
- * - Best INTRADAY (up to 2)
- * - Best SWING (1)
- * - Top MEME (up to 2)
+ * Pick clear corridors so лента always covers styles × trend:
+ * - SCALP WITH_TREND (2) + SCALP COUNTER (1)
+ * - INTRA WITH_TREND (2) + INTRA COUNTER (1)
+ * - SWING best (1)
+ * - MEME top (2)
  */
 export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
   const byWin = (a: ScanAlert, b: ScanAlert) =>
@@ -1313,36 +1538,65 @@ export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
   const sniper = alerts.filter((a) => a.type === 'SNIPER')
   const meme = alerts.filter((a) => a.type === 'MEME')
 
-  const scalp = sniper
-    .filter((a) => a.style === 'SCALP')
-    .sort(byWin)
-    .slice(0, 3)
-  const intra = sniper
-    .filter((a) => a.style === 'INTRADAY')
-    .sort(byWin)
-    .slice(0, 2)
-  const swing = sniper
-    .filter((a) => a.style === 'SWING')
-    .sort(byWin)
-    .slice(0, 1)
-  const memeTop = meme.sort(byWin).slice(0, 2)
+  const pick = (
+    pool: ScanAlert[],
+    style: ScanAlert['style'],
+    align: ScanAlert['align'] | null,
+    n: number
+  ) =>
+    pool
+      .filter(
+        (a) => a.style === style && (align == null || a.align === align)
+      )
+      .sort(byWin)
+      .slice(0, n)
 
-  // If scalp empty but we have OTHER/SNIPER without style tag, fill from score
-  const picked = [...scalp, ...intra, ...swing, ...memeTop]
+  const slots: ScanAlert[] = [
+    ...pick(sniper, 'SCALP', 'WITH_TREND', 2),
+    ...pick(sniper, 'SCALP', 'COUNTER', 1),
+    ...pick(sniper, 'INTRADAY', 'WITH_TREND', 2),
+    ...pick(sniper, 'INTRADAY', 'COUNTER', 1),
+    ...pick(sniper, 'SWING', null, 1),
+    ...meme.sort(byWin).slice(0, 2),
+  ]
+
+  // Dedupe by dedupeKey while preserving slot order
+  const seen = new Set<string>()
+  const picked: ScanAlert[] = []
+  for (const a of slots) {
+    if (seen.has(a.dedupeKey)) continue
+    seen.add(a.dedupeKey)
+    picked.push(a)
+  }
+
+  // Fill empty corridors from leftover snipers by win%
+  if (picked.length < 4) {
+    for (const a of [...sniper].sort(byWin)) {
+      if (seen.has(a.dedupeKey)) continue
+      seen.add(a.dedupeKey)
+      picked.push(a)
+      if (picked.length >= 6) break
+    }
+  }
+
   if (picked.length === 0) {
     return [...alerts].sort(byWin).slice(0, 5)
   }
 
-  // Prefixed ranking note on scalp titles for clarity
-  return picked.map((a, i) => {
-    if (a.style !== 'SCALP' || a.type !== 'SNIPER') return a
-    const rank = scalp.indexOf(a) + 1
-    if (rank <= 0) return a
+  return picked.map((a) => {
+    const corridor =
+      a.type === 'MEME'
+        ? 'MEME'
+        : `${a.style === 'INTRADAY' ? 'INTRA' : a.style} · ${
+            a.align === 'WITH_TREND' ? 'по тренду' : 'против тренда'
+          }`
     return {
       ...a,
-      title: `🏆 СКАЛЬП #${rank}/${scalp.length} · ${a.title.replace(/^🏆 СКАЛЬП #\d+\/\d+ · /, '')}`,
+      title: a.title.startsWith('🎯')
+        ? a.title
+        : `🎯 ${corridor} · ${a.winPct}% · ${a.title}`,
       text: [
-        `Рейтинг скальп (BTC+альты): #${rank} из топ-${scalp.length} по win% (${a.winPct}%).`,
+        `Коридор: ${corridor} · вероятность ${a.winPct}%`,
         '',
         a.text,
       ].join('\n'),
