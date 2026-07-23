@@ -166,6 +166,7 @@ async function handleTelegram(
       hasSecret: Boolean(env.ALERT_SECRET),
       cron: '*/2 * * * *',
       digestEveryMin: 5,
+      refreshSetupMin: 10,
       mode: '24/7',
     })
   }
@@ -308,8 +309,8 @@ async function handleTelegram(
           `<b>📡 Мониторинг включён</b>`,
           `Сетапов на сервере: <b>${watches.length}</b>`,
           `Символ: ${body.symbol}`,
-          `Отчёт в Telegram каждые <b>5 минут</b> (первый ≈ через 5 мин).`,
-          `Cron worker: каждые 2 мин проверяет зоны / READY / INVALIDATED.`,
+          `Отчёт в Telegram каждые <b>5 минут</b> · уровни сетапов обновляются каждые <b>10 минут</b>.`,
+          `Cron worker: каждые 2 мин проверяет зоны / READY / INVALIDATED / устаревший откат.`,
         ].join('\n')
       )
     }

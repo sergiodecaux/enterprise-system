@@ -43,6 +43,8 @@ export interface WatchedSetupRecord {
   updatedAt: number
   /** Last 5-min monitoring digest sent to Telegram */
   lastDigestAt?: number
+  /** Last 10-min levels refresh (pullback/zone rebuild) */
+  lastLevelsRefreshAt?: number
 }
 
 export interface WatchAlert {
@@ -56,6 +58,7 @@ type Candle = [number, number, number, number, number, number]
 
 const WATCH_KEY = 'telegram:watched_setups'
 const DIGEST_MS = 5 * 60_000
+const REFRESH_MS = 10 * 60_000
 const memoryWatches: WatchedSetupRecord[] = []
 
 interface WatchEvalSnapshot {
@@ -483,6 +486,236 @@ function formatInvalidated(w: WatchedSetupRecord, price: number): WatchAlert {
   }
 }
 
+function formatRefreshed(
+  w: WatchedSetupRecord,
+  price: number,
+  reason: string,
+  prev: { limit: number; zoneLo: number; zoneHi: number }
+): WatchAlert {
+  const s = w.setup
+  const icon = s.side === 'LONG' ? '🟢' : '🔴'
+  return {
+    chatId: w.chatId,
+    title: `🔄 Сетап обновлён · ${w.symbol}`,
+    text: [
+      `${icon} ${s.side} · ${s.title}`,
+      `Причина: ${reason}`,
+      `Цена сейчас: ${fmtPx(price)}`,
+      '',
+      `Было: лимит ${fmtPx(prev.limit)} · зона ${fmtPx(prev.zoneLo)}–${fmtPx(prev.zoneHi)}`,
+      `Стало: лимит ${fmtPx(s.limitEntry)} · зона ${fmtPx(s.entryZone.bottom)}–${fmtPx(s.entryZone.top)}`,
+      `SL ${fmtPx(s.invalidation)} · TP ${fmtPx(s.target)} · ~${Math.round(s.probability)}%`,
+      '',
+      'Откат/зона пересчитаны по свежим свингам (каждые 10 мин).',
+    ].join('\n'),
+    dedupeKey: `watch:${w.watchId}:REFRESH:${Math.floor(Date.now() / REFRESH_MS)}`,
+  }
+}
+
+/** Recent swing low/high from closed candles */
+function recentSwing(
+  candles: Candle[],
+  kind: 'low' | 'high'
+): number | null {
+  if (candles.length < 8) return null
+  const closed = candles.slice(0, -1)
+  const slice = closed.slice(-24)
+  if (kind === 'low') {
+    let v = slice[0][3]
+    for (const c of slice) v = Math.min(v, c[3])
+    return v
+  }
+  let v = slice[0][2]
+  for (const c of slice) v = Math.max(v, c[2])
+  return v
+}
+
+function zoneBand(mid: number, pct = 0.0035): { top: number; bottom: number } {
+  return { top: mid * (1 + pct), bottom: mid * (1 - pct) }
+}
+
+function isBounceLike(setup: ConditionalSetupPayload): boolean {
+  const t = `${setup.kind} ${setup.title}`.toUpperCase()
+  return (
+    t.includes('BOUNCE') ||
+    t.includes('ОТСКОК') ||
+    t.includes('ОТКАТ') ||
+    t.includes('PULL') ||
+    t.includes('SURGICAL') ||
+    t.includes('FORECAST') ||
+    t.includes('SSL') ||
+    t.includes('BSL') ||
+    t.includes('OTE') ||
+    t.includes('FIB')
+  )
+}
+
+/**
+ * Pullback already played / geometry wrong / zone too far → needs rebuild.
+ */
+function pullbackStaleReason(
+  setup: ConditionalSetupPayload,
+  price: number,
+  ohlcv1m: Candle[]
+): string | null {
+  if (!isBounceLike(setup) || !(price > 0)) return null
+
+  const zone = setup.entryZone
+  const mid = (zone.top + zone.bottom) / 2
+  const recent = ohlcv1m.slice(-40)
+
+  const touched = recent.some((c) =>
+    setup.side === 'LONG' ? c[3] <= zone.top * 1.002 : c[2] >= zone.bottom * 0.998
+  )
+  const leftZone =
+    setup.side === 'LONG'
+      ? price > zone.top * 1.004
+      : price < zone.bottom * 0.996
+
+  // Цена уже сходила в зону и ушла — откат отыгран, старый лимит мёртв
+  if (touched && leftZone && setup.status !== 'READY') {
+    return 'откат уже был: цена касалась зоны и ушла'
+  }
+
+  // LONG ждал покупку снизу, а зона выше цены — это не откат вниз
+  if (setup.side === 'LONG' && mid > price * 1.003) {
+    return 'зона выше цены — сценарий отката устарел'
+  }
+  // SHORT ждал продажу сверху, а зона ниже
+  if (setup.side === 'SHORT' && mid < price * 0.997) {
+    return 'зона ниже цены — сценарий отката устарел'
+  }
+
+  // Пробой зоны без READY
+  if (setup.side === 'LONG' && price < zone.bottom * 0.992) {
+    return 'цена пробила зону вниз — нужна новая SSL'
+  }
+  if (setup.side === 'SHORT' && price > zone.top * 1.008) {
+    return 'цена пробила зону вверх — нужна новая BSL'
+  }
+
+  // Слишком далеко ждать
+  const distPct = Math.abs(((mid - price) / price) * 100)
+  if (distPct > 2.8) {
+    return `зона слишком далеко (${distPct.toFixed(2)}%)`
+  }
+
+  return null
+}
+
+/**
+ * Rebuild bounce/pullback levels from fresh 15m/1h swings.
+ */
+function rebuildPullbackSetup(
+  setup: ConditionalSetupPayload,
+  price: number,
+  c15: Candle[],
+  c1h: Candle[]
+): ConditionalSetupPayload | null {
+  const swingSrc = c15.length >= 10 ? c15 : c1h
+  if (swingSrc.length < 8 || !(price > 0)) return null
+
+  const swingLow = recentSwing(swingSrc, 'low')
+  const swingHigh = recentSwing(swingSrc, 'high')
+  if (swingLow == null || swingHigh == null || swingHigh <= swingLow) return null
+
+  const range = swingHigh - swingLow
+  let mid: number
+  let label: string
+  let kind = setup.kind
+
+  if (setup.side === 'LONG') {
+    // Prefer SSL under price; else 61.8% pullback of range under price
+    const fib618 = swingHigh - range * 0.618
+    mid =
+      swingLow < price * 0.999
+        ? swingLow
+        : fib618 < price * 0.999
+          ? fib618
+          : price * 0.994
+    label = swingLow < price * 0.999 ? 'SSL fresh' : 'Fib 0.618 fresh'
+    if (setup.kind.startsWith('BOUNCE') || setup.kind === 'SURGICAL') {
+      kind = 'BOUNCE_SSL'
+    }
+  } else {
+    const fib618 = swingLow + range * 0.618
+    mid =
+      swingHigh > price * 1.001
+        ? swingHigh
+        : fib618 > price * 1.001
+          ? fib618
+          : price * 1.006
+    label = swingHigh > price * 1.001 ? 'BSL fresh' : 'Fib 0.618 fresh'
+    if (setup.kind.startsWith('BOUNCE') || setup.kind === 'SURGICAL') {
+      kind = 'BOUNCE_BSL'
+    }
+  }
+
+  const band = zoneBand(mid, 0.0038)
+  // Don't rebuild to almost the same place
+  const oldMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
+  if (Math.abs(mid - oldMid) / price < 0.0015) return null
+
+  const limitEntry = setup.side === 'LONG' ? band.bottom * 1.0005 : band.top * 0.9995
+  const invalidation =
+    setup.side === 'LONG' ? band.bottom * 0.996 : band.top * 1.004
+  const risk = Math.abs(limitEntry - invalidation)
+  const target =
+    setup.side === 'LONG'
+      ? limitEntry + Math.max(risk * 2.1, price * 0.008)
+      : limitEntry - Math.max(risk * 2.1, price * 0.008)
+
+  const distPct = ((mid - price) / price) * 100
+  const probability = Math.round(
+    Math.min(
+      78,
+      Math.max(
+        42,
+        52 +
+          (Math.abs(distPct) < 0.8 ? 8 : 0) +
+          (Math.abs(distPct) < 0.35 ? 4 : 0) -
+          (Math.abs(distPct) > 1.5 ? 6 : 0)
+      )
+    )
+  )
+
+  const inZone = price >= band.bottom * 0.997 && price <= band.top * 1.003
+  const preconditions = [
+    {
+      id: 'touch',
+      label: `Касание зоны ${label}`,
+      status: inZone ? 'MET' : 'PENDING',
+    },
+    { id: 'book', label: 'Стакан за отскок', status: 'PENDING' },
+    { id: 'confirm', label: 'Реакция / reclaim', status: 'PENDING' },
+  ]
+
+  return {
+    ...setup,
+    kind,
+    title: `↗ Отскок · ${label}`,
+    probability,
+    preconditions,
+    entryZone: { top: band.top, bottom: band.bottom },
+    limitEntry,
+    target,
+    invalidation,
+    triggerSummary: `Обновлено 10м: лимит ${limitEntry.toPrecision(6)} → TP ${target.toPrecision(6)} · ~${probability}%`,
+    reasoning: [
+      'Уровни пересчитаны по свежим свингам 15m/1h',
+      `Было далеко/устарело · новая дистанция ${distPct.toFixed(2)}%`,
+      `SL @ ${invalidation.toPrecision(6)}`,
+    ],
+    status: inZone ? 'ARMED' : 'HYPOTHESIS',
+    createdAt: setup.createdAt,
+  }
+}
+
+function dueForLevelsRefresh(w: WatchedSetupRecord, now: number): boolean {
+  const anchor = w.lastLevelsRefreshAt ?? w.createdAt
+  return now - anchor >= REFRESH_MS
+}
+
 export async function markChatDigestSent(
   env: Env,
   chatId: number,
@@ -499,8 +732,8 @@ export async function markChatDigestSent(
 }
 
 /**
- * Cron: evaluate all active watches, emit READY / INVALIDATED once each,
- * plus a 5-min monitoring digest per chat while watches are live.
+ * Cron: evaluate watches, refresh stale pullback levels every 10 min,
+ * emit READY / INVALIDATED / REFRESH, plus 5-min digests.
  * Note: lastDigestAt is stamped by caller AFTER successful Telegram send.
  */
 export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
@@ -522,50 +755,107 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   }
 
   for (const [mexcSym, watches] of bySymbol) {
-    const [c1m, c1h, c4h] = await Promise.all([
+    const [c1m, c15, c1h, c4h] = await Promise.all([
       fetchKlines(mexcSym, 'Min1', 60),
+      fetchKlines(mexcSym, 'Min15', 64),
       fetchKlines(mexcSym, 'Min60', 60),
       fetchKlines(mexcSym, 'Hour4', 40),
     ])
     const price =
       c1m[c1m.length - 1]?.[4] ??
+      c15[c15.length - 1]?.[4] ??
       c1h[c1h.length - 1]?.[4] ??
       0
 
     for (const w of watches) {
+      let working = w
+
+      // Every 10 min: rebuild stale pullback / wrong-geometry setups
+      if (price && dueForLevelsRefresh(w, now)) {
+        const staleReason = pullbackStaleReason(w.setup, price, c1m)
+        // Also refresh bounce-like setups periodically even if not obviously stale,
+        // when fresh swing moved ≥0.25% from old mid
+        let reason = staleReason
+        if (!reason && isBounceLike(w.setup)) {
+          const swingSrc = c15.length >= 10 ? c15 : c1h
+          const swing =
+            w.setup.side === 'LONG'
+              ? recentSwing(swingSrc, 'low')
+              : recentSwing(swingSrc, 'high')
+          const oldMid =
+            (w.setup.entryZone.top + w.setup.entryZone.bottom) / 2
+          if (
+            swing != null &&
+            Math.abs(swing - oldMid) / price >= 0.0025
+          ) {
+            reason = 'структура сдвинулась — новая зона ликвидности'
+          }
+        }
+
+        if (reason) {
+          const rebuilt = rebuildPullbackSetup(w.setup, price, c15, c1h)
+          if (rebuilt) {
+            const prev = {
+              limit: w.setup.limitEntry,
+              zoneLo: w.setup.entryZone.bottom,
+              zoneHi: w.setup.entryZone.top,
+            }
+            working = {
+              ...w,
+              setup: rebuilt,
+              lastStatus: rebuilt.status,
+              readyNotified: false,
+              lastLevelsRefreshAt: now,
+              updatedAt: now,
+            }
+            alerts.push(formatRefreshed(working, price, reason, prev))
+          } else {
+            working = { ...w, lastLevelsRefreshAt: now, updatedAt: now }
+          }
+        } else {
+          working = { ...w, lastLevelsRefreshAt: now, updatedAt: now }
+        }
+      }
+
       let snap: WatchEvalSnapshot
       if (!price) {
         snap = {
-          status: w.lastStatus || 'HYPOTHESIS',
-          price: w.setup.limitEntry,
+          status: working.lastStatus || 'HYPOTHESIS',
+          price: working.setup.limitEntry,
           inZone: false,
           distToZonePct: 0,
           distToLimitPct: 0,
           distToInvPct: 0,
-          preconditions: w.setup.preconditions ?? [],
+          preconditions: working.setup.preconditions ?? [],
           narrative: `Нет котировки по ${mexcSym} — повторю на следующем цикле`,
         }
       } else {
-        snap = evaluateWatchSnapshot(w.setup, price, c1m, c1h, c4h)
+        snap = evaluateWatchSnapshot(
+          working.setup,
+          price,
+          c1m,
+          c1h,
+          c4h
+        )
       }
 
       const status = snap.status
       const updated: WatchedSetupRecord = {
-        ...w,
+        ...working,
         lastStatus: status,
         setup: {
-          ...w.setup,
+          ...working.setup,
           status,
           preconditions: snap.preconditions,
         },
         updatedAt: Date.now(),
       }
 
-      if (price && status === 'READY' && !w.readyNotified) {
+      if (price && status === 'READY' && !working.readyNotified) {
         alerts.push(formatReady(updated, price))
         updated.readyNotified = true
       }
-      if (price && status === 'INVALIDATED' && !w.invalidatedNotified) {
+      if (price && status === 'INVALIDATED' && !working.invalidatedNotified) {
         alerts.push(formatInvalidated(updated, price))
         updated.invalidatedNotified = true
       }
@@ -602,18 +892,18 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     }
     if (lines.length === 0) continue
 
-    // Do NOT stamp lastDigestAt here — only after Telegram send succeeds
     alerts.push({
       chatId,
       title: `📡 Мониторинг сетапов · ${lines.length}`,
       text: [
-        `Отчёт каждые 5 мин · активных: ${watches.length}`,
+        `Отчёт каждые 5 мин · уровни refresh каждые 10 мин`,
+        `Активных: ${watches.length}`,
         '',
         ...lines.flatMap((block, i) =>
           i < lines.length - 1 ? [block, '———'] : [block]
         ),
         '',
-        'READY — вход по лимиту · INVALIDATED — стоп слежения.',
+        'READY — вход · 🔄 обновление зоны · INVALIDATED — стоп.',
       ].join('\n'),
       dedupeKey: `watch_digest:${chatId}:${Math.floor(now / DIGEST_MS)}`,
     })
