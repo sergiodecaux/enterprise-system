@@ -3,6 +3,7 @@ import type { SniperSignal } from '../../engine/sniperMode'
 import type { ConditionalSetup } from '../../engine/setups/types'
 import { sendTelegramAlert } from '../../api/telegram/alerts'
 import { assertUsdtPerpetual } from '../../api/mexc/perpetualGuard'
+import { toApiSymbol } from '../../api/mexc'
 
 function fmt(price: number): string {
   if (!(price > 0)) return '—'
@@ -397,25 +398,32 @@ export async function pushZoneWatchAck(opts: {
   }[]
   setupsCount: number
   chatId?: number
-}): Promise<void> {
-  const check = await assertUsdtPerpetual(opts.symbol)
-  if (!check.ok) return
+}): Promise<{ ok: boolean; reason?: string }> {
+  // Soft symbol normalize — don't block ack on live funding/OI checks
+  const apiSymbol = toApiSymbol(opts.symbol)
+  if (!apiSymbol.endsWith('_USDT')) {
+    return { ok: false, reason: 'bad_symbol' }
+  }
+  if (opts.chatId == null) {
+    return { ok: false, reason: 'no_chat_id' }
+  }
+
   const name = opts.displayName ?? opts.symbol.replace('_USDT', '/USDT')
   const lines = opts.zones.slice(0, 6).map((z) => {
     const icon = z.side === 'LONG' ? '🟢' : '🔴'
     return `${icon} ${z.side} · ${z.label}\n   зона @ ${fmt(z.mid)} · лимит ${fmt(z.limitEntry)}\n   SL ${fmt(z.invalidation)} · TP ${fmt(z.target)}`
   })
 
-  await sendTelegramAlert({
+  const result = await sendTelegramAlert({
     type: 'SETUP_WATCH',
     title: `👁 Слежу за зонами · ${name}`,
     text: [
-      `Монета: ${name} (${check.apiSymbol})`,
+      `Монета: ${name} (${apiSymbol})`,
       `Цена сейчас: ${fmt(opts.price)}`,
       `Вариантов сделок: ${opts.setupsCount}`,
       '',
       'Зоны под наблюдением:',
-      ...lines,
+      ...(lines.length ? lines : ['(зоны будут уточнены при касании)']),
       '',
       'Жди сигнал «💎 Ювелирный LONG/SHORT» когда:',
       '• цена войдёт в зону',
@@ -424,9 +432,12 @@ export async function pushZoneWatchAck(opts: {
       '',
       'Не входи заранее — только по READY.',
     ].join('\n'),
-    dedupeKey: `zone_watch:${check.apiSymbol}:${Math.floor(Date.now() / 60_000)}`,
+    dedupeKey: `zone_watch:${apiSymbol}:${opts.chatId}:${Math.floor(Date.now() / 30_000)}`,
     chatId: opts.chatId,
   })
+
+  if (!result.ok) return { ok: false, reason: 'send_failed' }
+  return { ok: true }
 }
 
 /** Ювелирный вход из найденной зоны ликвидности */

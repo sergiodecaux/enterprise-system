@@ -57,6 +57,7 @@ import {
   createWatchedSetup,
   removeWatchedSetup,
   isTelegramAlertsConfigured,
+  subscribeTelegramAlerts,
 } from '../../api/telegram/alerts'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 
@@ -144,7 +145,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
   const removeWatchedSetupLocal = useAppStore((s) => s.removeWatchedSetupLocal)
   const telegramSettings = useAppStore((s) => s.telegramAlertSettings)
-  const { showAlert, haptic } = useTelegramWebApp()
+  const { showAlert, haptic, userId } = useTelegramWebApp()
 
   const currentPrice = ticker?.price ?? signal?.price ?? 0
   const liveBookImbalance =
@@ -357,11 +358,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   ])
 
   const resolveChatId = useCallback((): number | null => {
+    // Mini App: Telegram user id is the chat id
+    if (userId) return userId
     const manual = telegramSettings.manualChatId.trim()
     if (manual && /^-?\d+$/.test(manual)) return Number(manual)
     if (telegramSettings.subscribedChatId) return telegramSettings.subscribedChatId
     return null
-  }, [telegramSettings])
+  }, [userId, telegramSettings])
 
   const handlePickSetups = useCallback(() => {
     if (!signal) {
@@ -421,9 +424,23 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const chatId = resolveChatId()
     const autoWatch = result.setups.slice(0, 6)
 
-    // Immediate ack in bot: "watching zones, wait for jewel signal"
-    if (chatId || isTelegramAlertsConfigured()) {
-      void pushZoneWatchAck({
+    if (!isTelegramAlertsConfigured()) {
+      showAlert('Прокси бота не настроен (VITE_MEXC_PROXY_URL)')
+    } else if (!chatId) {
+      showAlert('Нет chatId — открой Mini App из Telegram или /start у бота и колокольчик')
+    } else {
+      // Ensure subscriber exists, then send watch-ack
+      try {
+        await subscribeTelegramAlerts({
+          chatId,
+          sniper: telegramSettings.sniper !== false,
+          meme: telegramSettings.meme !== false,
+        })
+      } catch {
+        /* subscribe best-effort */
+      }
+
+      const ack = await pushZoneWatchAck({
         symbol: flatSymbol,
         displayName: signal?.displayName,
         price: currentPrice,
@@ -436,8 +453,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           invalidation: z.invalidation,
         })),
         setupsCount: result.setups.length,
-        chatId: chatId ?? undefined,
+        chatId,
       })
+
+      if (!ack.ok) {
+        showAlert(
+          ack.reason === 'send_failed'
+            ? 'Бот не принял сообщение — проверь /start и ALERT_SECRET'
+            : `Не удалось отправить в бот (${ack.reason ?? 'error'})`
+        )
+      }
     }
 
     for (const setup of autoWatch) {
@@ -488,14 +513,19 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     const longZ = result.nearestLong
     const shortZ = result.nearestShort
-    showAlert(
-      chatId
-        ? `👁 Бот следит · ${result.setups.length} вариантов · жди 💎 сигнал`
-        : `Зоны: ${result.zones.length}` +
-            (longZ ? ` · LONG @ ${longZ.mid.toPrecision(5)}` : '') +
-            (shortZ ? ` · SHORT @ ${shortZ.mid.toPrecision(5)}` : '') +
-            ' · подпишитесь на бота для алертов'
-    )
+    if (chatId && isTelegramAlertsConfigured()) {
+      showAlert(
+        `👁 Отправлено в бот · ${result.setups.length} вариантов · жди 💎`
+      )
+    } else if (!chatId) {
+      /* already alerted above */
+    } else {
+      showAlert(
+        `Зоны: ${result.zones.length}` +
+          (longZ ? ` · LONG @ ${longZ.mid.toPrecision(5)}` : '') +
+          (shortZ ? ` · SHORT @ ${shortZ.mid.toPrecision(5)}` : '')
+      )
+    }
   }, [
     currentPrice,
     candles,
@@ -512,6 +542,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     showAlert,
     haptic,
     resolveChatId,
+    telegramSettings.sniper,
+    telegramSettings.meme,
   ])
 
   const watchingIds = useMemo(() => {

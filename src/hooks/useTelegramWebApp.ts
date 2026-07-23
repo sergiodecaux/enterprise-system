@@ -43,39 +43,30 @@ export const useTelegramWebApp = () => {
   const [userId, setUserId] = useState<number | null>(null)
 
   useEffect(() => {
-    // Only initialize once
-    if (isInitialized) return
-
     const webApp = window.Telegram?.WebApp
 
     if (webApp) {
-      // Mark as initialized BEFORE any async operations
-      isInitialized = true
-
-      // Running inside Telegram
       setIsInTelegram(true)
 
-      // Initialize WebApp (only once)
-      webApp.ready()
-      webApp.expand()
-
-      // Theme colors — only if client supports them (not available in WebApp 6.0)
-      try {
-        webApp.setHeaderColor('#0a0a0a')
-        webApp.setBackgroundColor('#0a0a0a')
-      } catch {
-        /* older Telegram clients */
+      // Initialize WebApp only once per lifetime
+      if (!isInitialized) {
+        isInitialized = true
+        webApp.ready()
+        webApp.expand()
+        try {
+          webApp.setHeaderColor('#0a0a0a')
+          webApp.setBackgroundColor('#0a0a0a')
+        } catch {
+          /* older Telegram clients */
+        }
       }
 
-      // Extract user language
       const lang = webApp.initDataUnsafe?.user?.language_code || 'en'
       setUserLanguage(lang)
 
-      // Extract user ID
       const id = webApp.initDataUnsafe?.user?.id || null
       setUserId(id)
     } else {
-      // Running outside Telegram (browser dev mode)
       setIsInTelegram(false)
       setUserLanguage('en')
       setUserId(null)
