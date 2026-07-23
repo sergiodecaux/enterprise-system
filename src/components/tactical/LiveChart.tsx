@@ -457,11 +457,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       })
 
       if (!ack.ok) {
-        showAlert(
-          ack.reason === 'send_failed'
-            ? 'Бот не принял сообщение — проверь /start и ALERT_SECRET'
-            : `Не удалось отправить в бот (${ack.reason ?? 'error'})`
-        )
+        const hint =
+          ack.reason === 'secret_missing_in_app' ||
+          ack.reason === 'secret_mismatch'
+            ? 'ALERT_SECRET: в Pages нет VITE_ALERT_SECRET или он не совпадает с worker'
+            : ack.reason === 'need_start' || ack.reason === 'tg_send_failed'
+              ? 'Напиши боту /start, потом снова «Зоны»'
+              : ack.reason === 'network'
+                ? 'Нет связи с worker (VITE_MEXC_PROXY_URL)'
+                : ack.reason === 'no_chat_id'
+                  ? 'Нет chatId — открой Mini App из Telegram'
+                  : `Не удалось отправить в бот (${ack.reason ?? 'error'})`
+        showAlert(hint)
       }
     }
 

@@ -94,14 +94,50 @@ export async function unsubscribeTelegramAlerts(
 /** Отправить сигнал всем подписчикам (или одному chatId) */
 export async function sendTelegramAlert(
   payload: TelegramAlertPayload
-): Promise<{ ok: boolean; skipped?: boolean }> {
+): Promise<{
+  ok: boolean
+  skipped?: boolean
+  reason?: string
+  status?: number
+}> {
   try {
+    const secret = getAlertSecret()
     const res = await postJson('/telegram/alert', payload, true)
-    if (!res.ok) return { ok: false }
-    const data = (await res.json()) as { skipped?: string }
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      skipped?: string
+      error?: string
+      sent?: number
+      failed?: number
+    }
+    if (res.status === 401) {
+      return {
+        ok: false,
+        status: 401,
+        reason: data.error?.includes('/start')
+          ? 'need_start'
+          : secret
+            ? 'secret_mismatch'
+            : 'secret_missing_in_app',
+      }
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        reason: data.error ?? `http_${res.status}`,
+      }
+    }
+    if (data.ok === false || (data.failed && data.failed > 0 && !data.sent)) {
+      return {
+        ok: false,
+        status: res.status,
+        reason: 'tg_send_failed',
+      }
+    }
     return { ok: true, skipped: data.skipped === 'dedup' }
   } catch {
-    return { ok: false }
+    return { ok: false, reason: 'network' }
   }
 }
 

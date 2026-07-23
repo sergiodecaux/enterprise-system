@@ -233,27 +233,17 @@ async function handleTelegram(
   }
 
   if (path === '/telegram/alert' && request.method === 'POST') {
-    if (env.ALERT_SECRET) {
-      const secret = request.headers.get('X-Alert-Secret')
-      if (secret !== env.ALERT_SECRET) {
-        return json({ error: 'Unauthorized' }, 401)
-      }
-    }
-
     const payload = (await request.json()) as AlertPayload
     if (!payload?.text) return json({ error: 'text required' }, 400)
+
+    const auth = await assertAlertAuth(env, request, payload.chatId)
+    if (!auth.ok) return json({ error: auth.error }, 401)
 
     const broadcast = await broadcastAlert(env, payload)
     return json(broadcast)
   }
 
   if (path === '/telegram/watch' && request.method === 'POST') {
-    if (env.ALERT_SECRET) {
-      const secret = request.headers.get('X-Alert-Secret')
-      if (secret !== env.ALERT_SECRET) {
-        return json({ error: 'Unauthorized' }, 401)
-      }
-    }
     const body = (await request.json()) as {
       chatId: number
       symbol: string
@@ -264,17 +254,13 @@ async function handleTelegram(
     if (!body?.chatId || !body?.setup || !body?.symbol) {
       return json({ error: 'chatId, symbol, setup required' }, 400)
     }
+    const auth = await assertAlertAuth(env, request, body.chatId)
+    if (!auth.ok) return json({ error: auth.error }, 401)
     const watch = await createWatch(env, body)
     return json({ ok: true, watch })
   }
 
   if (path === '/telegram/watch/delete' && request.method === 'POST') {
-    if (env.ALERT_SECRET) {
-      const secret = request.headers.get('X-Alert-Secret')
-      if (secret !== env.ALERT_SECRET) {
-        return json({ error: 'Unauthorized' }, 401)
-      }
-    }
     const body = (await request.json()) as {
       chatId: number
       watchId: string
@@ -282,6 +268,8 @@ async function handleTelegram(
     if (!body?.chatId || !body?.watchId) {
       return json({ error: 'chatId, watchId required' }, 400)
     }
+    const auth = await assertAlertAuth(env, request, body.chatId)
+    if (!auth.ok) return json({ error: auth.error }, 401)
     const ok = await deleteWatch(env, body.chatId, body.watchId)
     return json({ ok })
   }
@@ -301,6 +289,34 @@ async function handleTelegram(
 
   void ctx
   return json({ error: 'Unknown telegram route' }, 404)
+}
+
+/**
+ * Auth for alert/watch:
+ * 1) X-Alert-Secret matches ALERT_SECRET, or
+ * 2) directed request (chatId) for an existing subscriber
+ *    (Pages build may lack VITE_ALERT_SECRET; Mini App always subscribe()'s first)
+ */
+async function assertAlertAuth(
+  env: Env,
+  request: Request,
+  chatId?: number
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!env.ALERT_SECRET) return { ok: true }
+
+  const secret = request.headers.get('X-Alert-Secret')
+  if (secret === env.ALERT_SECRET) return { ok: true }
+
+  if (chatId != null && Number.isFinite(chatId)) {
+    const subs = await listSubscribers(env)
+    if (subs.some((s) => s.chatId === chatId)) return { ok: true }
+    return {
+      ok: false,
+      error: 'Unauthorized: need ALERT_SECRET or /start + subscribe for this chatId',
+    }
+  }
+
+  return { ok: false, error: 'Unauthorized: invalid ALERT_SECRET' }
 }
 
 /** Dedup + send to subscribers */

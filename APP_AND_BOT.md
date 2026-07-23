@@ -301,7 +301,8 @@ Mini App scanners (useMexcScanner / meme)
 | Переменная | Назначение |
 |------------|------------|
 | `VITE_MEXC_PROXY_URL` | Base URL worker |
-| `VITE_ALERT_SECRET` | Секрет для `/telegram/alert` и `/telegram/watch` |
+| `VITE_ALERT_SECRET` | Секрет для `/telegram/alert` и `/telegram/watch` (обязателен в GitHub Actions secrets для Pages) |
+| `VITE_TELEGRAM_BOT_USERNAME` | Username бота без `@` |
 | `VITE_TELEGRAM_BOT_USERNAME` | Username бота без `@` |
 
 ### Worker (`wrangler secret`)

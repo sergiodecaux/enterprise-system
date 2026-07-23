@@ -436,7 +436,12 @@ export async function pushZoneWatchAck(opts: {
     chatId: opts.chatId,
   })
 
-  if (!result.ok) return { ok: false, reason: 'send_failed' }
+  if (!result.ok) {
+    return {
+      ok: false,
+      reason: result.reason ?? 'send_failed',
+    }
+  }
   return { ok: true }
 }
 

@@ -35,6 +35,8 @@ jobs:
         run: npm run build
         env:
           VITE_MEXC_PROXY_URL: ${{ secrets.VITE_MEXC_PROXY_URL }}
+          VITE_ALERT_SECRET: ${{ secrets.VITE_ALERT_SECRET }}
+          VITE_TELEGRAM_BOT_USERNAME: ${{ secrets.VITE_TELEGRAM_BOT_USERNAME }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
