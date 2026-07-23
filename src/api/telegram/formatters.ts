@@ -401,8 +401,8 @@ export async function pushZoneWatchAck(opts: {
 }): Promise<{ ok: boolean; reason?: string }> {
   // Soft symbol normalize — don't block ack on live funding/OI checks
   const apiSymbol = toApiSymbol(opts.symbol)
-  if (!apiSymbol.endsWith('_USDT')) {
-    return { ok: false, reason: 'bad_symbol' }
+  if (!apiSymbol.endsWith('_USDT') || apiSymbol.length < 7) {
+    return { ok: false, reason: `bad_symbol:${opts.symbol}→${apiSymbol}` }
   }
   if (opts.chatId == null) {
     return { ok: false, reason: 'no_chat_id' }

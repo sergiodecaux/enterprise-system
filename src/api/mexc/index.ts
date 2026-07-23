@@ -94,8 +94,19 @@ export function getMexcBaseUrl(): string {
 }
 
 export function toApiSymbol(internal: string): string {
-  // BTC/USDT:USDT → BTC_USDT
-  return internal.replace('/USDT:USDT', '_USDT').replace('/', '_')
+  const s = (internal || '').trim().toUpperCase()
+  if (!s) return s
+  // Already MEXC contract form
+  if (s.includes('_') && s.endsWith('_USDT')) return s
+  // BTC/USDT:USDT or BTC/USDT → BTC_USDT
+  if (s.includes('/')) {
+    return s.replace('/USDT:USDT', '_USDT').replace('/USDT', '_USDT').replace('/', '_')
+  }
+  // Flat BTCUSDT → BTC_USDT
+  if (s.endsWith('USDT') && !s.endsWith('_USDT')) {
+    return `${s.slice(0, -4)}_USDT`
+  }
+  return s
 }
 
 export function toInternalSymbol(apiSymbol: string): string {
