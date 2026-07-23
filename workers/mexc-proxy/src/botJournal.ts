@@ -84,6 +84,13 @@ export interface BotJournalAnalytics {
 }
 
 /** Adaptive scanner gates derived from outcomes */
+export interface WinPctCalibrationEntry {
+  setup: string
+  sampleN: number
+  historicalWr: number
+  avgR: number
+}
+
 export interface BotAdaptiveGates {
   /** Min score to emit MEME alerts */
   minMemeScore: number
@@ -95,9 +102,12 @@ export interface BotAdaptiveGates {
   boostedSetups: string[]
   /** Require stronger confirmation for weak setups */
   requireHighBrokenForSqueeze: boolean
+  /** Empirical win% by setup for display calibration */
+  winPctBySetup: WinPctCalibrationEntry[]
   updatedAt: number
   sampleSize: number
 }
+
 
 export interface TradePlanLike {
   side: 'LONG' | 'SHORT'
@@ -481,10 +491,13 @@ export function deriveAdaptiveGates(
   for (const s of analytics.bySetup) {
     const n = s.wins + s.losses
     if (n < 5) continue
+    const base = parseBotSetup(s.setup).base
     if (s.winRate < 38 || s.expectancyR < -0.15) {
       blocked.push(s.setup)
+      if (base && !blocked.includes(base)) blocked.push(base)
     } else if (s.winRate >= 62 && s.expectancyR >= 0.25) {
       boosted.push(s.setup)
+      if (base && !boosted.includes(base)) boosted.push(base)
     }
   }
 
@@ -501,16 +514,124 @@ export function deriveAdaptiveGates(
     else if (sniper.winRate >= 60) minSniperScore = 78
   }
 
+  const squeezeBlocked = blocked.some(
+    (b) => b === 'SQUEEZE' || b.startsWith('SQUEEZE_')
+  )
+
   return {
     minMemeScore,
     minSniperScore,
     blockedSetups: blocked,
     boostedSetups: boosted,
-    requireHighBrokenForSqueeze: blocked.includes('SQUEEZE') || (meme?.winRate ?? 100) < 48,
+    requireHighBrokenForSqueeze: squeezeBlocked || (meme?.winRate ?? 100) < 48,
+    winPctBySetup: buildWinPctCalibration(analytics),
     updatedAt: Date.now(),
     sampleSize: analytics.resolved,
   }
 }
+
+/** Parse composite `PUMP_SCALP_TREND` → base / style / align */
+export function parseBotSetup(setup: string): {
+  base: string
+  style: string | null
+  align: string | null
+} {
+  const parts = setup.split('_')
+  if (parts.length >= 3) {
+    const align = parts[parts.length - 1]
+    const style = parts[parts.length - 2]
+    if (
+      (align === 'TREND' || align === 'COUNTER') &&
+      (style === 'SCALP' || style === 'INTRADAY' || style === 'SWING')
+    ) {
+      return {
+        base: parts.slice(0, -2).join('_'),
+        style,
+        align,
+      }
+    }
+  }
+  return { base: setup, style: null, align: null }
+}
+
+export function buildWinPctCalibration(
+  analytics: BotJournalAnalytics
+): WinPctCalibrationEntry[] {
+  return analytics.bySetup
+    .map((s) => {
+      const n = s.wins + s.losses
+      return {
+        setup: s.setup,
+        sampleN: n,
+        historicalWr: s.winRate,
+        avgR: s.avgR,
+      }
+    })
+    .filter((s) => s.sampleN >= 3)
+    .sort((a, b) => b.sampleN - a.sampleN)
+}
+
+/**
+ * Shrink empirical WR toward model prior.
+ * n=0 → prior; n≥20 → mostly historical.
+ */
+export function calibrateWinPct(
+  priorWinPct: number,
+  compositeSetup: string,
+  calibration: WinPctCalibrationEntry[] | undefined | null
+): { winPct: number; source: 'PRIOR' | 'BLEND' | 'EMPIRICAL'; sampleN: number } {
+  if (!calibration?.length) {
+    return { winPct: priorWinPct, source: 'PRIOR', sampleN: 0 }
+  }
+  const { base } = parseBotSetup(compositeSetup)
+  const exact = calibration.find((c) => c.setup === compositeSetup)
+  const byBase = calibration.find((c) => parseBotSetup(c.setup).base === base)
+  const row =
+    exact && exact.sampleN >= 3
+      ? exact
+      : byBase && byBase.sampleN >= 5
+        ? byBase
+        : exact ?? byBase
+  if (!row || row.sampleN < 3) {
+    return { winPct: priorWinPct, source: 'PRIOR', sampleN: 0 }
+  }
+  const w = Math.min(1, row.sampleN / 20)
+  const blended = Math.round(priorWinPct * (1 - w) + row.historicalWr * w)
+  return {
+    winPct: Math.max(0, Math.min(92, blended)),
+    source: w >= 0.85 ? 'EMPIRICAL' : 'BLEND',
+    sampleN: row.sampleN,
+  }
+}
+
+export function isSetupBlocked(
+  gates: BotAdaptiveGates,
+  setupBase: string,
+  compositeSetup: string
+): boolean {
+  return gates.blockedSetups.some(
+    (b) =>
+      b === setupBase ||
+      b === compositeSetup ||
+      compositeSetup.startsWith(`${b}_`) ||
+      b.startsWith(`${setupBase}_`)
+  )
+}
+
+export function isSetupBoosted(
+  gates: BotAdaptiveGates,
+  setupBase: string,
+  compositeSetup: string
+): boolean {
+  return gates.boostedSetups.some(
+    (b) =>
+      b === setupBase ||
+      b === compositeSetup ||
+      compositeSetup.startsWith(`${b}_`) ||
+      b.startsWith(`${setupBase}_`)
+  )
+}
+
 
 async function recomputeAndSaveGates(env: Env): Promise<BotAdaptiveGates> {
   const list = await listJournal(env)
@@ -524,13 +645,16 @@ async function recomputeAndSaveGates(env: Env): Promise<BotAdaptiveGates> {
 }
 
 export async function getAdaptiveGates(env: Env): Promise<BotAdaptiveGates> {
-  if (memoryGates) return memoryGates
+  if (memoryGates?.winPctBySetup) return memoryGates
   if (env.SUBSCRIBERS) {
     const raw = await env.SUBSCRIBERS.get(GATES_KEY)
     if (raw) {
       try {
-        memoryGates = JSON.parse(raw) as BotAdaptiveGates
-        return memoryGates
+        const parsed = JSON.parse(raw) as BotAdaptiveGates
+        if (parsed.winPctBySetup) {
+          memoryGates = parsed
+          return memoryGates
+        }
       } catch {
         /* fallthrough */
       }
@@ -561,12 +685,13 @@ export function allowSetupByGates(
   score: number,
   alertType: BotAlertKind
 ): { ok: boolean; reason?: string } {
-  if (gates.blockedSetups.includes(setup) && score < 95) {
+  const { base } = parseBotSetup(setup)
+  if (isSetupBlocked(gates, base, setup) && score < 95) {
     return { ok: false, reason: `blocked_setup:${setup}` }
   }
   const min =
     alertType === 'MEME' ? gates.minMemeScore : gates.minSniperScore
-  const boost = gates.boostedSetups.includes(setup) ? -4 : 0
+  const boost = isSetupBoosted(gates, base, setup) ? -4 : 0
   if (score < min + boost) {
     return { ok: false, reason: `score<${min + boost}` }
   }

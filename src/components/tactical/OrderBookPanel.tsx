@@ -35,6 +35,7 @@ import {
 } from '../../engine/mm'
 import { useOrderBookHistory } from '../../hooks/useOrderBookHistory'
 import { useMLPredictor } from '../../hooks/useMLPredictor'
+import { useMexcDepthStream } from '../../hooks/useMexcDepthStream'
 import type {
   OrderBookState,
   WallTrackerState,
@@ -57,7 +58,8 @@ interface Props {
   symbol: string
 }
 
-const UPDATE_INTERVAL = 2000
+/** REST fallback when WS is stale / down */
+const REST_FALLBACK_MS = 5000
 
 const OrderBookPanel = ({ symbol }: Props) => {
   const { t } = useTranslation()
@@ -105,6 +107,16 @@ const OrderBookPanel = ({ symbol }: Props) => {
   const [mmLabel, setMmLabel] = useState<string | null>(null)
   const densityHistoryRef = useRef<DensitySnapshot[]>([])
 
+  const {
+    snapshot: wsSnapshot,
+    trades: wsTrades,
+    isWsFresh,
+    source: streamSource,
+    ingestRestSnapshot,
+    ingestRestTrades,
+    error: wsError,
+  } = useMexcDepthStream(symbol, depthLimit, true)
+
   const { history, stats, resetHistory } = useOrderBookHistory(state.metrics)
 
   const { prediction, model, isTraining } = useMLPredictor(
@@ -115,9 +127,8 @@ const OrderBookPanel = ({ symbol }: Props) => {
     showML
   )
 
-  const loadDepth = useCallback(async () => {
-    try {
-      const snapshot = await fetchDepth(symbol, depthLimit)
+  const processSnapshot = useCallback(
+    (snapshot: OrderBookSnapshot, tradesForIceberg: typeof wsTrades) => {
       const metrics = calculateOrderBookMetrics(snapshot)
       const obi = calculateWeightedObi(snapshot.bids, snapshot.asks)
       setWeightedObi(obi)
@@ -127,7 +138,6 @@ const OrderBookPanel = ({ symbol }: Props) => {
       setObDelta(symbol, obDelta)
       depthTickRef.current += 1
 
-      // Spoof from wall tracker (after walls update below) — buffer for MM
       let spoofAlerts = spoofBufRef.current
       let icebergAlerts = icebergBufRef.current
 
@@ -168,51 +178,50 @@ const OrderBookPanel = ({ symbol }: Props) => {
         )
       }
 
-      // Iceberg every ~3rd tick (~6s) with REST deals
-      if (depthTickRef.current % 3 === 0 && metrics.midPrice) {
-        try {
-          const trades = await fetchRecentTrades(symbol, 80)
-          const mid = metrics.midPrice
-          const prevBid = levelVolumeNear(
-            prevSnapshotRef.current?.bids ?? [],
-            mid
+      // Iceberg from live tape (WS) or REST batch
+      if (
+        metrics.midPrice &&
+        tradesForIceberg.length >= 8 &&
+        (isWsFresh || depthTickRef.current % 2 === 0)
+      ) {
+        const mid = metrics.midPrice
+        const prevBid = levelVolumeNear(
+          prevSnapshotRef.current?.bids ?? [],
+          mid
+        )
+        const prevAsk = levelVolumeNear(
+          prevSnapshotRef.current?.asks ?? [],
+          mid
+        )
+        const curBid = levelVolumeNear(snapshot.bids, mid)
+        const curAsk = levelVolumeNear(snapshot.asks, mid)
+        const iceBuy = detectIcebergOrder({
+          trades: tradesForIceberg.slice(0, 80),
+          prevLevelVolume: prevAsk,
+          currentLevelVolume: curAsk,
+          side: 'BUY',
+        })
+        const iceSell = detectIcebergOrder({
+          trades: tradesForIceberg.slice(0, 80),
+          prevLevelVolume: prevBid,
+          currentLevelVolume: curBid,
+          side: 'SELL',
+        })
+        const ices = [iceBuy, iceSell].filter((i) => i.detected)
+        if (ices.length) {
+          icebergAlerts = ices
+          icebergBufRef.current = ices
+          setIcebergAlerts(
+            symbol,
+            ices.map((i) => ({
+              detected: i.detected,
+              side: i.side,
+              price: i.price,
+              label: i.label,
+              bounceProbPct: i.bounceProbPct,
+              updatedAt: Date.now(),
+            }))
           )
-          const prevAsk = levelVolumeNear(
-            prevSnapshotRef.current?.asks ?? [],
-            mid
-          )
-          const curBid = levelVolumeNear(snapshot.bids, mid)
-          const curAsk = levelVolumeNear(snapshot.asks, mid)
-          const iceBuy = detectIcebergOrder({
-            trades,
-            prevLevelVolume: prevAsk,
-            currentLevelVolume: curAsk,
-            side: 'BUY',
-          })
-          const iceSell = detectIcebergOrder({
-            trades,
-            prevLevelVolume: prevBid,
-            currentLevelVolume: curBid,
-            side: 'SELL',
-          })
-          const ices = [iceBuy, iceSell].filter((i) => i.detected)
-          if (ices.length) {
-            icebergAlerts = ices
-            icebergBufRef.current = ices
-            setIcebergAlerts(
-              symbol,
-              ices.map((i) => ({
-                detected: i.detected,
-                side: i.side,
-                price: i.price,
-                label: i.label,
-                bounceProbPct: i.bounceProbPct,
-                updatedAt: Date.now(),
-              }))
-            )
-          }
-        } catch {
-          /* deals optional */
         }
       }
 
@@ -248,7 +257,6 @@ const OrderBookPanel = ({ symbol }: Props) => {
 
       setHeatmap3D((prev) => addSnapshot3D(prev, snapshot))
 
-      // ── Whale Watcher ────────────────────────────────────────────────────
       if (metrics.midPrice && metrics.midPrice > 0) {
         const whaleState = updateWhaleWatcher(
           whaleWatcherRef.current,
@@ -266,24 +274,79 @@ const OrderBookPanel = ({ symbol }: Props) => {
       if (alertEvents.length > 0) {
         setActiveAlerts((current) => [...current, ...alertEvents].slice(-5))
       }
-    } catch (err) {
-      logger.warn('[OrderBook] Load error:', err)
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      }))
+    },
+    [
+      symbol,
+      setWhaleWatcher,
+      setOrderBookMetrics,
+      setMmIntent,
+      setSpoofAlerts,
+      setIcebergAlerts,
+      setObDelta,
+      liquidityMap,
+      isWsFresh,
+    ]
+  )
+
+  const lastProcessRef = useRef(0)
+
+  // Primary: WebSocket snapshots (throttle ~250ms to avoid React thrash)
+  useEffect(() => {
+    if (!wsSnapshot || !isWsFresh) return
+    const now = Date.now()
+    if (now - lastProcessRef.current < 250) return
+    lastProcessRef.current = now
+    processSnapshot(wsSnapshot, wsTrades)
+  }, [wsSnapshot, wsTrades, isWsFresh, processSnapshot])
+
+  // Fallback REST when WS stale/down
+  useEffect(() => {
+    let cancelled = false
+    const loadRest = async () => {
+      if (isWsFresh) return
+      try {
+        const snapshot = await fetchDepth(symbol, depthLimit)
+        if (cancelled) return
+        ingestRestSnapshot(snapshot)
+        processSnapshot(snapshot, wsTrades)
+        try {
+          const trades = await fetchRecentTrades(symbol, 80)
+          if (!cancelled) ingestRestTrades(trades)
+        } catch {
+          /* optional */
+        }
+      } catch (err) {
+        logger.warn('[OrderBook] REST fallback error:', err)
+        if (!cancelled) {
+          setState((prev) => ({
+            ...prev,
+            isLoading: false,
+            error:
+              prev.snapshot || wsError
+                ? prev.error
+                : err instanceof Error
+                  ? err.message
+                  : 'Unknown error',
+          }))
+        }
+      }
+    }
+
+    void loadRest()
+    const interval = window.setInterval(() => void loadRest(), REST_FALLBACK_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
     }
   }, [
     symbol,
     depthLimit,
-    setWhaleWatcher,
-    setOrderBookMetrics,
-    setMmIntent,
-    setSpoofAlerts,
-    setIcebergAlerts,
-    setObDelta,
-    liquidityMap,
+    isWsFresh,
+    processSnapshot,
+    ingestRestSnapshot,
+    ingestRestTrades,
+    wsTrades,
+    wsError,
   ])
 
   useEffect(() => {
@@ -310,12 +373,6 @@ const OrderBookPanel = ({ symbol }: Props) => {
     icebergBufRef.current = []
     resetHistory()
   }, [symbol, resetHistory])
-
-  useEffect(() => {
-    loadDepth()
-    const interval = setInterval(loadDepth, UPDATE_INTERVAL)
-    return () => clearInterval(interval)
-  }, [loadDepth])
 
   // Вычисляем Tape Momentum при каждом обновлении stats
   useEffect(() => {
@@ -400,6 +457,13 @@ const OrderBookPanel = ({ symbol }: Props) => {
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-mono text-sm font-bold uppercase text-holo">
           {t('orderbook_title')}
+          <span
+            className={`ml-2 text-[9px] font-normal normal-case ${
+              streamSource === 'ws' ? 'text-long/80' : 'text-holo/40'
+            }`}
+          >
+            {streamSource === 'ws' ? 'WS live' : 'REST'}
+          </span>
         </h3>
         <div className="flex items-center gap-2">
           <DepthSettings currentDepth={depthLimit} onDepthChange={setDepthLimit} />
@@ -520,7 +584,9 @@ const OrderBookPanel = ({ symbol }: Props) => {
       </div>
 
       <div className="text-center text-[10px] text-holo/40">
-        {t('orderbook_update_hint_heatmap', { seconds: UPDATE_INTERVAL / 1000 })}
+        {streamSource === 'ws'
+          ? 'Стакан: WebSocket live · лента сделок online'
+          : `Стакан: REST fallback ~${REST_FALLBACK_MS / 1000}с`}
       </div>
     </div>
   )

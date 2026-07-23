@@ -364,7 +364,7 @@ Radar/Sniper/Meme → тап → Drawer → график + контекст.
 ## 11. Ограничения текущей версии
 
 - Нет автоторговли на MEXC (только зоны и алерты).  
-- Стакан — REST-поллинг, не полноценный L2 WebSocket.  
+- Стакан — **WebSocket** (`wss://contract.mexc.com/edge`, depth.full + deal) с REST-fallback.
 - Worker-сканер **упрощённее** полного ProbabilityEngine Mini App.  
 - `VITE_ALERT_SECRET` попадает в бандл браузера — это shared secret для MVP, не user-auth.  
 - Paper trades worker — демонстрационные, не баланс пользователя.

@@ -4,6 +4,15 @@
  * Runs on Cloudflare Cron (every 2 minutes).
  */
 
+import {
+  calibrateWinPct,
+  isSetupBlocked,
+  isSetupBoosted,
+  type BotAdaptiveGates,
+  type WinPctCalibrationEntry,
+} from './botJournal'
+import { detectMarketRegime, regimeAllows, type MarketRegime } from './regime'
+
 const MEXC = 'https://contract.mexc.com'
 
 /**
@@ -690,13 +699,9 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
  * Full 24/7 scan cycle. Returns alerts to broadcast.
  * @param gates optional adaptive filters from bot journal outcomes
  */
-export async function runMarketScan(gates?: {
-  minMemeScore: number
-  minSniperScore: number
-  blockedSetups: string[]
-  boostedSetups: string[]
-  requireHighBrokenForSqueeze: boolean
-} | null): Promise<ScanAlert[]> {
+export async function runMarketScan(
+  gates?: BotAdaptiveGates | null
+): Promise<ScanAlert[]> {
   const [tradable, tickers] = await Promise.all([
     fetchTradableSymbols(),
     fetchTickers(),
@@ -747,8 +752,10 @@ export async function runMarketScan(gates?: {
   const alerts: ScanAlert[] = []
   const seen = new Set<string>()
 
-  // BTC 1h once per cycle — relative strength anchor for alts
+  // BTC 1h once per cycle — relative strength + market regime
   const btc1h = await fetchKlines('BTC_USDT', 'Min60', 48)
+  const btcRegime: MarketRegime = detectMarketRegime(btc1h)
+  const winCal: WinPctCalibrationEntry[] = gates?.winPctBySetup ?? []
 
   const analyze = async (t: TickerRow, preferMeme: boolean) => {
     if (seen.has(t.symbol)) return
@@ -819,6 +826,7 @@ export async function runMarketScan(gates?: {
     ) => {
       const ctx = resolveTrendContext(side, bias15, bias1h, bias4h)
       const align = alignOverride ?? ctx.align
+      const composite = `${setup}_${style}_${align === 'WITH_TREND' ? 'TREND' : 'COUNTER'}`
 
       // Counter-trend needs a stronger raw score before win% mapping
       let scoreAdj =
@@ -827,20 +835,26 @@ export async function runMarketScan(gates?: {
         scoreAdj = Math.min(99, scoreAdj + 4) // HTF trend + LTF pullback
       }
 
+      const regimeGate = regimeAllows(btcRegime, style, align, scoreAdj)
+      if (!regimeGate.ok) return
+      scoreAdj = regimeGate.scoreAdj
+
       const gated = applyBookAndStrength(side, scoreAdj, bookImb, rs, isBtc)
       if (!gated) return
       scoreAdj = gated.score
 
       // Adaptive gates from bot journal outcomes
       if (gates) {
-        if (gates.blockedSetups.includes(setup) && scoreAdj < 95) return
+        if (isSetupBlocked(gates, setup, composite) && scoreAdj < 95) return
         const min =
           type === 'MEME' ? gates.minMemeScore : gates.minSniperScore
-        const boost = gates.boostedSetups.includes(setup) ? -4 : 0
+        const boost = isSetupBoosted(gates, setup, composite) ? -4 : 0
         if (scoreAdj < min + boost) return
       }
 
-      const winPct = winPctFromScore(scoreAdj, align, style)
+      const priorWin = winPctFromScore(scoreAdj, align, style)
+      const cal = calibrateWinPct(priorWin, composite, winCal)
+      const winPct = cal.winPct
       if (winPct < MIN_WIN_PCT) return
 
       // Final live check — detail + book + funding endpoint
@@ -850,6 +864,10 @@ export async function runMarketScan(gates?: {
       const trendLine = `Тренд: глобальный ${ctx.global} (4h/1h) · локальный ${ctx.local} (15m)${
         ctx.pullback ? ' · откат в тренд' : ''
       }`
+      const calLine =
+        cal.source === 'PRIOR'
+          ? `Win% модель ${priorWin}% (журнал: мало данных)`
+          : `Win% ${winPct}% = модель ${priorWin}% ⊕ журнал ${cal.sampleN} сделок (${cal.source})`
       const msg = formatTradeAlert({
         side,
         symbol: t.symbol,
@@ -868,7 +886,9 @@ export async function runMarketScan(gates?: {
         extras: [
           ...extras,
           trendLine,
+          `Режим рынка BTC: ${btcRegime}`,
           gated.note,
+          calLine,
           `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M`,
           `RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
           `Bias 15m/1h/4h: ${bias15}/${bias1h}/${bias4h}`,
@@ -884,7 +904,7 @@ export async function runMarketScan(gates?: {
         tradePlan: {
           side,
           symbol: t.symbol,
-          setup: `${setup}_${style}_${align === 'WITH_TREND' ? 'TREND' : 'COUNTER'}`,
+          setup: composite,
           signalPrice: plan.signalPrice,
           entryIdeal: plan.entryIdeal,
           zoneLow: plan.zoneLow,

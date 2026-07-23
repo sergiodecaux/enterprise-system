@@ -57,6 +57,12 @@ export interface BotAdaptiveGatesDto {
   blockedSetups: string[]
   boostedSetups: string[]
   requireHighBrokenForSqueeze: boolean
+  winPctBySetup?: {
+    setup: string
+    sampleN: number
+    historicalWr: number
+    avgR: number
+  }[]
   updatedAt: number
   sampleSize: number
 }
