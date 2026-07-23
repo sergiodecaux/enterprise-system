@@ -229,14 +229,14 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
   )
 }
 
-/** Панель Whale Watcher в Drawer */
+/** Панель Whale Watcher в Drawer — без баннеров в потоке (они в оверлее drawer) */
 const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
   const hasWhales =
     state.strongestSupport !== null || state.strongestResistance !== null
 
-  const activeAlerts = state.alerts.filter((a) => a.isActive && !a.isExpired)
+  const activeCount = state.alerts.filter((a) => a.isActive && !a.isExpired).length
 
-  if (!hasWhales && activeAlerts.length === 0) return null
+  if (!hasWhales && activeCount === 0) return null
 
   const formatPrice = (price: number): string => {
     if (price >= 1000)
@@ -247,12 +247,16 @@ const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
 
   return (
     <div className="rounded-xl border border-hull-border bg-hull p-3">
-      {/* Заголовок */}
       <div className="mb-3 flex items-center gap-2">
         <span className="text-base">🐋</span>
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
           Наблюдатель китов
         </span>
+        {activeCount > 0 && (
+          <span className="rounded bg-cyan-400/15 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300">
+            {activeCount} алерт{activeCount > 1 ? 'а' : ''} ↑
+          </span>
+        )}
         {state.scoreBoost > 0 && (
           <span className="ml-auto rounded bg-cyan-400/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-400">
             +{state.scoreBoost.toFixed(1)} к оценке
@@ -260,16 +264,6 @@ const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
         )}
       </div>
 
-      {/* Активные алерты — фиксированный слот, без прыжка вёрстки */}
-      {activeAlerts.length > 0 && (
-        <div className="mb-3 max-h-28 space-y-2 overflow-y-auto overscroll-contain">
-          {activeAlerts.slice(0, 3).map((alert) => (
-            <WhaleAlertBanner key={alert.id} alert={alert} />
-          ))}
-        </div>
-      )}
-
-      {/* Strongest Support / Resistance */}
       <div className="grid grid-cols-2 gap-2">
         {state.strongestSupport && (
           <div className="rounded-lg border border-matrix/20 bg-matrix/5 p-2">
@@ -631,59 +625,79 @@ const TacticalDrawer = () => {
 
       <div
         ref={drawerRef}
-        className={`fixed bottom-0 left-0 right-0 w-full max-h-[85vh] bg-space border-t border-hull-border rounded-t-2xl overflow-y-auto overscroll-contain z-50 transition-transform duration-400 ease-out ${
+        className={`fixed bottom-0 left-0 right-0 z-50 flex w-full max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border-t border-hull-border bg-space transition-transform duration-400 ease-out ${
           isDrawerOpen
             ? 'translate-y-0 opacity-100'
             : 'translate-y-full opacity-0 pointer-events-none'
         }`}
         style={{
           transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
-          WebkitOverflowScrolling: 'touch',
         }}
       >
-        <div className="flex justify-center my-3">
-          <div className="w-12 h-1 bg-hull-border rounded-full" />
-        </div>
-
-        <div className="px-4 pb-4 border-b border-hull-border/50">
-          <div className="flex items-start justify-between mb-2">
-            <div className="flex-1">
-              <h2 className="text-2xl font-mono font-bold text-holo mb-1">
-                {signal.displayName}
-              </h2>
-              <div className="flex items-center gap-3 text-sm font-mono">
-                <span className="text-holo/80">${formatPrice(signal.price)}</span>
-                <span
-                  className={signal.priceChange24h >= 0 ? 'text-matrix' : 'text-alert'}
-                >
-                  {formatChange(signal.priceChange24h)}
-                </span>
-                {signal.hasActiveSetup && (
-                  <span className="text-matrix text-xs uppercase">{t('signal_setup')}</span>
-                )}
-                {signal.scoreCard && (
-                  <span
-                    className={`text-xs font-bold ${
-                      signal.scoreCard.ready ? 'text-matrix' : 'text-holo/50'
-                    }`}
-                    title={signal.scoreCard.missingFactors.slice(0, 2).join(' · ')}
-                  >
-                    {signal.scoreCard.grade} {signal.scoreCard.totalScore}/
-                    {signal.scoreCard.maxScore}
-                  </span>
-                )}
+        {/* Киты: плавающий оверлей — НЕ двигает скролл меню монеты */}
+        {whaleState &&
+          whaleState.alerts.filter((a) => a.isActive && !a.isExpired).length >
+            0 && (
+            <div className="pointer-events-none absolute inset-x-3 top-11 z-[60]">
+              <div className="pointer-events-auto max-h-32 space-y-1.5 overflow-y-auto overscroll-contain rounded-xl bg-space/95 p-1.5 shadow-lg shadow-black/40 backdrop-blur-md">
+                {whaleState.alerts
+                  .filter((a) => a.isActive && !a.isExpired)
+                  .slice(0, 2)
+                  .map((alert) => (
+                    <WhaleAlertBanner key={alert.id} alert={alert} />
+                  ))}
               </div>
             </div>
-            <button
-              onClick={handleClose}
-              className="p-2 hover:bg-hull-light rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5 text-holo/60" />
-            </button>
+          )}
+
+        <div className="flex-shrink-0">
+          <div className="my-3 flex justify-center">
+            <div className="h-1 w-12 rounded-full bg-hull-border" />
+          </div>
+
+          <div className="border-b border-hull-border/50 px-4 pb-4">
+            <div className="mb-2 flex items-start justify-between">
+              <div className="flex-1">
+                <h2 className="mb-1 font-mono text-2xl font-bold text-holo">
+                  {signal.displayName}
+                </h2>
+                <div className="flex items-center gap-3 font-mono text-sm">
+                  <span className="text-holo/80">${formatPrice(signal.price)}</span>
+                  <span
+                    className={signal.priceChange24h >= 0 ? 'text-matrix' : 'text-alert'}
+                  >
+                    {formatChange(signal.priceChange24h)}
+                  </span>
+                  {signal.hasActiveSetup && (
+                    <span className="text-xs uppercase text-matrix">{t('signal_setup')}</span>
+                  )}
+                  {signal.scoreCard && (
+                    <span
+                      className={`text-xs font-bold ${
+                        signal.scoreCard.ready ? 'text-matrix' : 'text-holo/50'
+                      }`}
+                      title={signal.scoreCard.missingFactors.slice(0, 2).join(' · ')}
+                    >
+                      {signal.scoreCard.grade} {signal.scoreCard.totalScore}/
+                      {signal.scoreCard.maxScore}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={handleClose}
+                className="rounded-lg p-2 transition-colors hover:bg-hull-light"
+              >
+                <X className="h-5 w-5 text-holo/60" />
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="space-y-6 px-4 py-6">
+        <div
+          className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-4 py-6"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           {marketBrief && (
             <MarketBriefPanel brief={marketBrief} loading={briefLoading} />
           )}

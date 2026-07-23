@@ -47,7 +47,6 @@ import OrderBookLevelRow from './OrderBookLevel'
 import OrderBookMetricsView from './OrderBookMetrics'
 import ImbalanceChart from './ImbalanceChart'
 import WallAlert from './WallAlert'
-import WhaleAlertBanner from './WhaleAlertBanner'
 import DepthSettings from './DepthSettings'
 import MLPredictionPanel from './MLPredictionPanel'
 import { logger } from '../../utils/logger'
@@ -386,9 +385,6 @@ const OrderBookPanel = ({ symbol }: Props) => {
   }
 
   const { snapshot, metrics, isLoading, error } = state
-  const whaleState = useAppStore((s) => s.whaleWatcher[symbol] ?? null)
-  const activeWhaleAlerts =
-    whaleState?.alerts.filter((a) => a.isActive && !a.isExpired) ?? []
   const heatmap = heatmapRef.current
   void heatmapTick
 
@@ -434,19 +430,18 @@ const OrderBookPanel = ({ symbol }: Props) => {
 
   return (
     <div className="space-y-3">
-      {/* Fixed slot — alerts don't push chart layout above */}
-      <div className="max-h-28 min-h-0 space-y-2 overflow-y-auto overscroll-contain">
-        {activeWhaleAlerts.map((alert) => (
-          <WhaleAlertBanner key={alert.id} alert={alert} />
-        ))}
-        {activeAlerts.map((event, i) => (
-          <WallAlert
-            key={`${event.timestamp}-${event.wall.id}-${i}`}
-            event={event}
-            onDismiss={() => handleDismissAlert(i)}
-          />
-        ))}
-      </div>
+      {/* Wall alerts only — whale toasts live in drawer overlay (no layout jump) */}
+      {activeAlerts.length > 0 && (
+        <div className="max-h-24 space-y-1.5 overflow-y-auto overscroll-contain">
+          {activeAlerts.map((event, i) => (
+            <WallAlert
+              key={`${event.timestamp}-${event.wall.id}-${i}`}
+              event={event}
+              onDismiss={() => handleDismissAlert(i)}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-mono text-sm font-bold uppercase text-holo">
