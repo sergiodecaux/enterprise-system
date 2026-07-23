@@ -1,7 +1,7 @@
 /** Bumped on each user-visible bot engine change — shown in /status /scan /alerts */
 export const BOT_ENGINE = {
-  id: 'confluence-v3',
-  label: 'ScoreCard OB/FVG/raid · HTF 4H/D · coin news · lifecycle',
+  id: 'user-zone-v1',
+  label: 'User /zone · ScoreCard · HTF fly target · lifecycle',
   deployedNote:
-    'Вход только A+/A (SNIPER). Фазы watch: APPROACH→TOUCH→REACTION→FUEL→READY. Вселенная: топ-200 liquid USDT-M.',
+    '/zone BTC 94000-96000 — твоя зона, бот ищет L/S, силу/слабость и куда полетит. /zones · /zoneoff',
 } as const

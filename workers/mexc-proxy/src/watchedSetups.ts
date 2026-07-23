@@ -724,6 +724,8 @@ function zoneBand(mid: number, pct = 0.0035): { top: number; bottom: number } {
 }
 
 function isBounceLike(setup: ConditionalSetupPayload): boolean {
+  // User-defined zones must keep fixed geometry — never auto-rebuild to SSL/BSL
+  if (setup.kind === 'USER_ZONE') return false
   const t = `${setup.kind} ${setup.title}`.toUpperCase()
   return (
     t.includes('BOUNCE') ||
@@ -929,7 +931,12 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       let working = w
 
       // Every 10 min: rebuild stale pullback from HTF SSL/BSL only
-      if (price && dueForLevelsRefresh(w, now)) {
+      // USER_ZONE keeps fixed user geometry forever
+      if (
+        price &&
+        dueForLevelsRefresh(w, now) &&
+        w.setup.kind !== 'USER_ZONE'
+      ) {
         const staleReason = pullbackStaleReason(w.setup, price, c1m)
         let reason = staleReason
         if (!reason && isBounceLike(w.setup)) {

@@ -13,7 +13,11 @@
  */
 
 import { runMarketScan, type TradePlanPayload } from './scanner'
-import { BOT_ENGINE } from './botEngine'
+import {
+  analyzeUserZone,
+  parseZoneArg,
+  resolveMexcSymbol,
+} from './userZoneWatch'
 import {
   createPaperTradeFromPlan,
   formatTradesStatus,
@@ -860,7 +864,7 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
     await tgSend(
       env,
       chatId,
-      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7.\nСигналы + <b>пример сделки</b> с комментариями по рынку (давление, объём, вероятность успеха).\nМемы ≈каждые 2 мин · альты ≈каждые 5 мин.\n\nКоманды:\n/test — тест\n/trades — примеры сделок\n/status — статус\n/scan — сканер\n/ping — связь\n/stop — стоп'
+      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7.\nСигналы + мониторинг твоих зон.\n\nКоманды:\n/zone BTC 94000-96000 — зона + анализ L/S\n/zones — мои зоны\n/zoneoff BTC — снять\n/status · /scan · /journal · /trades\n/test · /ping · /stop'
     )
     await sendDemoSignal(env, chatId)
     return
@@ -933,6 +937,108 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
         `✅ Скан (${BOT_ENGINE.id}): найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}\nСопровождение: ${result.paperComments} сообщений`
       )
     }
+    return
+  }
+
+  if (cmd === 'zone' || cmd === 'зона') {
+    const list = await listSubscribers(env)
+    let me = list.find((s) => s.chatId === chatId)
+    if (!me) {
+      await upsertSubscriber(env, {
+        chatId,
+        username,
+        subscribedAt: Date.now(),
+        sniper: true,
+        meme: true,
+      })
+    }
+    const { arg } = parseCommand(msg.text)
+    const parsed = parseZoneArg(arg)
+    if ('error' in parsed) {
+      await tgSend(env, chatId, parsed.error)
+      return
+    }
+    await tgSend(
+      env,
+      chatId,
+      `⏳ Анализирую <code>${parsed.symbol}</code> зону ${parsed.zoneLow}–${parsed.zoneHigh}…`
+    )
+    const result = await analyzeUserZone(parsed)
+    if ('error' in result) {
+      await tgSend(env, chatId, `❌ ${result.error}`)
+      return
+    }
+    const watches = await createWatchesBatch(env, {
+      chatId,
+      symbol: result.display,
+      internalSymbol: result.symbol,
+      setups: [result.setup],
+      ttlHours: 72,
+    })
+    await tgSend(
+      env,
+      chatId,
+      [
+        result.reportHtml,
+        '',
+        watches.length
+          ? `✅ Watch на сервере: <code>${watches[0]?.watchId}</code> (TTL 72ч)`
+          : '⚠️ Не удалось сохранить watch',
+      ].join('\n')
+    )
+    return
+  }
+
+  if (cmd === 'zones' || cmd === 'зоны') {
+    const watches = await listWatchesForChat(env, chatId)
+    const userZones = watches.filter(
+      (w) => w.setup.kind === 'USER_ZONE' || w.setup.title.includes('👤')
+    )
+    if (userZones.length === 0) {
+      await tgSend(
+        env,
+        chatId,
+        'Нет твоих зон.\nПример: /zone BTC 94000-96000\nили /zone ETH 3200 3350 long'
+      )
+      return
+    }
+    const lines = userZones.map((w) => {
+      const s = w.setup
+      const icon = s.side === 'LONG' ? '🟢' : '🔴'
+      return `${icon} ${w.symbol} ${s.side} · ${s.entryZone.bottom}–${s.entryZone.top} · ${w.lastLifecyclePhase ?? w.lastStatus} · ~${Math.round(s.probability)}%\n  цель ${s.target} · id <code>${w.watchId}</code>`
+    })
+    await tgSend(
+      env,
+      chatId,
+      [`<b>👤 Твои зоны (${userZones.length})</b>`, ...lines, '', '/zoneoff BTC — снять по монете'].join(
+        '\n'
+      )
+    )
+    return
+  }
+
+  if (cmd === 'zoneoff' || cmd === 'зонастоп') {
+    const { arg } = parseCommand(msg.text)
+    const sym = resolveMexcSymbol(arg.split(/\s+/)[0] || '')
+    if (!sym) {
+      await tgSend(env, chatId, 'Формат: /zoneoff BTC')
+      return
+    }
+    const watches = await listWatchesForChat(env, chatId)
+    const victims = watches.filter(
+      (w) =>
+        (w.internalSymbol === sym || w.symbol.includes(sym.replace('_USDT', ''))) &&
+        (w.setup.kind === 'USER_ZONE' || w.setup.title.includes('👤'))
+    )
+    if (!victims.length) {
+      await tgSend(env, chatId, `Нет USER_ZONE watch по ${sym}`)
+      return
+    }
+    let n = 0
+    for (const w of victims) {
+      if (await deleteWatch(env, chatId, w.watchId)) n++
+    }
+    await tgSend(env, chatId, `Снято зон: ${n} по ${sym}`)
     return
   }
 
