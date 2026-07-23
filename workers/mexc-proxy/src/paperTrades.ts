@@ -92,6 +92,10 @@ interface MarketBrief {
   candleBias: 'UP' | 'DOWN' | 'CHOP'
   volMult: number
   move1mPct: number
+  /** Slope of last ~5 closes in % */
+  move5mPct: number
+  /** Order book imbalance −100…+100 (bids heavy → +) */
+  bookImb: number | null
   spreadBps: number
   fundingPct: number | null
 }
@@ -198,7 +202,7 @@ async function fetchMarketBrief(
   symbol: string,
   snap: TickerSnap
 ): Promise<MarketBrief> {
-  const [klines, deals] = await Promise.all([
+  const [klines, deals, depth] = await Promise.all([
     mexcJson<{
       data: {
         open: number[]
@@ -211,6 +215,9 @@ async function fetchMarketBrief(
     mexcJson<{
       data: Array<{ p: number; v: number; T: number; O?: number }>
     }>(`/api/v1/contract/deals/${symbol}?limit=60`),
+    mexcJson<{
+      data?: { asks?: [number, number, number][]; bids?: [number, number, number][] }
+    }>(`/api/v1/contract/depth/${symbol}?limit=20`),
   ])
 
   const o = klines?.data?.open?.map(Number) ?? []
@@ -238,7 +245,10 @@ async function fetchMarketBrief(
   const lastC = c[c.length - 1] ?? snap.last
   const move1mPct = lastO > 0 ? ((lastC - lastO) / lastO) * 100 : 0
 
-  // MEXC deals: T=1 taker buy, T=2 taker sell (common); O sometimes side
+  const c5 = c.length >= 6 ? c[c.length - 6] : c[0] ?? snap.last
+  const move5mPct = c5 > 0 ? ((lastC - c5) / c5) * 100 : 0
+
+  // MEXC deals: T=1 taker buy, T=2 taker sell
   let buyVol = 0
   let sellVol = 0
   const rows = deals?.data ?? []
@@ -246,11 +256,9 @@ async function fetchMarketBrief(
     const vol = Number(d.v ?? 0) * Number(d.p ?? 0)
     const side = d.T ?? d.O
     if (side === 1 || side === 2) {
-      // T: 1 buy / 2 sell on many MEXC docs; if inverted still relative
       if (side === 1) buyVol += vol
       else sellVol += vol
     } else {
-      // fallback: compare to mid
       if (Number(d.p) >= snap.last) buyVol += vol
       else sellVol += vol
     }
@@ -263,6 +271,14 @@ async function fetchMarketBrief(
   if (buyShare >= 0.58) pressure = 'BUYERS'
   else if (sellShare >= 0.58) pressure = 'SELLERS'
 
+  // If price is ripping one way, trust candles over noisy tape
+  if (move5mPct >= 0.45 && candleBias === 'UP' && pressure === 'SELLERS') {
+    pressure = 'MIXED'
+  }
+  if (move5mPct <= -0.45 && candleBias === 'DOWN' && pressure === 'BUYERS') {
+    pressure = 'MIXED'
+  }
+
   const pressureLabel =
     pressure === 'BUYERS'
       ? `Покупатели давят (${(buyShare * 100).toFixed(0)}% taker buy)`
@@ -273,6 +289,18 @@ async function fetchMarketBrief(
   const mid = (snap.bid1 + snap.ask1) / 2
   const spreadBps = mid > 0 ? ((snap.ask1 - snap.bid1) / mid) * 10_000 : 0
 
+  let bookImb: number | null = null
+  const asks = depth?.data?.asks ?? []
+  const bids = depth?.data?.bids ?? []
+  if (asks.length && bids.length) {
+    let askVol = 0
+    let bidVol = 0
+    for (const a of asks) askVol += Number(a[1] ?? 0)
+    for (const b of bids) bidVol += Number(b[1] ?? 0)
+    const bookTot = askVol + bidVol
+    if (bookTot > 0) bookImb = ((bidVol - askVol) / bookTot) * 100
+  }
+
   return {
     buyShare,
     sellShare,
@@ -281,49 +309,148 @@ async function fetchMarketBrief(
     candleBias,
     volMult,
     move1mPct,
+    move5mPct,
+    bookImb,
     spreadBps,
     fundingPct: snap.fundingRate != null ? snap.fundingRate * 100 : null,
   }
 }
 
 /**
- * Live success probability for the example trade (calibrated band, not historical WR).
+ * Live success probability — driven by price path, momentum strength, book.
+ * Hysteresis vs lastWinPct so it doesn't collapse on one noisy tape print.
  */
 function computeWinPct(
   t: PaperTrade,
   price: number,
   brief: MarketBrief
 ): { winPct: number; factors: string[] } {
-  let score = 58
   const factors: string[] = []
   const entry = t.fillPrice ?? t.entryIdeal
   const risk = Math.abs(entry - t.sl)
   const reward = Math.abs(t.tp - entry)
+  const open = t.status === 'OPEN' && t.fillPrice != null
 
-  // Path progress: how much of risk/reward path used
-  if (risk > 0) {
-    const towardTp =
-      t.side === 'LONG'
-        ? (price - entry) / reward
-        : (entry - price) / reward
-    const towardSl =
-      t.side === 'LONG'
-        ? (entry - price) / risk
-        : (price - entry) / risk
+  // ── 1) Path / R-multiple (primary for OPEN) ─────────────────────
+  let score = open ? 60 : 54
 
-    if (towardTp > 0.15) {
-      const bump = Math.min(18, towardTp * 22)
-      score += bump
-      factors.push(`к цели ${(towardTp * 100).toFixed(0)}% пути`)
+  if (open && risk > 0) {
+    const rMult =
+      t.side === 'LONG' ? (price - entry) / risk : (entry - price) / risk
+    const tpProgress =
+      reward > 0
+        ? t.side === 'LONG'
+          ? (price - entry) / reward
+          : (entry - price) / reward
+        : 0
+
+    if (rMult >= 1.2) {
+      score = 78 + Math.min(8, (rMult - 1.2) * 4)
+      factors.push(`в плюсе +${rMult.toFixed(1)}R · сила хода`)
+    } else if (rMult >= 0.35) {
+      score = 66 + Math.min(12, rMult * 10)
+      factors.push(`к цели ${(Math.max(0, tpProgress) * 100).toFixed(0)}% · +${rMult.toFixed(2)}R`)
+    } else if (rMult >= 0) {
+      score = 60 + rMult * 14
+      factors.push(`чуть в плюсе +${rMult.toFixed(2)}R`)
+    } else if (rMult > -0.45) {
+      score = 58 + rMult * 18
+      factors.push(`откат ${rMult.toFixed(2)}R от входа`)
+    } else {
+      score = 52 + Math.max(-26, rMult * 22)
+      factors.push(`к стопу ${Math.abs(rMult).toFixed(2)}R`)
     }
-    if (towardSl > 0.2) {
-      const pen = Math.min(22, towardSl * 28)
-      score -= pen
-      factors.push(`к стопу ${(towardSl * 100).toFixed(0)}% риска`)
+  } else if (!open && risk > 0) {
+    // WAITING: closer to zone = better; price running away from zone hurts
+    const zoneMid = (t.zoneLow + t.zoneHigh) / 2
+    const distPct = ((price - zoneMid) / price) * 100
+    const approaching =
+      (t.side === 'LONG' && price >= t.zoneLow * 0.997 && price <= t.zoneHigh * 1.01) ||
+      (t.side === 'SHORT' && price <= t.zoneHigh * 1.003 && price >= t.zoneLow * 0.99)
+    if (approaching) {
+      score = 64
+      factors.push('цена у зоны входа')
+    } else if (t.side === 'LONG' && distPct > 1.2) {
+      score = 48
+      factors.push(`ушла вверх от зоны (+${distPct.toFixed(1)}%) — жду откат`)
+    } else if (t.side === 'SHORT' && distPct < -1.2) {
+      score = 48
+      factors.push(`ушла вниз от зоны (${distPct.toFixed(1)}%) — жду откат`)
+    } else {
+      score = 56
+      factors.push(`до зоны ${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%`)
     }
   }
 
-  // Order-flow alignment
+  // ── 2) Momentum / strength of the move ──────────────────────────
+  const momWith =
+    (t.side === 'LONG' && brief.move5mPct >= 0.25 && brief.move1mPct >= -0.05) ||
+    (t.side === 'SHORT' && brief.move5mPct <= -0.25 && brief.move1mPct <= 0.05)
+  const momAgainst =
+    (t.side === 'LONG' && brief.move5mPct <= -0.35) ||
+    (t.side === 'SHORT' && brief.move5mPct >= 0.35)
+  const strongTrend =
+    (t.side === 'LONG' && brief.move5mPct >= 0.6 && brief.candleBias !== 'DOWN') ||
+    (t.side === 'SHORT' && brief.move5mPct <= -0.6 && brief.candleBias !== 'UP')
+
+  if (strongTrend) {
+    score += open ? 12 : 4
+    factors.push(
+      `сильный ход ${brief.move5mPct >= 0 ? '+' : ''}${brief.move5mPct.toFixed(2)}% /5м`
+    )
+  } else if (momWith) {
+    score += open ? 8 : 3
+    factors.push(
+      `импульс с нами ${brief.move5mPct >= 0 ? '+' : ''}${brief.move5mPct.toFixed(2)}%`
+    )
+  } else if (momAgainst && !(open && score >= 70)) {
+    // Don't punish a winning runner for a shallow pullback print
+    score -= open ? 6 : 8
+    factors.push(
+      `импульс против ${brief.move5mPct >= 0 ? '+' : ''}${brief.move5mPct.toFixed(2)}%`
+    )
+  }
+
+  if (
+    (t.side === 'LONG' && brief.candleBias === 'UP') ||
+    (t.side === 'SHORT' && brief.candleBias === 'DOWN')
+  ) {
+    score += 5
+    factors.push('свечи 1м за нас')
+  } else if (
+    (t.side === 'LONG' && brief.candleBias === 'DOWN' && !momWith) ||
+    (t.side === 'SHORT' && brief.candleBias === 'UP' && !momWith)
+  ) {
+    score -= 4
+    factors.push('свечи 1м против')
+  }
+
+  // ── 3) Order book ───────────────────────────────────────────────
+  if (brief.bookImb != null) {
+    const bookWith =
+      (t.side === 'LONG' && brief.bookImb >= 12) ||
+      (t.side === 'SHORT' && brief.bookImb <= -12)
+    const bookAgainst =
+      (t.side === 'LONG' && brief.bookImb <= -20) ||
+      (t.side === 'SHORT' && brief.bookImb >= 20)
+    if (bookWith) {
+      score += 7
+      factors.push(
+        `стакан за нас (OBI ${brief.bookImb >= 0 ? '+' : ''}${brief.bookImb.toFixed(0)}%)`
+      )
+    } else if (bookAgainst && !strongTrend) {
+      score -= 6
+      factors.push(
+        `стакан против (OBI ${brief.bookImb >= 0 ? '+' : ''}${brief.bookImb.toFixed(0)}%)`
+      )
+    } else {
+      factors.push(
+        `стакан OBI ${brief.bookImb >= 0 ? '+' : ''}${brief.bookImb.toFixed(0)}%`
+      )
+    }
+  }
+
+  // ── 4) Tape — soft, never override strong price trend ───────────
   const flowWithUs =
     (t.side === 'LONG' && brief.pressure === 'BUYERS') ||
     (t.side === 'SHORT' && brief.pressure === 'SELLERS')
@@ -332,72 +459,58 @@ function computeWinPct(
     (t.side === 'SHORT' && brief.pressure === 'BUYERS')
 
   if (flowWithUs) {
-    score += 8
-    factors.push('поток с нами')
-  } else if (flowAgainst) {
-    score -= 10
-    factors.push('поток против')
+    score += 6
+    factors.push('лента с нами')
+  } else if (flowAgainst && !strongTrend && !momWith) {
+    score -= 5
+    factors.push('лента против')
+  } else if (flowAgainst && (strongTrend || momWith)) {
+    factors.push('лента шумная, но цена/сила за нас')
   } else {
-    factors.push('поток нейтрален')
+    factors.push('лента нейтральна')
   }
 
-  // Candle structure
-  if (
-    (t.side === 'LONG' && brief.candleBias === 'UP') ||
-    (t.side === 'SHORT' && brief.candleBias === 'DOWN')
-  ) {
-    score += 5
-    factors.push('структура 1м за нас')
-  } else if (
-    (t.side === 'LONG' && brief.candleBias === 'DOWN') ||
-    (t.side === 'SHORT' && brief.candleBias === 'UP')
-  ) {
-    score -= 6
-    factors.push('структура 1м против')
-  }
-
-  // Volume expansion
-  if (brief.volMult >= 1.8 && flowWithUs) {
-    score += 5
+  if (brief.volMult >= 1.8 && (flowWithUs || momWith || strongTrend)) {
+    score += 4
     factors.push(`объём ×${brief.volMult.toFixed(1)}`)
-  } else if (brief.volMult >= 2.2 && flowAgainst) {
-    score -= 7
-    factors.push(`объём против ×${brief.volMult.toFixed(1)}`)
-  }
-
-  // Funding
-  if (brief.fundingPct != null) {
-    if (t.side === 'LONG' && brief.fundingPct <= -0.02) {
-      score += 4
-      factors.push('funding в шортах — топливо лонга')
-    } else if (t.side === 'SHORT' && brief.fundingPct >= 0.03) {
-      score += 3
-      factors.push('funding перегрет лонгами')
-    } else if (t.side === 'LONG' && brief.fundingPct >= 0.05) {
-      score -= 4
-      factors.push('funding против лонга')
-    }
-  }
-
-  // Spread stress (memes)
-  if (brief.spreadBps > 25) {
-    score -= 3
-    factors.push(`широкий спред ${brief.spreadBps.toFixed(0)}bps`)
-  }
-
-  // WAITING: slightly lower until filled
-  if (t.status === 'WAITING') {
-    score -= 4
-    factors.push('ещё не в сделке — только зона')
   }
 
   if (t.beSent) {
-    score += 4
-    factors.push('стоп уже в BE')
+    score += 3
+    factors.push('стоп в BE')
   }
 
-  const winPct = Math.round(Math.min(88, Math.max(22, score)))
-  return { winPct, factors: factors.slice(0, 5) }
+  // Floor: winning + momentum must not look like a loser
+  if (open && risk > 0) {
+    const rMult =
+      t.side === 'LONG' ? (price - entry) / risk : (entry - price) / risk
+    if (rMult > 0.15 && (momWith || strongTrend || flowWithUs)) {
+      score = Math.max(score, 68)
+    }
+    if (rMult > 0.5 && (strongTrend || brief.candleBias !== (t.side === 'LONG' ? 'DOWN' : 'UP'))) {
+      score = Math.max(score, 74)
+    }
+  }
+
+  let winPct = Math.round(Math.min(90, Math.max(28, score)))
+
+  // Hysteresis vs last published — avoid 80→46 whiplash
+  if (t.lastWinPct != null) {
+    const prev = t.lastWinPct
+    const nearSl =
+      open &&
+      risk > 0 &&
+      (t.side === 'LONG'
+        ? (entry - price) / risk > 0.55
+        : (price - entry) / risk > 0.55)
+    const maxStep = nearSl ? 14 : strongTrend || momWith ? 8 : 10
+    if (winPct > prev + maxStep) winPct = prev + maxStep
+    if (winPct < prev - maxStep) winPct = prev - maxStep
+    // Blend slightly toward fresh read
+    winPct = Math.round(winPct * 0.65 + prev * 0.35)
+  }
+
+  return { winPct: Math.round(Math.min(90, Math.max(28, winPct))), factors: factors.slice(0, 6) }
 }
 
 function buildCommentary(opts: {
@@ -436,18 +549,23 @@ function buildCommentary(opts: {
       : ((t.sl - price) / price) * 100
 
   const actionHint =
-    winPct >= 70
-      ? 'План держу. Вероятность в мою пользу.'
-      : winPct >= 50
-        ? 'Пока ок, но без догона — только по плану.'
-        : winPct >= 35
-          ? 'Осторожно: преимущество тает. Ближе к стопу — без усреднения.'
-          : 'Сценарий слабый. Если выбьет стоп — ок, риск уже заложен.'
+    winPct >= 72
+      ? 'Ход за нас — держу план, не мешаю прибыли.'
+      : winPct >= 58
+        ? 'Пока ок. Без догона — только по плану.'
+        : winPct >= 42
+          ? 'Преимущество слабеет. Ближе к стопу — без усреднения.'
+          : 'Сценарий слабый. Стоп — нормальный исход риска.'
 
   const title =
     phase === 'WAITING'
       ? `👁 Пример ${nameOf(t.symbol)} · жду зону`
       : `📡 Пример ${t.side} ${nameOf(t.symbol)}`
+
+  const bookLine =
+    brief.bookImb != null
+      ? `Стакан OBI ${brief.bookImb >= 0 ? '+' : ''}${brief.bookImb.toFixed(0)}%`
+      : 'Стакан: н/д'
 
   const lines = [
     `Учебная (бумажная) сделка · ${t.setup} · ${isMemeTrade(t) ? 'MEME 2м' : 'ALT 5м'}`,
@@ -459,7 +577,8 @@ function buildCommentary(opts: {
     `Факторы: ${factors.join('; ') || '—'}`,
     '',
     brief.pressureLabel,
-    `1м: ${brief.move1mPct >= 0 ? '+' : ''}${brief.move1mPct.toFixed(2)}% · свечи ${brief.candleBias} · vol ×${brief.volMult.toFixed(1)}`,
+    bookLine,
+    `Цена: 1м ${brief.move1mPct >= 0 ? '+' : ''}${brief.move1mPct.toFixed(2)}% · 5м ${brief.move5mPct >= 0 ? '+' : ''}${brief.move5mPct.toFixed(2)}% · свечи ${brief.candleBias} · vol ×${brief.volMult.toFixed(1)}`,
     brief.fundingPct != null
       ? `Funding: ${brief.fundingPct.toFixed(3)}% · спред ~${brief.spreadBps.toFixed(0)} bps`
       : `Спред ~${brief.spreadBps.toFixed(0)} bps`,

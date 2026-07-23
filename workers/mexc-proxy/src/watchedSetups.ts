@@ -345,6 +345,7 @@ function formatDigestBlock(
   const reward = Math.abs(s.target - s.limitEntry)
   const rr = risk > 0 ? reward / risk : 0
   const ageMin = Math.max(0, Math.round((Date.now() - w.createdAt) / 60_000))
+  const liveWin = liveWatchWinPct(s, snap)
   const preLines = snap.preconditions.slice(0, 5).map((p) => {
     const mark =
       p.status === 'MET' ? '✓' : p.status === 'FAILED' ? '✗' : '·'
@@ -362,7 +363,7 @@ function formatDigestBlock(
   return [
     `${icon} ${s.side} ${w.symbol}`,
     `${s.title}`,
-    `Статус: ${snap.status} · Win% ~${Math.round(s.probability)}% · R:R 1:${rr.toFixed(1)}`,
+    `Статус: ${snap.status} · Live win% ~${liveWin}% (база сетапа ${Math.round(s.probability)}%) · R:R 1:${rr.toFixed(1)}`,
     `Цена: ${fmtPx(snap.price)}`,
     `Зона: ${fmtPx(s.entryZone.bottom)} – ${fmtPx(s.entryZone.top)}`,
     `До зоны: ${
@@ -378,6 +379,45 @@ function formatDigestBlock(
     'Условия:',
     ...preLines,
   ].join('\n')
+}
+
+/** Live win% for watch: zone progress + path vs SL/TP (not a static snapshot). */
+function liveWatchWinPct(
+  setup: ConditionalSetupPayload,
+  snap: WatchEvalSnapshot
+): number {
+  let p = Math.max(40, Math.min(78, setup.probability || 55))
+  if (snap.status === 'READY') p += 8
+  else if (snap.status === 'ARMED') p += 4
+  else if (snap.status === 'INVALIDATED') p = Math.min(p, 28)
+
+  if (snap.inZone) p += 6
+
+  // Price progressing toward TP from limit
+  const risk = Math.abs(setup.limitEntry - setup.invalidation)
+  const reward = Math.abs(setup.target - setup.limitEntry)
+  if (risk > 0 && reward > 0) {
+    const r =
+      setup.side === 'LONG'
+        ? (snap.price - setup.limitEntry) / risk
+        : (setup.limitEntry - snap.price) / risk
+    if (r >= 0.4) p += 10
+    else if (r >= 0.1) p += 5
+    else if (r <= -0.5) p -= 12
+    else if (r <= -0.2) p -= 5
+  }
+
+  // Approaching zone from the correct side is good for bounce setups
+  if (!snap.inZone) {
+    if (setup.side === 'LONG' && snap.distToZonePct < 0 && snap.distToZonePct > -1.2) {
+      p += 3 // below zone slightly — may reclaim
+    }
+    if (setup.side === 'SHORT' && snap.distToZonePct > 0 && snap.distToZonePct < 1.2) {
+      p += 3
+    }
+  }
+
+  return Math.round(Math.min(88, Math.max(26, p)))
 }
 
 export async function listWatches(env: Env): Promise<WatchedSetupRecord[]> {
