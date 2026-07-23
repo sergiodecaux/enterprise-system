@@ -17,6 +17,9 @@ import type {
   MemeSignal,
   MemeUniverseMeta,
   MmIntentSnapshot,
+  SpoofAlertSnapshot,
+  IcebergAlertSnapshot,
+  ObDeltaStoreSnapshot,
 } from '../engine/types'
 import type { WatchedSetup } from '../engine/setups'
 import type { ChartPreferences } from '../engine/indicators/types'
@@ -200,6 +203,9 @@ export const useAppStore = create<AppState>()(
     orderBookMetrics: {},
     mmIntent: {},
     surgicalEntries: {},
+    spoofAlerts: {},
+    icebergAlerts: {},
+    obDelta: {},
     watchedSetups: loadWatchedSetups(),
 
     selectedCoin: null,
@@ -550,6 +556,28 @@ export const useAppStore = create<AppState>()(
     setSurgicalEntry: (symbol: string, entry) => {
       set((state) => ({
         surgicalEntries: { ...state.surgicalEntries, [symbol]: entry },
+      }))
+    },
+
+    setSpoofAlerts: (symbol: string, alerts: SpoofAlertSnapshot[]) => {
+      const now = Date.now()
+      const pruned = alerts.filter((a) => now - a.updatedAt < 30_000)
+      set((state) => ({
+        spoofAlerts: { ...state.spoofAlerts, [symbol]: pruned },
+      }))
+    },
+
+    setIcebergAlerts: (symbol: string, alerts: IcebergAlertSnapshot[]) => {
+      const now = Date.now()
+      const pruned = alerts.filter((a) => now - a.updatedAt < 60_000)
+      set((state) => ({
+        icebergAlerts: { ...state.icebergAlerts, [symbol]: pruned },
+      }))
+    },
+
+    setObDelta: (symbol: string, delta: ObDeltaStoreSnapshot) => {
+      set((state) => ({
+        obDelta: { ...state.obDelta, [symbol]: delta },
       }))
     },
 

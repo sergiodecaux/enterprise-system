@@ -61,17 +61,24 @@ import { computeHtfTrendStrength } from './trend/htfTrendStrength'
 import { buildGhostPath } from './prediction/ghostPath'
 import { buildGlobalFibonacci } from './zones/globalFibonacci'
 import { resolveSessionFlip } from './sessions/sessionFlip'
+import { evaluateSessionQuality } from './sessions/sessionQuality'
 import { computeMmIntent } from './mm/mmIntent'
 import {
   resolveSurgicalEntry,
   isSurgicalReady,
 } from './surgical/surgicalEntry'
 import type { SurgicalEntrySnapshot } from './types'
+import { buildScoreCard } from './confluence/scoreCard'
+import { detectMarketRegime } from './regime/marketRegime'
+import type { EnhancedCvdSnapshot } from './orderflow/enhancedCvd'
+import type { ObDeltaSnapshot } from './orderbook/obDelta'
+import type { SpoofAlert } from './mm/spoofing'
+import type { IcebergResult } from './mm/iceberg'
 
 export const CONFLUENCE_THRESHOLD = 4.5
 export const SOFT_CONFLUENCE_THRESHOLD = 3.5
 export const COOLDOWN_MS = 90 * 60 * 1000
-export const SCALP_COOLDOWN_MS = 25 * 60 * 1000
+export const SCALP_COOLDOWN_MS = 15 * 60 * 1000
 
 export interface AnalyzeSymbolInput {
   internalSymbol: string
@@ -106,6 +113,11 @@ export interface AnalyzeSymbolInput {
   sessionDna?: import('./types').SessionDNA | null
   /** Previous surgical plan (persist WAITING across scans) */
   previousSurgical?: SurgicalEntrySnapshot | null
+  /** Enhanced CVD from REST deals (or OHLCV proxy) */
+  enhancedCvd?: EnhancedCvdSnapshot | null
+  spoofAlerts?: SpoofAlert[] | null
+  icebergAlerts?: IcebergResult[] | null
+  obDelta?: ObDeltaSnapshot | null
 }
 
 export interface AnalyzeSymbolResult {
@@ -240,6 +252,10 @@ function enrichSignal(
     wallSupport?: boolean
     bestZoneTop?: number | null
     bestZoneBottom?: number | null
+    enhancedCvd?: EnhancedCvdSnapshot | null
+    spoofAlerts?: SpoofAlert[] | null
+    icebergAlerts?: IcebergResult[] | null
+    obDelta?: ObDeltaSnapshot | null
   }
 ): CoinSignal {
   if (!signal.direction) return signal
@@ -503,6 +519,54 @@ function enrichSignal(
     zones.push('HTF_OPPOSE: сильный встречный тренд')
   }
 
+  // ── ScoreCard gate (strict A+/A only) ──────────────────────────────────
+  const regime = detectMarketRegime(ctx.ohlcv1h, ctx.ohlcv4h)
+  const session = evaluateSessionQuality()
+  const entryPx =
+    signal.surgicalEntry?.limitEntry && signal.surgicalEntry.limitEntry > 0
+      ? signal.surgicalEntry.limitEntry
+      : signal.price
+  const slPx = enriched.sl ?? signal.sl ?? 0
+  const tpPx = enriched.tp1 ?? signal.tp1 ?? 0
+  const inOb = zones.some((z) => /OB|Order.?Block|ORDER_BLOCK/i.test(z))
+  const inFvg = zones.some((z) => /FVG/i.test(z))
+  const hasZone =
+    (ctx.bestZoneTop != null && ctx.bestZoneBottom != null) || inOb || inFvg
+
+  const card = buildScoreCard({
+    symbol: signal.internalSymbol,
+    direction: signal.direction,
+    style,
+    htfTrend,
+    mmIntent: signal.mmIntent ?? null,
+    spoofAlerts: ctx.spoofAlerts ?? null,
+    icebergAlerts: ctx.icebergAlerts ?? null,
+    enhancedCvd: ctx.enhancedCvd ?? null,
+    obDelta: ctx.obDelta ?? null,
+    raid: signal.raid ?? null,
+    inOrderBlock: inOb,
+    inFvg,
+    hasBestZone: hasZone,
+    regime,
+    session,
+    entry: entryPx,
+    stopLoss: slPx,
+    takeProfit: tpPx,
+  })
+
+  if (hasActiveSetup && !card.ready) {
+    hasActiveSetup = false
+    zones.push(
+      `SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore} — not ready`
+    )
+  } else if (card.ready) {
+    zones.push(`SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore}`)
+  } else {
+    zones.push(`SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore}`)
+  }
+
+  const probabilityPct = card.percent
+
   return {
     ...enriched,
     zones,
@@ -515,10 +579,25 @@ function enrichSignal(
     ghostPathWarning,
     unrealisticTp,
     htfTrend,
+    scoreCard: {
+      direction: card.direction,
+      style: card.style,
+      totalScore: card.totalScore,
+      maxScore: card.maxScore,
+      percent: card.percent,
+      grade: card.grade,
+      ready: card.ready,
+      missingFactors: card.missingFactors,
+      factors: card.factors,
+      dataQuality: card.dataQualitySnapshot ?? null,
+    },
+    marketRegime: regime,
+    sessionQuality: session,
+    probabilityPct,
     activeSignal: enriched.activeSignal
       ? {
           ...enriched.activeSignal,
-          win_rate: styleConfidence || enriched.probabilityPct,
+          win_rate: styleConfidence || probabilityPct,
         }
       : null,
   }
@@ -548,6 +627,10 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     mmIntent: mmIntentInput,
     sessionDna,
     previousSurgical,
+    enhancedCvd,
+    spoofAlerts,
+    icebergAlerts,
+    obDelta,
   } = input
 
   // Resolve / compute MM intent early for side selection
@@ -1212,6 +1295,10 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
             (side === 'SHORT' && bookImbalance < -15))),
       bestZoneTop: confluence.bestZone.top,
       bestZoneBottom: confluence.bestZone.bottom,
+      enhancedCvd,
+      spoofAlerts,
+      icebergAlerts,
+      obDelta,
     })
 
     // Still return the plan when waiting — radar shows it, sniper waits READY
@@ -1476,6 +1563,10 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
             (bookImbalance != null &&
               ((softSignal.direction === 'LONG' && bookImbalance > 15) ||
                 (softSignal.direction === 'SHORT' && bookImbalance < -15))),
+          enhancedCvd,
+          spoofAlerts,
+          icebergAlerts,
+          obDelta,
         })
       : softSignal
 

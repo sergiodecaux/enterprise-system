@@ -150,6 +150,12 @@ export interface CoinSignal {
   surgicalEntry?: SurgicalEntrySnapshot | null
   /** Сила HTF тренда 1H/4H */
   htfTrend?: HtfTrendSnapshot | null
+  /** Strict ScoreCard gate (8 factors / 12 pts) */
+  scoreCard?: ScoreCardSnapshot | null
+  /** Market regime for ScoreCard */
+  marketRegime?: MarketRegimeSnapshot | null
+  /** Session quality for ScoreCard */
+  sessionQuality?: SessionQualitySnapshot | null
 }
 
 export type SurgicalEntryStatus =
@@ -190,6 +196,81 @@ export interface HtfTrendSnapshot {
   strength1h: number
   strength4h: number
   reasons: string[]
+  updatedAt: number
+}
+
+export type MarketRegimeSnapshot =
+  | 'TRENDING_STRONG'
+  | 'TRENDING_WEAK'
+  | 'RANGING'
+  | 'VOLATILE_CHOP'
+
+export interface SessionQualitySnapshot {
+  score: number
+  session: 'OVERLAP' | 'LONDON' | 'NY' | 'ASIA' | 'DEAD'
+  avoid: boolean
+}
+
+export interface ScoreFactorSnapshot {
+  score: number
+  max: number
+  passed: boolean
+  reason: string
+}
+
+export interface ScoreCardSnapshot {
+  direction: 'LONG' | 'SHORT'
+  style: TradeStyle
+  totalScore: number
+  maxScore: number
+  percent: number
+  grade: 'A+' | 'A' | 'B' | 'SKIP'
+  ready: boolean
+  missingFactors: string[]
+  factors: {
+    htfStructure: ScoreFactorSnapshot
+    mmIntent: ScoreFactorSnapshot
+    orderflow: ScoreFactorSnapshot
+    liquiditySweep: ScoreFactorSnapshot
+    obFvgEntry: ScoreFactorSnapshot
+    session: ScoreFactorSnapshot
+    regime: ScoreFactorSnapshot
+    rrQuality: ScoreFactorSnapshot
+  }
+  /** Compact data-quality gate result */
+  dataQuality?: {
+    overall: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR'
+    overallScore: number
+    cvdQuality: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR'
+    cvdSource: 'TRADES' | 'OHLCV_PROXY' | 'NONE'
+    penalties: string[]
+    warnings: string[]
+  } | null
+}
+
+export interface SpoofAlertSnapshot {
+  detected: boolean
+  side: 'BID' | 'ASK' | null
+  price: number
+  label: string
+  lifetimeMs: number
+  updatedAt: number
+}
+
+export interface IcebergAlertSnapshot {
+  detected: boolean
+  side: 'BID' | 'ASK' | null
+  price: number
+  label: string
+  bounceProbPct: number
+  updatedAt: number
+}
+
+export interface ObDeltaStoreSnapshot {
+  volumeShift: 'BUYING' | 'SELLING' | 'NEUTRAL'
+  bidDelta: number
+  askDelta: number
+  imbalanceDelta: number
   updatedAt: number
 }
 
@@ -296,6 +377,15 @@ export interface AppState {
   /** Surgical entry plans by internalSymbol */
   surgicalEntries: Record<string, SurgicalEntrySnapshot>
   setSurgicalEntry: (symbol: string, entry: SurgicalEntrySnapshot) => void
+  /** Live spoof alerts by symbol (TTL pruned) */
+  spoofAlerts: Record<string, SpoofAlertSnapshot[]>
+  setSpoofAlerts: (symbol: string, alerts: SpoofAlertSnapshot[]) => void
+  /** Live iceberg alerts by symbol */
+  icebergAlerts: Record<string, IcebergAlertSnapshot[]>
+  setIcebergAlerts: (symbol: string, alerts: IcebergAlertSnapshot[]) => void
+  /** Order book delta by symbol */
+  obDelta: Record<string, ObDeltaStoreSnapshot>
+  setObDelta: (symbol: string, delta: ObDeltaStoreSnapshot) => void
   /** Watched conditional setups (local mirror of worker) */
   watchedSetups: import('./setups').WatchedSetup[]
   setWatchedSetups: (watches: import('./setups').WatchedSetup[]) => void

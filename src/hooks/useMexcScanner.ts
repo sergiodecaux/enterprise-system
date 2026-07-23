@@ -4,11 +4,17 @@ import {
   CORE_WATCHLIST,
   fetchOhlcv,
   fetchDepth,
+  fetchRecentTrades,
   fetchTickers,
   sleep,
   toFlatSymbol,
 } from '../api/mexc'
-import { calculateOrderBookMetrics } from '../engine/orderbook'
+import {
+  calculateOrderBookMetrics,
+  calculateObDelta,
+  createWallTracker,
+  updateWalls,
+} from '../engine/orderbook'
 import {
   buildLiquidityMap,
   analyzePO3,
@@ -23,12 +29,18 @@ import {
   COOLDOWN_MS,
   SCALP_COOLDOWN_MS,
 } from '../engine/ProbabilityEngine'
-import { computeMmIntent, calculateWeightedObi } from '../engine/mm'
+import {
+  computeMmIntent,
+  calculateWeightedObi,
+  spoofEventsFromWallUpdate,
+} from '../engine/mm'
+import { buildEnhancedCvd } from '../engine/orderflow/enhancedCvd'
 import type {
   CoinSignal,
   LiveTicker,
   LiquidityMap,
   MarketContext,
+  OrderBookSnapshot,
 } from '../engine/types'
 import { logger } from '../utils/logger'
 
@@ -45,6 +57,10 @@ export const useMexcScanner = () => {
   const cooldownRef = useRef<Record<string, number>>({})
   const watchlistRef = useRef<string[]>([...CORE_WATCHLIST])
   const btc1hRef = useRef<import('../api/mexc').OhlcvCandle[]>([])
+  const wallTrackersRef = useRef<
+    Record<string, ReturnType<typeof createWallTracker>>
+  >({})
+  const prevDepthRef = useRef<Record<string, OrderBookSnapshot>>({})
 
   const {
     updateTicker,
@@ -243,25 +259,112 @@ export const useMexcScanner = () => {
             logger.warn(`PO3 error ${symbol}`, po3Err)
           }
 
-          // Live order book + MM intent (liquidity hunt)
+          // Live order book + MM intent + ScoreCard feeds
           let bookImbalance: number | null = null
           let mmIntent = null as ReturnType<typeof computeMmIntent> | null
+          let enhancedCvd = null as ReturnType<typeof buildEnhancedCvd> | null
+          let spoofAlerts = null as ReturnType<
+            typeof spoofEventsFromWallUpdate
+          > | null
+          let icebergAlerts = null as
+            | import('../engine/mm').IcebergResult[]
+            | null
+          let obDelta = null as ReturnType<typeof calculateObDelta> | null
           try {
             const depth = await fetchDepth(symbol, 20)
             const obMetrics = calculateOrderBookMetrics(depth)
             bookImbalance = obMetrics.imbalance
             const wobi = calculateWeightedObi(depth.bids, depth.asks)
             useAppStore.getState().setOrderBookMetrics(symbol, obMetrics)
+
+            if (!wallTrackersRef.current[symbol]) {
+              wallTrackersRef.current[symbol] = createWallTracker()
+            }
+            const { tracker, newEvents } = updateWalls(
+              wallTrackersRef.current[symbol],
+              obMetrics.walls
+            )
+            wallTrackersRef.current[symbol] = tracker
+            spoofAlerts = spoofEventsFromWallUpdate(
+              newEvents,
+              obMetrics.midPrice
+            )
+            if (spoofAlerts.length) {
+              useAppStore.getState().setSpoofAlerts(
+                symbol,
+                spoofAlerts.map((s) => ({
+                  detected: s.detected,
+                  side: s.side,
+                  price: s.price,
+                  label: s.label,
+                  lifetimeMs: s.lifetimeMs,
+                  updatedAt: Date.now(),
+                }))
+              )
+            }
+
+            obDelta = calculateObDelta(prevDepthRef.current[symbol], depth, 10)
+            useAppStore.getState().setObDelta(symbol, obDelta)
+            prevDepthRef.current[symbol] = depth
+
+            // Deals → enhanced CVD (and reuse store spoof/iceberg from panel)
+            let trades: import('../api/mexc').MexcTrade[] = []
+            try {
+              trades = await fetchRecentTrades(symbol, 80)
+            } catch {
+              /* optional */
+            }
+            enhancedCvd = buildEnhancedCvd({
+              trades,
+              candles1m: ohlcv1m,
+            })
+
+            const storeSpoof =
+              useAppStore.getState().spoofAlerts[symbol] ?? []
+            const storeIce =
+              useAppStore.getState().icebergAlerts[symbol] ?? []
+            const mergedSpoof =
+              spoofAlerts.length > 0
+                ? spoofAlerts
+                : storeSpoof.map((s) => ({
+                    detected: s.detected,
+                    side: s.side,
+                    price: s.price,
+                    volumeUsdApprox: 0,
+                    lifetimeMs: s.lifetimeMs,
+                    approachPct: 0,
+                    label: s.label,
+                    emoji: '👻',
+                    ignoreForConfidence: true,
+                  }))
+            icebergAlerts = storeIce
+              .filter((i) => i.detected)
+              .map((i) => ({
+                detected: true,
+                side: i.side,
+                price: i.price,
+                tradedVolume: 0,
+                bookDelta: 0,
+                hiddenVolumeEstimate: 0,
+                label: i.label,
+                emoji: '🧊',
+                bounceProbPct: i.bounceProbPct,
+              }))
+
             mmIntent = computeMmIntent({
               price: currentPrice1h || obMetrics.midPrice || 0,
               book: obMetrics,
               weightedObi: wobi,
               liquidityMap: liquidityMap ?? null,
+              spoofAlerts: mergedSpoof,
+              icebergAlerts: icebergAlerts ?? undefined,
             })
             useAppStore.getState().setMmIntent(symbol, mmIntent)
+            spoofAlerts = mergedSpoof
             await sleep(80)
           } catch {
-            /* depth optional */
+            /* depth optional — still try CVD from candles */
+            enhancedCvd = buildEnhancedCvd({ candles1m: ohlcv1m })
           }
 
           const sessionDna =
@@ -291,6 +394,10 @@ export const useMexcScanner = () => {
                 (s) => s.internalSymbol === symbol
               )?.surgicalEntry ??
               null,
+            enhancedCvd,
+            spoofAlerts,
+            icebergAlerts,
+            obDelta,
           })
 
           if (signal.surgicalEntry) {

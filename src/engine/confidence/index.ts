@@ -594,3 +594,12 @@ export {
   evaluateFullInvalidation,
   pickInvalidationForDisplay,
 }
+
+export {
+  assessDataQuality,
+  meetsMinimumDataQuality,
+  toDataQualitySnapshot,
+  type DataQualityReport,
+  type DataQualityLevel,
+  type DataQualitySnapshot,
+} from './dataQuality'

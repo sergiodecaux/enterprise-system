@@ -633,6 +633,17 @@ const TacticalDrawer = () => {
                 {signal.hasActiveSetup && (
                   <span className="text-matrix text-xs uppercase">{t('signal_setup')}</span>
                 )}
+                {signal.scoreCard && (
+                  <span
+                    className={`text-xs font-bold ${
+                      signal.scoreCard.ready ? 'text-matrix' : 'text-holo/50'
+                    }`}
+                    title={signal.scoreCard.missingFactors.slice(0, 2).join(' · ')}
+                  >
+                    {signal.scoreCard.grade} {signal.scoreCard.totalScore}/
+                    {signal.scoreCard.maxScore}
+                  </span>
+                )}
               </div>
             </div>
             <button

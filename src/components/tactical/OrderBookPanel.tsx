@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, AlertCircle, Brain, Layers3 } from 'lucide-react'
-import { fetchDepth } from '../../api/mexc'
+import { fetchDepth, fetchRecentTrades } from '../../api/mexc'
 import { updateWhaleWatcher } from '../../engine/orderbook/whaleDetector'
 import { useAppStore } from '../../store/useAppStore'
 import { computeTapeMomentum } from '../../engine/orderbook/tapeMomentum'
-import { calculateOrderBookMetrics } from '../../engine/orderbook'
+import {
+  calculateOrderBookMetrics,
+  calculateObDelta,
+} from '../../engine/orderbook'
 import { createWallTracker, updateWalls } from '../../engine/orderbook/wallTracker'
 import {
   createHeatmap,
@@ -22,8 +25,13 @@ import {
   densityFromWalls,
   detectPriceProdding,
   computeMmIntent,
+  spoofEventsFromWallUpdate,
+  detectIcebergOrder,
+  levelVolumeNear,
   type DensitySnapshot,
   type WeightedObiResult,
+  type SpoofAlert,
+  type IcebergResult,
 } from '../../engine/mm'
 import { useOrderBookHistory } from '../../hooks/useOrderBookHistory'
 import { useMLPredictor } from '../../hooks/useMLPredictor'
@@ -32,6 +40,7 @@ import type {
   WallTrackerState,
   HeatmapState,
   WallEvent,
+  OrderBookSnapshot,
 } from '../../engine/types'
 import OrderBookLevelRow from './OrderBookLevel'
 import OrderBookMetricsView from './OrderBookMetrics'
@@ -56,6 +65,9 @@ const OrderBookPanel = ({ symbol }: Props) => {
   const setTapeMomentum = useAppStore((s) => s.setTapeMomentum)
   const setOrderBookMetrics = useAppStore((s) => s.setOrderBookMetrics)
   const setMmIntent = useAppStore((s) => s.setMmIntent)
+  const setSpoofAlerts = useAppStore((s) => s.setSpoofAlerts)
+  const setIcebergAlerts = useAppStore((s) => s.setIcebergAlerts)
+  const setObDelta = useAppStore((s) => s.setObDelta)
   const liquidityMap = useAppStore((s) => s.liquidityMaps[symbol] ?? null)
   const whaleWatcherPrev = useAppStore((s) => s.whaleWatcher[symbol] ?? null)
   // ref для предыдущего состояния whale (избегаем stale closure)
@@ -77,6 +89,10 @@ const OrderBookPanel = ({ symbol }: Props) => {
   const wallTrackerRef = useRef<WallTrackerState>(createWallTracker())
   const heatmapRef = useRef<HeatmapState>(createHeatmap(0.1))
   const heatmapInitedRef = useRef(false)
+  const prevSnapshotRef = useRef<OrderBookSnapshot | null>(null)
+  const depthTickRef = useRef(0)
+  const spoofBufRef = useRef<SpoofAlert[]>([])
+  const icebergBufRef = useRef<IcebergResult[]>([])
 
   const [wallTracker, setWallTracker] = useState<WallTrackerState>(() =>
     createWallTracker()
@@ -107,6 +123,14 @@ const OrderBookPanel = ({ symbol }: Props) => {
       setWeightedObi(obi)
       setOrderBookMetrics(symbol, metrics)
 
+      const obDelta = calculateObDelta(prevSnapshotRef.current, snapshot, 10)
+      setObDelta(symbol, obDelta)
+      depthTickRef.current += 1
+
+      // Spoof from wall tracker (after walls update below) — buffer for MM
+      let spoofAlerts = spoofBufRef.current
+      let icebergAlerts = icebergBufRef.current
+
       let prodding = null as ReturnType<typeof detectPriceProdding> | null
       if (metrics.midPrice && metrics.walls.length) {
         const snap = densityFromWalls(metrics.midPrice, metrics.walls)
@@ -117,11 +141,90 @@ const OrderBookPanel = ({ symbol }: Props) => {
         )
       }
 
+      const { tracker, newEvents } = updateWalls(
+        wallTrackerRef.current,
+        metrics.walls
+      )
+      wallTrackerRef.current = tracker
+      setWallTracker(tracker)
+
+      const freshSpoof = spoofEventsFromWallUpdate(
+        newEvents,
+        metrics.midPrice
+      )
+      if (freshSpoof.length) {
+        spoofAlerts = [...spoofAlerts, ...freshSpoof].slice(-8)
+        spoofBufRef.current = spoofAlerts
+        setSpoofAlerts(
+          symbol,
+          spoofAlerts.map((s) => ({
+            detected: s.detected,
+            side: s.side,
+            price: s.price,
+            label: s.label,
+            lifetimeMs: s.lifetimeMs,
+            updatedAt: Date.now(),
+          }))
+        )
+      }
+
+      // Iceberg every ~3rd tick (~6s) with REST deals
+      if (depthTickRef.current % 3 === 0 && metrics.midPrice) {
+        try {
+          const trades = await fetchRecentTrades(symbol, 80)
+          const mid = metrics.midPrice
+          const prevBid = levelVolumeNear(
+            prevSnapshotRef.current?.bids ?? [],
+            mid
+          )
+          const prevAsk = levelVolumeNear(
+            prevSnapshotRef.current?.asks ?? [],
+            mid
+          )
+          const curBid = levelVolumeNear(snapshot.bids, mid)
+          const curAsk = levelVolumeNear(snapshot.asks, mid)
+          const iceBuy = detectIcebergOrder({
+            trades,
+            prevLevelVolume: prevAsk,
+            currentLevelVolume: curAsk,
+            side: 'BUY',
+          })
+          const iceSell = detectIcebergOrder({
+            trades,
+            prevLevelVolume: prevBid,
+            currentLevelVolume: curBid,
+            side: 'SELL',
+          })
+          const ices = [iceBuy, iceSell].filter((i) => i.detected)
+          if (ices.length) {
+            icebergAlerts = ices
+            icebergBufRef.current = ices
+            setIcebergAlerts(
+              symbol,
+              ices.map((i) => ({
+                detected: i.detected,
+                side: i.side,
+                price: i.price,
+                label: i.label,
+                bounceProbPct: i.bounceProbPct,
+                updatedAt: Date.now(),
+              }))
+            )
+          }
+        } catch {
+          /* deals optional */
+        }
+      }
+
+      prevSnapshotRef.current = snapshot
+
       const intent = computeMmIntent({
         price: metrics.midPrice ?? snapshot.bids[0]?.price ?? 0,
         book: metrics,
         weightedObi: obi,
         prodding,
+        spoofAlerts,
+        icebergAlerts,
         liquidityMap,
       })
       setMmIntent(symbol, intent)
@@ -157,18 +260,6 @@ const OrderBookPanel = ({ symbol }: Props) => {
         whaleWatcherRef.current = whaleState
       }
 
-      // ── Tape Momentum ────────────────────────────────────────────────────
-      // history обновится на следующем рендере через useOrderBookHistory
-      // поэтому используем последний stats из хука
-      // (вызываем вне блока чтобы получить обновлённый history)
-
-      const { tracker, newEvents } = updateWalls(
-        wallTrackerRef.current,
-        metrics.walls
-      )
-      wallTrackerRef.current = tracker
-      setWallTracker(tracker)
-
       const alertEvents = newEvents.filter(
         (e) => e.type === 'EATEN' || e.type === 'SPOOFED'
       )
@@ -183,7 +274,17 @@ const OrderBookPanel = ({ symbol }: Props) => {
         error: err instanceof Error ? err.message : 'Unknown error',
       }))
     }
-  }, [symbol, depthLimit, setWhaleWatcher, setOrderBookMetrics, setMmIntent, liquidityMap])
+  }, [
+    symbol,
+    depthLimit,
+    setWhaleWatcher,
+    setOrderBookMetrics,
+    setMmIntent,
+    setSpoofAlerts,
+    setIcebergAlerts,
+    setObDelta,
+    liquidityMap,
+  ])
 
   useEffect(() => {
     setState({
@@ -203,6 +304,10 @@ const OrderBookPanel = ({ symbol }: Props) => {
     setWeightedObi(null)
     setProddingLabel(null)
     densityHistoryRef.current = []
+    prevSnapshotRef.current = null
+    depthTickRef.current = 0
+    spoofBufRef.current = []
+    icebergBufRef.current = []
     resetHistory()
   }, [symbol, resetHistory])
 

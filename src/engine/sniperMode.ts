@@ -77,6 +77,9 @@ export function isSniperQuality(signal: CoinSignal): boolean {
     if (!isSurgicalReady(surgical)) return false
   }
 
+  // ScoreCard: only A+/A
+  if (signal.scoreCard && !signal.scoreCard.ready) return false
+
   // Мемы: обязателен свежий Liquidity Raid (не входим на первом касании),
   // кроме элитных сетапов со своим триггером (squeeze / flatline / cvdTrap / backside)
   if (signal.memePulse) {

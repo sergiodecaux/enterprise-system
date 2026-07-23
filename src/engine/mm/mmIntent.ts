@@ -2,6 +2,7 @@ import type { LiquidityMap, OrderBookMetrics, OrderBookWall } from '../types'
 import type { WeightedObiResult } from './obi'
 import type { PriceProddingResult } from './priceProdding'
 import type { SpoofAlert } from './spoofing'
+import type { IcebergResult } from './iceberg'
 
 export type MmDriveDirection = 'UP' | 'DOWN' | 'NEUTRAL'
 
@@ -39,6 +40,8 @@ export interface MmIntentInput {
   weightedObi?: WeightedObiResult | null
   prodding?: PriceProddingResult | null
   spoofAlerts?: SpoofAlert[]
+  /** Iceberg fills that confirm hidden liquidity */
+  icebergAlerts?: IcebergResult[]
   liquidityMap?: LiquidityMap | null
   /** Tape: buy share 0–100 */
   buyerAggressionPct?: number | null
@@ -126,6 +129,18 @@ export function computeMmIntent(input: MmIntentInput): MmIntentResult {
     } else if (s.side === 'BID') {
       downScore += 1.8
       reasons.push('Spoof BID убран — ММ пускает вниз')
+    }
+  }
+
+  // ── Iceberg: hidden ask = resistance (DOWN); hidden bid = support (UP) ─
+  for (const ice of input.icebergAlerts ?? []) {
+    if (!ice.detected) continue
+    if (ice.side === 'ASK') {
+      downScore += 1.4
+      reasons.push(ice.label || 'Iceberg ASK — скрытое сопротивление')
+    } else if (ice.side === 'BID') {
+      upScore += 1.4
+      reasons.push(ice.label || 'Iceberg BID — скрытая поддержка')
     }
   }
 

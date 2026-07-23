@@ -97,6 +97,53 @@ function tradeBlock(opts: {
 }
 
 /** Формат снайперского сигнала для Telegram */
+function scoreCardBlock(
+  card: NonNullable<CoinSignal['scoreCard']>
+): string[] {
+  const gradeEmoji =
+    card.grade === 'A+'
+      ? '🏆'
+      : card.grade === 'A'
+        ? '⭐'
+        : card.grade === 'B'
+          ? '📊'
+          : '❌'
+  const lines = [
+    `${gradeEmoji} ScoreCard ${card.grade} · ${card.totalScore}/${card.maxScore} (${card.percent}%)`,
+  ]
+
+  if (card.dataQuality) {
+    const dq = card.dataQuality
+    const emoji =
+      dq.overall === 'EXCELLENT'
+        ? '🟢'
+        : dq.overall === 'GOOD'
+          ? '🟡'
+          : dq.overall === 'FAIR'
+            ? '🟠'
+            : '🔴'
+    lines.push(
+      `${emoji} Data Quality: ${dq.overall} (${dq.overallScore}/100) · CVD ${dq.cvdSource}`
+    )
+    if (dq.penalties.length > 0) {
+      lines.push(...dq.penalties.slice(0, 2).map((p) => `• ${p}`))
+    }
+  }
+
+  lines.push('CONFLUENCE:')
+  for (const [, f] of Object.entries(card.factors)) {
+    const filled = Math.round(f.score)
+    const bar =
+      '█'.repeat(Math.min(f.max, filled)) +
+      '░'.repeat(Math.max(0, f.max - filled))
+    lines.push(`${bar} ${f.reason}`)
+  }
+  if (!card.ready && card.missingFactors.length) {
+    lines.push(`Missing: ${card.missingFactors.slice(0, 3).join('; ')}`)
+  }
+  return lines
+}
+
 export function formatSniperTelegramMessage(signal: SniperSignal): {
   title: string
   text: string
@@ -111,11 +158,30 @@ export function formatSniperTelegramMessage(signal: SniperSignal): {
         : 'INTRADAY'
   const icon = direction === 'LONG' ? '🟢' : '🔴'
   const contract = mexcContract(signal.symbol)
-  const title = `${icon} ${direction} ${signal.displayName} · ${style}`
+  const grade = signal.scoreCard?.grade
+  const title = `${icon} ${direction} ${signal.displayName} · ${style}${
+    grade ? ` · ${grade}` : ''
+  }`
 
   const reason =
     signal.sniperReasons.slice(0, 3).join('; ') ||
     `${style} setup · conf ${signal.calibratedWinRate}%`
+
+  const extras = [
+    `Risk ${signal.riskPercent.toFixed(2)}% · Reward ${signal.rewardPercent.toFixed(2)}%`,
+    ...(signal.sniperReasons.slice(0, 5).map((r) => `• ${r}`)),
+  ]
+  if (signal.scoreCard) {
+    extras.push(...scoreCardBlock(signal.scoreCard))
+  }
+  if (signal.marketRegime) {
+    extras.push(`Regime: ${signal.marketRegime}`)
+  }
+  if (signal.sessionQuality) {
+    extras.push(
+      `Session: ${signal.sessionQuality.session} (${signal.sessionQuality.score})`
+    )
+  }
 
   const text = tradeBlock({
     side: direction,
@@ -125,10 +191,7 @@ export function formatSniperTelegramMessage(signal: SniperSignal): {
     tp: signal.tp1!,
     winPct: Math.round(signal.calibratedWinRate),
     reason,
-    extras: [
-      `Risk ${signal.riskPercent.toFixed(2)}% · Reward ${signal.rewardPercent.toFixed(2)}%`,
-      ...(signal.sniperReasons.slice(0, 5).map((r) => `• ${r}`)),
-    ],
+    extras,
   })
 
   return {

@@ -112,6 +112,20 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
 
       <div className="flex items-center gap-1">
         <WinRateBar value={signal.probabilityPct} />
+        {signal.scoreCard && (
+          <span
+            className={`inline-flex items-center rounded px-1 font-mono text-[9px] font-bold ${
+              signal.scoreCard.ready
+                ? 'text-matrix'
+                : signal.scoreCard.grade === 'B'
+                  ? 'text-yellow-400'
+                  : 'text-holo/40'
+            }`}
+            title={`ScoreCard ${signal.scoreCard.totalScore}/${signal.scoreCard.maxScore}`}
+          >
+            {signal.scoreCard.grade}
+          </span>
+        )}
         {liqMap && liqMap.liquidityBoost > 0.5 && (
           <span
             className="inline-flex items-center rounded px-1 font-mono text-[9px] font-bold text-yellow-400"

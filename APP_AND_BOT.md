@@ -151,8 +151,11 @@ enterprise-system/
 3. Hard path `trySide` или soft radar  
 4. Surgical gate (при micro-hunt — active только в `READY`)  
 5. Enrich: VPVR, CVD, liq, style, **HTF trend**, invalidation 1H/4H  
+6. **ScoreCard gate** (8 факторов / 12 баллов): active только при grade **A+ / A**  
+7. **Data Quality gates** — штрафы CVD/OB/spoof freshness; POOR → SKIP  
 
-**Файл:** `src/engine/ProbabilityEngine.ts`
+**Файлы:** `src/engine/ProbabilityEngine.ts`, `src/engine/confluence/scoreCard.ts`, `src/engine/confidence/dataQuality.ts`, `src/engine/regime/`, `sessions/sessionQuality.ts`  
+**Backtest:** `src/engine/backtest/` · `npm run backtest`
 
 ### 5.2 SMC
 Market structure, BOS, order blocks, FVG, OTE, candle rejection, daily bias, equal H/L, MSS, liquidity raid, absorption, 1m CHoCH, PO3.
@@ -164,6 +167,7 @@ Market structure, BOS, order blocks, FVG, OTE, candle rejection, daily bias, equ
 - Effort vs result / absorption trap  
 - Triple filter, BTC dump  
 - **MM Intent:** куда гонит цену + hunt micro→macro  
+- Spoof/Iceberg **подключены** через OrderBookPanel → store → PE / ScoreCard  
 
 ### 5.4 Surgical Entry
 Состояния: `WAITING_SWEEP` → `WAITING_CONFIRM` → `READY` | `INVALIDATED` | `MISSED`  
