@@ -36,6 +36,7 @@ import {
   getBotJournalPayload,
   recordBotAlert,
   resolveBotJournal,
+  formatCorridorWrReport,
 } from './botJournal'
 import {
   buildIdlePulseText,
@@ -946,6 +947,12 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
     const live = papers.filter(
       (t) => t.status === 'WAITING' || t.status === 'OPEN'
     ).length
+    const journal = await getBotJournalPayload(env)
+    const wrBlock = formatCorridorWrReport(
+      journal.analytics,
+      journal.entries,
+      journal.gates
+    )
     await tgSend(
       env,
       chatId,
@@ -963,8 +970,41 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
         `Подписчиков: ${list.length}`,
         `chatId: <code>${chatId}</code>`,
         ``,
-        `/scan — прогон · /trades — сделки`,
+        wrBlock,
+        ``,
+        `/scan — прогон · /trades — сделки · /journal`,
       ].join('\n')
+    )
+    return
+  }
+
+  if (cmd === 'journal') {
+    const list = await listSubscribers(env)
+    const me = list.find((s) => s.chatId === chatId)
+    if (!me) {
+      await tgSend(env, chatId, 'Сначала /start')
+      return
+    }
+    const journal = await getBotJournalPayload(env)
+    const wrBlock = formatCorridorWrReport(
+      journal.analytics,
+      journal.entries,
+      journal.gates
+    )
+    const insights = journal.analytics.insights
+      .slice(0, 5)
+      .map((i) => `· ${i.title}: ${i.detail}`)
+    await tgSend(
+      env,
+      chatId,
+      [
+        `<b>📓 Журнал бота</b>`,
+        wrBlock,
+        insights.length ? `\nИнсайты:\n${insights.join('\n')}` : '',
+        `\nПороги: meme≥${journal.gates.minMemeScore} sniper≥${journal.gates.minSniperScore}`,
+      ]
+        .filter(Boolean)
+        .join('\n')
     )
     return
   }

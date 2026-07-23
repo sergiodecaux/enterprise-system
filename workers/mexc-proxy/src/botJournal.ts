@@ -713,3 +713,89 @@ export function allowSetupByGates(
   }
   return { ok: true }
 }
+
+export interface CorridorWrRow {
+  key: string
+  n: number
+  wins: number
+  losses: number
+  winRate: number
+  expectancyR: number
+}
+
+/** Aggregate WR by SCALP/INTRA/SWING × TREND/COUNTER (+ optional TF tag in setup) */
+export function computeCorridorStats(
+  entries: BotJournalEntry[]
+): CorridorWrRow[] {
+  const buckets = new Map<string, BotJournalEntry[]>()
+  for (const e of entries) {
+    const p = parseBotSetup(e.setup)
+    const style = p.style ?? 'OTHER'
+    const align = p.align ?? 'NA'
+    const key = `${style}_${align}`
+    const arr = buckets.get(key) ?? []
+    arr.push(e)
+    buckets.set(key, arr)
+  }
+  const rows: CorridorWrRow[] = []
+  for (const [key, subset] of buckets) {
+    const wins = subset.filter((e) => e.status === 'WIN').length
+    const losses = subset.filter(
+      (e) => e.status === 'LOSS' || e.status === 'INVALIDATED'
+    ).length
+    const decided = wins + losses
+    if (decided < 1) continue
+    const rs = subset
+      .filter((e) => e.rMultiple != null)
+      .map((e) => e.rMultiple!)
+    const expectancyR =
+      rs.length > 0 ? rs.reduce((a, b) => a + b, 0) / rs.length : 0
+    rows.push({
+      key,
+      n: decided,
+      wins,
+      losses,
+      winRate: (wins / decided) * 100,
+      expectancyR,
+    })
+  }
+  return rows.sort((a, b) => b.n - a.n)
+}
+
+export function formatCorridorWrReport(
+  analytics: BotJournalAnalytics,
+  entries: BotJournalEntry[],
+  gates: BotAdaptiveGates
+): string {
+  const corridors = computeCorridorStats(entries)
+  const lines: string[] = [
+    `Журнал: ${analytics.resolved} закрытых · WR ${analytics.winRate.toFixed(0)}%`,
+  ]
+  if (corridors.length === 0) {
+    lines.push('Коридоры: мало данных (нужно ≥1 закрытая сделка на тег)')
+  } else {
+    lines.push('WR по коридорам (#SCALP/#INTRA × #TREND/#COUNTER):')
+    for (const c of corridors.slice(0, 8)) {
+      const tag = c.key
+        .replace('INTRADAY', 'INTRA')
+        .replace('WITH_TREND', 'TREND')
+        .replace('_', ' · ')
+      lines.push(
+        `  · ${tag}: ${c.winRate.toFixed(0)}% (${c.wins}W/${c.losses}L) E[R]=${c.expectancyR.toFixed(2)}`
+      )
+    }
+  }
+  if (gates.blockedSetups.length) {
+    lines.push(
+      `Режем слабые теги: ${gates.blockedSetups.slice(0, 6).join(', ')}${
+        gates.blockedSetups.length > 6 ? '…' : ''
+      }`
+    )
+  } else {
+    lines.push('Заблокированных тегов пока нет')
+  }
+  if (gates.boostedSetups.length) {
+    lines.push(`Буст сильных: ${gates.boostedSetups.slice(0, 4).join(', ')}`)
+  }
+  return lines.join('\n')
+}

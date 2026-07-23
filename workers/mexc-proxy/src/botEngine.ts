@@ -1,7 +1,7 @@
 /** Bumped on each user-visible bot engine change — shown in /status /scan /alerts */
 export const BOT_ENGINE = {
-  id: 'htf-zones-v2',
-  label: 'HTF zones 4H/D · F&G · BTC.D · spoof filter',
+  id: 'confluence-v3',
+  label: 'ScoreCard OB/FVG/raid · HTF 4H/D · coin news · lifecycle',
   deployedNote:
-    'Зоны только 4H/Daily. 15m = тайминг реакции. Сигнал без HTF SSL/BSL не шлётся.',
+    'Вход только A+/A (SNIPER). Фазы watch: APPROACH→TOUCH→REACTION→FUEL→READY. WR по коридорам в /status.',
 } as const

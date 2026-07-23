@@ -51,7 +51,18 @@ export interface WatchedSetupRecord {
   lastDigestAt?: number
   /** Last 10-min levels refresh (pullback/zone rebuild) */
   lastLevelsRefreshAt?: number
+  /** Lifecycle phase for hard transition alerts */
+  lastLifecyclePhase?: LifecyclePhase
 }
+
+export type LifecyclePhase =
+  | 'FAR'
+  | 'APPROACH'
+  | 'TOUCH'
+  | 'REACTION'
+  | 'FUEL'
+  | 'READY'
+  | 'INVALIDATED'
 
 export interface WatchAlert {
   chatId: number
@@ -76,6 +87,10 @@ interface WatchEvalSnapshot {
   distToInvPct: number
   preconditions: { id: string; label: string; status: string }[]
   narrative: string
+  lifecycle: LifecyclePhase
+  bookOk: boolean
+  reactionOk: boolean
+  fuelOk: boolean
 }
 
 interface Env {
@@ -271,6 +286,10 @@ export function evaluateWatchSnapshot(
       distToInvPct,
       preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
       narrative: 'HTF слом — сетап снят',
+      lifecycle: 'INVALIDATED',
+      bookOk: false,
+      reactionOk: false,
+      fuelOk: false,
     }
   }
   if (
@@ -286,6 +305,10 @@ export function evaluateWatchSnapshot(
       distToInvPct,
       preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
       narrative: 'Цена за invalidation',
+      lifecycle: 'INVALIDATED',
+      bookOk: false,
+      reactionOk: false,
+      fuelOk: false,
     }
   }
 
@@ -353,19 +376,28 @@ export function evaluateWatchSnapshot(
   const pending = pre.filter((p) => p.status === 'PENDING').length
   const approach = !inside && Math.abs(distToZonePct) < 0.45
 
+  let lifecycle: LifecyclePhase = 'FAR'
+  if (status === 'INVALIDATED') lifecycle = 'INVALIDATED'
+  else if (status === 'READY' || (inside && fuel.reactionOk && fuel.bookOk)) {
+    lifecycle = 'READY'
+  } else if (inside && fuel.bookOk && !fuel.reactionOk) lifecycle = 'FUEL'
+  else if (inside && fuel.reactionOk) lifecycle = 'REACTION'
+  else if (inside) lifecycle = 'TOUCH'
+  else if (approach) lifecycle = 'APPROACH'
+
   let narrative: string
-  if (status === 'READY') {
+  if (lifecycle === 'READY') {
     narrative = `READY: зона + реакция + топливо → цель ${setup.target}`
-  } else if (status === 'ARMED') {
-    narrative = inside
-      ? `TOUCH · ${fuel.reactionNote} · ${fuel.fuelNote} · ${met}/${pre.length}`
-      : approach
-        ? `APPROACH · до зоны ${distToZonePct.toFixed(2)}% · ждём касание`
-        : `Частично (${met} MET, ${pending} PENDING)`
-  } else if (inside) {
+  } else if (lifecycle === 'FUEL') {
+    narrative = `FUEL: стакан за сторону · ждём 1m реакцию · ${fuel.fuelNote}`
+  } else if (lifecycle === 'REACTION') {
+    narrative = `REACTION: ${fuel.reactionNote} · ждём топливо стакана`
+  } else if (lifecycle === 'TOUCH') {
     narrative = `TOUCH — ${fuel.reactionNote}`
-  } else if (approach) {
+  } else if (lifecycle === 'APPROACH') {
     narrative = `APPROACH (${distToZonePct >= 0 ? '+' : ''}${distToZonePct.toFixed(2)}%) — смотрим закрепление`
+  } else if (status === 'ARMED') {
+    narrative = `Частично (${met} MET, ${pending} PENDING)`
   } else {
     narrative =
       distToZonePct > 0
@@ -382,6 +414,10 @@ export function evaluateWatchSnapshot(
     distToInvPct,
     preconditions: pre,
     narrative,
+    lifecycle,
+    bookOk: fuel.bookOk,
+    reactionOk: fuel.reactionOk,
+    fuelOk: fuel.fuelOk,
   }
 }
 
@@ -420,7 +456,7 @@ function formatDigestBlock(
   return [
     `${icon} ${s.side} ${w.symbol}`,
     `${s.title}`,
-    `Статус: ${snap.status} · Live win% ~${liveWin}% (база сетапа ${Math.round(s.probability)}%) · R:R 1:${rr.toFixed(1)}`,
+    `Статус: ${snap.status} · фаза ${snap.lifecycle} · Live win% ~${liveWin}% (база ${Math.round(s.probability)}%) · R:R 1:${rr.toFixed(1)}`,
     `Цена: ${fmtPx(snap.price)}`,
     `Зона: ${fmtPx(s.entryZone.bottom)} – ${fmtPx(s.entryZone.top)}`,
     `До зоны: ${
@@ -554,6 +590,42 @@ export async function listWatchesForChat(
   const list = await listWatches(env)
   const now = Date.now()
   return list.filter((w) => w.chatId === chatId && w.expiresAt > now)
+}
+
+function formatLifecyclePhase(
+  w: WatchedSetupRecord,
+  snap: WatchEvalSnapshot
+): WatchAlert {
+  const s = w.setup
+  const icon = s.side === 'LONG' ? '🟢' : '🔴'
+  const phase = snap.lifecycle
+  const titleMap: Record<LifecyclePhase, string> = {
+    FAR: `⏳ FAR · ${w.symbol}`,
+    APPROACH: `📍 APPROACH · ${w.symbol}`,
+    TOUCH: `🖐 TOUCH · ${w.symbol}`,
+    REACTION: `⚡ REACTION · ${w.symbol}`,
+    FUEL: `⛽ FUEL · ${w.symbol}`,
+    READY: `🎯 READY · ${w.symbol}`,
+    INVALIDATED: `⛔ INVALIDATED · ${w.symbol}`,
+  }
+  const chain = 'APPROACH → TOUCH → REACTION → FUEL → READY'
+  return {
+    chatId: w.chatId,
+    title: titleMap[phase] ?? `Фаза ${phase}`,
+    text: [
+      `${icon} ${s.side} ${w.symbol} · ${s.title}`,
+      `Фаза: <b>${phase}</b>`,
+      `Цепочка: ${chain}`,
+      '',
+      snap.narrative,
+      `Цена: ${fmtPx(snap.price)}`,
+      `Зона: ${fmtPx(s.entryZone.bottom)} – ${fmtPx(s.entryZone.top)}`,
+      `Лимит: ${fmtPx(s.limitEntry)} · TP: ${fmtPx(s.target)} · SL: ${fmtPx(s.invalidation)}`,
+      `Реакция: ${snap.reactionOk ? '✓' : '·'} · Стакан: ${snap.bookOk ? '✓' : '·'} · Топливо: ${snap.fuelOk ? '✓' : '·'}`,
+      `Win% сетапа: ~${Math.round(s.probability)}%`,
+    ].join('\n'),
+    dedupeKey: `watch:${w.watchId}:phase:${phase}:${Math.floor(Date.now() / 120_000)}`,
+  }
 }
 
 function formatReady(w: WatchedSetupRecord, price: number): WatchAlert {
@@ -921,6 +993,10 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
           distToInvPct: 0,
           preconditions: working.setup.preconditions ?? [],
           narrative: `Нет котировки по ${mexcSym} — повторю на следующем цикле`,
+          lifecycle: working.lastLifecyclePhase ?? 'FAR',
+          bookOk: false,
+          reactionOk: false,
+          fuelOk: false,
         }
       } else {
         snap = evaluateWatchSnapshot(
@@ -937,12 +1013,34 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       const updated: WatchedSetupRecord = {
         ...working,
         lastStatus: status,
+        lastLifecyclePhase: snap.lifecycle,
         setup: {
           ...working.setup,
           status,
           preconditions: snap.preconditions,
         },
         updatedAt: Date.now(),
+      }
+
+      // Hard lifecycle transitions (skip noisy FAR)
+      const prevPhase = working.lastLifecyclePhase
+      const nextPhase = snap.lifecycle
+      const noteworthy: LifecyclePhase[] = [
+        'APPROACH',
+        'TOUCH',
+        'REACTION',
+        'FUEL',
+        'READY',
+        'INVALIDATED',
+      ]
+      if (
+        price &&
+        nextPhase !== prevPhase &&
+        noteworthy.includes(nextPhase) &&
+        nextPhase !== 'READY' &&
+        nextPhase !== 'INVALIDATED'
+      ) {
+        alerts.push(formatLifecyclePhase(updated, snap))
       }
 
       if (price && status === 'READY' && !working.readyNotified) {
@@ -955,6 +1053,7 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       }
 
       if (status === 'INVALIDATED' && updated.invalidatedNotified) {
+        // Keep record briefly so phase INVALIDATED was sent; drop from active
         continue
       }
 
@@ -997,19 +1096,31 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       (w) => w.lastStatus === 'HYPOTHESIS' || !w.lastStatus
     ).length
 
+    const phaseLine = watches
+      .slice(0, 5)
+      .map((w) => {
+        const snap = snapshots.get(w.watchId)
+        const ph = snap?.lifecycle ?? w.lastLifecyclePhase ?? 'FAR'
+        return `  · ${w.symbol} · ${ph}`
+      })
+      .join('\n')
+
     alerts.push({
       chatId,
       title: `📡 Мониторинг · ${blocks.length}/${watches.length}`,
       text: [
         `Отчёт каждые 5 мин · ${new Date(now).toISOString().replace('T', ' ').slice(0, 16)} UTC`,
         `Сводка: READY ${ready} · ARMED ${armed} · HYPOTHESIS ${hyp} · всего ${watches.length}`,
-        `Уровни зон пересчитываются каждые 10 мин при устаревании отката.`,
+        'Фазы:',
+        phaseLine || '  · —',
+        'Цепочка: APPROACH → TOUCH → REACTION → FUEL → READY',
+        `Уровни зон (4H/D) пересчитываются каждые 10 мин.`,
         '',
         ...blocks.flatMap((block, i) =>
           i < blocks.length - 1 ? [block, '────────'] : [block]
         ),
         '',
-        'READY → лимит · ARMED → жди confirm · 🔄 зона обновлена · ⛔ INVALIDATED.',
+        'Смена фазы шлётся сразу · READY → лимит · ⛔ INVALIDATED.',
       ].join('\n'),
       // Unique per send window; retries ok if previous send failed (dedup after success)
       dedupeKey: `watch_digest:${chatId}:${Math.floor(now / DIGEST_MS)}`,

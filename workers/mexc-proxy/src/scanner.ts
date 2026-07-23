@@ -15,6 +15,10 @@ import { detectMarketRegime, regimeAllows, type MarketRegime } from './regime'
 import { assessBookToxicity } from './bookToxicity'
 import { BOT_ENGINE } from './botEngine'
 import {
+  analyzeConfluence,
+  buildBotScoreCard,
+} from './confluence'
+import {
   assessZoneFuel,
   buildHtfLiquidityMap,
   findSmartZone,
@@ -677,6 +681,7 @@ function computeSetupProbability(opts: {
   isBtc: boolean
   rsi: number
   side: Side
+  symbol?: string
   zone?: SmartZonePlan | null
   zoneFuelAdj?: number
   zoneFactors?: string[]
@@ -793,11 +798,12 @@ function computeSetupProbability(opts: {
     factors.push(...z.factors)
   }
 
-  // Fear&Greed / news / BTC.D
+  // Fear&Greed / coin news / BTC.D
   if (opts.marketCtx) {
     const cx = contextProbabilityAdj({
       side: opts.side,
       isBtc: opts.isBtc,
+      symbol: opts.symbol,
       ctx: opts.marketCtx,
     })
     p += cx.adj
@@ -1148,6 +1154,55 @@ export async function runMarketScan(
       }
       if (fuel) scoreAdj = Math.max(0, Math.min(99, scoreAdj + fuel.scoreAdj))
 
+      // Mini App confluence: OB / FVG / raid / absorption + ScoreCard
+      const conf = analyzeConfluence({
+        candles4h: c4h,
+        candles1m: candles,
+        side,
+        price,
+      })
+      if (conf.raid.detected) {
+        scoreAdj = Math.min(99, scoreAdj + Math.round(conf.raid.scoreBoost * 2))
+      }
+      if (
+        conf.absorption.detected &&
+        (conf.absorption.sideHint == null || conf.absorption.sideHint === side)
+      ) {
+        scoreAdj = Math.min(99, scoreAdj + 4)
+      }
+      if (conf.inOrderBlock) scoreAdj = Math.min(99, scoreAdj + 3)
+      if (conf.inFvg) scoreAdj = Math.min(99, scoreAdj + 2)
+
+      const atrPreview = buildEntryPlan(side, price, atr, style)
+      const entryPx = smart ? smart.limitEntry : atrPreview.entryIdeal
+      const slPx = smart ? smart.invalidate : atrPreview.sl
+      const tpPx = smart ? smart.target : atrPreview.tp
+
+      const scoreCard = buildBotScoreCard({
+        side,
+        style,
+        bias4h,
+        bias1h,
+        align,
+        regime: btcRegime,
+        bookImb,
+        raid: conf.raid,
+        absorption: conf.absorption,
+        inOrderBlock: conf.inOrderBlock,
+        inFvg: conf.inFvg,
+        hasHtfZone: Boolean(smart),
+        zoneStrength: smart?.strength ?? 0,
+        entry: entryPx,
+        sl: slPx,
+        tp: tpPx,
+        toxicBook: false,
+      })
+      // SNIPER: only A+/A; MEME: allow B+ (not SKIP)
+      if (type === 'SNIPER' && !scoreCard.ready) return
+      if (type === 'MEME' && scoreCard.grade === 'SKIP') return
+      if (scoreCard.grade === 'A+') scoreAdj = Math.min(99, scoreAdj + 4)
+      else if (scoreCard.grade === 'A') scoreAdj = Math.min(99, scoreAdj + 2)
+
       const zAdj = zoneProbabilityAdj(smart, fuel)
       const prior = computeSetupProbability({
         score: scoreAdj,
@@ -1160,6 +1215,7 @@ export async function runMarketScan(
         isBtc,
         rsi,
         side,
+        symbol: t.symbol,
         zone: smart,
         zoneFuelAdj: zAdj.adj,
         zoneFactors: zAdj.factors,
@@ -1209,11 +1265,15 @@ export async function runMarketScan(
         ? [
             ...smart.reasoning,
             ...(fuel?.lines ?? []),
+            `ScoreCard ${scoreCard.grade}: ${scoreCard.total}/${scoreCard.max} (${scoreCard.percent}%)`,
+            ...scoreCard.factors.slice(0, 6),
+            ...conf.lines,
             `Цель полёта: ${smart.targetLabel}`,
           ]
         : [
             '⚠️ Нет HTF SSL/BSL 4H+ — только meme/ATR fallback',
-            '15m зона НЕ используется как источник сигнала',
+            `ScoreCard ${scoreCard.grade}: ${scoreCard.total}/${scoreCard.max}`,
+            ...conf.lines,
           ]
 
       const whyNow: string[] = [
