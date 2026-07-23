@@ -65,6 +65,9 @@ export interface ScanAlert {
   text: string
   dedupeKey: string
   score: number
+  /** Display win probability used for ranking */
+  winPct: number
+  style: 'SCALP' | 'INTRADAY' | 'SWING' | 'OTHER'
   tradePlan?: TradePlanPayload
 }
 
@@ -929,6 +932,8 @@ export async function runMarketScan(
         text: msg.text,
         dedupeKey,
         score: scoreAdj,
+        winPct,
+        style,
         tradePlan: {
           side,
           symbol: t.symbol,
@@ -1190,32 +1195,67 @@ export async function runMarketScan(
 
   for (const t of memes) {
     await analyze(t, true)
-    await new Promise((r) => setTimeout(r, 120))
+    await new Promise((r) => setTimeout(r, 80))
   }
   for (const t of majors) {
     await analyze(t, false)
-    await new Promise((r) => setTimeout(r, 100))
+    await new Promise((r) => setTimeout(r, 70))
   }
   for (const t of movers) {
     await analyze(t, false)
-    await new Promise((r) => setTimeout(r, 120))
+    await new Promise((r) => setTimeout(r, 80))
   }
 
-  // Prefer diversity across SCALP / INTRADAY / SWING, then by score
-  const byStyle = new Map<string, ScanAlert>()
-  const rest: ScanAlert[] = []
-  for (const a of alerts.sort((x, y) => y.score - x.score)) {
-    const setup = a.tradePlan?.setup ?? ''
-    const styleTag = setup.includes('_SCALP_')
-      ? 'SCALP'
-      : setup.includes('_SWING_')
-        ? 'SWING'
-        : setup.includes('_INTRADAY_')
-          ? 'INTRADAY'
-          : 'OTHER'
-    if (!byStyle.has(styleTag)) byStyle.set(styleTag, a)
-    else rest.push(a)
+  return rankAndSelectAlerts(alerts)
+}
+
+/**
+ * Pick best actionable set:
+ * - Top 3 SCALP by win% on BTC+alts (SNIPER)
+ * - Best INTRADAY (up to 2)
+ * - Best SWING (1)
+ * - Top MEME (up to 2)
+ */
+export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
+  const byWin = (a: ScanAlert, b: ScanAlert) =>
+    b.winPct - a.winPct || b.score - a.score
+
+  const sniper = alerts.filter((a) => a.type === 'SNIPER')
+  const meme = alerts.filter((a) => a.type === 'MEME')
+
+  const scalp = sniper
+    .filter((a) => a.style === 'SCALP')
+    .sort(byWin)
+    .slice(0, 3)
+  const intra = sniper
+    .filter((a) => a.style === 'INTRADAY')
+    .sort(byWin)
+    .slice(0, 2)
+  const swing = sniper
+    .filter((a) => a.style === 'SWING')
+    .sort(byWin)
+    .slice(0, 1)
+  const memeTop = meme.sort(byWin).slice(0, 2)
+
+  // If scalp empty but we have OTHER/SNIPER without style tag, fill from score
+  const picked = [...scalp, ...intra, ...swing, ...memeTop]
+  if (picked.length === 0) {
+    return [...alerts].sort(byWin).slice(0, 5)
   }
-  const diversified = [...byStyle.values(), ...rest]
-  return diversified.slice(0, 10)
+
+  // Prefixed ranking note on scalp titles for clarity
+  return picked.map((a, i) => {
+    if (a.style !== 'SCALP' || a.type !== 'SNIPER') return a
+    const rank = scalp.indexOf(a) + 1
+    if (rank <= 0) return a
+    return {
+      ...a,
+      title: `🏆 СКАЛЬП #${rank}/${scalp.length} · ${a.title.replace(/^🏆 СКАЛЬП #\d+\/\d+ · /, '')}`,
+      text: [
+        `Рейтинг скальп (BTC+альты): #${rank} из топ-${scalp.length} по win% (${a.winPct}%).`,
+        '',
+        a.text,
+      ].join('\n'),
+    }
+  })
 }

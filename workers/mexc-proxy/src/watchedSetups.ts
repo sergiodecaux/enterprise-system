@@ -341,21 +341,41 @@ function formatDigestBlock(
 ): string {
   const s = w.setup
   const icon = s.side === 'LONG' ? '🟢' : '🔴'
-  const preLines = snap.preconditions
-    .slice(0, 4)
-    .map((p) => {
-      const mark =
-        p.status === 'MET' ? '✓' : p.status === 'FAILED' ? '✗' : '·'
-      return `  ${mark} ${p.label}`
-    })
+  const risk = Math.abs(s.limitEntry - s.invalidation)
+  const reward = Math.abs(s.target - s.limitEntry)
+  const rr = risk > 0 ? reward / risk : 0
+  const ageMin = Math.max(0, Math.round((Date.now() - w.createdAt) / 60_000))
+  const preLines = snap.preconditions.slice(0, 5).map((p) => {
+    const mark =
+      p.status === 'MET' ? '✓' : p.status === 'FAILED' ? '✗' : '·'
+    return `  ${mark} ${p.label} [${p.status}]`
+  })
+  const nextStep =
+    snap.status === 'READY'
+      ? '➡️ Действие: лимитка по зоне, не догонять'
+      : snap.status === 'ARMED'
+        ? '➡️ Ждём подтверждение / reclaim'
+        : snap.inZone
+          ? '➡️ Цена в зоне — смотри реакцию стакана'
+          : '➡️ Ждём подход цены к зоне'
+
   return [
-    `${icon} ${s.side} ${w.symbol} · ${s.title}`,
-    `Статус: ${snap.status}`,
-    `Цена: ${fmtPx(snap.price)} · зона ${fmtPx(s.entryZone.bottom)}–${fmtPx(s.entryZone.top)}`,
-    `До зоны: ${snap.inZone ? 'ВНУТРИ' : `${snap.distToZonePct >= 0 ? '+' : ''}${snap.distToZonePct.toFixed(2)}%`}`,
-    `Лимит ${fmtPx(s.limitEntry)} (${snap.distToLimitPct >= 0 ? '+' : ''}${snap.distToLimitPct.toFixed(2)}%) · SL ${fmtPx(s.invalidation)} · TP ${fmtPx(s.target)}`,
-    `Win% ~${Math.round(s.probability)}%`,
+    `${icon} ${s.side} ${w.symbol}`,
+    `${s.title}`,
+    `Статус: ${snap.status} · Win% ~${Math.round(s.probability)}% · R:R 1:${rr.toFixed(1)}`,
+    `Цена: ${fmtPx(snap.price)}`,
+    `Зона: ${fmtPx(s.entryZone.bottom)} – ${fmtPx(s.entryZone.top)}`,
+    `До зоны: ${
+      snap.inZone
+        ? 'ВНУТРИ ✓'
+        : `${snap.distToZonePct >= 0 ? '+' : ''}${snap.distToZonePct.toFixed(2)}%`
+    }`,
+    `Лимит: ${fmtPx(s.limitEntry)} (${snap.distToLimitPct >= 0 ? '+' : ''}${snap.distToLimitPct.toFixed(2)}%)`,
+    `SL: ${fmtPx(s.invalidation)} · TP: ${fmtPx(s.target)}`,
+    `Возраст watch: ${ageMin} мин`,
     snap.narrative,
+    nextStep,
+    'Условия:',
     ...preLines,
   ].join('\n')
 }
@@ -869,7 +889,7 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     }
   }
 
-  // One digest per chat every 5 minutes (first report 5 min after watch create)
+  // One digest per chat every 5 minutes (first ≈ 5 min after create)
   const byChat = new Map<number, WatchedSetupRecord[]>()
   for (const w of next) {
     const arr = byChat.get(w.chatId) ?? []
@@ -884,27 +904,40 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     })
     if (!due) continue
 
-    const lines: string[] = []
-    for (const w of watches.slice(0, 8)) {
+    const blocks: string[] = []
+    let chars = 0
+    for (const w of watches.slice(0, 5)) {
       const snap = snapshots.get(w.watchId)
       if (!snap) continue
-      lines.push(formatDigestBlock(w, snap))
+      const block = formatDigestBlock(w, snap)
+      // Telegram hard limit ~4096; keep headroom
+      if (chars + block.length > 3200) break
+      blocks.push(block)
+      chars += block.length + 8
     }
-    if (lines.length === 0) continue
+    if (blocks.length === 0) continue
+
+    const armed = watches.filter((w) => w.lastStatus === 'ARMED').length
+    const ready = watches.filter((w) => w.lastStatus === 'READY').length
+    const hyp = watches.filter(
+      (w) => w.lastStatus === 'HYPOTHESIS' || !w.lastStatus
+    ).length
 
     alerts.push({
       chatId,
-      title: `📡 Мониторинг сетапов · ${lines.length}`,
+      title: `📡 Мониторинг · ${blocks.length}/${watches.length}`,
       text: [
-        `Отчёт каждые 5 мин · уровни refresh каждые 10 мин`,
-        `Активных: ${watches.length}`,
+        `Отчёт каждые 5 мин · ${new Date(now).toISOString().replace('T', ' ').slice(0, 16)} UTC`,
+        `Сводка: READY ${ready} · ARMED ${armed} · HYPOTHESIS ${hyp} · всего ${watches.length}`,
+        `Уровни зон пересчитываются каждые 10 мин при устаревании отката.`,
         '',
-        ...lines.flatMap((block, i) =>
-          i < lines.length - 1 ? [block, '———'] : [block]
+        ...blocks.flatMap((block, i) =>
+          i < blocks.length - 1 ? [block, '────────'] : [block]
         ),
         '',
-        'READY — вход · 🔄 обновление зоны · INVALIDATED — стоп.',
+        'READY → лимит · ARMED → жди confirm · 🔄 зона обновлена · ⛔ INVALIDATED.',
       ].join('\n'),
+      // Unique per send window; retries ok if previous send failed (dedup after success)
       dedupeKey: `watch_digest:${chatId}:${Math.floor(now / DIGEST_MS)}`,
     })
   }
@@ -912,6 +945,20 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   void expired
   await saveWatches(env, next)
   return alerts
+}
+
+/** Short lines for idle pulse (per chat) */
+export async function watchSummaryLines(
+  env: Env,
+  chatId: number,
+  limit = 5
+): Promise<string[]> {
+  const watches = await listWatchesForChat(env, chatId)
+  return watches.slice(0, limit).map((w) => {
+    const s = w.setup
+    const mid = (s.entryZone.top + s.entryZone.bottom) / 2
+    return `  · ${s.side} ${w.symbol} · ${w.lastStatus} · зона≈${fmtPx(mid)} · ~${Math.round(s.probability)}%`
+  })
 }
 
 export async function countActiveWatches(env: Env): Promise<number> {

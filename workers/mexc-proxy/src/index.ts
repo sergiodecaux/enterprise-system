@@ -27,6 +27,7 @@ import {
   monitorWatchedSetups,
   markChatDigestSent,
   countActiveWatches,
+  watchSummaryLines,
   type ConditionalSetupPayload,
 } from './watchedSetups'
 import {
@@ -35,6 +36,11 @@ import {
   recordBotAlert,
   resolveBotJournal,
 } from './botJournal'
+import {
+  buildIdlePulseText,
+  markIdlePulseSent,
+  shouldSendIdlePulse,
+} from './marketPulse'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 
@@ -167,6 +173,8 @@ async function handleTelegram(
       cron: '*/2 * * * *',
       digestEveryMin: 5,
       refreshSetupMin: 10,
+      idlePulseMin: 10,
+      scalpTopN: 3,
       mode: '24/7',
     })
   }
@@ -467,6 +475,7 @@ async function runCronScan(env: Env): Promise<{
   heartbeat: number
   paperComments: number
   watchAlerts?: number
+  idlePulses?: number
   journalLogged?: number
   journalResolved?: number
 }> {
@@ -474,7 +483,27 @@ async function runCronScan(env: Env): Promise<{
     return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
   }
 
-  // Market scan FIRST (memes/snipers), then watches — avoid silencing signals on CPU timeout
+  // Watches / digests FIRST so 5-min monitoring is never starved by market scan
+  let watchAlerts = 0
+  try {
+    const wa = await monitorWatchedSetups(env)
+    for (const a of wa) {
+      const r = await broadcastAlert(env, {
+        type: 'SETUP_WATCH',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+        chatId: a.chatId,
+      })
+      watchAlerts += r.sent
+      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
+        await markChatDigestSent(env, a.chatId)
+      }
+    }
+  } catch (err) {
+    console.error('[cron] watch monitor failed', err)
+  }
+
   const heartbeat = await maybeHeartbeat(env)
   const gates = await getAdaptiveGates(env)
   const alerts = await runMarketScan(gates)
@@ -496,7 +525,6 @@ async function runCronScan(env: Env): Promise<{
     }
     sent += r.sent
 
-    // Journal every non-deduped bot signal (for Lab + adaptive gates)
     if (a.tradePlan) {
       const logged = await recordBotAlert(env, {
         alertType: a.type,
@@ -507,7 +535,6 @@ async function runCronScan(env: Env): Promise<{
       if (logged) journalLogged++
     }
 
-    // Open paper companion only when signal actually went out to someone
     if (r.sent > 0 && a.tradePlan) {
       const paper = await createPaperTradeFromPlan(env, {
         ...a.tradePlan,
@@ -525,24 +552,42 @@ async function runCronScan(env: Env): Promise<{
     }
   }
 
-  let watchAlerts = 0
-  try {
-    const wa = await monitorWatchedSetups(env)
-    for (const a of wa) {
-      const r = await broadcastAlert(env, {
-        type: 'SETUP_WATCH',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-        chatId: a.chatId,
-      })
-      watchAlerts += r.sent
-      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
-        await markChatDigestSent(env, a.chatId)
+  // No actionable signals → tell subscribers + favorites under watch (every ~10 min)
+  let idlePulses = 0
+  if (sent === 0 && (await shouldSendIdlePulse(env))) {
+    try {
+      const subs = await listSubscribers(env)
+      const shared = await buildIdlePulseText({ activeWatches: 0 })
+      for (const sub of subs) {
+        const lines = await watchSummaryLines(env, sub.chatId, 5)
+        const text =
+          lines.length > 0
+            ? [
+                shared.text.replace(
+                  /\n👁[\s\S]*$/m,
+                  ''
+                ).trimEnd(),
+                '',
+                `👁 Ваши сетапы под слежением: ${lines.length}`,
+                ...lines,
+                '',
+                'Когда появится сетап ≥60% win — пришлю сразу.',
+                'Скальп: топ-3 по win% (BTC+альты) · Интра до 2 · Свинг 1 · Мемы до 2.',
+              ].join('\n')
+            : shared.text
+        const r = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          title: shared.title,
+          text,
+          dedupeKey: `idle_pulse:${sub.chatId}:${Math.floor(Date.now() / (10 * 60_000))}`,
+          chatId: sub.chatId,
+        })
+        idlePulses += r.sent
       }
+      if (idlePulses > 0) await markIdlePulseSent(env)
+    } catch (err) {
+      console.error('[cron] idle pulse failed', err)
     }
-  } catch (err) {
-    console.error('[cron] watch monitor failed', err)
   }
 
   // Narrate open / waiting paper trades
@@ -572,6 +617,7 @@ async function runCronScan(env: Env): Promise<{
     heartbeat,
     paperComments,
     watchAlerts,
+    idlePulses,
     journalLogged,
     journalResolved,
   }
