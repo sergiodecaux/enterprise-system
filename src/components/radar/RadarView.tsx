@@ -87,10 +87,9 @@ const RadarView = () => {
           </p>
         )}
         {newsSettings.enabled &&
-          newsSettings.showFearGreed &&
-          fearGreed && (
-            <div className="ml-7 mt-3">
-              <FearGreedGauge data={fearGreed} />
+          newsSettings.showFearGreed && (
+            <div className="ml-7 mt-3 min-h-[4.5rem]">
+              {fearGreed && <FearGreedGauge data={fearGreed} />}
             </div>
           )}
       </div>
@@ -101,9 +100,10 @@ const RadarView = () => {
         <div className="flex items-center gap-3 font-mono text-xs uppercase text-holo/30">
           <div className="w-6 text-right">#</div>
           <div className="flex-1">{t('column_asset')}</div>
-          <div className="w-20">{t('column_signal')}</div>
-          <div className="w-32">{t('column_probability')}</div>
-          <div className="w-4" />
+          <div className="w-[4.5rem] shrink-0">{t('column_signal')}</div>
+          <div className="w-[5.75rem] shrink-0 text-right">
+            {t('column_probability')}
+          </div>
         </div>
       </div>
 

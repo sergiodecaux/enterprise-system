@@ -1,8 +1,10 @@
 interface WinRateBarProps {
   value: number
+  /** Compact rail for coin rows (fixed width, no layout jump) */
+  compact?: boolean
 }
 
-const WinRateBar = ({ value }: WinRateBarProps) => {
+const WinRateBar = ({ value, compact = false }: WinRateBarProps) => {
   const getBarColorClass = () => {
     if (value >= 70) return 'bg-matrix'
     if (value >= 50) return 'bg-yellow-500'
@@ -17,15 +19,33 @@ const WinRateBar = ({ value }: WinRateBarProps) => {
     return 'text-alert'
   }
 
+  if (compact) {
+    return (
+      <div className="flex w-[3.25rem] shrink-0 items-center gap-1">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hull-light">
+          <div
+            className={`h-full rounded-full transition-[width] duration-300 ${getBarColorClass()}`}
+            style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+          />
+        </div>
+        <span
+          className={`w-6 text-right font-mono text-[9px] tabular-nums ${getTextColorClass()}`}
+        >
+          {Math.round(value)}
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <div className="w-32 flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-hull-light rounded-full overflow-hidden">
+    <div className="flex w-32 items-center gap-2">
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hull-light">
         <div
-          className={`h-full rounded-full transition-all duration-300 ${getBarColorClass()}`}
+          className={`h-full rounded-full transition-[width] duration-300 ${getBarColorClass()}`}
           style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
         />
       </div>
-      <span className={`text-xs font-mono w-8 text-right ${getTextColorClass()}`}>
+      <span className={`w-8 text-right font-mono text-xs tabular-nums ${getTextColorClass()}`}>
         {Math.round(value)}%
       </span>
     </div>

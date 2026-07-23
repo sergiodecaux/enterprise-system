@@ -37,6 +37,7 @@ import { useBuyerAggression } from '../../hooks/useBuyerAggression'
 import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
 import { buildMarketBrief } from '../../engine/brief'
 import MarketBriefPanel from './MarketBriefPanel'
+import CollapsibleSection from '../ui/CollapsibleSection'
 
 /** Панель дивергенции силы альта vs BTC */
 const BtcDivergencePanel = ({
@@ -695,25 +696,41 @@ const TacticalDrawer = () => {
         </div>
 
         <div
-          className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-4 py-6"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4"
           style={{ WebkitOverflowScrolling: 'touch' }}
         >
-          {marketBrief && (
-            <MarketBriefPanel brief={marketBrief} loading={briefLoading} />
+          {(marketBrief || briefLoading) && (
+            <CollapsibleSection
+              title="Бриф"
+              subtitle={
+                briefLoading
+                  ? 'загрузка…'
+                  : marketBrief?.nowHeadline?.slice(0, 28)
+              }
+            >
+              {marketBrief && (
+                <MarketBriefPanel brief={marketBrief} loading={briefLoading} />
+              )}
+            </CollapsibleSection>
           )}
 
           {compositeAnalysis && (
-            <CompositeAnalysisPanel analysis={compositeAnalysis} />
+            <CollapsibleSection
+              title="Сводка"
+              subtitle={`${compositeAnalysis.marketPhase} · ${compositeAnalysis.overallScore}`}
+            >
+              <CompositeAnalysisPanel analysis={compositeAnalysis} />
+            </CollapsibleSection>
           )}
 
           <div className="flex justify-center">
             <ProbabilityGauge value={probability} direction={direction} />
           </div>
 
-          {signal.memePulse && <MemePulsePanel meme={signal.memePulse} />}
-
           {signal.memePulse && (
-            <div className="grid grid-cols-2 gap-3">
+            <CollapsibleSection title="Meme pulse" defaultOpen>
+              <MemePulsePanel meme={signal.memePulse} />
+              <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 disabled={!!signal.memePulse.longBlocked || !signal.sl || !signal.tp1}
@@ -828,23 +845,27 @@ const TacticalDrawer = () => {
                 )}
               </button>
             </div>
+            </CollapsibleSection>
           )}
 
           {newsSettings.enabled && newsSettings.showInDrawer && (
-            <div className="space-y-3">
-              {newsSettings.showFearGreed && newsIntel.fearGreed && (
-                <FearGreedGauge data={newsIntel.fearGreed} />
-              )}
-              <NewsPanel
-                coinSentiment={
-                  newsIntel.coinSentiments[signal.displayName.split('/')[0]] ??
-                  null
-                }
-                symbol={signal.displayName.split('/')[0]}
-              />
-            </div>
+            <CollapsibleSection title="Новости">
+              <div className="space-y-3">
+                {newsSettings.showFearGreed && newsIntel.fearGreed && (
+                  <FearGreedGauge data={newsIntel.fearGreed} />
+                )}
+                <NewsPanel
+                  coinSentiment={
+                    newsIntel.coinSentiments[signal.displayName.split('/')[0]] ??
+                    null
+                  }
+                  symbol={signal.displayName.split('/')[0]}
+                />
+              </div>
+            </CollapsibleSection>
           )}
 
+          <CollapsibleSection title="Метрики" defaultOpen>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-hull border border-hull-border rounded-lg p-3">
               <div className="text-xs text-holo/40 font-mono uppercase mb-1">
@@ -955,54 +976,70 @@ const TacticalDrawer = () => {
               </div>
             )}
           </div>
+          </CollapsibleSection>
 
-          {mmIntent && <MmIntentPanel intent={mmIntent} />}
-          {surgicalPlan && <SurgicalEntryPanel plan={surgicalPlan} />}
-          {watchedForCoin > 0 && (
-            <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
-              <div className="font-mono text-[10px] font-bold uppercase text-yellow-300/80">
-                Слежение
-              </div>
-              <p className="font-mono text-xs text-yellow-200/90">
-                Активных watch по монете: {watchedForCoin}
-              </p>
+          <CollapsibleSection
+            title="Анализ"
+            subtitle={[
+              mmIntent && 'MM',
+              surgicalPlan && 'хирургия',
+              liquidityMap && 'магниты',
+              dna && 'DNA',
+              hasLTF && 'LTF',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          >
+            <div className="space-y-3">
+              {mmIntent && <MmIntentPanel intent={mmIntent} />}
+              {surgicalPlan && <SurgicalEntryPanel plan={surgicalPlan} />}
+              {watchedForCoin > 0 && (
+                <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
+                  <div className="font-mono text-[10px] font-bold uppercase text-yellow-300/80">
+                    Слежение
+                  </div>
+                  <p className="font-mono text-xs text-yellow-200/90">
+                    Активных watch по монете: {watchedForCoin}
+                  </p>
+                </div>
+              )}
+              {signal.sessionFlipReason && (
+                <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
+                  <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-wider text-yellow-300/80">
+                    Session Flip
+                  </div>
+                  <p className="font-mono text-xs text-yellow-200/90">
+                    {signal.sessionFlipReason}
+                  </p>
+                </div>
+              )}
+              {liquidityMap && <LiquidityMagnetPanel map={liquidityMap} />}
+              {btcDivergence && (
+                <BtcDivergencePanel divergence={btcDivergence} />
+              )}
+              {dna && <SessionDNAPanel dna={dna} />}
+              {po3 && <PO3Panel analysis={po3} />}
+              {tape && tape.signal !== 'NEUTRAL' && (
+                <TapeMomentumIndicator momentum={tape} />
+              )}
+              {hasLTF && (
+                <LTFAlignmentPanel
+                  mss={signal.mss ?? null}
+                  raid={signal.raid ?? null}
+                  ote={signal.ote ?? null}
+                />
+              )}
+              {(signal?.absorption?.detected || signal?.ltfChoCH?.detected) && (
+                <AbsorptionPanel
+                  absorption={signal.absorption}
+                  ltfChoCH={signal.ltfChoCH}
+                />
+              )}
+              {aggressionState && (
+                <BuyerAggressionIndicator aggression={aggressionState} />
+              )}
             </div>
-          )}
-          {signal.sessionFlipReason && (
-            <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
-              <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-wider text-yellow-300/80">
-                Session Flip
-              </div>
-              <p className="font-mono text-xs text-yellow-200/90">
-                {signal.sessionFlipReason}
-              </p>
-            </div>
-          )}
-          {liquidityMap && <LiquidityMagnetPanel map={liquidityMap} />}
-          {btcDivergence && (
-            <BtcDivergencePanel divergence={btcDivergence} />
-          )}
-          {dna && <SessionDNAPanel dna={dna} />}
-          {po3 && <PO3Panel analysis={po3} />}
-          {tape && tape.signal !== 'NEUTRAL' && (
-            <TapeMomentumIndicator momentum={tape} />
-          )}
-          {hasLTF && (
-            <LTFAlignmentPanel
-              mss={signal.mss ?? null}
-              raid={signal.raid ?? null}
-              ote={signal.ote ?? null}
-            />
-          )}
-          {(signal?.absorption?.detected || signal?.ltfChoCH?.detected) && (
-            <AbsorptionPanel
-              absorption={signal.absorption}
-              ltfChoCH={signal.ltfChoCH}
-            />
-          )}
-          {aggressionState && (
-            <BuyerAggressionIndicator aggression={aggressionState} />
-          )}
+          </CollapsibleSection>
 
           <LiveChart
             symbol={signal.internalSymbol}
@@ -1010,12 +1047,17 @@ const TacticalDrawer = () => {
             signal={signal}
           />
 
-          {/* Киты ниже графика — появление не толкает свечи */}
-          {whaleState && <WhaleWatcherPanel state={whaleState} />}
+          <CollapsibleSection
+            title="Стакан / киты"
+            subtitle="уровни · стены · imbalance"
+          >
+            {whaleState && <WhaleWatcherPanel state={whaleState} />}
+            <OrderBookPanel symbol={signal.internalSymbol} />
+          </CollapsibleSection>
 
-          <OrderBookPanel symbol={signal.internalSymbol} />
-
-          <DataLog signal={signal} />
+          <CollapsibleSection title="Лог">
+            <DataLog signal={signal} />
+          </CollapsibleSection>
         </div>
       </div>
     </>

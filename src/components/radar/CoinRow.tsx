@@ -104,14 +104,14 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
       </div>
 
       <div
-        className={`max-w-[4.5rem] shrink-0 truncate rounded border px-1.5 py-0.5 text-center font-mono text-[10px] uppercase sm:max-w-none sm:px-2 sm:text-xs ${getSignalBadgeClass()}`}
+        className={`w-[4.5rem] shrink-0 truncate rounded border px-1.5 py-0.5 text-center font-mono text-[10px] uppercase ${getSignalBadgeClass()}`}
         title={getSignalText()}
       >
         {getSignalText()}
       </div>
 
       <div className="flex w-[5.75rem] shrink-0 items-center justify-end gap-0.5 overflow-hidden">
-        <WinRateBar value={signal.probabilityPct} />
+        <WinRateBar value={signal.probabilityPct} compact />
         <span
           className={`inline-flex w-4 justify-center font-mono text-[9px] font-bold ${
             signal.scoreCard

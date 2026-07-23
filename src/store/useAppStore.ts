@@ -230,16 +230,14 @@ export const useAppStore = create<AppState>()(
     },
 
     upsertSignal: (signal: CoinSignal) => {
+      // Keep list order stable — re-sorting on every meme/live upsert makes rows jump.
+      // Full scan still sorts once via updateSignals.
       set((state) => {
         const idx = state.signals.findIndex((s) => s.symbol === signal.symbol)
         const next =
           idx >= 0
             ? state.signals.map((s, i) => (i === idx ? signal : s))
-            : [signal, ...state.signals]
-        next.sort((a, b) => {
-          if (a.hasActiveSetup !== b.hasActiveSetup) return a.hasActiveSetup ? -1 : 1
-          return b.probabilityPct - a.probabilityPct
-        })
+            : [...state.signals, signal]
         return { signals: next, lastUpdate: Date.now() }
       })
     },

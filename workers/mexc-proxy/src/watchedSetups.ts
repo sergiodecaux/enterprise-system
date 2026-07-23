@@ -41,6 +41,8 @@ export interface WatchedSetupRecord {
   readyNotified: boolean
   invalidatedNotified: boolean
   updatedAt: number
+  /** Last 5-min monitoring digest sent to Telegram */
+  lastDigestAt?: number
 }
 
 export interface WatchAlert {
@@ -53,7 +55,19 @@ export interface WatchAlert {
 type Candle = [number, number, number, number, number, number]
 
 const WATCH_KEY = 'telegram:watched_setups'
+const DIGEST_MS = 5 * 60_000
 const memoryWatches: WatchedSetupRecord[] = []
+
+interface WatchEvalSnapshot {
+  status: SetupStatus
+  price: number
+  inZone: boolean
+  distToZonePct: number
+  distToLimitPct: number
+  distToInvPct: number
+  preconditions: { id: string; label: string; status: string }[]
+  narrative: string
+}
 
 interface Env {
   SUBSCRIBERS?: KVNamespace
@@ -188,46 +202,149 @@ export function evaluateWatchSetup(
   ohlcv1h: Candle[],
   ohlcv4h: Candle[]
 ): SetupStatus {
+  return evaluateWatchSnapshot(setup, price, ohlcv1m, ohlcv1h, ohlcv4h).status
+}
+
+export function evaluateWatchSnapshot(
+  setup: ConditionalSetupPayload,
+  price: number,
+  ohlcv1m: Candle[],
+  ohlcv1h: Candle[],
+  ohlcv4h: Candle[]
+): WatchEvalSnapshot {
+  const zoneMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
+  const inside = inZone(price, setup.entryZone)
+  const distToZonePct =
+    price === 0
+      ? 0
+      : inside
+        ? 0
+        : ((price - zoneMid) / price) * 100
+  const distToLimitPct =
+    price === 0 ? 0 : ((price - setup.limitEntry) / price) * 100
+  const distToInvPct =
+    price === 0 ? 0 : ((price - setup.invalidation) / price) * 100
+
   if (htfBreached(ohlcv4h, setup.side) || htfBreached(ohlcv1h, setup.side)) {
-    return 'INVALIDATED'
+    return {
+      status: 'INVALIDATED',
+      price,
+      inZone: inside,
+      distToZonePct,
+      distToLimitPct,
+      distToInvPct,
+      preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
+      narrative: 'HTF слом — сетап снят',
+    }
   }
   if (
     (setup.side === 'LONG' && price < setup.invalidation) ||
     (setup.side === 'SHORT' && price > setup.invalidation)
   ) {
-    return 'INVALIDATED'
+    return {
+      status: 'INVALIDATED',
+      price,
+      inZone: inside,
+      distToZonePct,
+      distToLimitPct,
+      distToInvPct,
+      preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
+      narrative: 'Цена за invalidation',
+    }
   }
 
   const pre = setup.preconditions.map((p) => ({ ...p }))
   for (const p of pre) {
     if (p.id === 'touch' || p.id === 'zone' || p.id === 'limit' || p.id === 'entry') {
-      p.status = inZone(price, setup.entryZone) ? 'MET' : 'PENDING'
+      p.status = inside ? 'MET' : 'PENDING'
     }
     if (p.id === 'sweep' || p.id === 'stop_hunt') {
       p.status = wickSweep(ohlcv1m, setup.limitEntry, setup.side)
         ? 'MET'
         : p.status
     }
-    if (p.id === 'reject' || p.id === 'confirm' || p.id === 'flip') {
+    if (p.id === 'reject' || p.id === 'confirm' || p.id === 'flip' || p.id === 'book') {
       const swept = pre.find(
-        (x) => x.id === 'sweep' || x.id === 'stop_hunt' || x.id === 'touch'
+        (x) =>
+          x.id === 'sweep' ||
+          x.id === 'stop_hunt' ||
+          x.id === 'touch' ||
+          x.id === 'zone'
       )
-      if (swept?.status === 'MET' && inZone(price, setup.entryZone)) {
-        p.status = 'MET'
+      if (swept?.status === 'MET' && inside) {
+        if (p.id !== 'book') p.status = 'MET'
       }
     }
   }
 
-  if (pre.some((p) => p.status === 'FAILED')) return 'INVALIDATED'
-  if (pre.length > 0 && pre.every((p) => p.status === 'MET')) return 'READY'
-  if (
-    setup.kind.startsWith('FORECAST') &&
-    inZone(price, setup.entryZone)
-  ) {
-    return 'READY'
+  let status: SetupStatus = 'HYPOTHESIS'
+  if (pre.some((p) => p.status === 'FAILED')) status = 'INVALIDATED'
+  else if (pre.length > 0 && pre.every((p) => p.status === 'MET')) status = 'READY'
+  else if (setup.kind.startsWith('FORECAST') && inside) status = 'READY'
+  else if (pre.some((p) => p.status === 'MET')) status = 'ARMED'
+
+  const met = pre.filter((p) => p.status === 'MET').length
+  const pending = pre.filter((p) => p.status === 'PENDING').length
+  let narrative: string
+  if (status === 'READY') {
+    narrative = 'Все условия MET — можно входить по лимиту'
+  } else if (status === 'ARMED') {
+    narrative = inside
+      ? `В зоне · условий ${met}/${pre.length} · ждём подтверждение`
+      : `Частично готово (${met} MET, ${pending} PENDING)`
+  } else if (inside) {
+    narrative = 'Цена в зоне — ждём реакцию / reclaim'
+  } else if (Math.abs(distToZonePct) < 0.35) {
+    narrative = `Почти у зоны (${distToZonePct >= 0 ? '+' : ''}${distToZonePct.toFixed(2)}%)`
+  } else {
+    narrative =
+      distToZonePct > 0
+        ? `Выше зоны на ${distToZonePct.toFixed(2)}% — ждём подход`
+        : `Ниже зоны на ${Math.abs(distToZonePct).toFixed(2)}% — ждём подход`
   }
-  if (pre.some((p) => p.status === 'MET')) return 'ARMED'
-  return 'HYPOTHESIS'
+
+  return {
+    status,
+    price,
+    inZone: inside,
+    distToZonePct,
+    distToLimitPct,
+    distToInvPct,
+    preconditions: pre,
+    narrative,
+  }
+}
+
+function fmtPx(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  if (Math.abs(n) >= 1000) return n.toFixed(2)
+  if (Math.abs(n) >= 1) return n.toFixed(4)
+  return n.toFixed(6)
+}
+
+function formatDigestBlock(
+  w: WatchedSetupRecord,
+  snap: WatchEvalSnapshot
+): string {
+  const s = w.setup
+  const icon = s.side === 'LONG' ? '🟢' : '🔴'
+  const preLines = snap.preconditions
+    .slice(0, 4)
+    .map((p) => {
+      const mark =
+        p.status === 'MET' ? '✓' : p.status === 'FAILED' ? '✗' : '·'
+      return `  ${mark} ${p.label}`
+    })
+  return [
+    `${icon} ${s.side} ${w.symbol} · ${s.title}`,
+    `Статус: ${snap.status}`,
+    `Цена: ${fmtPx(snap.price)} · зона ${fmtPx(s.entryZone.bottom)}–${fmtPx(s.entryZone.top)}`,
+    `До зоны: ${snap.inZone ? 'ВНУТРИ' : `${snap.distToZonePct >= 0 ? '+' : ''}${snap.distToZonePct.toFixed(2)}%`}`,
+    `Лимит ${fmtPx(s.limitEntry)} (${snap.distToLimitPct >= 0 ? '+' : ''}${snap.distToLimitPct.toFixed(2)}%) · SL ${fmtPx(s.invalidation)} · TP ${fmtPx(s.target)}`,
+    `Win% ~${Math.round(s.probability)}%`,
+    snap.narrative,
+    ...preLines,
+  ].join('\n')
 }
 
 export async function listWatches(env: Env): Promise<WatchedSetupRecord[]> {
@@ -357,15 +474,16 @@ function formatInvalidated(w: WatchedSetupRecord, price: number): WatchAlert {
 }
 
 /**
- * Cron: evaluate all active watches, emit READY / INVALIDATED once each.
+ * Cron: evaluate all active watches, emit READY / INVALIDATED once each,
+ * plus a 5-min monitoring digest per chat while watches are live.
  */
 export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   const list = await listWatches(env)
   const now = Date.now()
   const alerts: WatchAlert[] = []
   const next: WatchedSetupRecord[] = []
+  const snapshots = new Map<string, WatchEvalSnapshot>()
 
-  // Group by symbol to reuse candles
   const active = list.filter((w) => w.expiresAt > now)
   const expired = list.filter((w) => w.expiresAt <= now)
 
@@ -393,11 +511,16 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     }
 
     for (const w of watches) {
-      const status = evaluateWatchSetup(w.setup, price, c1m, c1h, c4h)
+      const snap = evaluateWatchSnapshot(w.setup, price, c1m, c1h, c4h)
+      const status = snap.status
       const updated: WatchedSetupRecord = {
         ...w,
         lastStatus: status,
-        setup: { ...w.setup, status },
+        setup: {
+          ...w.setup,
+          status,
+          preconditions: snap.preconditions,
+        },
         updatedAt: Date.now(),
       }
 
@@ -410,16 +533,60 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
         updated.invalidatedNotified = true
       }
 
-      // Keep invalidated for history briefly, drop after notify
       if (status === 'INVALIDATED' && updated.invalidatedNotified) {
-        // drop from active list
         continue
       }
+
+      snapshots.set(updated.watchId, snap)
       next.push(updated)
     }
   }
 
-  // Drop expired silently
+  // One digest per chat every 5 minutes (first report 5 min after watch create)
+  const byChat = new Map<number, WatchedSetupRecord[]>()
+  for (const w of next) {
+    const arr = byChat.get(w.chatId) ?? []
+    arr.push(w)
+    byChat.set(w.chatId, arr)
+  }
+
+  for (const [chatId, watches] of byChat) {
+    const due = watches.some((w) => {
+      const anchor = w.lastDigestAt ?? w.createdAt
+      return now - anchor >= DIGEST_MS
+    })
+    if (!due) continue
+
+    const lines: string[] = []
+    for (const w of watches) {
+      const snap = snapshots.get(w.watchId)
+      if (!snap) continue
+      lines.push(formatDigestBlock(w, snap))
+    }
+    if (lines.length === 0) continue
+
+    for (let i = 0; i < next.length; i++) {
+      if (next[i].chatId === chatId) {
+        next[i] = { ...next[i], lastDigestAt: now }
+      }
+    }
+
+    alerts.push({
+      chatId,
+      title: `📡 Мониторинг сетапов · ${lines.length}`,
+      text: [
+        `Отчёт каждые 5 мин · активных: ${lines.length}`,
+        '',
+        ...lines.flatMap((block, i) =>
+          i < lines.length - 1 ? [block, '———'] : [block]
+        ),
+        '',
+        'READY — вход по лимиту · INVALIDATED — стоп слежения.',
+      ].join('\n'),
+      dedupeKey: `watch_digest:${chatId}:${Math.floor(now / DIGEST_MS)}`,
+    })
+  }
+
   void expired
   await saveWatches(env, next)
   return alerts
