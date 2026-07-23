@@ -6,6 +6,8 @@ import {
   Lightbulb,
   Trash2,
   Clock,
+  Bot,
+  RefreshCw,
 } from 'lucide-react'
 import {
   clearJournal,
@@ -17,6 +19,7 @@ import {
   useJournalAnalytics,
   useJournalEntries,
 } from '../../hooks/useSignalJournalResolver'
+import { useBotJournalSync } from '../../hooks/useBotJournalSync'
 import { useAppStore } from '../../store/useAppStore'
 
 const severityStyle: Record<
@@ -58,13 +61,18 @@ const JournalStatsPanel = () => {
   const analytics = useJournalAnalytics()
   const entries = useJournalEntries()
   const bump = useAppStore((s) => s.bumpJournalVersion)
-  const [tab, setTab] = useState<'overview' | 'setups' | 'log'>('overview')
+  const { payload: bot, loading: botLoading, refresh: refreshBot } =
+    useBotJournalSync()
+  const [tab, setTab] = useState<'bot' | 'overview' | 'setups' | 'log'>('bot')
 
   const handleClear = () => {
     if (!window.confirm('Очистить журнал сигналов? Статистика обнулится.')) return
     clearJournal()
     bump()
   }
+
+  const botA = bot?.analytics
+  const gates = bot?.gates
 
   return (
     <div className="space-y-4">
@@ -77,22 +85,87 @@ const JournalStatsPanel = () => {
             </h2>
           </div>
           <p className="font-mono text-[10px] text-holo/40">
-            Авто-учёт отработок TP/SL · MFE/MAE · инсайты для тюнинга
+            Бот 24/7 + Mini App · TP/SL · адаптивные фильтры сканера
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleClear}
-          className="rounded-lg border border-hull-border p-2 text-holo/40 hover:border-alert/40 hover:text-alert"
-          title="Очистить журнал"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={() => void refreshBot()}
+            className="rounded-lg border border-hull-border p-2 text-holo/40 hover:border-matrix/40 hover:text-matrix"
+            title="Обновить статистику бота"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${botLoading ? 'animate-spin' : ''}`}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={handleClear}
+            className="rounded-lg border border-hull-border p-2 text-holo/40 hover:border-alert/40 hover:text-alert"
+            title="Очистить локальный журнал Mini App"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
+
+      {botA && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <Bot className="h-4 w-4 text-sky-300" />
+            <span className="font-mono text-xs font-bold uppercase text-sky-300">
+              Статистика бота (cron)
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <StatTile
+              label="Bot WR"
+              value={`${botA.winRate.toFixed(0)}%`}
+              sub={`${botA.wins}W / ${botA.losses}L`}
+              accent="text-sky-300"
+            />
+            <StatTile
+              label="Avg R"
+              value={`${botA.avgR >= 0 ? '+' : ''}${botA.avgR.toFixed(2)}R`}
+              sub={`PnL ${botA.avgPnl.toFixed(1)}%`}
+              accent={botA.avgR >= 0 ? 'text-matrix' : 'text-alert'}
+            />
+            <StatTile
+              label="Sample"
+              value={`${botA.resolved}`}
+              sub={`${botA.open} open · ${botA.timeouts} TO`}
+              accent="text-holo/70"
+            />
+            <StatTile
+              label="Gates"
+              value={gates ? String(gates.minMemeScore) : '—'}
+              sub={
+                gates
+                  ? `meme≥${gates.minMemeScore} · block ${gates.blockedSetups.length}`
+                  : 'waiting'
+              }
+              accent="text-yellow-300"
+            />
+          </div>
+          {gates && (gates.blockedSetups.length > 0 || gates.boostedSetups.length > 0) && (
+            <div className="mt-2 font-mono text-[10px] text-holo/45">
+              {gates.blockedSetups.length > 0 && (
+                <div>Блок: {gates.blockedSetups.join(', ')}</div>
+              )}
+              {gates.boostedSetups.length > 0 && (
+                <div className="text-matrix/70">
+                  Boost: {gates.boostedSetups.join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <StatTile
-          label="Win Rate"
+          label="App WR"
           value={`${analytics.winRate.toFixed(0)}%`}
           sub={`${analytics.wins}W / ${analytics.losses}L`}
           accent="text-matrix"
@@ -112,7 +185,7 @@ const JournalStatsPanel = () => {
           accent="text-holo"
         />
         <StatTile
-          label="Sample"
+          label="App Sample"
           value={`${analytics.resolved}`}
           sub={`${analytics.open} open · ${analytics.timeouts} TO`}
           accent="text-holo/70"
@@ -122,7 +195,8 @@ const JournalStatsPanel = () => {
       <div className="flex gap-2">
         {(
           [
-            { id: 'overview' as const, label: 'Инсайты' },
+            { id: 'bot' as const, label: 'Бот' },
+            { id: 'overview' as const, label: 'App' },
             { id: 'setups' as const, label: 'Сетапы' },
             { id: 'log' as const, label: 'Лог' },
           ] as const
@@ -141,6 +215,95 @@ const JournalStatsPanel = () => {
           </button>
         ))}
       </div>
+
+      {tab === 'bot' && (
+        <div className="space-y-3">
+          {!botA && (
+            <p className="rounded-lg border border-hull-border bg-hull/50 p-4 text-center font-mono text-xs text-holo/40">
+              Журнал бота ещё пуст или worker недоступен. После алертов в Telegram
+              сюда подтянутся WIN/LOSS и адаптивные пороги.
+            </p>
+          )}
+          {botA?.insights.map((ins) => (
+            <div
+              key={ins.id}
+              className={`rounded-lg border p-3 ${severityStyle[ins.severity]}`}
+            >
+              <div className="mb-1 flex items-center gap-2">
+                {ins.severity === 'POSITIVE' ? (
+                  <TrendingUp className="h-3.5 w-3.5" />
+                ) : (
+                  <Lightbulb className="h-3.5 w-3.5" />
+                )}
+                <span className="font-mono text-xs font-bold">{ins.title}</span>
+              </div>
+              <p className="font-mono text-[11px] leading-relaxed opacity-80">
+                {ins.detail}
+              </p>
+            </div>
+          ))}
+          {botA && botA.bySetup.length > 0 && (
+            <div className="space-y-2">
+              <div className="font-mono text-[10px] uppercase text-holo/40">
+                Сетапы бота
+              </div>
+              {botA.bySetup.map((s) => (
+                <div
+                  key={s.setup}
+                  className="rounded-lg border border-hull-border bg-hull/40 px-3 py-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-xs font-bold text-holo">
+                      {s.setup}
+                    </span>
+                    <span
+                      className={`font-mono text-xs font-bold ${
+                        s.winRate >= 55 ? 'text-matrix' : 'text-alert'
+                      }`}
+                    >
+                      {s.winRate.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10px] text-holo/40">
+                    {s.wins}W/{s.losses}L · {s.expectancyR.toFixed(2)}R · MAE{' '}
+                    {s.avgMae.toFixed(1)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {bot?.entries && bot.entries.length > 0 && (
+            <div className="max-h-56 space-y-1 overflow-y-auto">
+              {bot.entries.slice(0, 40).map((e) => (
+                <div
+                  key={e.id}
+                  className="flex items-center justify-between rounded border border-hull-border/40 bg-black/20 px-2 py-1.5 font-mono text-[10px]"
+                >
+                  <span className="text-holo/70">
+                    {e.displayName} {e.side} · {e.setup}
+                  </span>
+                  <span
+                    className={
+                      e.status === 'WIN'
+                        ? 'text-matrix'
+                        : e.status === 'LOSS'
+                          ? 'text-alert'
+                          : e.status === 'TIMEOUT'
+                            ? 'text-yellow-400'
+                            : 'text-holo/40'
+                    }
+                  >
+                    {e.status}
+                    {e.pnlPercent != null
+                      ? ` ${e.pnlPercent >= 0 ? '+' : ''}${e.pnlPercent.toFixed(1)}%`
+                      : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === 'overview' && (
         <div className="space-y-3">

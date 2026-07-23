@@ -493,8 +493,15 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
 
 /**
  * Full 24/7 scan cycle. Returns alerts to broadcast.
+ * @param gates optional adaptive filters from bot journal outcomes
  */
-export async function runMarketScan(): Promise<ScanAlert[]> {
+export async function runMarketScan(gates?: {
+  minMemeScore: number
+  minSniperScore: number
+  blockedSetups: string[]
+  boostedSetups: string[]
+  requireHighBrokenForSqueeze: boolean
+} | null): Promise<ScanAlert[]> {
   const [tradable, tickers] = await Promise.all([
     fetchTradableSymbols(),
     fetchTickers(),
@@ -577,6 +584,15 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
       type: 'SNIPER' | 'MEME',
       dedupeKey: string
     ) => {
+      // Adaptive gates from bot journal outcomes
+      if (gates) {
+        if (gates.blockedSetups.includes(setup) && score < 95) return
+        const min =
+          type === 'MEME' ? gates.minMemeScore : gates.minSniperScore
+        const boost = gates.boostedSetups.includes(setup) ? -4 : 0
+        if (score < min + boost) return
+      }
+
       // Final live check — detail + book + funding endpoint
       if (!(await isSymbolTradableNow(t.symbol, minVol))) return
 
@@ -625,7 +641,11 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
 
     // ── SHORT SQUEEZE → LONG ───────────────────────────────────────
     const deeplyNeg = fundingPct <= -0.05 || fundingPct * 3 <= -0.15
-    if (deeplyNeg && highBroken && (spike.detected || chg >= 8)) {
+    if (
+      deeplyNeg &&
+      highBroken &&
+      (spike.detected || chg >= 8)
+    ) {
       await push(
         'LONG',
         'SQUEEZE',
@@ -636,6 +656,24 @@ export async function runMarketScan(): Promise<ScanAlert[]> {
         [],
         'MEME',
         `cron:squeeze:${t.symbol}`
+      )
+      return
+    }
+    // Soft squeeze only if gates do not require high break
+    if (
+      deeplyNeg &&
+      !highBroken &&
+      (spike.detected || chg >= 10) &&
+      !gates?.requireHighBrokenForSqueeze
+    ) {
+      await push(
+        'LONG',
+        'SQUEEZE',
+        82,
+        `Short squeeze (мягкий): funding ${fundingPct.toFixed(3)}% без пробоя хая.`,
+        [],
+        'MEME',
+        `cron:squeeze_soft:${t.symbol}`
       )
       return
     }

@@ -26,6 +26,12 @@ import {
   monitorWatchedSetups,
   type ConditionalSetupPayload,
 } from './watchedSetups'
+import {
+  getAdaptiveGates,
+  getBotJournalPayload,
+  recordBotAlert,
+  resolveBotJournal,
+} from './botJournal'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 
@@ -288,6 +294,11 @@ async function handleTelegram(
     return json({ ok: true, watches })
   }
 
+  if (path === '/telegram/journal' && request.method === 'GET') {
+    const payload = await getBotJournalPayload(env)
+    return json({ ok: true, ...payload })
+  }
+
   void ctx
   return json({ error: 'Unknown telegram route' }, 404)
 }
@@ -365,16 +376,21 @@ async function runCronScan(env: Env): Promise<{
   skipped: number
   heartbeat: number
   paperComments: number
+  watchAlerts?: number
+  journalLogged?: number
+  journalResolved?: number
 }> {
   if (!env.TELEGRAM_BOT_TOKEN) {
     return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
   }
 
   const heartbeat = await maybeHeartbeat(env)
-  const alerts = await runMarketScan()
+  const gates = await getAdaptiveGates(env)
+  const alerts = await runMarketScan(gates)
   let sent = 0
   let skipped = 0
   let paperComments = 0
+  let journalLogged = 0
 
   for (const a of alerts) {
     const r = await broadcastAlert(env, {
@@ -389,7 +405,18 @@ async function runCronScan(env: Env): Promise<{
     }
     sent += r.sent
 
-    // Open paper companion only when signal actually went out
+    // Journal every non-deduped bot signal (for Lab + adaptive gates)
+    if (a.tradePlan) {
+      const logged = await recordBotAlert(env, {
+        alertType: a.type,
+        score: a.score,
+        dedupeKey: a.dedupeKey,
+        plan: a.tradePlan,
+      })
+      if (logged) journalLogged++
+    }
+
+    // Open paper companion only when signal actually went out to someone
     if (r.sent > 0 && a.tradePlan) {
       const paper = await createPaperTradeFromPlan(env, {
         ...a.tradePlan,
@@ -419,6 +446,14 @@ async function runCronScan(env: Env): Promise<{
     paperComments += cr.sent
   }
 
+  // Resolve bot journal outcomes + refresh adaptive gates
+  let journalResolved = 0
+  try {
+    journalResolved = await resolveBotJournal(env)
+  } catch {
+    /* best-effort */
+  }
+
   // Watched conditional setups → READY / INVALIDATED
   let watchAlerts = 0
   try {
@@ -444,6 +479,8 @@ async function runCronScan(env: Env): Promise<{
     heartbeat,
     paperComments,
     watchAlerts,
+    journalLogged,
+    journalResolved,
   }
 }
 
