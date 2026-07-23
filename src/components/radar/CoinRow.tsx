@@ -79,7 +79,7 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
 
   return (
     <div
-      className="flex cursor-pointer items-center gap-2 border-b border-hull-border/50 px-4 py-3 transition-colors duration-200 hover:bg-hull-light/50 sm:gap-3"
+      className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 border-b border-hull-border/50 px-4 py-3 transition-colors duration-200 hover:bg-hull-light/50 sm:gap-3"
       onClick={onClick}
     >
       <div className="w-6 shrink-0 text-right font-mono text-xs text-holo/30">
@@ -110,68 +110,80 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
         {getSignalText()}
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex w-[5.75rem] shrink-0 items-center justify-end gap-0.5 overflow-hidden">
         <WinRateBar value={signal.probabilityPct} />
-        {signal.scoreCard && (
-          <span
-            className={`inline-flex items-center rounded px-1 font-mono text-[9px] font-bold ${
-              signal.scoreCard.ready
+        <span
+          className={`inline-flex w-4 justify-center font-mono text-[9px] font-bold ${
+            signal.scoreCard
+              ? signal.scoreCard.ready
                 ? 'text-matrix'
                 : signal.scoreCard.grade === 'B'
                   ? 'text-yellow-400'
                   : 'text-holo/40'
-            }`}
-            title={`ScoreCard ${signal.scoreCard.totalScore}/${signal.scoreCard.maxScore}`}
-          >
-            {signal.scoreCard.grade}
-          </span>
-        )}
-        {liqMap && liqMap.liquidityBoost > 0.5 && (
-          <span
-            className="inline-flex items-center rounded px-1 font-mono text-[9px] font-bold text-yellow-400"
-            title={`Магнит ликвидности: +${liqMap.liquidityBoost.toFixed(1)}`}
-          >
-            🧲
-          </span>
-        )}
-        {signal.btcDivergence?.type === 'BULL_DIV' && (
-          <span
-            className="inline-flex items-center rounded px-1 font-mono text-[9px] font-bold text-matrix"
-            title={signal.btcDivergence.label}
-          >
-            ⚡
-          </span>
-        )}
-        {signal.btcDivergence?.type === 'BEAR_DIV' && (
-          <span
-            className="inline-flex items-center rounded px-1 font-mono text-[9px] font-bold text-alert"
-            title={signal.btcDivergence.label}
-          >
-            🔻
-          </span>
-        )}
-        {hasWhaleAlert && (
-          <span
-            className="inline-flex items-center rounded px-1 font-mono text-[9px] font-bold text-cyan-400"
-            title={`Кит: ${
-              whaleState?.strongestSupport
-                ? `Поддержка $${(whaleState.strongestSupport.volumeUsd / 1e6).toFixed(1)}M`
-                : whaleState?.strongestResistance
-                  ? `Сопротивление $${(whaleState.strongestResistance.volumeUsd / 1e6).toFixed(1)}M`
-                  : 'Активен'
-            }`}
-          >
-            🐋
-          </span>
-        )}
-        {personalityIcon && dna && (
-          <span
-            className="inline-flex items-center rounded px-1 font-mono text-[9px]"
-            title={`ДНК сессии: ${dna.personalityLabel} — ${dna.keyInsight}`}
-          >
-            {personalityIcon}
-          </span>
-        )}
+              : 'invisible'
+          }`}
+          title={
+            signal.scoreCard
+              ? `ScoreCard ${signal.scoreCard.totalScore}/${signal.scoreCard.maxScore}`
+              : undefined
+          }
+        >
+          {signal.scoreCard?.grade ?? '·'}
+        </span>
+        <span
+          className={`inline-flex w-3.5 justify-center text-[9px] ${
+            liqMap && liqMap.liquidityBoost > 0.5 ? 'text-yellow-400' : 'invisible'
+          }`}
+          title={
+            liqMap && liqMap.liquidityBoost > 0.5
+              ? `Магнит ликвидности: +${liqMap.liquidityBoost.toFixed(1)}`
+              : undefined
+          }
+        >
+          🧲
+        </span>
+        <span
+          className={`inline-flex w-3.5 justify-center text-[9px] ${
+            signal.btcDivergence?.type === 'BULL_DIV'
+              ? 'text-matrix'
+              : signal.btcDivergence?.type === 'BEAR_DIV'
+                ? 'text-alert'
+                : 'invisible'
+          }`}
+          title={signal.btcDivergence?.label}
+        >
+          {signal.btcDivergence?.type === 'BEAR_DIV' ? '🔻' : '⚡'}
+        </span>
+        <span
+          className={`inline-flex w-3.5 justify-center text-[9px] ${
+            hasWhaleAlert ? 'text-cyan-400' : 'invisible'
+          }`}
+          title={
+            hasWhaleAlert
+              ? `Кит: ${
+                  whaleState?.strongestSupport
+                    ? `Поддержка $${(whaleState.strongestSupport.volumeUsd / 1e6).toFixed(1)}M`
+                    : whaleState?.strongestResistance
+                      ? `Сопротивление $${(whaleState.strongestResistance.volumeUsd / 1e6).toFixed(1)}M`
+                      : 'Активен'
+                }`
+              : undefined
+          }
+        >
+          🐋
+        </span>
+        <span
+          className={`inline-flex w-3.5 justify-center text-[9px] ${
+            personalityIcon && dna ? '' : 'invisible'
+          }`}
+          title={
+            dna
+              ? `ДНК сессии: ${dna.personalityLabel} — ${dna.keyInsight}`
+              : undefined
+          }
+        >
+          {personalityIcon ?? '·'}
+        </span>
       </div>
 
       <div className="flex-shrink-0">

@@ -16,7 +16,7 @@ import { buildGlobalFibonacci } from './globalFibonacci'
 import type { ConditionalSetup, SetupPrecondition } from '../setups/types'
 import { buildConditionalSetups } from '../setups/buildConditionalSetups'
 import type { PriceForecast } from '../prediction/types'
-import { buildZoneTradeVariants } from './zoneScenarios'
+import { buildZoneTradeVariants, scoreZoneWinPct } from './zoneScenarios'
 
 export interface FoundTradeZone {
   id: string
@@ -300,7 +300,8 @@ export function findTradeZones(input: {
     price,
     input.bookImbalance ?? null,
     input.signal?.symbol ?? input.flatSymbol,
-    input.signal?.internalSymbol ?? input.symbol
+    input.signal?.internalSymbol ?? input.symbol,
+    input.signal?.btcDivergence?.relativeStrength ?? null
   )
 
   let extra: ConditionalSetup[] = []
@@ -388,7 +389,6 @@ export function refreshZoneSetups(
       return p
     })
 
-    // Ensure book precondition exists for zone setups
     if (!pre.some((p) => p.id === 'book')) {
       pre.push({
         id: 'book',
@@ -397,15 +397,54 @@ export function refreshZoneSetups(
       })
     }
 
-    const status = statusFromPre(pre)
-    const probability = Math.min(
-      82,
-      s.probability +
-        (inZone ? 6 : 0) +
-        (bookOk === 'MET' ? 8 : 0) +
-        (confirm === 'MET' ? 8 : 0)
-    )
+    const mid = (s.entryZone.top + s.entryZone.bottom) / 2
+    const kind = s.kind === 'STOP_THEN_REVERSE' ? 'break' : 'bounce'
+    const synthetic: FoundTradeZone = {
+      id: s.id,
+      source:
+        s.kind === 'BOUNCE_SSL'
+          ? 'SSL'
+          : s.kind === 'BOUNCE_BSL'
+            ? 'BSL'
+            : s.title.includes('Fib') || s.title.includes('OTE')
+              ? 'FIB'
+              : 'SSL',
+      side: s.side,
+      top: s.entryZone.top,
+      bottom: s.entryZone.bottom,
+      mid,
+      label: s.title,
+      strength: Math.max(4, Math.min(10, Math.round(s.probability / 10))),
+      distancePct: mid > 0 ? ((mid - price) / price) * 100 : 0,
+      target: s.target,
+      invalidation: s.invalidation,
+      limitEntry: s.limitEntry,
+      chartZone: {
+        id: s.id,
+        type: 'LIQ',
+        side: s.side === 'LONG' ? 'BULLISH' : 'BEARISH',
+        top: s.entryZone.top,
+        bottom: s.entryZone.bottom,
+        startTime: 0 as never,
+        strength: 6,
+      },
+    }
 
-    return { ...s, preconditions: pre, status, probability }
+    let probability = scoreZoneWinPct({
+      kind,
+      side: s.side,
+      zone: synthetic,
+      bookImbalance,
+      btcRs: signal?.btcDivergence?.relativeStrength ?? null,
+    })
+    if (inZone) probability = Math.min(84, probability + 4)
+    if (confirm === 'MET') probability = Math.min(86, probability + 5)
+
+    return {
+      ...s,
+      preconditions: pre,
+      status: statusFromPre(pre),
+      probability,
+    }
   })
 }

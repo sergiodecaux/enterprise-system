@@ -634,12 +634,12 @@ const TacticalDrawer = () => {
           transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
-        {/* Киты: плавающий оверлей — НЕ двигает скролл меню монеты */}
+        {/* Киты: toast поверх drawer, без влияния на скролл/высоту контента */}
         {whaleState &&
           whaleState.alerts.filter((a) => a.isActive && !a.isExpired).length >
             0 && (
-            <div className="pointer-events-none absolute inset-x-3 top-11 z-[60]">
-              <div className="pointer-events-auto max-h-32 space-y-1.5 overflow-y-auto overscroll-contain rounded-xl bg-space/95 p-1.5 shadow-lg shadow-black/40 backdrop-blur-md">
+            <div className="pointer-events-none absolute inset-x-3 bottom-3 z-[60] sm:bottom-4">
+              <div className="pointer-events-auto ml-auto max-h-28 max-w-sm space-y-1 overflow-y-auto overscroll-contain rounded-xl border border-cyan-500/20 bg-space/95 p-1.5 shadow-lg shadow-black/50 backdrop-blur-md">
                 {whaleState.alerts
                   .filter((a) => a.isActive && !a.isExpired)
                   .slice(0, 2)
@@ -982,7 +982,6 @@ const TacticalDrawer = () => {
           {btcDivergence && (
             <BtcDivergencePanel divergence={btcDivergence} />
           )}
-          {whaleState && <WhaleWatcherPanel state={whaleState} />}
           {dna && <SessionDNAPanel dna={dna} />}
           {po3 && <PO3Panel analysis={po3} />}
           {tape && tape.signal !== 'NEUTRAL' && (
@@ -1010,6 +1009,9 @@ const TacticalDrawer = () => {
             flatSymbol={signal.symbol}
             signal={signal}
           />
+
+          {/* Киты ниже графика — появление не толкает свечи */}
+          {whaleState && <WhaleWatcherPanel state={whaleState} />}
 
           <OrderBookPanel symbol={signal.internalSymbol} />
 
