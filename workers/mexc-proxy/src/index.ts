@@ -21,9 +21,12 @@ import {
 } from './paperTrades'
 import {
   createWatch,
+  createWatchesBatch,
   deleteWatch,
   listWatchesForChat,
   monitorWatchedSetups,
+  markChatDigestSent,
+  countActiveWatches,
   type ConditionalSetupPayload,
 } from './watchedSetups'
 import {
@@ -153,13 +156,16 @@ async function handleTelegram(
   // Health works even without token
   if (path === '/telegram/health') {
     const subs = await listSubscribers(env)
+    const watches = await countActiveWatches(env)
     return json({
       ok: true,
       bot: 'Enterprisesystem_bot',
       subscribers: subs.length,
+      activeWatches: watches,
       hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
       hasSecret: Boolean(env.ALERT_SECRET),
       cron: '*/2 * * * *',
+      digestEveryMin: 5,
       mode: '24/7',
     })
   }
@@ -254,10 +260,60 @@ async function handleTelegram(
     if (!body?.chatId || !body?.setup || !body?.symbol) {
       return json({ error: 'chatId, symbol, setup required' }, 400)
     }
+    // Ensure subscriber exists so Pages builds without VITE_ALERT_SECRET still work
+    await upsertSubscriber(env, {
+      chatId: body.chatId,
+      subscribedAt: Date.now(),
+      sniper: true,
+      meme: true,
+    })
     const auth = await assertAlertAuth(env, request, body.chatId)
     if (!auth.ok) return json({ error: auth.error }, 401)
     const watch = await createWatch(env, body)
     return json({ ok: true, watch })
+  }
+
+  if (path === '/telegram/watch/batch' && request.method === 'POST') {
+    const body = (await request.json()) as {
+      chatId: number
+      symbol: string
+      internalSymbol: string
+      setups: ConditionalSetupPayload[]
+      ttlHours?: number
+    }
+    if (!body?.chatId || !body?.symbol || !Array.isArray(body.setups)) {
+      return json({ error: 'chatId, symbol, setups required' }, 400)
+    }
+    await upsertSubscriber(env, {
+      chatId: body.chatId,
+      subscribedAt: Date.now(),
+      sniper: true,
+      meme: true,
+    })
+    const auth = await assertAlertAuth(env, request, body.chatId)
+    if (!auth.ok) return json({ error: auth.error }, 401)
+    const watches = await createWatchesBatch(env, {
+      chatId: body.chatId,
+      symbol: body.symbol,
+      internalSymbol: body.internalSymbol || body.symbol,
+      setups: body.setups,
+      ttlHours: body.ttlHours,
+    })
+    // Confirm monitoring is on the server (not only localStorage)
+    if (env.TELEGRAM_BOT_TOKEN && watches.length > 0) {
+      await tgSend(
+        env,
+        body.chatId,
+        [
+          `<b>📡 Мониторинг включён</b>`,
+          `Сетапов на сервере: <b>${watches.length}</b>`,
+          `Символ: ${body.symbol}`,
+          `Отчёт в Telegram каждые <b>5 минут</b> (первый ≈ через 5 мин).`,
+          `Cron worker: каждые 2 мин проверяет зоны / READY / INVALIDATED.`,
+        ].join('\n')
+      )
+    }
+    return json({ ok: true, watches, count: watches.length })
   }
 
   if (path === '/telegram/watch/delete' && request.method === 'POST') {
@@ -331,13 +387,11 @@ async function broadcastAlert(
       if (exists) {
         return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
       }
-      await env.SUBSCRIBERS.put(dedupKey, '1', { expirationTtl: 3600 })
     } else {
       const prev = memoryDedup.get(payload.dedupeKey)
       if (prev && Date.now() - prev < 3600_000) {
         return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
       }
-      memoryDedup.set(payload.dedupeKey, Date.now())
     }
   }
 
@@ -347,6 +401,15 @@ async function broadcastAlert(
 
   if (payload.chatId) {
     const ok = await tgSend(env, payload.chatId, message)
+    if (ok && payload.dedupeKey) {
+      if (env.SUBSCRIBERS) {
+        await env.SUBSCRIBERS.put(DEDUP_PREFIX + payload.dedupeKey, '1', {
+          expirationTtl: 3600,
+        })
+      } else {
+        memoryDedup.set(payload.dedupeKey, Date.now())
+      }
+    }
     return { ok, sent: ok ? 1 : 0, failed: ok ? 0 : 1 }
   }
 
@@ -357,6 +420,16 @@ async function broadcastAlert(
     const ok = await tgSend(env, sub.chatId, message)
     if (ok) sent++
     else failed++
+  }
+
+  if (sent > 0 && payload.dedupeKey) {
+    if (env.SUBSCRIBERS) {
+      await env.SUBSCRIBERS.put(DEDUP_PREFIX + payload.dedupeKey, '1', {
+        expirationTtl: 3600,
+      })
+    } else {
+      memoryDedup.set(payload.dedupeKey, Date.now())
+    }
   }
 
   return { ok: true, sent, failed }
@@ -398,6 +471,27 @@ async function runCronScan(env: Env): Promise<{
 }> {
   if (!env.TELEGRAM_BOT_TOKEN) {
     return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
+  }
+
+  // Watches FIRST — must not be starved by heavy market scan CPU/time limits
+  let watchAlerts = 0
+  try {
+    const wa = await monitorWatchedSetups(env)
+    for (const a of wa) {
+      const r = await broadcastAlert(env, {
+        type: 'SETUP_WATCH',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+        chatId: a.chatId,
+      })
+      watchAlerts += r.sent
+      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
+        await markChatDigestSent(env, a.chatId)
+      }
+    }
+  } catch (err) {
+    console.error('[cron] watch monitor failed', err)
   }
 
   const heartbeat = await maybeHeartbeat(env)
@@ -468,24 +562,6 @@ async function runCronScan(env: Env): Promise<{
     journalResolved = await resolveBotJournal(env)
   } catch {
     /* best-effort */
-  }
-
-  // Watched conditional setups → READY / INVALIDATED
-  let watchAlerts = 0
-  try {
-    const wa = await monitorWatchedSetups(env)
-    for (const a of wa) {
-      const r = await broadcastAlert(env, {
-        type: 'SETUP_WATCH',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-        chatId: a.chatId,
-      })
-      watchAlerts += r.sent
-    }
-  } catch {
-    /* watch monitor best-effort */
   }
 
   return {

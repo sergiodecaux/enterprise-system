@@ -120,10 +120,20 @@ async function fetchKlines(
 }
 
 function toMexcSymbol(internalOrFlat: string): string {
-  // BTC/USDT:USDT → BTC_USDT ; BTC_USDT stays
-  if (internalOrFlat.includes('_')) return internalOrFlat
-  const base = internalOrFlat.split('/')[0]?.replace(':USDT', '') ?? internalOrFlat
-  return `${base}_USDT`
+  const s = (internalOrFlat || '').trim().toUpperCase()
+  if (!s) return 'UNKNOWN_USDT'
+  // BTC_USDT
+  if (s.includes('_') && s.endsWith('_USDT')) return s
+  // BTC/USDT:USDT or BTC/USDT
+  if (s.includes('/')) {
+    const base = s.split('/')[0]!.replace(/:USDT$/i, '')
+    return `${base}_USDT`
+  }
+  // Flat BTCUSDT → BTC_USDT
+  if (s.endsWith('USDT') && !s.endsWith('_USDT')) {
+    return `${s.slice(0, -4)}_USDT`
+  }
+  return `${s}_USDT`
 }
 
 function lastSwing(candles: Candle[], kind: 'high' | 'low'): number | null {
@@ -473,9 +483,25 @@ function formatInvalidated(w: WatchedSetupRecord, price: number): WatchAlert {
   }
 }
 
+export async function markChatDigestSent(
+  env: Env,
+  chatId: number,
+  at = Date.now()
+): Promise<void> {
+  const list = await listWatches(env)
+  let changed = false
+  const next = list.map((w) => {
+    if (w.chatId !== chatId || w.expiresAt <= at) return w
+    changed = true
+    return { ...w, lastDigestAt: at, updatedAt: at }
+  })
+  if (changed) await saveWatches(env, next)
+}
+
 /**
  * Cron: evaluate all active watches, emit READY / INVALIDATED once each,
  * plus a 5-min monitoring digest per chat while watches are live.
+ * Note: lastDigestAt is stamped by caller AFTER successful Telegram send.
  */
 export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   const list = await listWatches(env)
@@ -505,13 +531,24 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       c1m[c1m.length - 1]?.[4] ??
       c1h[c1h.length - 1]?.[4] ??
       0
-    if (!price) {
-      next.push(...watches)
-      continue
-    }
 
     for (const w of watches) {
-      const snap = evaluateWatchSnapshot(w.setup, price, c1m, c1h, c4h)
+      let snap: WatchEvalSnapshot
+      if (!price) {
+        snap = {
+          status: w.lastStatus || 'HYPOTHESIS',
+          price: w.setup.limitEntry,
+          inZone: false,
+          distToZonePct: 0,
+          distToLimitPct: 0,
+          distToInvPct: 0,
+          preconditions: w.setup.preconditions ?? [],
+          narrative: `Нет котировки по ${mexcSym} — повторю на следующем цикле`,
+        }
+      } else {
+        snap = evaluateWatchSnapshot(w.setup, price, c1m, c1h, c4h)
+      }
+
       const status = snap.status
       const updated: WatchedSetupRecord = {
         ...w,
@@ -524,11 +561,11 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
         updatedAt: Date.now(),
       }
 
-      if (status === 'READY' && !w.readyNotified) {
+      if (price && status === 'READY' && !w.readyNotified) {
         alerts.push(formatReady(updated, price))
         updated.readyNotified = true
       }
-      if (status === 'INVALIDATED' && !w.invalidatedNotified) {
+      if (price && status === 'INVALIDATED' && !w.invalidatedNotified) {
         alerts.push(formatInvalidated(updated, price))
         updated.invalidatedNotified = true
       }
@@ -558,24 +595,19 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     if (!due) continue
 
     const lines: string[] = []
-    for (const w of watches) {
+    for (const w of watches.slice(0, 8)) {
       const snap = snapshots.get(w.watchId)
       if (!snap) continue
       lines.push(formatDigestBlock(w, snap))
     }
     if (lines.length === 0) continue
 
-    for (let i = 0; i < next.length; i++) {
-      if (next[i].chatId === chatId) {
-        next[i] = { ...next[i], lastDigestAt: now }
-      }
-    }
-
+    // Do NOT stamp lastDigestAt here — only after Telegram send succeeds
     alerts.push({
       chatId,
       title: `📡 Мониторинг сетапов · ${lines.length}`,
       text: [
-        `Отчёт каждые 5 мин · активных: ${lines.length}`,
+        `Отчёт каждые 5 мин · активных: ${watches.length}`,
         '',
         ...lines.flatMap((block, i) =>
           i < lines.length - 1 ? [block, '———'] : [block]
@@ -590,4 +622,50 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   void expired
   await saveWatches(env, next)
   return alerts
+}
+
+export async function countActiveWatches(env: Env): Promise<number> {
+  const list = await listWatches(env)
+  const now = Date.now()
+  return list.filter((w) => w.expiresAt > now).length
+}
+
+/** Create many watches in one KV write (avoids lost updates). */
+export async function createWatchesBatch(
+  env: Env,
+  input: {
+    chatId: number
+    symbol: string
+    internalSymbol: string
+    setups: ConditionalSetupPayload[]
+    ttlHours?: number
+  }
+): Promise<WatchedSetupRecord[]> {
+  const ttl = (input.ttlHours ?? 48) * 3600_000
+  const now = Date.now()
+  const list = await listWatches(env)
+  const setupIds = new Set(input.setups.map((s) => s.id))
+  const filtered = list.filter(
+    (w) => !(w.chatId === input.chatId && setupIds.has(w.setup.id))
+  )
+  const created: WatchedSetupRecord[] = []
+  for (const setup of input.setups.slice(0, 8)) {
+    const watch: WatchedSetupRecord = {
+      watchId: `w_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      chatId: input.chatId,
+      symbol: input.symbol,
+      internalSymbol: input.internalSymbol,
+      setup,
+      createdAt: now,
+      expiresAt: now + ttl,
+      lastStatus: setup.status,
+      readyNotified: false,
+      invalidatedNotified: false,
+      updatedAt: now,
+    }
+    created.push(watch)
+    filtered.push(watch)
+  }
+  await saveWatches(env, filtered)
+  return created
 }

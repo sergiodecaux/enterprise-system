@@ -55,6 +55,7 @@ import {
 } from '../../engine/setups'
 import {
   createWatchedSetup,
+  createWatchedSetupsBatch,
   removeWatchedSetup,
   isTelegramAlertsConfigured,
   subscribeTelegramAlerts,
@@ -472,36 +473,56 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
-    for (const setup of autoWatch) {
-      if (chatId) {
-        try {
-          if (isTelegramAlertsConfigured()) {
-            const watch = await createWatchedSetup({
-              chatId,
-              setup,
-              symbol: flatSymbol,
-              internalSymbol: symbol,
-              ttlHours: 48,
-            })
-            if (watch) upsertWatchedSetup(watch)
-          } else {
-            upsertWatchedSetup({
-              watchId: `local_${setup.id}`,
-              chatId,
-              symbol: flatSymbol,
-              internalSymbol: symbol,
-              setup,
-              createdAt: Date.now(),
-              expiresAt: Date.now() + 48 * 3600_000,
-              lastStatus: setup.status,
-              readyNotified: false,
-              invalidatedNotified: false,
-              updatedAt: Date.now(),
-            })
-          }
-        } catch {
-          /* ignore watch errors */
+    let serverWatches = 0
+    if (chatId && isTelegramAlertsConfigured() && autoWatch.length > 0) {
+      try {
+        const watches = await createWatchedSetupsBatch({
+          chatId,
+          setups: autoWatch,
+          symbol: flatSymbol,
+          internalSymbol: symbol,
+          ttlHours: 48,
+        })
+        serverWatches = watches.length
+        for (const watch of watches) upsertWatchedSetup(watch)
+      } catch {
+        /* fall through to local */
+      }
+      if (serverWatches === 0) {
+        for (const setup of autoWatch) {
+          upsertWatchedSetup({
+            watchId: `local_${setup.id}`,
+            chatId,
+            symbol: flatSymbol,
+            internalSymbol: symbol,
+            setup,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 48 * 3600_000,
+            lastStatus: setup.status,
+            readyNotified: false,
+            invalidatedNotified: false,
+            updatedAt: Date.now(),
+          })
         }
+        showAlert(
+          'Зоны на экране, но серверный мониторинг не включился — проверь /start и снова «Зоны»'
+        )
+      }
+    } else if (chatId && autoWatch.length > 0) {
+      for (const setup of autoWatch) {
+        upsertWatchedSetup({
+          watchId: `local_${setup.id}`,
+          chatId,
+          symbol: flatSymbol,
+          internalSymbol: symbol,
+          setup,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 48 * 3600_000,
+          lastStatus: setup.status,
+          readyNotified: false,
+          invalidatedNotified: false,
+          updatedAt: Date.now(),
+        })
       }
     }
 
@@ -522,7 +543,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const shortZ = result.nearestShort
     if (chatId && isTelegramAlertsConfigured()) {
       showAlert(
-        `👁 Отправлено в бот · ${result.setups.length} вариантов · жди 💎`
+        serverWatches > 0
+          ? `👁 На сервере ${serverWatches} сетапов · отчёт каждые 5 мин · жди 💎`
+          : `Зоны: ${result.zones.length} · мониторинг бота не активен`
       )
     } else if (!chatId) {
       /* already alerted above */

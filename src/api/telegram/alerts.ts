@@ -174,6 +174,28 @@ export async function createWatchedSetup(input: {
   }
 }
 
+/** Пакетно создать watches на worker (1 KV-запись + подтверждение в Telegram) */
+export async function createWatchedSetupsBatch(input: {
+  chatId: number
+  setups: ConditionalSetup[]
+  symbol: string
+  internalSymbol: string
+  ttlHours?: number
+}): Promise<WatchedSetup[]> {
+  try {
+    const res = await postJson('/telegram/watch/batch', input, true)
+    if (!res.ok) return []
+    const data = (await res.json()) as {
+      ok: boolean
+      watches?: WatchedSetup[]
+      count?: number
+    }
+    return data.watches ?? []
+  } catch {
+    return []
+  }
+}
+
 export async function removeWatchedSetup(input: {
   chatId: number
   watchId: string
