@@ -19,6 +19,12 @@ const SniperCard = ({ signal }: SniperCardProps) => {
   const buyerAggression = useAppStore(
     (s) => s.buyerAggression[signal.internalSymbol] ?? null
   )
+  const orderBookMetrics = useAppStore(
+    (s) => s.orderBookMetrics[signal.internalSymbol] ?? null
+  )
+  const mmIntent = useAppStore(
+    (s) => signal.mmIntent ?? s.mmIntent[signal.internalSymbol] ?? null
+  )
 
   const [showConfidence, setShowConfidence] = useState(false)
 
@@ -27,7 +33,12 @@ const SniperCard = ({ signal }: SniperCardProps) => {
     buyerAggression: buyerAggression ?? signal.buyerAggression ?? null,
   }
 
-  const confidence = calculateConfidenceScore(enrichedSignal, null, null)
+  const confidence = calculateConfidenceScore(
+    enrichedSignal,
+    orderBookMetrics,
+    null,
+    { isMeme: !!signal.memePulse }
+  )
 
   const isLong = signal.direction === 'LONG'
 
@@ -49,8 +60,14 @@ const SniperCard = ({ signal }: SniperCardProps) => {
 
     if (!signal.direction || signal.sl == null || signal.tp1 == null) return
 
+    const entry =
+      signal.surgicalEntry?.status === 'READY' &&
+      signal.surgicalEntry.limitEntry != null
+        ? signal.surgicalEntry.limitEntry
+        : signal.entryPrice
+
     const positionSize = window.prompt(
-      `Открыть ${signal.direction} ${signal.displayName}?\nВведи размер позиции в USD (или оставь пустым):`,
+      `Открыть ${signal.direction} ${signal.displayName}?\nЛимит: ${entry}\nВведи размер позиции в USD (или оставь пустым):`,
       ''
     )
 
@@ -62,7 +79,7 @@ const SniperCard = ({ signal }: SniperCardProps) => {
       symbol: signal.symbol,
       internalSymbol: signal.internalSymbol,
       direction: signal.direction,
-      entryPrice: signal.entryPrice,
+      entryPrice: entry,
       entryTime: Date.now(),
       sl: signal.sl,
       tp1: signal.tp1,
@@ -153,6 +170,44 @@ const SniperCard = ({ signal }: SniperCardProps) => {
             <div className="font-mono text-sm text-holo/60">
               ${formatPrice(signal.price)}
             </div>
+            {(mmIntent?.preferredSide ||
+              signal.sessionFlipReason ||
+              signal.surgicalEntry) && (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                {mmIntent?.preferredSide && (
+                  <span
+                    className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${
+                      mmIntent.preferredSide === 'LONG'
+                        ? 'bg-matrix/15 text-matrix'
+                        : 'bg-alert/15 text-alert'
+                    }`}
+                  >
+                    {mmIntent.emoji} MM → {mmIntent.preferredSide}
+                  </span>
+                )}
+                {signal.sessionFlipReason && (
+                  <span className="rounded bg-yellow-400/10 px-1.5 py-0.5 font-mono text-[9px] text-yellow-300">
+                    Session flip
+                  </span>
+                )}
+                {signal.surgicalEntry &&
+                  signal.surgicalEntry.status !== 'IDLE' && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-mono text-[9px] font-bold ${
+                        signal.surgicalEntry.status === 'READY'
+                          ? 'bg-matrix/20 text-matrix'
+                          : signal.surgicalEntry.status.startsWith('WAITING')
+                            ? 'bg-yellow-400/15 text-yellow-300'
+                            : 'bg-alert/15 text-alert'
+                      }`}
+                    >
+                      {signal.surgicalEntry.status === 'READY'
+                        ? `🎯 ${signal.surgicalEntry.limitEntry?.toPrecision(5)}`
+                        : signal.surgicalEntry.status}
+                    </span>
+                  )}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col items-end gap-1">
@@ -176,9 +231,12 @@ const SniperCard = ({ signal }: SniperCardProps) => {
               {signal.ote?.isActive ? 'OTE зона' : 'Вход'}
             </div>
             <div className="font-mono text-sm font-bold text-holo">
-              {signal.ote?.priceInZone
-                ? `${formatPrice(signal.ote.zoneBottom)}–${formatPrice(signal.ote.zoneTop)}`
-                : formatPrice(signal.entryPrice)}
+              {signal.surgicalEntry?.status === 'READY' &&
+              signal.surgicalEntry.limitEntry != null
+                ? formatPrice(signal.surgicalEntry.limitEntry)
+                : signal.ote?.priceInZone
+                  ? `${formatPrice(signal.ote.zoneBottom)}–${formatPrice(signal.ote.zoneTop)}`
+                  : formatPrice(signal.entryPrice)}
             </div>
           </div>
 

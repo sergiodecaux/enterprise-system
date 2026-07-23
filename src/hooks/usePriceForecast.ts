@@ -38,6 +38,14 @@ function normalizeHorizon(
   return horizon
 }
 
+function calcMomentumPct(candles: OhlcvCandle[], lookback = 8): number {
+  if (candles.length < lookback + 1) return 0
+  const end = candles[candles.length - 1][4]
+  const start = candles[candles.length - 1 - lookback][4]
+  if (start <= 0) return 0
+  return ((end - start) / start) * 100
+}
+
 export function usePriceForecast(
   candles: OhlcvCandle[],
   alignment: MultiTFAlignment | null,
@@ -51,12 +59,25 @@ export function usePriceForecast(
   candles1d: OhlcvCandle[] = [],
   newsBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL',
   newsScore = 0,
-  fearGreed: number | null = null
+  fearGreed: number | null = null,
+  /** −1…+1 from order book */
+  bookImbalance: number | null = null,
+  /** coin − btc RS % */
+  btcRelativeStrengthPct: number | null = null,
+  /** force refresh tick (e.g. ticker updates) */
+  refreshKey = 0,
+  mmHunt: {
+    microTarget: number | null
+    macroTarget: number | null
+    microIsStopHunt: boolean
+    preferredSide: 'LONG' | 'SHORT' | null
+  } | null = null
 ): PriceForecast | null {
   return useMemo(() => {
     if (!alignment || currentPrice === 0) return null
 
     const mode = normalizeHorizon(horizon)
+    const momentumPct = calcMomentumPct(candles, mode === 'SCALP' ? 5 : 8)
 
     if (mode === 'SWING' || horizon === 'MACRO') {
       const daily = candles1d.length >= 20 ? candles1d : candles
@@ -112,6 +133,10 @@ export function usePriceForecast(
         fearGreed,
         horizon: mode,
         pathTimeScale,
+        bookImbalance,
+        btcRelativeStrengthPct,
+        momentumPct,
+        mmHunt,
       }
     )
 
@@ -141,5 +166,9 @@ export function usePriceForecast(
     newsBias,
     newsScore,
     fearGreed,
+    bookImbalance,
+    btcRelativeStrengthPct,
+    refreshKey,
+    mmHunt,
   ])
 }

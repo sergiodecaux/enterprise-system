@@ -142,6 +142,55 @@ export interface CoinSignal {
     near141?: boolean
     price141?: number | null
   } | null
+  /** Market maker intent / liquidity hunt */
+  mmIntent?: MmIntentSnapshot | null
+  /** Session flip note for UI */
+  sessionFlipReason?: string | null
+  /** Ювелирный вход: sweep → confirm → limit */
+  surgicalEntry?: SurgicalEntrySnapshot | null
+  /** Сила HTF тренда 1H/4H */
+  htfTrend?: HtfTrendSnapshot | null
+}
+
+export type SurgicalEntryStatus =
+  | 'IDLE'
+  | 'WAITING_SWEEP'
+  | 'WAITING_CONFIRM'
+  | 'READY'
+  | 'INVALIDATED'
+  | 'MISSED'
+
+export interface SurgicalEntrySnapshot {
+  status: SurgicalEntryStatus
+  side: 'LONG' | 'SHORT'
+  microTarget: number | null
+  macroTarget: number | null
+  sweepPrice: number | null
+  /** Candle open time ms */
+  sweepAt: number | null
+  confirmations: string[]
+  limitEntry: number | null
+  zoneTop: number | null
+  zoneBottom: number | null
+  invalidation: number | null
+  reason: string
+  updatedAt: number
+}
+
+/** HTF trend strength snapshot (avoids circular import with trend module) */
+export interface HtfTrendSnapshot {
+  bias: 'BULLISH' | 'BEARISH' | 'RANGING'
+  strength: number
+  label: 'WEAK' | 'MEDIUM' | 'STRONG'
+  impulseLegs: number
+  avgPullbackPct: number
+  primaryTf: '1h' | '4h'
+  bias1h: 'BULLISH' | 'BEARISH' | 'RANGING'
+  bias4h: 'BULLISH' | 'BEARISH' | 'RANGING'
+  strength1h: number
+  strength4h: number
+  reasons: string[]
+  updatedAt: number
 }
 
 export interface MarketContext {
@@ -232,6 +281,57 @@ export interface AppState {
   memeSignals: MemeSignal[]
   updateMemeSignal: (signal: MemeSignal) => void
   updateMemeSignals: (signals: MemeSignal[]) => void
+  /** Покрытие мем-вселенной MEXC */
+  memeUniverse: MemeUniverseMeta | null
+  setMemeUniverse: (meta: MemeUniverseMeta) => void
+  /** Bump to re-read signal journal from localStorage */
+  journalVersion: number
+  bumpJournalVersion: () => void
+  /** Live order book metrics by internalSymbol */
+  orderBookMetrics: Record<string, OrderBookMetrics>
+  setOrderBookMetrics: (symbol: string, metrics: OrderBookMetrics) => void
+  /** MM intent by internalSymbol */
+  mmIntent: Record<string, MmIntentSnapshot>
+  setMmIntent: (symbol: string, intent: MmIntentSnapshot) => void
+  /** Surgical entry plans by internalSymbol */
+  surgicalEntries: Record<string, SurgicalEntrySnapshot>
+  setSurgicalEntry: (symbol: string, entry: SurgicalEntrySnapshot) => void
+  /** Watched conditional setups (local mirror of worker) */
+  watchedSetups: import('./setups').WatchedSetup[]
+  setWatchedSetups: (watches: import('./setups').WatchedSetup[]) => void
+  upsertWatchedSetup: (watch: import('./setups').WatchedSetup) => void
+  removeWatchedSetupLocal: (watchId: string) => void
+}
+
+export interface MemeUniverseMeta {
+  totalTickers: number
+  memeCount: number
+  scannedCount: number
+  batchSize: number
+  rotation: number
+  lastScanAt: number
+  rejectedLowVolume: number
+  rejectedBlueChip: number
+}
+
+/** Snapshot of market-maker intent for store / signals (avoids circular imports) */
+export interface MmIntentSnapshot {
+  drive: 'UP' | 'DOWN' | 'NEUTRAL'
+  confidence: number
+  preferredSide: 'LONG' | 'SHORT' | null
+  scoreBoostForLong: number
+  scoreBoostForShort: number
+  hunt: {
+    microTarget: number | null
+    microLabel: string
+    macroTarget: number | null
+    macroLabel: string
+    microIsStopHunt: boolean
+  }
+  reasons: string[]
+  label: string
+  emoji: string
+  updatedAt: number
 }
 
 // ============================================================================
@@ -304,6 +404,10 @@ export interface TradeEvent {
     | 'TRAILING_MOVED'
     | 'TRAILING_HIT'
     | 'PANIC_CLOSE'
+    | 'ABSORPTION_TRAP'
+    | 'SPOOF_ALERT'
+    | 'ICEBERG'
+    | 'MM_DISTRIBUTION'
   timestamp: number
   price: number
   message: string
@@ -343,6 +447,14 @@ export interface ActiveTrade {
   /** Peak price since entry (for trailing) */
   peakPrice?: number | null
   trailingAlertShown?: boolean
+  /** TP1 touched — required before meme BE */
+  tp1Hit?: boolean
+  /** Partial close at TP1 (50%) recommended / done */
+  partialTp1Taken?: boolean
+  /** Timestamp when price first stayed continuously in profit (Time-Delay BE) */
+  profitSince?: number | null
+  /** Absorption trap already alerted this trade */
+  absorptionAlertShown?: boolean
 }
 
 // ============================================================================
@@ -435,7 +547,12 @@ export interface TrackedWall {
   isActive: boolean
 }
 
-export type WallEventType = 'APPEARED' | 'EATEN' | 'REDUCED' | 'INCREASED'
+export type WallEventType =
+  | 'APPEARED'
+  | 'EATEN'
+  | 'REDUCED'
+  | 'INCREASED'
+  | 'SPOOFED'
 
 export interface WallEvent {
   type: WallEventType

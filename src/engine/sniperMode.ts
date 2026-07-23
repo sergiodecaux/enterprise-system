@@ -1,5 +1,6 @@
 import type { CoinSignal, TradeStyle } from './types'
 import { getStyleProfile } from './strategies'
+import { isSurgicalReady } from './surgical/surgicalEntry'
 
 /**
  * Расширенный снайперский сигнал с калиброванным винрейтом и R:R
@@ -70,6 +71,28 @@ export function isSniperQuality(signal: CoinSignal): boolean {
 
   if (strengthFilters < profile.minStrengthFilters) return false
 
+  // Ювелирный вход: если есть surgical plan — только READY
+  const surgical = signal.surgicalEntry
+  if (surgical && surgical.status !== 'IDLE') {
+    if (!isSurgicalReady(surgical)) return false
+  }
+
+  // Мемы: обязателен свежий Liquidity Raid (не входим на первом касании),
+  // кроме элитных сетапов со своим триггером (squeeze / flatline / cvdTrap / backside)
+  if (signal.memePulse) {
+    const eliteMeme =
+      !!signal.memePulse.squeeze?.setup ||
+      !!signal.memePulse.squeeze?.inProgress ||
+      !!signal.memePulse.flatline?.detected ||
+      !!signal.memePulse.cvdTrap?.detected ||
+      !!signal.memePulse.backside?.detected
+    const hasFreshRaid =
+      !!signal.raid &&
+      signal.raid.type !== 'NONE' &&
+      signal.raid.isFresh
+    if (!eliteMeme && !hasFreshRaid) return false
+  }
+
   const dailyDir = signal.dailyBias
   if (style === 'INTRADAY' || style === 'SWING') {
     if (signal.direction === 'LONG' && dailyDir === 'BEARISH') return false
@@ -77,8 +100,15 @@ export function isSniperQuality(signal: CoinSignal): boolean {
   }
 
   if (signal.currentRSI !== null) {
-    if (signal.direction === 'LONG' && signal.currentRSI >= 45) return false
-    if (signal.direction === 'SHORT' && signal.currentRSI <= 55) return false
+    // Soft RSI — scalp/LTF can enter earlier than classic HTF rules
+    const style = signal.tradeStyle ?? 'INTRADAY'
+    if (style === 'SCALP') {
+      if (signal.direction === 'LONG' && signal.currentRSI >= 62) return false
+      if (signal.direction === 'SHORT' && signal.currentRSI <= 38) return false
+    } else {
+      if (signal.direction === 'LONG' && signal.currentRSI >= 52) return false
+      if (signal.direction === 'SHORT' && signal.currentRSI <= 48) return false
+    }
   }
 
   // Интрадей: gate ликвидаций должен быть открыт для элитных
@@ -154,7 +184,10 @@ export function toSniperSignal(signal: CoinSignal): SniperSignal {
   }
 
   const tradeStyle: TradeStyle = signal.tradeStyle ?? 'INTRADAY'
-  const entryPrice = signal.ltfChoCH?.surgicalEntryPrice ?? signal.price
+  const entryPrice =
+    isSurgicalReady(signal.surgicalEntry)
+      ? signal.surgicalEntry!.limitEntry!
+      : signal.ltfChoCH?.surgicalEntryPrice ?? signal.price
 
   const risk = Math.abs(entryPrice - signal.sl)
   const reward = Math.abs(signal.tp1 - entryPrice)
@@ -187,6 +220,17 @@ export function toSniperSignal(signal: CoinSignal): SniperSignal {
         ? '🎯 CHoCH + Surgical Entry'
         : '✅ CHoCH 1m'
     )
+  }
+
+  if (isSurgicalReady(signal.surgicalEntry)) {
+    reasons.push(
+      `🎯 Limit ${signal.surgicalEntry!.limitEntry!.toPrecision(6)} · ${signal.surgicalEntry!.confirmations.slice(0, 2).join('+')}`
+    )
+  } else if (
+    signal.surgicalEntry &&
+    signal.surgicalEntry.status !== 'IDLE'
+  ) {
+    reasons.push(`⏳ ${signal.surgicalEntry.status}`)
   }
 
   if (signal.absorption?.detected) {

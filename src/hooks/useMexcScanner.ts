@@ -3,10 +3,12 @@ import { useAppStore } from '../store/useAppStore'
 import {
   CORE_WATCHLIST,
   fetchOhlcv,
+  fetchDepth,
   fetchTickers,
   sleep,
   toFlatSymbol,
 } from '../api/mexc'
+import { calculateOrderBookMetrics } from '../engine/orderbook'
 import {
   buildLiquidityMap,
   analyzePO3,
@@ -16,7 +18,12 @@ import {
   type TrendDirection,
 } from '../engine/smc'
 import { analyzeSessionDNA } from '../engine/sessions/dnaAnalyzer'
-import { analyzeSymbol, COOLDOWN_MS } from '../engine/ProbabilityEngine'
+import {
+  analyzeSymbol,
+  COOLDOWN_MS,
+  SCALP_COOLDOWN_MS,
+} from '../engine/ProbabilityEngine'
+import { computeMmIntent, calculateWeightedObi } from '../engine/mm'
 import type {
   CoinSignal,
   LiveTicker,
@@ -26,8 +33,8 @@ import type {
 import { logger } from '../utils/logger'
 
 const BTC = 'BTC/USDT:USDT'
-const SCAN_PAUSE_MS = 120_000
-const COIN_DELAY_MS = 300
+const SCAN_PAUSE_MS = 75_000
+const COIN_DELAY_MS = 220
 const TICKER_POLL_MS = 5_000
 
 /**
@@ -90,27 +97,18 @@ export const useMexcScanner = () => {
     syncWatchlist()
 
     try {
-      // 0. Daily bias BTC 1D
+      // 0. Daily bias BTC 1D — NO_TRADE больше не убивает весь скан (scalp/LTF живут)
       const candles1d = await fetchOhlcv(BTC, '1d', 60)
-      const dailyBias = resolveDailyBias(candles1d)
+      let dailyBias = resolveDailyBias(candles1d)
 
       if (dailyBias.direction === 'NO_TRADE') {
-        setMarketContext({
-          dailyDirection: dailyBias.direction,
-          dailyBias: dailyBias.bias,
-          dailyConfidence: dailyBias.confidence,
-          dailyPattern: dailyBias.dailyAnalysis?.pattern ?? '',
-          dailyDetails: dailyBias.dailyAnalysis?.details ?? '',
-          dailyAnalysis: dailyBias.dailyAnalysis,
-          dailyLevels: dailyBias.dailyLevels,
-          btcTrend: 'RANGING',
-          emaConfirms: false,
-          lastScanAt: Date.now(),
-          watchlistSize: watchlistRef.current.length,
-          scanProgress: 'Нет торговли — низкая уверенность дня',
-        })
-        logger.info('Daily bias NO_TRADE — skipping coin scan')
-        return
+        // Переводим день в BOTH с низкой уверенностью — ищем LTF/scalp сетапы
+        dailyBias = {
+          ...dailyBias,
+          direction: 'BOTH',
+          confidence: Math.min(dailyBias.confidence, 54),
+        }
+        logger.info('Daily bias soft NO_TRADE → BOTH for LTF/scalp scan')
       }
 
       await sleep(COIN_DELAY_MS)
@@ -183,7 +181,7 @@ export const useMexcScanner = () => {
         })
 
         const lastCd = cooldownRef.current[symbol] ?? 0
-        const onCooldown = now - lastCd < COOLDOWN_MS
+        void lastCd
 
         try {
           await sleep(COIN_DELAY_MS)
@@ -245,6 +243,30 @@ export const useMexcScanner = () => {
             logger.warn(`PO3 error ${symbol}`, po3Err)
           }
 
+          // Live order book + MM intent (liquidity hunt)
+          let bookImbalance: number | null = null
+          let mmIntent = null as ReturnType<typeof computeMmIntent> | null
+          try {
+            const depth = await fetchDepth(symbol, 20)
+            const obMetrics = calculateOrderBookMetrics(depth)
+            bookImbalance = obMetrics.imbalance
+            const wobi = calculateWeightedObi(depth.bids, depth.asks)
+            useAppStore.getState().setOrderBookMetrics(symbol, obMetrics)
+            mmIntent = computeMmIntent({
+              price: currentPrice1h || obMetrics.midPrice || 0,
+              book: obMetrics,
+              weightedObi: wobi,
+              liquidityMap: liquidityMap ?? null,
+            })
+            useAppStore.getState().setMmIntent(symbol, mmIntent)
+            await sleep(80)
+          } catch {
+            /* depth optional */
+          }
+
+          const sessionDna =
+            useAppStore.getState().sessionDNA[symbol] ?? null
+
           const { signal, triggered } = analyzeSymbol({
             internalSymbol: symbol,
             ohlcv4h,
@@ -260,13 +282,33 @@ export const useMexcScanner = () => {
               btc1hRef.current.length > 25 ? btc1hRef.current : undefined,
             ohlcv5m: ohlcv5m.length >= 15 ? ohlcv5m : undefined,
             ohlcv1m: ohlcv1m.length >= 20 ? ohlcv1m : undefined,
+            bookImbalance,
+            mmIntent,
+            sessionDna,
+            previousSurgical:
+              useAppStore.getState().surgicalEntries[symbol] ??
+              useAppStore.getState().signals.find(
+                (s) => s.internalSymbol === symbol
+              )?.surgicalEntry ??
+              null,
           })
 
+          if (signal.surgicalEntry) {
+            useAppStore
+              .getState()
+              .setSurgicalEntry(symbol, signal.surgicalEntry)
+          }
+
           // Respect cooldown for triggered setups (still show soft rows)
-          if (triggered && !onCooldown) {
+          const cdMs =
+            signal.tradeStyle === 'SCALP' ? SCALP_COOLDOWN_MS : COOLDOWN_MS
+          const onCooldownNow =
+            (cooldownRef.current[symbol] ?? 0) + cdMs > now
+
+          if (triggered && !onCooldownNow) {
             cooldownRef.current[symbol] = Date.now()
             logger.info(`Signal ${signal.direction} ${symbol} score=${signal.score}`)
-          } else if (triggered && onCooldown) {
+          } else if (triggered && onCooldownNow) {
             signal.hasActiveSetup = false
           }
 

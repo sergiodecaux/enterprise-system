@@ -52,7 +52,16 @@ const GhostPathOverlay = ({
       style,
       candleTimeframeSeconds: style === 'SCALP' ? 60 : 900,
     })
-  }, [signal, candles])
+  }, [
+    signal?.direction,
+    signal?.sl,
+    signal?.tp1,
+    signal?.tp2,
+    signal?.price,
+    signal?.tradeStyle,
+    signal?.ltfChoCH?.surgicalEntryPrice,
+    candles,
+  ])
 
   useEffect(() => {
     const canvas = canvasRef.current

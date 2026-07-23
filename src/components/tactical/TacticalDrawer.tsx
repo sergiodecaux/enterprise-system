@@ -14,8 +14,10 @@ import type {
   CoinSignal,
   EqualLevel,
   LiquidityMap,
+  MmIntentSnapshot,
   PO3Analysis,
   SessionDNA,
+  SurgicalEntrySnapshot,
   TapeMomentumState,
   BuyerAggressionResult,
   WhaleWatcherState,
@@ -308,6 +310,163 @@ const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
   )
 }
 
+/** Ювелирный вход: статус sweep → confirm → limit */
+const SurgicalEntryPanel = ({ plan }: { plan: SurgicalEntrySnapshot }) => {
+  if (plan.status === 'IDLE') return null
+
+  const statusColor =
+    plan.status === 'READY'
+      ? 'text-matrix border-matrix/30 bg-matrix/5'
+      : plan.status === 'WAITING_SWEEP' || plan.status === 'WAITING_CONFIRM'
+        ? 'text-yellow-300 border-yellow-400/25 bg-yellow-400/5'
+        : 'text-alert border-alert/25 bg-alert/5'
+
+  const statusLabel: Record<string, string> = {
+    WAITING_SWEEP: 'Ждём sweep',
+    WAITING_CONFIRM: 'Ждём confirm',
+    READY: 'ГОТОВ · лимитка',
+    INVALIDATED: 'Сломан',
+    MISSED: 'Пропущен',
+  }
+
+  return (
+    <div className={`rounded-xl border p-3 ${statusColor}`}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-sm">🎯</span>
+        <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
+          Surgical Entry
+        </span>
+        <span className="ml-auto font-mono text-[10px] font-bold">
+          {statusLabel[plan.status] ?? plan.status}
+        </span>
+      </div>
+      <p className="mb-2 font-mono text-xs leading-relaxed opacity-90">
+        {plan.reason}
+      </p>
+      {plan.limitEntry != null && (
+        <div className="mb-2 grid grid-cols-3 gap-2 rounded-lg bg-black/20 p-2">
+          <div className="text-center">
+            <div className="font-mono text-[9px] uppercase text-holo/30">
+              Limit
+            </div>
+            <div className="font-mono text-sm font-bold text-holo">
+              {plan.limitEntry.toPrecision(6)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="font-mono text-[9px] uppercase text-holo/30">
+              Zone
+            </div>
+            <div className="font-mono text-[10px] text-holo/70">
+              {plan.zoneBottom != null && plan.zoneTop != null
+                ? `${plan.zoneBottom.toPrecision(5)}–${plan.zoneTop.toPrecision(5)}`
+                : '—'}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="font-mono text-[9px] uppercase text-holo/30">
+              Invalid
+            </div>
+            <div className="font-mono text-[10px] text-alert/80">
+              {plan.invalidation != null
+                ? plan.invalidation.toPrecision(6)
+                : '—'}
+            </div>
+          </div>
+        </div>
+      )}
+      {plan.confirmations.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {plan.confirmations.map((c) => (
+            <span
+              key={c}
+              className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-holo/60"
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Намерение ММ: куда гонит цену и маршрут микро → макро ликвидность */
+const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
+  const driveColor =
+    intent.drive === 'UP'
+      ? 'text-matrix'
+      : intent.drive === 'DOWN'
+        ? 'text-alert'
+        : 'text-holo/50'
+  const sideColor =
+    intent.preferredSide === 'LONG'
+      ? 'text-matrix'
+      : intent.preferredSide === 'SHORT'
+        ? 'text-alert'
+        : 'text-holo/40'
+
+  return (
+    <div className="rounded-xl border border-hull-border bg-hull p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-sm">{intent.emoji}</span>
+        <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
+          MM Intent
+        </span>
+        <span className={`ml-auto font-mono text-[10px] font-bold ${driveColor}`}>
+          Drive {intent.drive} · {intent.confidence}%
+        </span>
+      </div>
+      <p className={`mb-2 font-mono text-xs font-medium ${driveColor}`}>
+        {intent.label}
+      </p>
+      {intent.preferredSide && (
+        <div className={`mb-2 font-mono text-xs font-bold ${sideColor}`}>
+          Лучший сетап сейчас: {intent.preferredSide}
+          {intent.hunt.microIsStopHunt ? ' (после sweep стопов)' : ''}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2 rounded-lg bg-black/20 p-2">
+        <div>
+          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+            Микро
+          </div>
+          <div className="font-mono text-[11px] text-holo/80">
+            {intent.hunt.microLabel || '—'}
+            {intent.hunt.microTarget != null && (
+              <span className="ml-1 text-holo/40">
+                @ {intent.hunt.microTarget.toPrecision(6)}
+              </span>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+            Макро (магнит)
+          </div>
+          <div className="font-mono text-[11px] text-holo/80">
+            {intent.hunt.macroLabel || '—'}
+            {intent.hunt.macroTarget != null && (
+              <span className="ml-1 text-holo/40">
+                @ {intent.hunt.macroTarget.toPrecision(6)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      {intent.reasons.length > 0 && (
+        <ul className="mt-2 space-y-0.5">
+          {intent.reasons.slice(0, 4).map((r) => (
+            <li key={r} className="font-mono text-[10px] text-holo/35">
+              · {r}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 const TacticalDrawer = () => {
   const { t } = useTranslation()
   const { haptic, showAlert } = useTelegramWebApp()
@@ -325,6 +484,8 @@ const TacticalDrawer = () => {
   const po3Store = useAppStore((state) => state.po3Analysis)
   const tapeStore = useAppStore((state) => state.tapeMomentum)
   const aggressionStore = useAppStore((state) => state.buyerAggression)
+  const mmIntentStore = useAppStore((state) => state.mmIntent)
+  const watchedSetups = useAppStore((state) => state.watchedSetups)
 
   const drawerRef = useRef<HTMLDivElement>(null)
 
@@ -351,6 +512,18 @@ const TacticalDrawer = () => {
   const aggressionState: BuyerAggressionResult | null = signal
     ? aggressionStore[signal.internalSymbol] ?? null
     : null
+  const mmIntent: MmIntentSnapshot | null = signal
+    ? signal.mmIntent ?? mmIntentStore[signal.internalSymbol] ?? null
+    : null
+  const surgicalPlan: SurgicalEntrySnapshot | null =
+    signal?.surgicalEntry ?? null
+  const watchedForCoin = signal
+    ? watchedSetups.filter(
+        (w) =>
+          w.internalSymbol === signal.internalSymbol ||
+          w.symbol === signal.symbol
+      ).length
+    : 0
   const hasLTF = !!(
     signal?.mss?.detected ||
     (signal?.raid && signal.raid.type !== 'NONE') ||
@@ -699,8 +872,54 @@ const TacticalDrawer = () => {
                 </div>
               </div>
             )}
+
+            {signal.htfTrend && (
+              <div className="bg-hull border border-hull-border rounded-lg p-3">
+                <div className="text-xs text-holo/40 font-mono uppercase mb-1">
+                  HTF Trend {signal.htfTrend.primaryTf.toUpperCase()}
+                </div>
+                <div
+                  className={`text-sm font-mono font-bold ${
+                    signal.htfTrend.bias === 'BULLISH'
+                      ? 'text-matrix'
+                      : signal.htfTrend.bias === 'BEARISH'
+                        ? 'text-alert'
+                        : 'text-holo/60'
+                  }`}
+                >
+                  {signal.htfTrend.bias} · {signal.htfTrend.label}{' '}
+                  {signal.htfTrend.strength}
+                </div>
+                <div className="mt-1 font-mono text-[10px] text-holo/35">
+                  1H {signal.htfTrend.strength1h} · 4H{' '}
+                  {signal.htfTrend.strength4h}
+                </div>
+              </div>
+            )}
           </div>
 
+          {mmIntent && <MmIntentPanel intent={mmIntent} />}
+          {surgicalPlan && <SurgicalEntryPanel plan={surgicalPlan} />}
+          {watchedForCoin > 0 && (
+            <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
+              <div className="font-mono text-[10px] font-bold uppercase text-yellow-300/80">
+                Слежение
+              </div>
+              <p className="font-mono text-xs text-yellow-200/90">
+                Активных watch по монете: {watchedForCoin}
+              </p>
+            </div>
+          )}
+          {signal.sessionFlipReason && (
+            <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
+              <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-wider text-yellow-300/80">
+                Session Flip
+              </div>
+              <p className="font-mono text-xs text-yellow-200/90">
+                {signal.sessionFlipReason}
+              </p>
+            </div>
+          )}
           {liquidityMap && <LiquidityMagnetPanel map={liquidityMap} />}
           {btcDivergence && (
             <BtcDivergencePanel divergence={btcDivergence} />

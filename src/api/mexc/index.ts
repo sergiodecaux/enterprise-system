@@ -58,7 +58,7 @@ const STABLE_BLACKLIST = new Set([
   'USDP_USDT',
 ])
 
-/** 10 основных пар — лёгкий старт без перегрузки TMA */
+/** 18 ликвидных перпов — BTC + majors + активные альты */
 export const CORE_WATCHLIST = [
   'BTC/USDT:USDT',
   'ETH/USDT:USDT',
@@ -70,6 +70,14 @@ export const CORE_WATCHLIST = [
   'AVAX/USDT:USDT',
   'LINK/USDT:USDT',
   'LTC/USDT:USDT',
+  'DOT/USDT:USDT',
+  'NEAR/USDT:USDT',
+  'APT/USDT:USDT',
+  'SUI/USDT:USDT',
+  'ARB/USDT:USDT',
+  'OP/USDT:USDT',
+  'INJ/USDT:USDT',
+  'TON/USDT:USDT',
 ] as const
 
 /** @deprecated use CORE_WATCHLIST */

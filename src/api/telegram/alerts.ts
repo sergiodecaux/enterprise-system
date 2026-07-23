@@ -2,7 +2,9 @@
  * Client for Telegram alerts via Cloudflare Worker.
  */
 
-export type AlertType = 'SNIPER' | 'MEME' | 'SYSTEM'
+import type { ConditionalSetup, WatchedSetup } from '../../engine/setups'
+
+export type AlertType = 'SNIPER' | 'MEME' | 'SYSTEM' | 'SETUP_WATCH'
 
 export interface TelegramAlertPayload {
   type: AlertType
@@ -115,5 +117,52 @@ export async function checkTelegramHealth(): Promise<{
     return (await res.json()) as { ok: boolean; subscribers?: number }
   } catch {
     return null
+  }
+}
+
+/** Создать офлайн-watch сетапа на worker */
+export async function createWatchedSetup(input: {
+  chatId: number
+  setup: ConditionalSetup
+  symbol: string
+  internalSymbol: string
+  ttlHours?: number
+}): Promise<WatchedSetup | null> {
+  try {
+    const res = await postJson('/telegram/watch', input, true)
+    if (!res.ok) return null
+    const data = (await res.json()) as { ok: boolean; watch?: WatchedSetup }
+    return data.watch ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function removeWatchedSetup(input: {
+  chatId: number
+  watchId: string
+}): Promise<boolean> {
+  try {
+    const res = await postJson('/telegram/watch/delete', input, true)
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+export async function listWatchedSetups(
+  chatId: number
+): Promise<WatchedSetup[]> {
+  const base = getProxyBase()
+  if (!base) return []
+  try {
+    const res = await fetch(
+      `${base}/telegram/watches?chatId=${encodeURIComponent(String(chatId))}`
+    )
+    if (!res.ok) return []
+    const data = (await res.json()) as { watches?: WatchedSetup[] }
+    return data.watches ?? []
+  } catch {
+    return []
   }
 }

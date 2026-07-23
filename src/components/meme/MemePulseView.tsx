@@ -6,6 +6,7 @@ import MemeCard from './MemeCard'
 
 const MemePulseView = () => {
   const memeSignals = useAppStore((s) => s.memeSignals)
+  const memeUniverse = useAppStore((s) => s.memeUniverse)
   useMemePulseScanner()
 
   const [filter, setFilter] = useState<
@@ -31,6 +32,14 @@ const MemePulseView = () => {
   ).length
   const squeezeCount = memeSignals.filter((s) => s.squeeze?.detected).length
   const shortCount = memeSignals.filter((s) => s.backside?.detected).length
+
+  const coveragePct =
+    memeUniverse && memeUniverse.memeCount > 0
+      ? Math.min(
+          100,
+          Math.round((memeUniverse.scannedCount / memeUniverse.memeCount) * 100)
+        )
+      : 0
 
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-[#0a0505] via-space to-[#120808] pb-6">
@@ -60,6 +69,33 @@ const MemePulseView = () => {
             )}
           </div>
         </div>
+
+        {memeUniverse && (
+          <div className="mb-3 rounded-lg border border-hull-border bg-hull/60 px-3 py-2">
+            <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-holo/50">
+              <span>
+                Вселенная MEXC: {memeUniverse.memeCount} мемов
+                {memeUniverse.totalTickers > 0
+                  ? ` / ${memeUniverse.totalTickers} тикеров`
+                  : ''}
+              </span>
+              <span>
+                Скан {memeUniverse.scannedCount}/{memeUniverse.memeCount} (
+                {coveragePct}%)
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-hull-border">
+              <div
+                className="h-full rounded-full bg-alert/80 transition-all duration-500"
+                style={{ width: `${coveragePct}%` }}
+              />
+            </div>
+            <p className="mt-1 font-mono text-[9px] text-holo/35">
+              Round-robin ×{memeUniverse.batchSize}/цикл · оборот #
+              {memeUniverse.rotation} · радар топ-{memeSignals.length}
+            </p>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {(
@@ -123,7 +159,9 @@ const MemePulseView = () => {
               Нет ракет на радаре
             </p>
             <p className="max-w-xs text-center font-mono text-xs text-holo/30">
-              Ищем ignition, squeeze и backside на MEXC Futures...
+              {memeUniverse
+                ? `Обходим ${memeUniverse.memeCount} мем-перпов MEXC round-robin…`
+                : 'Ищем ignition, squeeze и backside на MEXC Futures...'}
             </p>
           </div>
         )}

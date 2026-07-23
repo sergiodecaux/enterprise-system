@@ -17,6 +17,14 @@ import {
   addSnapshot3D,
   type Heatmap3DState,
 } from '../../engine/orderbook/heatmap3d'
+import {
+  calculateWeightedObi,
+  densityFromWalls,
+  detectPriceProdding,
+  computeMmIntent,
+  type DensitySnapshot,
+  type WeightedObiResult,
+} from '../../engine/mm'
 import { useOrderBookHistory } from '../../hooks/useOrderBookHistory'
 import { useMLPredictor } from '../../hooks/useMLPredictor'
 import type {
@@ -46,6 +54,9 @@ const OrderBookPanel = ({ symbol }: Props) => {
   const { t } = useTranslation()
   const setWhaleWatcher = useAppStore((s) => s.setWhaleWatcher)
   const setTapeMomentum = useAppStore((s) => s.setTapeMomentum)
+  const setOrderBookMetrics = useAppStore((s) => s.setOrderBookMetrics)
+  const setMmIntent = useAppStore((s) => s.setMmIntent)
+  const liquidityMap = useAppStore((s) => s.liquidityMaps[symbol] ?? null)
   const whaleWatcherPrev = useAppStore((s) => s.whaleWatcher[symbol] ?? null)
   // ref для предыдущего состояния whale (избегаем stale closure)
   const whaleWatcherRef = useRef(whaleWatcherPrev)
@@ -73,6 +84,10 @@ const OrderBookPanel = ({ symbol }: Props) => {
   const [heatmap3D, setHeatmap3D] = useState<Heatmap3DState>(() => createHeatmap3D(60))
   const [heatmapTick, setHeatmapTick] = useState(0)
   const [activeAlerts, setActiveAlerts] = useState<WallEvent[]>([])
+  const [weightedObi, setWeightedObi] = useState<WeightedObiResult | null>(null)
+  const [proddingLabel, setProddingLabel] = useState<string | null>(null)
+  const [mmLabel, setMmLabel] = useState<string | null>(null)
+  const densityHistoryRef = useRef<DensitySnapshot[]>([])
 
   const { history, stats, resetHistory } = useOrderBookHistory(state.metrics)
 
@@ -88,6 +103,29 @@ const OrderBookPanel = ({ symbol }: Props) => {
     try {
       const snapshot = await fetchDepth(symbol, depthLimit)
       const metrics = calculateOrderBookMetrics(snapshot)
+      const obi = calculateWeightedObi(snapshot.bids, snapshot.asks)
+      setWeightedObi(obi)
+      setOrderBookMetrics(symbol, metrics)
+
+      let prodding = null as ReturnType<typeof detectPriceProdding> | null
+      if (metrics.midPrice && metrics.walls.length) {
+        const snap = densityFromWalls(metrics.midPrice, metrics.walls)
+        densityHistoryRef.current = [...densityHistoryRef.current, snap].slice(-12)
+        prodding = detectPriceProdding(densityHistoryRef.current)
+        setProddingLabel(
+          prodding.detected || prodding.exitSignal ? prodding.label : null
+        )
+      }
+
+      const intent = computeMmIntent({
+        price: metrics.midPrice ?? snapshot.bids[0]?.price ?? 0,
+        book: metrics,
+        weightedObi: obi,
+        prodding,
+        liquidityMap,
+      })
+      setMmIntent(symbol, intent)
+      setMmLabel(`${intent.emoji} ${intent.label}`)
 
       setState({
         snapshot,
@@ -131,9 +169,11 @@ const OrderBookPanel = ({ symbol }: Props) => {
       wallTrackerRef.current = tracker
       setWallTracker(tracker)
 
-      const eatenEvents = newEvents.filter((e) => e.type === 'EATEN')
-      if (eatenEvents.length > 0) {
-        setActiveAlerts((current) => [...current, ...eatenEvents].slice(-5))
+      const alertEvents = newEvents.filter(
+        (e) => e.type === 'EATEN' || e.type === 'SPOOFED'
+      )
+      if (alertEvents.length > 0) {
+        setActiveAlerts((current) => [...current, ...alertEvents].slice(-5))
       }
     } catch (err) {
       logger.warn('[OrderBook] Load error:', err)
@@ -143,7 +183,7 @@ const OrderBookPanel = ({ symbol }: Props) => {
         error: err instanceof Error ? err.message : 'Unknown error',
       }))
     }
-  }, [symbol, depthLimit, setWhaleWatcher])
+  }, [symbol, depthLimit, setWhaleWatcher, setOrderBookMetrics, setMmIntent, liquidityMap])
 
   useEffect(() => {
     setState({
@@ -160,6 +200,9 @@ const OrderBookPanel = ({ symbol }: Props) => {
     heatmapInitedRef.current = false
     setHeatmap3D(createHeatmap3D(60))
     setActiveAlerts([])
+    setWeightedObi(null)
+    setProddingLabel(null)
+    densityHistoryRef.current = []
     resetHistory()
   }, [symbol, resetHistory])
 
@@ -302,6 +345,35 @@ const OrderBookPanel = ({ symbol }: Props) => {
       <ImbalanceChart history={history} stats={stats} />
 
       <OrderBookMetricsView metrics={metrics} />
+
+      {(weightedObi || proddingLabel || mmLabel) && (
+        <div className="space-y-1.5 rounded-lg bg-hull-light/30 p-3 font-mono text-[11px]">
+          {mmLabel && (
+            <div className="font-bold text-holo">{mmLabel}</div>
+          )}
+          {weightedObi && (
+            <div
+              className={
+                weightedObi.nearTouchPressure === 'BUY'
+                  ? 'text-matrix'
+                  : weightedObi.nearTouchPressure === 'SELL'
+                    ? 'text-alert'
+                    : 'text-holo/60'
+              }
+            >
+              OBI 0.1%/0.5%/1%: {weightedObi.label}
+              {weightedObi.levels.map((l) => (
+                <span key={l.bandPct} className="ml-2 text-holo/40">
+                  {l.bandPct}%×{l.bidAskRatio.toFixed(1)}
+                </span>
+              ))}
+            </div>
+          )}
+          {proddingLabel && (
+            <div className="text-yellow-400">{proddingLabel}</div>
+          )}
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-lg bg-hull-light/20">
         <div className="space-y-px">

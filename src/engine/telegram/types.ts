@@ -5,6 +5,8 @@ export interface TelegramAlertSettings {
   sniper: boolean
   /** Мем-сигналы */
   meme: boolean
+  /** Слежение за выбранными сетапами */
+  setupWatch: boolean
   /** Мин. confidence / heat для отправки */
   minSniperConfidence: number
   minMemeHeat: number
@@ -22,6 +24,7 @@ export const DEFAULT_TELEGRAM_ALERT_SETTINGS: TelegramAlertSettings = {
   enabled: true,
   sniper: true,
   meme: true,
+  setupWatch: true,
   minSniperConfidence: 70,
   minMemeHeat: 50,
   manualChatId: '',

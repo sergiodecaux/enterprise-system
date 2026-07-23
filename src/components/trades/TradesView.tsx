@@ -1,14 +1,15 @@
 import { useState } from 'react'
-import { Activity, History } from 'lucide-react'
+import { Activity, History, BarChart3 } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { useTradeCopilot } from '../../hooks/useTradeCopilot'
 import TradeCard from './TradeCard'
+import JournalStatsPanel from './JournalStatsPanel'
 
 const TradesView = () => {
   const activeTrades = useAppStore((s) => s.activeTrades)
   useTradeCopilot()
 
-  const [filter, setFilter] = useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
+  const [filter, setFilter] = useState<'ACTIVE' | 'CLOSED' | 'STATS'>('ACTIVE')
 
   const filteredTrades =
     filter === 'ACTIVE'
@@ -18,9 +19,11 @@ const TradesView = () => {
             t.status === 'BREAKEVEN' ||
             t.status === 'INVALIDATED'
         )
-      : activeTrades.filter(
-          (t) => t.status === 'CLOSED_WIN' || t.status === 'CLOSED_LOSS'
-        )
+      : filter === 'CLOSED'
+        ? activeTrades.filter(
+            (t) => t.status === 'CLOSED_WIN' || t.status === 'CLOSED_LOSS'
+          )
+        : []
 
   const activeCount = activeTrades.filter(
     (t) =>
@@ -55,33 +58,48 @@ const TradesView = () => {
           <button
             type="button"
             onClick={() => setFilter('ACTIVE')}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 font-mono text-xs font-bold uppercase transition-all ${
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 font-mono text-[10px] font-bold uppercase transition-all sm:text-xs ${
               filter === 'ACTIVE'
                 ? 'border border-matrix/50 bg-matrix/20 text-matrix'
                 : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
             }`}
           >
             <Activity className="h-3 w-3" />
-            Активные ({activeCount})
+            Актив ({activeCount})
           </button>
 
           <button
             type="button"
             onClick={() => setFilter('CLOSED')}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 font-mono text-xs font-bold uppercase transition-all ${
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 font-mono text-[10px] font-bold uppercase transition-all sm:text-xs ${
               filter === 'CLOSED'
                 ? 'border border-matrix/50 bg-matrix/20 text-matrix'
                 : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
             }`}
           >
             <History className="h-3 w-3" />
-            Закрытые ({closedCount})
+            Архив ({closedCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilter('STATS')}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 font-mono text-[10px] font-bold uppercase transition-all sm:text-xs ${
+              filter === 'STATS'
+                ? 'border border-matrix/50 bg-matrix/20 text-matrix'
+                : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
+            }`}
+          >
+            <BarChart3 className="h-3 w-3" />
+            Lab
           </button>
         </div>
       </div>
 
       <div className="flex-1 px-4 pt-4">
-        {filteredTrades.length === 0 && (
+        {filter === 'STATS' && <JournalStatsPanel />}
+
+        {filter !== 'STATS' && filteredTrades.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12">
             <span className="mb-3 text-5xl opacity-20">
               {filter === 'ACTIVE' ? '📊' : '📜'}
@@ -91,13 +109,13 @@ const TradesView = () => {
             </p>
             <p className="max-w-xs text-center font-mono text-xs text-holo/30">
               {filter === 'ACTIVE'
-                ? 'Открой сделку из вкладки "Снайпер"'
+                ? 'Открой сделку из вкладки "Снайпер" или смотри Lab — авто-учёт сигналов'
                 : 'Закрытые сделки появятся здесь'}
             </p>
           </div>
         )}
 
-        {filteredTrades.length > 0 && (
+        {filter !== 'STATS' && filteredTrades.length > 0 && (
           <div className="space-y-3">
             {filteredTrades
               .slice()

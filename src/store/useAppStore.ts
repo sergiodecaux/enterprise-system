@@ -15,7 +15,10 @@ import type {
   TradeEvent,
   TradeStatus,
   MemeSignal,
+  MemeUniverseMeta,
+  MmIntentSnapshot,
 } from '../engine/types'
+import type { WatchedSetup } from '../engine/setups'
 import type { ChartPreferences } from '../engine/indicators/types'
 import { DEFAULT_CHART_PREFERENCES } from '../engine/indicators/types'
 import type { SessionSettings } from '../engine/sessions/types'
@@ -30,6 +33,10 @@ import {
   TELEGRAM_ALERT_SETTINGS_KEY,
   type TelegramAlertSettings,
 } from '../engine/telegram/types'
+import {
+  linkTradeToJournal,
+  resolveJournalByTrade,
+} from '../engine/journal'
 import { CORE_WATCHLIST } from '../api/mexc'
 
 const defaultMarketContext: MarketContext = {
@@ -52,6 +59,27 @@ const CHART_PREFS_KEY = 'enterprise_chart_preferences'
 const SESSION_SETTINGS_KEY = 'enterprise_session_settings'
 const NEWS_SETTINGS_KEY = 'enterprise_news_settings'
 const ACTIVE_TRADES_KEY = 'enterprise_active_trades'
+const WATCHED_SETUPS_KEY = 'enterprise_watched_setups'
+
+function loadWatchedSetups(): WatchedSetup[] {
+  try {
+    const saved = localStorage.getItem(WATCHED_SETUPS_KEY)
+    if (!saved) return []
+    const parsed = JSON.parse(saved) as WatchedSetup[]
+    const now = Date.now()
+    return parsed.filter((w) => w.expiresAt > now)
+  } catch {
+    return []
+  }
+}
+
+function saveWatchedSetups(watches: WatchedSetup[]) {
+  try {
+    localStorage.setItem(WATCHED_SETUPS_KEY, JSON.stringify(watches))
+  } catch {
+    /* ignore */
+  }
+}
 
 function loadActiveTrades(): ActiveTrade[] {
   try {
@@ -167,6 +195,12 @@ export const useAppStore = create<AppState>()(
     buyerAggression: {},
     activeTrades: loadActiveTrades(),
     memeSignals: [],
+    memeUniverse: null,
+    journalVersion: 0,
+    orderBookMetrics: {},
+    mmIntent: {},
+    surgicalEntries: {},
+    watchedSetups: loadWatchedSetups(),
 
     selectedCoin: null,
     isDrawerOpen: false,
@@ -358,10 +392,20 @@ export const useAppStore = create<AppState>()(
         updatedAt: Date.now(),
       }
 
+      linkTradeToJournal(newTrade.id, {
+        internalSymbol: newTrade.internalSymbol,
+        direction: newTrade.direction,
+        entryPrice: newTrade.entryPrice,
+        isMeme: newTrade.isMemeTrade,
+      })
+
       set((state) => {
         const next = [...state.activeTrades, newTrade]
         saveActiveTrades(next)
-        return { activeTrades: next }
+        return {
+          activeTrades: next,
+          journalVersion: state.journalVersion + 1,
+        }
       })
     },
 
@@ -438,7 +482,17 @@ export const useAppStore = create<AppState>()(
             : t
         )
         saveActiveTrades(next)
-        return { activeTrades: next }
+
+        resolveJournalByTrade(
+          id,
+          reason === 'WIN' ? 'WIN' : reason === 'LOSS' ? 'LOSS' : 'MANUAL',
+          price
+        )
+
+        return {
+          activeTrades: next,
+          journalVersion: state.journalVersion + 1,
+        }
       })
     },
 
@@ -471,6 +525,59 @@ export const useAppStore = create<AppState>()(
         return b.heatScore - a.heatScore
       })
       set({ memeSignals: sorted })
+    },
+
+    setMemeUniverse: (meta: MemeUniverseMeta) => {
+      set({ memeUniverse: meta })
+    },
+
+    bumpJournalVersion: () => {
+      set((state) => ({ journalVersion: state.journalVersion + 1 }))
+    },
+
+    setOrderBookMetrics: (symbol, metrics) => {
+      set((state) => ({
+        orderBookMetrics: { ...state.orderBookMetrics, [symbol]: metrics },
+      }))
+    },
+
+    setMmIntent: (symbol: string, intent: MmIntentSnapshot) => {
+      set((state) => ({
+        mmIntent: { ...state.mmIntent, [symbol]: intent },
+      }))
+    },
+
+    setSurgicalEntry: (symbol: string, entry) => {
+      set((state) => ({
+        surgicalEntries: { ...state.surgicalEntries, [symbol]: entry },
+      }))
+    },
+
+    setWatchedSetups: (watches) => {
+      saveWatchedSetups(watches)
+      set({ watchedSetups: watches })
+    },
+
+    upsertWatchedSetup: (watch) => {
+      set((state) => {
+        const idx = state.watchedSetups.findIndex(
+          (w) => w.watchId === watch.watchId
+        )
+        const next =
+          idx >= 0
+            ? state.watchedSetups.map((w, i) => (i === idx ? watch : w))
+            : [...state.watchedSetups, watch]
+        saveWatchedSetups(next)
+        return { watchedSetups: next }
+      })
+    },
+
+    removeWatchedSetupLocal: (watchId) => {
+      set((state) => {
+        const next = state.watchedSetups.filter((w) => w.watchId !== watchId)
+        saveWatchedSetups(next)
+        return { watchedSetups: next }
+      })
     },
 }))
 )

@@ -49,6 +49,11 @@ const WallAlert = ({ event, onDismiss }: Props) => {
     title =
       wall.side === 'BID' ? t('wall_eaten_bid') : t('wall_eaten_ask')
     message = `$${wall.price.toLocaleString('ru-RU')} • -${reduction?.toFixed(0) ?? 0}%`
+  } else if (type === 'SPOOFED') {
+    bgColor = 'bg-alert/25'
+    icon = <AlertTriangle className="w-5 h-5 text-alert" />
+    title = `👻 SPOOFING ${wall.side}`
+    message = `$${wall.price.toLocaleString('ru-RU')} • стена исчезла ≤2с — не учитывать в Confidence`
   } else if (type === 'APPEARED') {
     bgColor = 'bg-holo/10'
     icon = <AlertTriangle className="w-5 h-5 text-holo" />

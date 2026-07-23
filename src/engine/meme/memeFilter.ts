@@ -131,11 +131,17 @@ const BLUE_CHIP_BASES = new Set([
   'USTC',
 ])
 
-/** Минимальный 24h объём (USD) — только ликвидные USDT-M, видимые в поиске */
-const MIN_VOLUME_USD = 1_000_000
+/**
+ * Минимальный 24h quote volume (USDT).
+ * Раньше было $1M — отсекало большую часть мем-вселенной MEXC.
+ */
+export const MIN_VOLUME_USD = 150_000
 
-/** Макс. цена — мемы редко дороже */
-const MAX_MEME_PRICE = 15
+/** Макс. цена — выше порога почти всегда mid/large cap, не мем-игноришн */
+export const MAX_MEME_PRICE = 50
+
+/** Минимальный OI (контракты) — мягче, чтобы ловить свежие листинги */
+export const MIN_OPEN_INTEREST = 500
 
 export function getTickerBase(ticker: MexcTicker): string {
   return ticker.apiSymbol.replace(/_USDT$/, '')
@@ -145,20 +151,33 @@ export function isBlueChip(ticker: MexcTicker): boolean {
   return BLUE_CHIP_BASES.has(getTickerBase(ticker))
 }
 
+export type MemeRejectReason =
+  | 'blue_chip'
+  | 'bad_price'
+  | 'low_volume'
+  | 'low_oi'
+  | 'not_usdt'
+  | 'usdc'
+
 /**
- * Мем / шиткоин = всё, что не blue chip и имеет ликвидность.
- * DOGE, PEPE, SHIB, WIF и прочий «мусор» попадают сюда.
+ * Почему тикер не прошёл мем-фильтр (для диагностики покрытия).
+ */
+export function memeRejectReason(ticker: MexcTicker): MemeRejectReason | null {
+  if (!ticker.apiSymbol.endsWith('_USDT')) return 'not_usdt'
+  if (ticker.apiSymbol.includes('USDC')) return 'usdc'
+  if (isBlueChip(ticker)) return 'blue_chip'
+  if (ticker.lastPrice <= 0 || ticker.lastPrice > MAX_MEME_PRICE) return 'bad_price'
+  if (ticker.volume24h < MIN_VOLUME_USD) return 'low_volume'
+  if ((ticker.openInterest ?? 0) < MIN_OPEN_INTEREST) return 'low_oi'
+  return null
+}
+
+/**
+ * Мем / шиткоин = всё, что не blue chip и имеет минимальную ликвидность.
+ * fundingRate больше не обязателен: на тикере иногда null при живом perp.
  */
 export function isMemeTicker(ticker: MexcTicker): boolean {
-  if (isBlueChip(ticker)) return false
-  if (ticker.lastPrice <= 0 || ticker.lastPrice > MAX_MEME_PRICE) return false
-  if (ticker.volume24h < MIN_VOLUME_USD) return false
-  // Real perpetual markers from MEXC contract ticker
-  if (ticker.fundingRate == null || Number.isNaN(ticker.fundingRate)) return false
-  if ((ticker.openInterest ?? 0) < 5_000) return false
-  if (!ticker.apiSymbol.endsWith('_USDT')) return false
-  if (ticker.apiSymbol.includes('USDC')) return false
-  return true
+  return memeRejectReason(ticker) === null
 }
 
 /**
@@ -174,6 +193,33 @@ export function filterMemeTickers(tickers: MexcTicker[]): MexcTicker[] {
     })
 }
 
+export interface MemeUniverseStats {
+  totalTickers: number
+  memeCount: number
+  rejected: Record<MemeRejectReason, number>
+}
+
+export function summarizeMemeUniverse(tickers: MexcTicker[]): MemeUniverseStats {
+  const rejected: Record<MemeRejectReason, number> = {
+    blue_chip: 0,
+    bad_price: 0,
+    low_volume: 0,
+    low_oi: 0,
+    not_usdt: 0,
+    usdc: 0,
+  }
+  let memeCount = 0
+  for (const t of tickers) {
+    const reason = memeRejectReason(t)
+    if (reason == null) memeCount++
+    else rejected[reason]++
+  }
+  return { totalTickers: tickers.length, memeCount, rejected }
+}
+
+/**
+ * Round-robin батч по всей мем-вселенной (чтобы deep-scan не зацикливался на топ-12).
+ */
 export function prioritizeMemeBatch(
   tickers: MexcTicker[],
   offset: number,

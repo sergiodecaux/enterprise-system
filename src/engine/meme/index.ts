@@ -10,7 +10,12 @@ export {
   filterMemeTickers,
   isMemeTicker,
   prioritizeMemeBatch,
+  summarizeMemeUniverse,
+  MIN_VOLUME_USD,
+  MAX_MEME_PRICE,
+  MIN_OPEN_INTEREST,
 } from './memeFilter'
+export type { MemeUniverseStats, MemeRejectReason } from './memeFilter'
 export { analyzeMemeMarketData, computeMemeHeatScore } from './analyzer'
 export { buildMemeCoinSignal } from './memeSignalBuilder'
 export { detectShortSqueeze, type SqueezeResult } from './squeeze'
@@ -29,18 +34,10 @@ export {
   type VolatilityGaugeResult,
 } from './volatility'
 
-export const TOP_MEME_COUNT = 10
+export const TOP_MEME_COUNT = 40
 
-/** @deprecated Используй filterMemeTickers(fetchTickers()) — динамический список с биржи */
-export const MEME_WATCHLIST = [
-  'PEPE/USDT:USDT',
-  'SHIB/USDT:USDT',
-  'DOGE/USDT:USDT',
-  'FLOKI/USDT:USDT',
-  'BONK/USDT:USDT',
-  'WIF/USDT:USDT',
-  'MEME/USDT:USDT',
-  'PEPE2/USDT:USDT',
-  'BABYDOGE/USDT:USDT',
-  'ELON/USDT:USDT',
-] as const
+/** Сколько монет deep-scan'ить за один цикл (round-robin по всей вселенной) */
+export const MEME_BATCH_SIZE = 18
+
+/** Сигналы старше этого TTL выкидываем из радара */
+export const MEME_SIGNAL_TTL_MS = 12 * 60 * 1000

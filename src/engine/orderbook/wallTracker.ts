@@ -7,6 +7,8 @@ import type {
 
 const WALL_EATEN_THRESHOLD = 0.7
 const WALL_TIMEOUT_MS = 10_000
+/** Стена исчезла быстрее этого порога без съедения → spoof candidate */
+const SPOOF_MAX_LIFETIME_MS = 2_000
 const MAX_EVENTS = 50
 
 export function createWallTracker(): WallTrackerState {
@@ -98,12 +100,34 @@ export function updateWalls(
 
   walls.forEach((wall, id) => {
     if (!activeWallIds.has(id) && wall.isActive) {
-      if (now - wall.lastSeen > WALL_TIMEOUT_MS) {
+      const goneMs = now - wall.lastSeen
+      const lifetimeMs = now - wall.firstSeen
+      const reductionPercent =
+        wall.initialVolume > 0
+          ? ((wall.initialVolume - wall.currentVolume) / wall.initialVolume) * 100
+          : 0
+      const barelyEaten = reductionPercent < 20
+
+      // Spoof: крупная стена исчезла за ≤2с почти без проторговки
+      if (
+        lifetimeMs <= SPOOF_MAX_LIFETIME_MS &&
+        barelyEaten &&
+        wall.initialVolume > 0
+      ) {
         const updated = cloneWall(wall)
-        const reductionPercent =
-          updated.initialVolume > 0
-            ? ((updated.initialVolume - updated.currentVolume) / updated.initialVolume) * 100
-            : 0
+        updated.isActive = false
+        newEvents.push({
+          type: 'SPOOFED',
+          wall: cloneWall(updated),
+          timestamp: now,
+          reduction: reductionPercent,
+        })
+        walls.set(id, updated)
+        return
+      }
+
+      if (goneMs > WALL_TIMEOUT_MS) {
+        const updated = cloneWall(wall)
 
         if (reductionPercent > 50) {
           newEvents.push({

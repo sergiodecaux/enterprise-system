@@ -12,6 +12,7 @@ import { useMexcScanner } from './hooks/useMexcScanner'
 import { useNewsIntelligence } from './hooks/useNewsIntelligence'
 import { useTelegramWebApp } from './hooks/useTelegramWebApp'
 import { useTelegramAlerts } from './hooks/useTelegramAlerts'
+import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
 import { useAppStore } from './store/useAppStore'
 
 type ActiveTab = 'sniper' | 'meme' | 'trades' | 'radar'
@@ -21,6 +22,7 @@ function App() {
   useTelegramAlerts()
   useMexcScanner()
   useNewsIntelligence()
+  useSignalJournalResolver()
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('sniper')
 

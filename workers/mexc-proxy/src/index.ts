@@ -19,6 +19,13 @@ import {
   listPaperTrades,
   monitorPaperTrades,
 } from './paperTrades'
+import {
+  createWatch,
+  deleteWatch,
+  listWatchesForChat,
+  monitorWatchedSetups,
+  type ConditionalSetupPayload,
+} from './watchedSetups'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 
@@ -58,7 +65,7 @@ interface Subscriber {
 }
 
 interface AlertPayload {
-  type: 'SNIPER' | 'MEME' | 'SYSTEM'
+  type: 'SNIPER' | 'MEME' | 'SYSTEM' | 'SETUP_WATCH'
   title: string
   text: string
   dedupeKey?: string
@@ -234,6 +241,53 @@ async function handleTelegram(
     return json(broadcast)
   }
 
+  if (path === '/telegram/watch' && request.method === 'POST') {
+    if (env.ALERT_SECRET) {
+      const secret = request.headers.get('X-Alert-Secret')
+      if (secret !== env.ALERT_SECRET) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+    }
+    const body = (await request.json()) as {
+      chatId: number
+      symbol: string
+      internalSymbol: string
+      setup: ConditionalSetupPayload
+      ttlHours?: number
+    }
+    if (!body?.chatId || !body?.setup || !body?.symbol) {
+      return json({ error: 'chatId, symbol, setup required' }, 400)
+    }
+    const watch = await createWatch(env, body)
+    return json({ ok: true, watch })
+  }
+
+  if (path === '/telegram/watch/delete' && request.method === 'POST') {
+    if (env.ALERT_SECRET) {
+      const secret = request.headers.get('X-Alert-Secret')
+      if (secret !== env.ALERT_SECRET) {
+        return json({ error: 'Unauthorized' }, 401)
+      }
+    }
+    const body = (await request.json()) as {
+      chatId: number
+      watchId: string
+    }
+    if (!body?.chatId || !body?.watchId) {
+      return json({ error: 'chatId, watchId required' }, 400)
+    }
+    const ok = await deleteWatch(env, body.chatId, body.watchId)
+    return json({ ok })
+  }
+
+  if (path === '/telegram/watches' && request.method === 'GET') {
+    const url = new URL(request.url)
+    const chatId = Number(url.searchParams.get('chatId'))
+    if (!chatId) return json({ error: 'chatId required' }, 400)
+    const watches = await listWatchesForChat(env, chatId)
+    return json({ ok: true, watches })
+  }
+
   void ctx
   return json({ error: 'Unknown telegram route' }, 404)
 }
@@ -365,7 +419,32 @@ async function runCronScan(env: Env): Promise<{
     paperComments += cr.sent
   }
 
-  return { alerts: alerts.length, sent, skipped, heartbeat, paperComments }
+  // Watched conditional setups → READY / INVALIDATED
+  let watchAlerts = 0
+  try {
+    const wa = await monitorWatchedSetups(env)
+    for (const a of wa) {
+      const r = await broadcastAlert(env, {
+        type: 'SETUP_WATCH',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+        chatId: a.chatId,
+      })
+      watchAlerts += r.sent
+    }
+  } catch {
+    /* watch monitor best-effort */
+  }
+
+  return {
+    alerts: alerts.length,
+    sent,
+    skipped,
+    heartbeat,
+    paperComments,
+    watchAlerts,
+  }
 }
 
 // ── Subscribers KV ───────────────────────────────────────────────────────────
@@ -593,7 +672,9 @@ function formatAlertMessage(payload: AlertPayload): string {
       ? '🎯 '
       : payload.type === 'MEME'
         ? '🚀 '
-        : ''
+        : payload.type === 'SETUP_WATCH'
+          ? ''
+          : ''
   const title = payload.title ? `<b>${escapeHtml(payload.title)}</b>\n` : ''
   return `${icon}${title}${escapeHtml(payload.text)}`
 }

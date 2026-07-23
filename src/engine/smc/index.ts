@@ -395,7 +395,8 @@ export function checkCandleRejection(
   candle: OhlcvCandle,
   zoneTop: number,
   zoneBottom: number,
-  direction: TradeSide
+  direction: TradeSide,
+  minWickRatio = 0.4
 ): RejectionResult {
   const openPrice = candle[1]
   const high = candle[2]
@@ -416,7 +417,7 @@ export function checkCandleRejection(
     const wickEnteredZone = low <= zoneTop
     const bodyAboveZone = bodyBottom >= zoneBottom
     const isGreen = close > openPrice
-    const strongRejection = wickRatio > 0.4
+    const strongRejection = wickRatio > minWickRatio
 
     return {
       rejected: wickEnteredZone && bodyAboveZone && isGreen && strongRejection,
@@ -430,7 +431,7 @@ export function checkCandleRejection(
   const wickEnteredZone = high >= zoneBottom
   const bodyBelowZone = bodyTop <= zoneTop
   const isRed = close < openPrice
-  const strongRejection = wickRatio > 0.4
+  const strongRejection = wickRatio > minWickRatio
 
   return {
     rejected: wickEnteredZone && bodyBelowZone && isRed && strongRejection,

@@ -35,11 +35,22 @@ import PredictionOverlay from './PredictionOverlay'
 import GhostPathOverlay from './GhostPathOverlay'
 import ScenarioLegend from './ScenarioLegend'
 import MacroOutlookPanel from './MacroOutlookPanel'
+import SetupPickerPanel from './SetupPickerPanel'
 import { useSessionData } from '../../hooks/useSessionData'
 import { SESSION_DEFINITIONS, getSessionAtHour } from '../../engine/sessions/sessionMap'
 import { buildGlobalFibonacci } from '../../engine/zones/globalFibonacci'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
+import {
+  buildConditionalSetups,
+  type ConditionalSetup,
+} from '../../engine/setups'
+import {
+  createWatchedSetup,
+  removeWatchedSetup,
+  isTelegramAlertsConfigured,
+} from '../../api/telegram/alerts'
+import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 
 interface LiveChartProps {
   symbol: string
@@ -76,6 +87,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
 
   const ticker = useAppStore((s) => s.liveTickets[flatSymbol])
+  const orderBookMetrics = useAppStore(
+    (s) => s.orderBookMetrics[symbol] ?? null
+  )
   const chartPreferences = useAppStore((s) => s.chartPreferences)
   const setChartPreferences = useAppStore((s) => s.setChartPreferences)
   const sessionSettings = useAppStore((s) => s.sessionSettings)
@@ -105,8 +119,36 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     () => new Set(['A'])
   )
   const [cleanMode, setCleanMode] = useState(true)
+  const [showSetupPicker, setShowSetupPicker] = useState(false)
+  const [pickedSetups, setPickedSetups] = useState<ConditionalSetup[]>([])
+  const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null)
+  const [watchBusy, setWatchBusy] = useState(false)
 
-  const currentPrice = signal?.price ?? ticker?.price ?? 0
+  const watchedSetups = useAppStore((s) => s.watchedSetups)
+  const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
+  const removeWatchedSetupLocal = useAppStore((s) => s.removeWatchedSetupLocal)
+  const telegramSettings = useAppStore((s) => s.telegramAlertSettings)
+  const { showAlert, haptic } = useTelegramWebApp()
+
+  const currentPrice = ticker?.price ?? signal?.price ?? 0
+  const liveBookImbalance =
+    orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
+  const btcRs = signal?.btcDivergence?.relativeStrength ?? null
+  const mmFromStore = useAppStore((s) => s.mmIntent[symbol] ?? null)
+  const mmSnap = signal?.mmIntent ?? mmFromStore
+  const mmHunt = mmSnap
+    ? {
+        microTarget: mmSnap.hunt.microTarget,
+        macroTarget: mmSnap.hunt.macroTarget,
+        microIsStopHunt: mmSnap.hunt.microIsStopHunt,
+        preferredSide: mmSnap.preferredSide,
+      }
+    : null
+  const forecastRefreshKey =
+    Math.round((ticker?.timestamp ?? 0) / 15_000) +
+    Math.round((orderBookMetrics?.imbalance ?? 0) * 10) +
+    (mmSnap?.updatedAt ? Math.round(mmSnap.updatedAt / 15_000) : 0)
+
   const baseSym = flatSymbol.replace(/USDT$/i, '').replace(/_USDT$/i, '')
   const coinSentiment = useAppStore(
     (s) => s.newsIntel.coinSentiments[baseSym] ?? null
@@ -245,7 +287,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     candles1d,
     newsBias,
     newsScore,
-    fearGreedValue
+    fearGreedValue,
+    liveBookImbalance,
+    btcRs,
+    forecastRefreshKey,
+    mmHunt
   )
 
   const macroCtx = useMemo(() => {
@@ -273,6 +319,146 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     newsBias,
     newsScore,
   ])
+
+  const handlePickSetups = useCallback(() => {
+    if (!signal) {
+      showAlert('Нет сигнала по монете — подождите скан')
+      return
+    }
+    const setups = buildConditionalSetups({
+      signal,
+      forecast,
+      liquidityMap: eqLiquidityMap,
+      mmIntent: mmSnap,
+      htfTrend: signal.htfTrend,
+      price: currentPrice || signal.price,
+    })
+    setPickedSetups(setups)
+    setShowSetupPicker(true)
+    setShowForecast(true)
+    haptic.impact()
+  }, [
+    signal,
+    forecast,
+    eqLiquidityMap,
+    mmSnap,
+    currentPrice,
+    showAlert,
+    haptic,
+  ])
+
+  const resolveChatId = useCallback((): number | null => {
+    const manual = telegramSettings.manualChatId.trim()
+    if (manual && /^-?\d+$/.test(manual)) return Number(manual)
+    if (telegramSettings.subscribedChatId) return telegramSettings.subscribedChatId
+    return null
+  }, [telegramSettings])
+
+  const watchingIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const w of watchedSetups) {
+      if (w.internalSymbol === symbol || w.symbol === flatSymbol) {
+        ids.add(w.setup.id)
+      }
+    }
+    return ids
+  }, [watchedSetups, symbol, flatSymbol])
+
+  const handleWatchSetup = useCallback(
+    async (setup: ConditionalSetup) => {
+      const chatId = resolveChatId()
+      if (!chatId) {
+        showAlert('Сначала подпишитесь на Telegram-алерты (колокольчик)')
+        return
+      }
+      setWatchBusy(true)
+      try {
+        if (!isTelegramAlertsConfigured()) {
+          upsertWatchedSetup({
+            watchId: `local_${setup.id}`,
+            chatId,
+            symbol: flatSymbol,
+            internalSymbol: symbol,
+            setup,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 48 * 3600_000,
+            lastStatus: setup.status,
+            readyNotified: false,
+            invalidatedNotified: false,
+            updatedAt: Date.now(),
+          })
+          showAlert('Watch сохранён локально (прокси не настроен)')
+          return
+        }
+        const watch = await createWatchedSetup({
+          chatId,
+          setup,
+          symbol: flatSymbol,
+          internalSymbol: symbol,
+          ttlHours: 48,
+        })
+        if (watch) {
+          upsertWatchedSetup(watch)
+          haptic.success()
+          showAlert(`Слежу за сетапом ${setup.side} · алерт в бот при READY`)
+        } else {
+          upsertWatchedSetup({
+            watchId: `local_${setup.id}`,
+            chatId,
+            symbol: flatSymbol,
+            internalSymbol: symbol,
+            setup,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 48 * 3600_000,
+            lastStatus: setup.status,
+            readyNotified: false,
+            invalidatedNotified: false,
+            updatedAt: Date.now(),
+          })
+          showAlert('Worker недоступен — watch только локально')
+        }
+      } finally {
+        setWatchBusy(false)
+      }
+    },
+    [
+      resolveChatId,
+      showAlert,
+      flatSymbol,
+      symbol,
+      upsertWatchedSetup,
+      haptic,
+    ]
+  )
+
+  const handleUnwatchSetup = useCallback(
+    async (setup: ConditionalSetup) => {
+      const chatId = resolveChatId()
+      const existing = watchedSetups.find((w) => w.setup.id === setup.id)
+      if (existing) {
+        removeWatchedSetupLocal(existing.watchId)
+        if (chatId && !existing.watchId.startsWith('local_')) {
+          await removeWatchedSetup({ chatId, watchId: existing.watchId })
+        }
+      }
+      haptic.impact()
+    },
+    [resolveChatId, watchedSetups, removeWatchedSetupLocal, haptic]
+  )
+
+  const selectedSetup = pickedSetups.find((s) => s.id === selectedSetupId) ?? null
+
+  useEffect(() => {
+    if (!selectedSetup?.chartPath || !forecast) return
+    if (
+      selectedSetup.kind === 'FORECAST_A' ||
+      selectedSetup.kind === 'FORECAST_B' ||
+      selectedSetup.kind === 'FORECAST_C'
+    ) {
+      const id = selectedSetup.kind.replace('FORECAST_', '')
+      setActiveScenarios(new Set([id]))
+    }
+  }, [selectedSetup, forecast])
 
   const { sessions, weekends, news } = useSessionData(
     chartInstance,
@@ -534,7 +720,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       addLine(
         signal.invalidationPrice,
         'rgba(251, 191, 36, 0.95)',
-        '⚠ INVALIDATION',
+        signal.invalidationMessage?.includes('4H')
+          ? 'Inv 4H'
+          : signal.invalidationMessage?.includes('1H')
+            ? 'Inv 1H'
+            : '⚠ Inv HTF',
         1
       )
     }
@@ -673,7 +863,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const chartHeight = cleanMode ? CHART_HEIGHT_CLEAN : CHART_HEIGHT
   const showSessions = sessionSettings.enabled && !cleanMode
   const showGhost =
-    !!signal?.hasActiveSetup && !showForecast && chartReady > 0 && lastCandleTs > 0
+    !!signal?.direction &&
+    signal.sl != null &&
+    signal.tp1 != null &&
+    !showForecast &&
+    chartReady > 0 &&
+    lastCandleTs > 0
 
   return (
     <div className="space-y-2">
@@ -759,6 +954,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             {forecastHorizon === 'MACRO'
               ? 'SWING'
               : forecastHorizon}
+          </button>
+          <button
+            type="button"
+            onClick={handlePickSetups}
+            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              showSetupPicker
+                ? 'border border-matrix/50 bg-matrix/15 text-matrix'
+                : 'border border-hull-border text-holo/40 hover:text-holo/70'
+            }`}
+            title="Подобрать условные сетапы"
+          >
+            Сетапы
           </button>
           <button
             type="button"
@@ -917,6 +1124,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             />
           )}
         </>
+      )}
+
+      {showSetupPicker && (
+        <SetupPickerPanel
+          setups={pickedSetups}
+          selectedId={selectedSetupId}
+          watchingIds={watchingIds}
+          busy={watchBusy}
+          onSelect={(s) => {
+            setSelectedSetupId(s.id)
+            haptic.impact()
+          }}
+          onWatch={handleWatchSetup}
+          onUnwatch={handleUnwatchSetup}
+        />
       )}
 
       <ChartSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />

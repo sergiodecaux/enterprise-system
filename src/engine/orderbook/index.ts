@@ -30,3 +30,12 @@ export {
 } from './whaleDetector'
 export { createHeatmap3D, addSnapshot3D } from './heatmap3d'
 export type { Heatmap3DState, Heatmap3DPoint } from './heatmap3d'
+
+// Re-export MM orderbook helpers
+export {
+  calculateWeightedObi,
+  detectPriceProdding,
+  densityFromWalls,
+  detectIcebergOrder,
+  levelVolumeNear,
+} from '../mm'

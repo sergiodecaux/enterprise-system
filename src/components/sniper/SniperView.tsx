@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Crosshair, AlertCircle, TrendingUp } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { getSniperSignals } from '../../engine/sniperMode'
+import { recordCoinSignal } from '../../engine/journal'
 import type { TradeSide } from '../../engine/smc'
 import type { TradeStyle } from '../../engine/types'
 import SniperCard from './SniperCard'
@@ -25,6 +26,19 @@ const SniperView = () => {
     if (activeFilter === 'ALL') return all
     return all.filter((s) => s.direction === activeFilter)
   }, [signals, buyerAggression, activeFilter, styleFilter])
+
+  const bumpJournal = useAppStore((s) => s.bumpJournalVersion)
+
+  // Журнал отработок: каждый sniper-quality сигнал
+  useEffect(() => {
+    if (!sniperSignals.length) return
+    let logged = 0
+    for (const s of sniperSignals) {
+      const conf = s.calibratedWinRate || s.styleConfidence || s.probabilityPct
+      if (recordCoinSignal(s, conf)) logged++
+    }
+    if (logged > 0) bumpJournal()
+  }, [sniperSignals, bumpJournal])
 
   const totalCount = sniperSignals.length
   const longCount = sniperSignals.filter((s) => s.direction === 'LONG').length

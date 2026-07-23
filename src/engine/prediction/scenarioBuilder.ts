@@ -160,6 +160,8 @@ function calcFixedProbabilities(
     fearGreed?: number | null
     bookImbalance?: number | null
     horizon?: 'SCALP' | 'INTRA' | 'SWING' | 'MACRO'
+    btcRelativeStrengthPct?: number | null
+    momentumPct?: number | null
   }
 ): {
   a: number
@@ -173,6 +175,8 @@ function calcFixedProbabilities(
     fearGreed: extras?.fearGreed,
     bookImbalance: extras?.bookImbalance,
     horizon: extras?.horizon ?? 'INTRA',
+    btcRelativeStrengthPct: extras?.btcRelativeStrengthPct,
+    momentumPct: extras?.momentumPct,
   })
 }
 
@@ -214,6 +218,15 @@ export interface BuildScenariosOptions {
   horizon?: 'SCALP' | 'INTRA' | 'SWING' | 'MACRO'
   /** Scale path time offsets (scalp < 1, swing > 1) */
   pathTimeScale?: number
+  btcRelativeStrengthPct?: number | null
+  momentumPct?: number | null
+  /** MM liquidity hunt: micro then macro targets */
+  mmHunt?: {
+    microTarget: number | null
+    macroTarget: number | null
+    microIsStopHunt: boolean
+    preferredSide: 'LONG' | 'SHORT' | null
+  } | null
 }
 
 /**
@@ -239,26 +252,40 @@ export function buildScenarios(
   const nearestUp = findNearestLiquidity(liquidityMap, 'UP', 0.3)
   const nearestDown = findNearestLiquidity(liquidityMap, 'DOWN', 0.3)
 
-  const isLong = alignment.dominantBias !== 'SHORT'
+  // MM hunt can override dominant side for the forecast narrative
+  const hunt = options?.mmHunt
+  const huntPrefersShort = hunt?.preferredSide === 'SHORT'
+  const huntPrefersLong = hunt?.preferredSide === 'LONG'
+  const isLong = huntPrefersShort
+    ? false
+    : huntPrefersLong
+      ? true
+      : alignment.dominantBias !== 'SHORT'
+
   const { a: pctA, b: pctB, c: pctC } = calcFixedProbabilities(alignment, isLong, {
     newsBias: options?.newsBias,
     fearGreed: options?.fearGreed,
     bookImbalance: options?.bookImbalance,
     horizon: options?.horizon,
+    btcRelativeStrengthPct: options?.btcRelativeStrengthPct,
+    momentumPct: options?.momentumPct,
   })
 
   // Scalp aims closer magnets; swing aims farther
   const atrMult =
     options?.horizon === 'SCALP' ? 1.4 : options?.horizon === 'SWING' ? 3.2 : 2.5
 
-  const target = isLong
+  // Macro target = far liquidity; micro = stop hunt first
+  const macroDefault = isLong
     ? nearestUp?.price ?? currentPrice + atr * atrMult
     : nearestDown?.price ?? currentPrice - atr * atrMult
+  const target = hunt?.macroTarget ?? macroDefault
 
-  // Sweep: SSL ниже для лонга / BSL выше для шорта
-  const sweepLevel = isLong
-    ? (nearestDown?.price ?? currentPrice - atr * 1.1)
-    : (nearestUp?.price ?? currentPrice + atr * 1.1)
+  const sweepLevel =
+    hunt?.microTarget ??
+    (isLong
+      ? nearestDown?.price ?? currentPrice - atr * 1.1
+      : nearestUp?.price ?? currentPrice + atr * 1.1)
 
   const stopLevel =
     options?.stopLoss ??
@@ -278,13 +305,41 @@ export function buildScenarios(
         ? 'свинг'
         : 'интра'
 
+  const huntPath =
+    hunt?.microTarget != null &&
+    hunt.macroTarget != null &&
+    hunt.microTarget !== hunt.macroTarget
+      ? [
+          {
+            timeOffsetSeconds: 0,
+            price: currentPrice,
+            label: 'Now',
+            isKeyLevel: true,
+          },
+          {
+            timeOffsetSeconds: scaledSec * 2,
+            price: hunt.microTarget,
+            label: hunt.microIsStopHunt ? 'Sweep стопов' : 'Микро-цель',
+            isKeyLevel: true,
+          },
+          {
+            timeOffsetSeconds: scaledSec * 6,
+            price: hunt.macroTarget,
+            label: 'Магнит ликвидности',
+            isKeyLevel: true,
+          },
+        ]
+      : null
+
   const scenA: PriceScenario = {
     id: 'A',
     type: isLong ? 'LONG' : 'SHORT',
-    label: `Основной (${horizonTag} → OB)`,
+    label: huntPath
+      ? `MM Hunt (${horizonTag}): микро → ликвидность`
+      : `Основной (${horizonTag} → OB)`,
     probability: pctA,
     color: primaryColor,
-    path: buildPrimaryPath(currentPrice, target, atr, scaledSec, isLong),
+    path: huntPath ?? buildPrimaryPath(currentPrice, target, atr, scaledSec, isLong),
     entry: currentPrice,
     target,
     invalidation: stopLevel,
@@ -298,7 +353,13 @@ export function buildScenarios(
         ? (nearestUp?.label ?? 'OB / Swing High')
         : (nearestDown?.label ?? 'OB / Swing Low'),
     },
-    reasoning: buildReasoning(alignment, isLong, 'A'),
+    reasoning: huntPath
+      ? [
+          'ММ сначала снимает ближние стопы (микро-ход)',
+          'Затем гонит цену к противоположному пулу ликвидности',
+          'Стакан + equal H/L подтверждают маршрут',
+        ]
+      : buildReasoning(alignment, isLong, 'A'),
     triggerCondition: isLong
       ? 'Удержание структуры + ретест бычьего OB'
       : 'Удержание структуры + ретест медвежьего OB',

@@ -1,5 +1,6 @@
 import type { CoinSignal, MarketContext, MemeSignal } from '../types'
 import type { TradeSide } from '../smc'
+import { enforceMemeTp1Floor } from '../mm'
 
 function resolveMemeDirection(meme: MemeSignal): TradeSide | null {
   // Elite setups first
@@ -76,9 +77,10 @@ function calcMemeLevels(
   // Squeeze: TP за локальный хай (приблизительно + funding fuel move)
   if (meme.squeeze?.setup || meme.squeeze?.inProgress) {
     const tpPct = meme.squeeze.inProgress ? 8 : 5
+    const tp1 = enforceMemeTp1Floor(price, 'LONG', price * (1 + tpPct / 100), 5)
     return {
       sl: price * 0.985,
-      tp1: price * (1 + tpPct / 100),
+      tp1,
       tp2: price * (1 + (tpPct * 1.8) / 100),
     }
   }
@@ -87,7 +89,7 @@ function calcMemeLevels(
   if (meme.flatline?.detected) {
     return {
       sl: price * 0.99,
-      tp1: price * 1.08,
+      tp1: enforceMemeTp1Floor(price, 'LONG', price * 1.08, 5),
       tp2: price * 1.2,
     }
   }
@@ -96,30 +98,39 @@ function calcMemeLevels(
   if (meme.backside?.detected && direction === 'SHORT') {
     return {
       sl: price * 1.015,
-      tp1: price * 0.94,
+      tp1: enforceMemeTp1Floor(price, 'SHORT', price * 0.94, 5),
       tp2: price * 0.88,
     }
   }
 
   const slPct = meme.meanReversion.detected ? 2 : 3
+  // Мемы: TP1 минимум +5% (шум 2–4% не должен считаться «целью»)
   const tpPct = meme.meanReversion.detected
-    ? Math.max(meme.meanReversion.expectedRetracePct, 2)
+    ? Math.max(meme.meanReversion.expectedRetracePct, 5)
     : meme.liquidityGap.detected
-      ? 5
-      : 4
+      ? Math.max(5, 5)
+      : 6
 
   if (direction === 'LONG') {
-    return {
+    const raw = {
       sl: price * (1 - slPct / 100),
       tp1: price * (1 + tpPct / 100),
       tp2: price * (1 + (tpPct * 1.5) / 100),
     }
+    return {
+      ...raw,
+      tp1: enforceMemeTp1Floor(price, 'LONG', raw.tp1, 5),
+    }
   }
 
-  return {
+  const rawShort = {
     sl: price * (1 + slPct / 100),
     tp1: price * (1 - tpPct / 100),
     tp2: price * (1 - (tpPct * 1.5) / 100),
+  }
+  return {
+    ...rawShort,
+    tp1: enforceMemeTp1Floor(price, 'SHORT', rawShort.tp1, 5),
   }
 }
 

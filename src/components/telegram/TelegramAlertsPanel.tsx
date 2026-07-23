@@ -19,6 +19,7 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
   const { userId, isInTelegram, showAlert, haptic } = useTelegramWebApp()
   const settings = useAppStore((s) => s.telegramAlertSettings)
   const setSettings = useAppStore((s) => s.setTelegramAlertSettings)
+  const watchedSetups = useAppStore((s) => s.watchedSetups)
 
   const [health, setHealth] = useState<{
     ok: boolean
@@ -162,6 +163,16 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
             />
           </label>
 
+          <label className="flex items-center justify-between">
+            <span className="font-mono text-xs text-holo/80">Слежение за сетапами</span>
+            <input
+              type="checkbox"
+              checked={settings.setupWatch !== false}
+              onChange={(e) => setSettings({ setupWatch: e.target.checked })}
+              className="accent-matrix"
+            />
+          </label>
+
           <div>
             <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
               Мин. Confidence снайпер: {settings.minSniperConfidence}%
@@ -263,10 +274,29 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
             )}
           </div>
 
+              {watchedSetups.length > 0 && (
+                <div className="rounded-lg border border-hull-border/50 bg-black/20 p-2">
+                  <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
+                    Активные watch: {watchedSetups.length}
+                  </div>
+                  <ul className="max-h-24 space-y-1 overflow-y-auto">
+                    {watchedSetups.slice(0, 8).map((w) => (
+                      <li
+                        key={w.watchId}
+                        className="font-mono text-[9px] text-holo/50"
+                      >
+                        {w.symbol} {w.setup.side} · {w.lastStatus}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
           <p className="font-mono text-[10px] leading-relaxed text-holo/35">
             1) Создайте бота у @BotFather 2) Задеплойте worker с секретами 3)
-            Нажмите /start у бота 4) Включите алерты здесь. Сигналы уходят, когда
-            Mini App сканирует рынок.
+            Нажмите /start у бота 4) Включите алерты здесь. «Слежение за сетапами»
+            — бот напишет, когда выбранный сетап станет READY (даже если Mini App
+            закрыт, после деплоя worker).
           </p>
         </div>
       </div>

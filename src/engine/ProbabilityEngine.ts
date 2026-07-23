@@ -56,12 +56,22 @@ import {
   evaluateLiquidationGate,
 } from './derivatives'
 import { detectCvdDivergence } from './orderflow'
-import { calculateDynamicInvalidation } from './confidence/invalidation'
+import { pickInvalidationForDisplay } from './confidence/invalidation'
+import { computeHtfTrendStrength } from './trend/htfTrendStrength'
 import { buildGhostPath } from './prediction/ghostPath'
 import { buildGlobalFibonacci } from './zones/globalFibonacci'
+import { resolveSessionFlip } from './sessions/sessionFlip'
+import { computeMmIntent } from './mm/mmIntent'
+import {
+  resolveSurgicalEntry,
+  isSurgicalReady,
+} from './surgical/surgicalEntry'
+import type { SurgicalEntrySnapshot } from './types'
 
-export const CONFLUENCE_THRESHOLD = 5
-export const COOLDOWN_MS = 180 * 60 * 1000
+export const CONFLUENCE_THRESHOLD = 4.5
+export const SOFT_CONFLUENCE_THRESHOLD = 3.5
+export const COOLDOWN_MS = 90 * 60 * 1000
+export const SCALP_COOLDOWN_MS = 25 * 60 * 1000
 
 export interface AnalyzeSymbolInput {
   internalSymbol: string
@@ -88,6 +98,14 @@ export interface AnalyzeSymbolInput {
   ohlcv5m?: OhlcvCandle[]
   /** 1m свечи для LTF CHoCH детекции */
   ohlcv1m?: OhlcvCandle[]
+  /** Order book imbalance −100…+100 from live depth */
+  bookImbalance?: number | null
+  /** Precomputed MM intent (from depth + liq map) */
+  mmIntent?: import('./types').MmIntentSnapshot | null
+  /** Session DNA for flip bias */
+  sessionDna?: import('./types').SessionDNA | null
+  /** Previous surgical plan (persist WAITING across scans) */
+  previousSurgical?: SurgicalEntrySnapshot | null
 }
 
 export interface AnalyzeSymbolResult {
@@ -216,6 +234,7 @@ function enrichSignal(
     ohlcv15m: OhlcvCandle[]
     ohlcv5m?: OhlcvCandle[]
     ohlcv1m?: OhlcvCandle[]
+    ohlcv4h?: OhlcvCandle[]
     liquidityMap?: LiquidityMap
     tapeBurst?: boolean
     wallSupport?: boolean
@@ -230,6 +249,13 @@ function enrichSignal(
   const dailyAtr =
     calculateAtr(ctx.ohlcv1h.slice(-24), 14) ?? atr
   const dailyAtrPct = (dailyAtr / signal.price) * 100
+
+  const htfTrend =
+    ctx.ohlcv4h && ctx.ohlcv4h.length >= 20
+      ? computeHtfTrendStrength(ctx.ohlcv1h, ctx.ohlcv4h)
+      : ctx.ohlcv1h.length >= 30
+        ? computeHtfTrendStrength(ctx.ohlcv1h, ctx.ohlcv1h)
+        : null
 
   // VPVR
   let vpRaw = calculateVolumeProfile(ctx.ohlcv1h, 48, true)
@@ -319,7 +345,7 @@ function enrichSignal(
   const kz = isKillzoneActive()
 
   // Style-specific risk model (пересчёт SL/TP если есть уровни)
-  if (enriched.hasActiveSetup && enriched.sl != null && enriched.tp1 != null) {
+  if (enriched.sl != null && enriched.tp1 != null) {
     if (style === 'SCALP') {
       const levels = buildScalpLevels(
         signal.direction,
@@ -431,31 +457,50 @@ function enrichSignal(
     }
   }
 
-  // Dynamic invalidation
-  const invCandles = ctx.ohlcv5m?.length
-    ? ctx.ohlcv5m
-    : ctx.ohlcv1m?.length
-      ? ctx.ohlcv1m
-      : ctx.ohlcv15m
-  const inv = calculateDynamicInvalidation(
-    invCandles,
-    signal.direction,
-    ctx.ohlcv5m?.length ? '5m' : '1m'
-  )
+  // HTF invalidation (1H/4H close) preferred for display; LTF for early warn
+  const inv = pickInvalidationForDisplay({
+    direction: signal.direction,
+    ohlcv1m: ctx.ohlcv1m,
+    ohlcv5m: ctx.ohlcv5m,
+    ohlcv1h: ctx.ohlcv1h,
+    ohlcv4h: ctx.ohlcv4h,
+  })
+  if (inv) {
+    zones.push(
+      inv.breached
+        ? `HTF_BREAK: ${inv.timeframe.toUpperCase()}`
+        : `INV_${inv.timeframe.toUpperCase()}: ${inv.price.toFixed(4)}`
+    )
+  }
+  if (htfTrend) {
+    zones.push(`HTF_TREND: ${htfTrend.bias} ${htfTrend.label} (${htfTrend.strength})`)
+  }
 
-  // Интрадей: не триггерим элитный сетап если liq gate закрыт (сильный пул не снят)
+  // Интрадей: liq gate закрыт — не убиваем сетап, а снижаем confidence / помечаем
   let hasActiveSetup = enriched.hasActiveSetup
   if (
     hasActiveSetup &&
     style === 'INTRADAY' &&
     !liq.gateOpen &&
-    styleConfidence < 85
+    styleConfidence < 70
+  ) {
+    styleConfidence = Math.min(styleConfidence, 62)
+    zones.push(`LIQ_GATE_WARN: ${liq.label}`)
+    logger.info(
+      `[PE] ${signal.internalSymbol} liq gate closed — confidence capped, setup kept`
+    )
+  }
+
+  // Strong opposing HTF → demote active setup
+  if (
+    hasActiveSetup &&
+    htfTrend &&
+    htfTrend.label === 'STRONG' &&
+    ((signal.direction === 'LONG' && htfTrend.bias === 'BEARISH') ||
+      (signal.direction === 'SHORT' && htfTrend.bias === 'BULLISH'))
   ) {
     hasActiveSetup = false
-    zones.push(`LIQ_GATE: ${liq.label}`)
-    logger.info(
-      `[PE] ${signal.internalSymbol} liq gate closed — setup deferred`
-    )
+    zones.push('HTF_OPPOSE: сильный встречный тренд')
   }
 
   return {
@@ -469,6 +514,7 @@ function enrichSignal(
     invalidationMessage: inv?.message ?? null,
     ghostPathWarning,
     unrealisticTp,
+    htfTrend,
     activeSignal: enriched.activeSignal
       ? {
           ...enriched.activeSignal,
@@ -498,7 +544,89 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     btcOhlcv1h,
     ohlcv5m,
     ohlcv1m,
+    bookImbalance,
+    mmIntent: mmIntentInput,
+    sessionDna,
+    previousSurgical,
   } = input
+
+  // Resolve / compute MM intent early for side selection
+  const mmIntent =
+    mmIntentInput ??
+    computeMmIntent({
+      price: ohlcv1h[ohlcv1h.length - 1]?.[4] ?? 0,
+      book:
+        bookImbalance != null
+          ? {
+              imbalance: bookImbalance,
+              bidVolume: 0,
+              askVolume: 0,
+              bidOrders: 0,
+              askOrders: 0,
+              walls: [],
+              midPrice: null,
+              spread: null,
+              spreadPercent: null,
+              pressure:
+                bookImbalance > 20
+                  ? 'BUYERS'
+                  : bookImbalance < -20
+                    ? 'SELLERS'
+                    : 'NEUTRAL',
+            }
+          : null,
+      liquidityMap: liquidityMap ?? null,
+    })
+
+  const applyMmBoost = (
+    score: number,
+    direction: TradeSide | null,
+    zones: string[]
+  ): { score: number; zones: string[] } => {
+    if (!direction || mmIntent.drive === 'NEUTRAL') return { score, zones }
+    const boost =
+      direction === 'LONG'
+        ? mmIntent.scoreBoostForLong
+        : mmIntent.scoreBoostForShort
+    if (Math.abs(boost) < 0.15) return { score, zones }
+    return {
+      score: Math.min(Math.max(score + boost, 0), 10),
+      zones: [...zones, `MM_INTENT: ${mmIntent.label}`],
+    }
+  }
+
+  const applyBookBoost = (
+    score: number,
+    direction: TradeSide | null,
+    zones: string[]
+  ): { score: number; zones: string[] } => {
+    if (bookImbalance == null || !direction || !Number.isFinite(bookImbalance)) {
+      return { score, zones }
+    }
+    const aligned =
+      (direction === 'LONG' && bookImbalance >= 18) ||
+      (direction === 'SHORT' && bookImbalance <= -18)
+    const against =
+      (direction === 'LONG' && bookImbalance <= -25) ||
+      (direction === 'SHORT' && bookImbalance >= 25)
+    if (aligned) {
+      const boost = Math.min(1.2, Math.abs(bookImbalance) / 50)
+      return {
+        score: Math.min(score + boost, 10),
+        zones: [
+          ...zones,
+          `OBI: ${bookImbalance > 0 ? 'Bids' : 'Asks'} ${bookImbalance.toFixed(0)}%`,
+        ],
+      }
+    }
+    if (against) {
+      return {
+        score: Math.max(score - 0.8, 0),
+        zones: [...zones, `OBI_AGAINST: ${bookImbalance.toFixed(0)}%`],
+      }
+    }
+    return { score, zones }
+  }
 
   const applyWallBoost = (
     score: number,
@@ -791,7 +919,16 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const coinStructure = detectMarketStructure(ohlcv4h, 50)
   const coinTrend = coinStructure.trend
 
-  if (coinTrend === 'RANGING' && btcTrend === 'RANGING') {
+  const ltfAlive =
+    _raidLong.isFresh ||
+    _raidShort.isFresh ||
+    _ltfChoCH.detected ||
+    _absorption.detected ||
+    (_mssLong?.detected ?? false) ||
+    (_mssShort?.detected ?? false)
+
+  // Dual ranging блокирует только если нет LTF-триггера (raid/CHoCH/absorption)
+  if (coinTrend === 'RANGING' && btcTrend === 'RANGING' && !ltfAlive) {
     return {
       signal: emptySignal(
         internalSymbol,
@@ -825,10 +962,31 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
 
   const longAllowed =
     longPermitted &&
-    (coinTrend === 'BULLISH' || (coinTrend === 'RANGING' && btcTrend === 'BULLISH'))
+    (coinTrend === 'BULLISH' ||
+      (coinTrend === 'RANGING' && btcTrend === 'BULLISH') ||
+      (coinTrend === 'RANGING' && btcTrend === 'RANGING' && ltfAlive) ||
+      (coinTrend === 'BEARISH' && (_raidLong.isFresh || _ltfChoCH.detected)))
   const shortAllowed =
     shortPermitted &&
-    (coinTrend === 'BEARISH' || (coinTrend === 'RANGING' && btcTrend === 'BEARISH'))
+    (coinTrend === 'BEARISH' ||
+      (coinTrend === 'RANGING' && btcTrend === 'BEARISH') ||
+      (coinTrend === 'RANGING' && btcTrend === 'RANGING' && ltfAlive) ||
+      (coinTrend === 'BULLISH' && _raidShort.isFresh))
+
+  const sessionFlip = resolveSessionFlip({
+    dailyLongOk: longPermitted,
+    dailyShortOk: shortPermitted,
+    coinTrend,
+    liquidityMap: liquidityMap ?? null,
+    sessionDna: sessionDna ?? null,
+    mmIntent,
+  })
+
+  const longAllowedFinal = longAllowed || sessionFlip.longAllowedExtra
+  const shortAllowedFinal = shortAllowed || sessionFlip.shortAllowedExtra
+  if (sessionFlip.reason) {
+    logger.info(`[PE] ${internalSymbol} session flip: ${sessionFlip.reason}`)
+  }
 
   const trySide = (side: TradeSide): AnalyzeSymbolResult | null => {
     const confluence = calculateConfluence(
@@ -841,20 +999,70 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     if (confluence.score < CONFLUENCE_THRESHOLD) return null
     if (!confluence.bestZone.top || !confluence.bestZone.bottom) return null
 
-    const rejection = checkCandleRejection(
+    const rejection1h = checkCandleRejection(
       ohlcv1h[ohlcv1h.length - 1],
       confluence.bestZone.top,
       confluence.bestZone.bottom,
-      side
+      side,
+      0.35
     )
-    if (!rejection.rejected) return null
+    const rejection15m =
+      ohlcv15m.length > 0
+        ? checkCandleRejection(
+            ohlcv15m[ohlcv15m.length - 1],
+            confluence.bestZone.top,
+            confluence.bestZone.bottom,
+            side,
+            0.28
+          )
+        : { rejected: false, wickRatio: 0, bodyInZone: false }
+    const rejection5m =
+      ohlcv5m && ohlcv5m.length > 0
+        ? checkCandleRejection(
+            ohlcv5m[ohlcv5m.length - 1],
+            confluence.bestZone.top,
+            confluence.bestZone.bottom,
+            side,
+            0.25
+          )
+        : { rejected: false, wickRatio: 0, bodyInZone: false }
 
-    if (side === 'LONG' && (rsi === null || rsi >= 45)) return null
-    if (side === 'SHORT' && (rsi === null || rsi <= 55)) return null
+    const raidFresh =
+      side === 'LONG' ? _raidLong.isFresh : _raidShort.isFresh
+    const surgicalLtf =
+      _ltfChoCH.detected && !!_ltfChoCH.surgicalEntryDetected
+    const ltfConfirm =
+      raidFresh ||
+      (side === 'LONG' && (_absorption.detected || _ltfChoCH.detected)) ||
+      (side === 'SHORT' &&
+        ((_mssShort?.detected ?? false) || _raidShort.isFresh))
+
+    const hasRejection =
+      rejection1h.rejected || rejection15m.rejected || rejection5m.rejected
+
+    // Ювелирный вход: rejection ИЛИ (LTF confirm + цена в зоне / surgical)
+    const priceInZone =
+      currentPrice <= confluence.bestZone.top &&
+      currentPrice >= confluence.bestZone.bottom
+    if (!hasRejection && !(ltfConfirm && (priceInZone || surgicalLtf))) {
+      return null
+    }
+
+    // RSI: мягче для LTF/scalp, жёстче без подтверждения
+    if (side === 'LONG') {
+      const rsiCap = ltfConfirm || hasRejection ? 58 : 48
+      if (rsi === null || rsi >= rsiCap) return null
+    }
+    if (side === 'SHORT') {
+      const rsiFloor = ltfConfirm || hasRejection ? 42 : 52
+      if (rsi === null || rsi <= rsiFloor) return null
+    }
 
     const levels = buildLevels(side, currentPrice, confluence, dailyBias.dailyLevels)
     const wallBoosted = applyWallBoost(confluence.score, side, confluence.zones)
-    const newsBoosted = applyNewsBoost(wallBoosted.score, wallBoosted.zones)
+    const bookBoosted = applyBookBoost(wallBoosted.score, side, wallBoosted.zones)
+    const mmBoosted = applyMmBoost(bookBoosted.score, side, bookBoosted.zones)
+    const newsBoosted = applyNewsBoost(mmBoosted.score, mmBoosted.zones)
     const liqBoosted = applyLiquidityBoost(
       newsBoosted.score,
       side,
@@ -880,6 +1088,57 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     const probabilityPct = scoreToProbability(boosted.score)
     const flat = toFlatSymbol(internalSymbol)
 
+    const entryHint = hasRejection
+      ? 'REJECTION'
+      : raidFresh
+        ? 'RAID_ENTRY'
+        : 'SURGICAL_LTF'
+
+    const atr = calculateAtr(ohlcv1h, 14) ?? currentPrice * 0.005
+    const surgicalPlan = resolveSurgicalEntry({
+      side,
+      price: currentPrice,
+      candles1m: ohlcv1m,
+      candles5m: ohlcv5m,
+      mmIntent,
+      ote: ltfResult.ote,
+      mss: ltfResult.mss,
+      raid: ltfResult.raid,
+      absorption: _absorption.detected ? _absorption : null,
+      ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
+      zoneTop: confluence.bestZone.top,
+      zoneBottom: confluence.bestZone.bottom,
+      previous: previousSurgical?.side === side ? previousSurgical : null,
+      atr,
+    })
+
+    const preciseReady = isSurgicalReady(surgicalPlan)
+    // With MM micro hunt — only READY is a full trigger; otherwise keep classic LTF path
+    const hasMicroHunt = surgicalPlan.microTarget != null
+    const setupActive = hasMicroHunt ? preciseReady : true
+    if (hasMicroHunt && !preciseReady) {
+      logger.info(
+        `[PE] ${internalSymbol} surgical ${surgicalPlan.status}: ${surgicalPlan.reason}`
+      )
+    }
+
+    let entrySl = levels.sl
+    let entryTp1 = levels.tp1
+    let entryTp2 = levels.tp2
+    if (preciseReady && surgicalPlan.limitEntry != null) {
+      const entry = surgicalPlan.limitEntry
+      const risk = Math.abs(entry - levels.sl)
+      if (side === 'LONG') {
+        entrySl = surgicalPlan.invalidation ?? levels.sl
+        entryTp1 = entry + risk * 2
+        entryTp2 = entry + risk * 3.5
+      } else {
+        entrySl = surgicalPlan.invalidation ?? levels.sl
+        entryTp1 = entry - risk * 2
+        entryTp2 = entry - risk * 3.5
+      }
+    }
+
     const signal: CoinSignal = {
       symbol: flat,
       internalSymbol,
@@ -888,12 +1147,16 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       priceChange24h,
       currentRSI: rsi,
       probabilityPct,
-      score: boosted.score,
+      score: preciseReady ? Math.min(boosted.score + 0.8, 10) : boosted.score,
       direction: side,
-      zones: boosted.zones,
-      sl: levels.sl,
-      tp1: levels.tp1,
-      tp2: levels.tp2,
+      zones: [
+        ...boosted.zones,
+        `ENTRY: ${entryHint}`,
+        `SURGICAL: ${surgicalPlan.status}`,
+      ],
+      sl: entrySl,
+      tp1: entryTp1,
+      tp2: entryTp2,
       tpDaily: levels.tpDaily,
       coinTrend,
       btcTrend,
@@ -901,7 +1164,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       dailyConfidence: dailyBias.confidence,
       dailyPattern: dailyBias.dailyAnalysis?.pattern ?? null,
       isLocked: false,
-      hasActiveSetup: true,
+      hasActiveSetup: setupActive,
       activeSignal: {
         win_rate: probabilityPct,
         samples: boosted.score,
@@ -916,6 +1179,9 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       absorption: _absorption.detected ? _absorption : null,
       ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
       buyerAggression: null,
+      mmIntent,
+      sessionFlipReason: sessionFlip.reason || null,
+      surgicalEntry: surgicalPlan,
       globalFib: globalFib
         ? {
             impulse: globalFib.impulse,
@@ -937,29 +1203,40 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       ohlcv15m,
       ohlcv5m,
       ohlcv1m,
+      ohlcv4h,
       liquidityMap,
-      wallSupport: Boolean(wallTracker),
+      wallSupport:
+        Boolean(wallTracker) ||
+        (bookImbalance != null &&
+          ((side === 'LONG' && bookImbalance > 15) ||
+            (side === 'SHORT' && bookImbalance < -15))),
       bestZoneTop: confluence.bestZone.top,
       bestZoneBottom: confluence.bestZone.bottom,
     })
 
+    // Still return the plan when waiting — radar shows it, sniper waits READY
     return { signal: enriched, triggered: enriched.hasActiveSetup }
   }
 
-  // Prefer side matching global fib reaction when price is in the zone
+  // Prefer session/MM liquidity hunt order; fib bias only if session not flipped
   const fibBias = globalFib?.entryBias
-  const tryOrder: TradeSide[] =
-    fibBias === 'SHORT'
-      ? ['SHORT', 'LONG']
-      : fibBias === 'LONG'
-        ? ['LONG', 'SHORT']
-        : ['LONG', 'SHORT']
+  let tryOrder: TradeSide[] = sessionFlip.tryOrder
+  if (!sessionFlip.flipped && (fibBias === 'SHORT' || fibBias === 'LONG')) {
+    tryOrder = [fibBias, fibBias === 'LONG' ? 'SHORT' : 'LONG']
+  }
+
+  let pendingSurgical: AnalyzeSymbolResult | null = null
 
   for (const side of tryOrder) {
-    if (side === 'LONG' && !longAllowed) continue
-    if (side === 'SHORT' && !shortAllowed) continue
+    if (side === 'LONG' && !longAllowedFinal) continue
+    if (side === 'SHORT' && !shortAllowedFinal) continue
     const result = trySide(side)
-    if (result) return result
+    if (result?.triggered) return result
+    if (result && !pendingSurgical) pendingSurgical = result
+  }
+  if (pendingSurgical) {
+    // Show WAITING plan on radar; sniper still blocked until READY
+    return pendingSurgical
   }
 
   // No full trigger — still show best confluence as soft probability for radar
@@ -967,8 +1244,27 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   let softDirection: TradeSide | null = null
   let softZones: string[] = []
 
-  // Soft-bias toward Fib 141 side (structural or when in/near zone)
-  if (globalFib?.entryBias === 'LONG' && longAllowed) {
+  // Soft-bias: session/MM preferred side first, then fib
+  const softPrefer = sessionFlip.tryOrder[0]
+  if (softPrefer === 'LONG' && longAllowedFinal) {
+    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
+    softScore = c.score + (mmIntent.scoreBoostForLong > 0 ? 0.8 : 0)
+    softDirection = 'LONG'
+    softZones = [
+      ...c.zones,
+      sessionFlip.reason ? `SESSION: ${sessionFlip.reason}` : '',
+      mmIntent.drive !== 'NEUTRAL' ? `MM: ${mmIntent.label}` : '',
+    ].filter(Boolean)
+  } else if (softPrefer === 'SHORT' && shortAllowedFinal) {
+    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
+    softScore = c.score + (mmIntent.scoreBoostForShort > 0 ? 0.8 : 0)
+    softDirection = 'SHORT'
+    softZones = [
+      ...c.zones,
+      sessionFlip.reason ? `SESSION: ${sessionFlip.reason}` : '',
+      mmIntent.drive !== 'NEUTRAL' ? `MM: ${mmIntent.label}` : '',
+    ].filter(Boolean)
+  } else if (globalFib?.entryBias === 'LONG' && longAllowedFinal) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
     const at141 = globalFib.in141 || globalFib.near141
     softScore = c.score + (at141 ? 2.4 : globalFib.zone141 ? 0.8 : 0)
@@ -979,7 +1275,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
         ? [`GLOBAL_FIB_141: ${globalFib.zone141?.label ?? '141'} → ищем LONG`]
         : [`GLOBAL_FIB_141_WATCH: ждём 141 @ ${globalFib.price141?.toPrecision(6) ?? '—'} → LONG`],
     ].flat()
-  } else if (globalFib?.entryBias === 'SHORT' && shortAllowed) {
+  } else if (globalFib?.entryBias === 'SHORT' && shortAllowedFinal) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
     const at141 = globalFib.in141 || globalFib.near141
     softScore = c.score + (at141 ? 2.4 : globalFib.zone141 ? 0.8 : 0)
@@ -992,7 +1288,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     ].flat()
   }
 
-  if (longAllowed) {
+  if (longAllowedFinal) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
     if (c.score > softScore) {
       softScore = c.score
@@ -1000,7 +1296,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       softZones = c.zones
     }
   }
-  if (shortAllowed) {
+  if (shortAllowedFinal) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
     if (c.score > softScore) {
       softScore = c.score
@@ -1010,7 +1306,9 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   }
 
   const softWall = applyWallBoost(softScore, softDirection, softZones)
-  const softNews = applyNewsBoost(softWall.score, softWall.zones)
+  const softBook = applyBookBoost(softWall.score, softDirection, softWall.zones)
+  const softMm = applyMmBoost(softBook.score, softDirection, softBook.zones)
+  const softNews = applyNewsBoost(softMm.score, softMm.zones)
   const softLiq = applyLiquidityBoost(
     softNews.score,
     softDirection,
@@ -1032,6 +1330,80 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const flat = toFlatSymbol(internalSymbol)
   const probabilityPct = scoreToProbability(softBoosted.score)
 
+  // Soft setups with decent confluence get provisional SL/TP (ghost + sniper prep)
+  let softSl: number | null = null
+  let softTp1: number | null = null
+  let softTp2: number | null = null
+  let softTpDaily: number | null = null
+  let softActive = false
+  if (
+    softDirection &&
+    softBoosted.score >= SOFT_CONFLUENCE_THRESHOLD
+  ) {
+    const softConf = calculateConfluence(
+      currentPrice,
+      orderBlocks,
+      fvgList,
+      fibLevels,
+      softDirection
+    )
+    if (softConf.bestZone.top && softConf.bestZone.bottom) {
+      const lv = buildLevels(
+        softDirection,
+        currentPrice,
+        softConf,
+        dailyBias.dailyLevels
+      )
+      softSl = lv.sl
+      softTp1 = lv.tp1
+      softTp2 = lv.tp2
+      softTpDaily = lv.tpDaily
+      // Promote to active only with surgical READY (precise entry)
+      softActive = false
+    }
+  }
+
+  const softAtr = calculateAtr(ohlcv1h, 14) ?? currentPrice * 0.005
+  const softSurgical =
+    softDirection != null
+      ? resolveSurgicalEntry({
+          side: softDirection,
+          price: currentPrice,
+          candles1m: ohlcv1m,
+          candles5m: ohlcv5m,
+          mmIntent,
+          ote: softLTF.ote,
+          mss: softLTF.mss,
+          raid: softLTF.raid,
+          absorption: _absorption.detected ? _absorption : null,
+          ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
+          previous:
+            previousSurgical?.side === softDirection ? previousSurgical : null,
+          atr: softAtr,
+        })
+      : null
+
+  if (
+    softSurgical &&
+    isSurgicalReady(softSurgical) &&
+    softBoosted.score >= CONFLUENCE_THRESHOLD &&
+    softSl != null
+  ) {
+    softActive = true
+    if (softSurgical.limitEntry != null) {
+      const entry = softSurgical.limitEntry
+      const risk = Math.abs(entry - (softSurgical.invalidation ?? softSl))
+      softSl = softSurgical.invalidation ?? softSl
+      if (softDirection === 'LONG') {
+        softTp1 = entry + risk * 2
+        softTp2 = entry + risk * 3.5
+      } else if (softDirection === 'SHORT') {
+        softTp1 = entry - risk * 2
+        softTp2 = entry - risk * 3.5
+      }
+    }
+  }
+
   const softSignal: CoinSignal = {
     symbol: flat,
     internalSymbol,
@@ -1043,17 +1415,17 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     score: softBoosted.score,
     direction: softBoosted.score > 0 ? softDirection : null,
     zones: softBoosted.zones,
-    sl: null,
-    tp1: null,
-    tp2: null,
-    tpDaily: null,
+    sl: softSl,
+    tp1: softTp1,
+    tp2: softTp2,
+    tpDaily: softTpDaily,
     coinTrend,
     btcTrend,
     dailyBias: dailyBias.bias,
     dailyConfidence: dailyBias.confidence,
     dailyPattern: dailyBias.dailyAnalysis?.pattern ?? null,
     isLocked: false,
-    hasActiveSetup: false,
+    hasActiveSetup: softActive,
     activeSignal:
       softBoosted.score > 0 && softDirection
         ? {
@@ -1071,6 +1443,9 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     absorption: _absorption.detected ? _absorption : null,
     ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
     buyerAggression: null,
+    mmIntent,
+    sessionFlipReason: sessionFlip.reason || null,
+    surgicalEntry: softSurgical,
     globalFib: globalFib
       ? {
           impulse: globalFib.impulse,
@@ -1094,13 +1469,18 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
           ohlcv15m,
           ohlcv5m,
           ohlcv1m,
+          ohlcv4h,
           liquidityMap,
-          wallSupport: Boolean(wallTracker),
+          wallSupport:
+            Boolean(wallTracker) ||
+            (bookImbalance != null &&
+              ((softSignal.direction === 'LONG' && bookImbalance > 15) ||
+                (softSignal.direction === 'SHORT' && bookImbalance < -15))),
         })
       : softSignal
 
   return {
     signal: enrichedSoft,
-    triggered: false,
+    triggered: enrichedSoft.hasActiveSetup,
   }
 }
