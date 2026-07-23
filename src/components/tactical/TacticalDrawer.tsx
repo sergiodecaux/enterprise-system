@@ -246,7 +246,7 @@ const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
   }
 
   return (
-    <div className="rounded-xl border border-hull-border bg-hull p-3">
+    <div className="min-h-[7.5rem] rounded-xl border border-hull-border bg-hull p-3">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-base">🐋</span>
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
