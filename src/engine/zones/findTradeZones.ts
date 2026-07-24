@@ -13,10 +13,15 @@ import type {
 } from '../types'
 import { buildLiquidityMap } from '../smc'
 import { buildGlobalFibonacci } from './globalFibonacci'
-import type { ConditionalSetup, SetupPrecondition } from '../setups/types'
+import type {
+  ConditionalSetup,
+  SetupPrecondition,
+  SetupTradeStyle,
+} from '../setups/types'
 import { buildConditionalSetups } from '../setups/buildConditionalSetups'
 import type { PriceForecast } from '../prediction/types'
 import { buildZoneTradeVariants, scoreZoneWinPct } from './zoneScenarios'
+import { HORIZON_PROFILES } from './horizonProfiles'
 
 export interface FoundTradeZone {
   id: string
@@ -100,8 +105,12 @@ export function findTradeZones(input: {
   forecast?: PriceForecast | null
   liquidityMap?: LiquidityMap | null
   bookImbalance?: number | null
+  /** Chart horizon toggle: SCALP / INTRADAY / SWING */
+  tradeStyle?: SetupTradeStyle
 }): FindTradeZonesResult {
   const price = input.price
+  const tradeStyle: SetupTradeStyle = input.tradeStyle ?? 'INTRADAY'
+  const prof = HORIZON_PROFILES[tradeStyle]
   const emptyMap: LiquidityMap = {
     symbol: input.symbol,
     timeframe: '1h',
@@ -125,16 +134,31 @@ export function findTradeZones(input: {
     }
   }
 
+  // SWING/INTRA: prefer daily structure for liquidity pools when available
+  const mapSrc =
+    (tradeStyle === 'SWING' || tradeStyle === 'INTRADAY') &&
+    input.candles1d &&
+    input.candles1d.length >= 40
+      ? input.candles1d
+      : input.candles
   const map =
-    input.liquidityMap ??
-    buildLiquidityMap(input.candles, price, input.symbol, 'chart')
+    input.liquidityMap && tradeStyle === 'SCALP'
+      ? input.liquidityMap
+      : buildLiquidityMap(
+          mapSrc,
+          price,
+          input.symbol,
+          tradeStyle === 'SWING' ? '1d' : tradeStyle === 'INTRADAY' ? '4h' : 'chart'
+        )
 
   const fibSrc =
-    input.candles.length >= 40
-      ? input.candles
-      : input.candles1d && input.candles1d.length >= 40
-        ? input.candles1d
-        : input.candles
+    tradeStyle === 'SWING' && input.candles1d && input.candles1d.length >= 40
+      ? input.candles1d
+      : input.candles.length >= 40
+        ? input.candles
+        : input.candles1d && input.candles1d.length >= 40
+          ? input.candles1d
+          : input.candles
   const fib = buildGlobalFibonacci(fibSrc, price)
 
   const lastTs = (input.candles[input.candles.length - 1]?.[0] ?? Date.now()) / 1000
@@ -231,12 +255,13 @@ export function findTradeZones(input: {
     })
   }
 
-  // Fib reaction bands near price
+  // Fib reaction bands — wider search for INTRA/SWING
+  const fibMaxDist = tradeStyle === 'SWING' ? 12 : tradeStyle === 'INTRADAY' ? 6.5 : 4.5
   if (fib?.chartZones?.length) {
-    for (const fz of fib.chartZones.slice(0, 4)) {
+    for (const fz of fib.chartZones.slice(0, tradeStyle === 'SWING' ? 8 : 4)) {
       const mid = (fz.top + fz.bottom) / 2
       const dist = Math.abs((mid - price) / price) * 100
-      if (dist > 4.5) continue
+      if (dist > fibMaxDist) continue
       const side: 'LONG' | 'SHORT' =
         fz.side === 'BEARISH' || mid > price ? 'SHORT' : 'LONG'
       const id = uid('zone_fib')
@@ -291,33 +316,73 @@ export function findTradeZones(input: {
       return da - db || b.strength - a.strength
     })
 
-  const zones = [...longs.slice(0, 2), ...shorts.slice(0, 2)]
+  // SWING: keep farther HTF pools; SCALP: nearest only
+  const zoneCap = tradeStyle === 'SWING' ? 3 : tradeStyle === 'INTRADAY' ? 3 : 2
+  const styleLongs = longs.filter((z) => {
+    const d = Math.abs(z.distancePct)
+    return d <= prof.maxDistPct && d >= prof.minDistPct
+  })
+  const styleShorts = shorts.filter((z) => {
+    const d = Math.abs(z.distancePct)
+    return d <= prof.maxDistPct && d >= prof.minDistPct
+  })
+  const zones = [
+    ...(styleLongs.length ? styleLongs : longs).slice(0, zoneCap),
+    ...(styleShorts.length ? styleShorts : shorts).slice(0, zoneCap),
+  ]
   const chartZones = zones.map((z) => z.chartZone)
 
-  // Bounce + break variants with chart paths
+  // Bounce + break variants shaped by horizon
   const zoneSetups = buildZoneTradeVariants(
     zones,
     price,
     input.bookImbalance ?? null,
     input.signal?.symbol ?? input.flatSymbol,
     input.signal?.internalSymbol ?? input.symbol,
-    input.signal?.btcDivergence?.relativeStrength ?? null
+    input.signal?.btcDivergence?.relativeStrength ?? null,
+    tradeStyle
   )
 
   let extra: ConditionalSetup[] = []
   if (input.signal) {
-    extra = buildConditionalSetups({
+    const built = buildConditionalSetups({
       signal: input.signal,
       forecast: input.forecast ?? null,
       liquidityMap: map,
       mmIntent: input.mmIntent ?? null,
       htfTrend: input.signal.htfTrend,
       price,
-    }).filter(
-      (s) =>
-        s.kind === 'SURGICAL' ||
-        s.kind === 'MM_HUNT'
-    )
+    })
+    if (tradeStyle === 'SCALP') {
+      extra = built.filter(
+        (s) => s.kind === 'SURGICAL' || s.kind === 'MM_HUNT'
+      )
+    } else if (tradeStyle === 'INTRADAY') {
+      extra = built.filter(
+        (s) =>
+          s.kind === 'SURGICAL' ||
+          s.kind === 'MM_HUNT' ||
+          s.kind === 'FORECAST_A' ||
+          s.kind === 'FORECAST_B'
+      )
+    } else {
+      // SWING — forecast + MM macro hunt
+      extra = built.filter(
+        (s) =>
+          s.kind === 'FORECAST_A' ||
+          s.kind === 'FORECAST_B' ||
+          s.kind === 'FORECAST_C' ||
+          s.kind === 'MM_HUNT'
+      )
+    }
+    extra = extra.map((s) => ({
+      ...s,
+      tradeStyle,
+      title: s.title.startsWith('#')
+        ? s.title
+        : `${prof.tag} ${s.title}`,
+      id: `${s.id}_${tradeStyle.toLowerCase()}`,
+    }))
   }
 
   const setups = [...zoneSetups]
@@ -325,6 +390,7 @@ export function findTradeZones(input: {
     const dup = setups.some(
       (x) =>
         x.side === s.side &&
+        x.tradeStyle === s.tradeStyle &&
         Math.abs(x.limitEntry - s.limitEntry) / s.limitEntry < 0.002
     )
     if (!dup) setups.push(s)

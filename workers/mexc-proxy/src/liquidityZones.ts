@@ -354,11 +354,14 @@ export function findSmartZone(
   side: Side,
   price: number,
   map: LiquidityMap,
-  atr: number
+  atr: number,
+  opts?: { relaxed?: boolean }
 ): SmartZonePlan | null {
   if (!(price > 0)) return null
 
   const bandPct = map.primaryTf === '1D' ? 0.0065 : 0.0055
+  const maxDist = opts?.relaxed ? 9.0 : 6.5
+  const minTouches4h = opts?.relaxed ? 1 : 2
 
   if (side === 'LONG') {
     const ssl = [...map.equalLows]
@@ -376,11 +379,11 @@ export function findSmartZone(
       )[0]
     if (!ssl) return null
     // Reject "medium" that is too far — but 4H ×2 touches IS a real pool
-    if (ssl.distancePct > 6.5) return null
+    if (ssl.distancePct > maxDist) return null
     if (
       ssl.strength === 'MEDIUM' &&
       ssl.tf === '4H' &&
-      ssl.touches < 2
+      ssl.touches < minTouches4h
     ) {
       return null
     }
@@ -388,7 +391,7 @@ export function findSmartZone(
     if (
       ssl.strength === 'MEDIUM' &&
       ssl.confluence < 1 &&
-      ssl.touches < 2
+      ssl.touches < minTouches4h
     ) {
       return null
     }
@@ -445,11 +448,15 @@ export function findSmartZone(
         a.distancePct - b.distancePct
     )[0]
   if (!bsl) return null
-  if (bsl.distancePct > 6.5) return null
-  if (bsl.strength === 'MEDIUM' && bsl.tf === '4H' && bsl.touches < 2) {
+  if (bsl.distancePct > maxDist) return null
+  if (bsl.strength === 'MEDIUM' && bsl.tf === '4H' && bsl.touches < minTouches4h) {
     return null
   }
-  if (bsl.strength === 'MEDIUM' && bsl.confluence < 1 && bsl.touches < 2) {
+  if (
+    bsl.strength === 'MEDIUM' &&
+    bsl.confluence < 1 &&
+    bsl.touches < minTouches4h
+  ) {
     return null
   }
 

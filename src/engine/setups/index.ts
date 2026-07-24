@@ -5,6 +5,11 @@ export type {
   ConditionalSetup,
   ConditionalSetupStatus,
   WatchedSetup,
+  TradeTargetLadder,
+  TradeMagnet,
+  TradeMagnetKind,
+  TradeGlobalView,
+  SetupTradeStyle,
 } from './types'
 
 export { buildConditionalSetups } from './buildConditionalSetups'

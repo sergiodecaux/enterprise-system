@@ -8,6 +8,11 @@ import {
   buildHtfLiquidityMap,
   findSmartZone,
 } from './liquidityZones'
+import { assessWatchQuality, type WatchQuality } from './watchQuality'
+import {
+  estimateMovePotential,
+  type MovePotential,
+} from './movePotential'
 
 export type SetupStatus =
   | 'HYPOTHESIS'
@@ -15,6 +20,15 @@ export type SetupStatus =
   | 'READY'
   | 'INVALIDATED'
   | 'EXPIRED'
+
+export interface TradeTargetLadderPayload {
+  r1: number
+  r2: number
+  r3: number
+  pReach1: number
+  pReach2: number
+  pReach3: number
+}
 
 export interface ConditionalSetupPayload {
   id: string
@@ -33,6 +47,13 @@ export interface ConditionalSetupPayload {
   symbol?: string
   internalSymbol?: string
   createdAt: number
+  targetsLadder?: TradeTargetLadderPayload
+  magnet?: { price: number; label: string; kind: string }
+  globalView?: {
+    bias: string
+    summary: string
+    factors: string[]
+  }
 }
 
 export interface WatchedSetupRecord {
@@ -91,6 +112,14 @@ interface WatchEvalSnapshot {
   bookOk: boolean
   reactionOk: boolean
   fuelOk: boolean
+  acceptanceOk?: boolean
+  structureOk?: boolean
+  strengthOk?: boolean
+  btcRs?: number | null
+  qualityNote?: string
+  htfSummary?: string
+  htfScore?: number
+  movePotential?: MovePotential
 }
 
 interface Env {
@@ -261,7 +290,14 @@ export function evaluateWatchSnapshot(
   ohlcv1m: Candle[],
   ohlcv1h: Candle[],
   ohlcv4h: Candle[],
-  bookImb: number | null = null
+  bookImb: number | null = null,
+  extras?: {
+    candles15m?: Candle[]
+    candles4h?: Candle[]
+    candles1d?: Candle[]
+    btc1h?: Candle[] | null
+    symbol?: string
+  }
 ): WatchEvalSnapshot {
   const zoneMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
   const inside = inZone(price, setup.entryZone)
@@ -276,40 +312,34 @@ export function evaluateWatchSnapshot(
   const distToInvPct =
     price === 0 ? 0 : ((price - setup.invalidation) / price) * 100
 
+  const emptyQuality = (narrative: string): WatchEvalSnapshot => ({
+    status: 'INVALIDATED',
+    price,
+    inZone: inside,
+    distToZonePct,
+    distToLimitPct,
+    distToInvPct,
+    preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
+    narrative,
+    lifecycle: 'INVALIDATED',
+    bookOk: false,
+    reactionOk: false,
+    fuelOk: false,
+    acceptanceOk: false,
+    structureOk: false,
+    strengthOk: false,
+    btcRs: null,
+    qualityNote: narrative,
+  })
+
   if (htfBreached(ohlcv4h, setup.side) || htfBreached(ohlcv1h, setup.side)) {
-    return {
-      status: 'INVALIDATED',
-      price,
-      inZone: inside,
-      distToZonePct,
-      distToLimitPct,
-      distToInvPct,
-      preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
-      narrative: 'HTF слом — сетап снят',
-      lifecycle: 'INVALIDATED',
-      bookOk: false,
-      reactionOk: false,
-      fuelOk: false,
-    }
+    return emptyQuality('HTF слом — сетап снят')
   }
   if (
     (setup.side === 'LONG' && price < setup.invalidation) ||
     (setup.side === 'SHORT' && price > setup.invalidation)
   ) {
-    return {
-      status: 'INVALIDATED',
-      price,
-      inZone: inside,
-      distToZonePct,
-      distToLimitPct,
-      distToInvPct,
-      preconditions: setup.preconditions.map((p) => ({ ...p, status: 'FAILED' })),
-      narrative: 'Цена за invalidation',
-      lifecycle: 'INVALIDATED',
-      bookOk: false,
-      reactionOk: false,
-      fuelOk: false,
-    }
+    return emptyQuality('Цена за invalidation')
   }
 
   const fuel = assessZoneFuel({
@@ -320,6 +350,31 @@ export function evaluateWatchSnapshot(
     candles1m: ohlcv1m,
     bookImb,
   })
+
+  const quality: WatchQuality = assessWatchQuality({
+    side: setup.side,
+    symbol: extras?.symbol ?? setup.internalSymbol ?? setup.symbol ?? '',
+    zoneLow: setup.entryZone.bottom,
+    zoneHigh: setup.entryZone.top,
+    invalidation: setup.invalidation,
+    inZone: inside,
+    reactionOk: fuel.reactionOk,
+    candles1m: ohlcv1m,
+    candles15m: extras?.candles15m ?? [],
+    candles1h: ohlcv1h,
+    candles4h: extras?.candles4h ?? ohlcv4h,
+    candles1d: extras?.candles1d ?? [],
+    btc1h: extras?.btc1h ?? null,
+  })
+
+  if (quality.structureBroken) {
+    return emptyQuality(quality.structureNote)
+  }
+  if (quality.strengthKill) {
+    return emptyQuality(
+      quality.htf.kill ? quality.htf.summary : quality.strengthNote
+    )
+  }
 
   const pre = setup.preconditions.map((p) => ({ ...p }))
   for (const p of pre) {
@@ -332,24 +387,39 @@ export function evaluateWatchSnapshot(
         : p.status
     }
     if (p.id === 'book') {
+      // Book against → delay READY, do NOT kill the whole watch
       if (fuel.bookOk) p.status = 'MET'
-      else if (
-        bookImb != null &&
-        ((setup.side === 'LONG' && bookImb <= -18) ||
-          (setup.side === 'SHORT' && bookImb >= 18))
-      ) {
-        p.status = 'FAILED'
-      } else {
-        p.status = 'PENDING'
-      }
+      else p.status = 'PENDING'
     }
     if (p.id === 'reject' || p.id === 'confirm' || p.id === 'flip' || p.id === 'fuel') {
-      if (fuel.reactionOk) p.status = 'MET'
+      if (fuel.reactionOk && quality.acceptanceOk) p.status = 'MET'
+      else if (fuel.reactionOk) p.status = 'PENDING'
       else if (inside) p.status = p.status === 'MET' ? 'MET' : 'PENDING'
+    }
+    if (p.id === 'acceptance' || p.id === 'hold') {
+      p.status = quality.acceptanceOk ? 'MET' : inside || fuel.reactionOk ? 'PENDING' : 'PENDING'
+    }
+    if (p.id === 'structure') {
+      p.status = quality.structureBroken
+        ? 'FAILED'
+        : quality.structureOk
+          ? 'MET'
+          : 'PENDING'
+    }
+    if (p.id === 'strength' || p.id === 'btc_rs') {
+      if (quality.strengthKill) p.status = 'FAILED'
+      else if (quality.strengthVeto) p.status = 'PENDING'
+      else p.status = quality.strengthOk ? 'MET' : 'PENDING'
+    }
+    if (p.id === 'htf' || p.id === 'htf_close') {
+      if (quality.htf.kill) p.status = 'FAILED'
+      else if (quality.htf.veto) p.status = 'PENDING'
+      else if (quality.htf.aligned) p.status = 'MET'
+      else p.status = 'PENDING'
     }
   }
 
-  // Ensure book/confirm exist for zone watches
+  // Ensure quality preconditions exist for digests
   if (!pre.some((p) => p.id === 'book')) {
     pre.push({
       id: 'book',
@@ -364,13 +434,72 @@ export function evaluateWatchSnapshot(
       status: fuel.reactionOk ? 'MET' : 'PENDING',
     })
   }
+  if (!pre.some((p) => p.id === 'acceptance')) {
+    pre.push({
+      id: 'acceptance',
+      label: 'Закреп / hold',
+      status: quality.acceptanceOk
+        ? 'MET'
+        : inside || fuel.reactionOk
+          ? 'PENDING'
+          : 'PENDING',
+    })
+  }
+  if (!pre.some((p) => p.id === 'structure')) {
+    // Structure break already hard-invalidates above; here PENDING ≠ FAILED
+    pre.push({
+      id: 'structure',
+      label: 'Структура стороны',
+      status: quality.structureBroken
+        ? 'FAILED'
+        : quality.structureOk
+          ? 'MET'
+          : 'PENDING',
+    })
+  }
+  if (!pre.some((p) => p.id === 'strength')) {
+    pre.push({
+      id: 'strength',
+      label: quality.isBtc ? 'BTC якорь' : 'Сила vs BTC',
+      status: quality.strengthKill
+        ? 'FAILED'
+        : quality.strengthVeto
+          ? 'PENDING'
+          : 'MET',
+    })
+  }
+
+  const qualityGate =
+    fuel.reactionOk &&
+    quality.acceptanceOk &&
+    fuel.bookOk &&
+    quality.structureOk &&
+    !quality.strengthVeto
+
+  // Only hard-fail preconditions invalidate (structure break / strength kill / HTF kill).
+  // Soft PENDING (book, far zone, HTF veto) must keep the watch alive.
+  const hardFail = pre.some(
+    (p) =>
+      p.status === 'FAILED' &&
+      (p.id === 'structure' ||
+        p.id === 'strength' ||
+        p.id === 'htf' ||
+        p.id === 'btc_rs')
+  )
 
   let status: SetupStatus = 'HYPOTHESIS'
-  if (pre.some((p) => p.status === 'FAILED')) status = 'INVALIDATED'
-  else if (pre.length > 0 && pre.every((p) => p.status === 'MET')) status = 'READY'
-  else if (setup.kind.startsWith('FORECAST') && inside && fuel.fuelOk) status = 'READY'
-  else if (inside && fuel.reactionOk && fuel.bookOk) status = 'READY'
-  else if (pre.some((p) => p.status === 'MET')) status = 'ARMED'
+  if (hardFail || quality.structureBroken || quality.strengthKill) {
+    status = 'INVALIDATED'
+  } else if (qualityGate) status = 'READY'
+  else if (
+    pre.length > 0 &&
+    pre.every((p) => p.status === 'MET') &&
+    quality.acceptanceOk &&
+    !quality.strengthVeto &&
+    !quality.htf.veto
+  ) {
+    status = 'READY'
+  } else if (pre.some((p) => p.status === 'MET')) status = 'ARMED'
 
   const met = pre.filter((p) => p.status === 'MET').length
   const pending = pre.filter((p) => p.status === 'PENDING').length
@@ -378,31 +507,64 @@ export function evaluateWatchSnapshot(
 
   let lifecycle: LifecyclePhase = 'FAR'
   if (status === 'INVALIDATED') lifecycle = 'INVALIDATED'
-  else if (status === 'READY' || (inside && fuel.reactionOk && fuel.bookOk)) {
+  else if (status === 'READY' || qualityGate) {
     lifecycle = 'READY'
-  } else if (inside && fuel.bookOk && !fuel.reactionOk) lifecycle = 'FUEL'
-  else if (inside && fuel.reactionOk) lifecycle = 'REACTION'
+  } else if (inside && fuel.bookOk && (!fuel.reactionOk || !quality.acceptanceOk)) {
+    lifecycle = quality.acceptanceOk ? 'FUEL' : inside && fuel.reactionOk ? 'REACTION' : 'FUEL'
+  } else if (inside && fuel.reactionOk && !quality.acceptanceOk) {
+    lifecycle = 'REACTION'
+  } else if (inside && fuel.reactionOk) lifecycle = 'REACTION'
   else if (inside) lifecycle = 'TOUCH'
   else if (approach) lifecycle = 'APPROACH'
 
+  const move = estimateMovePotential({
+    side: setup.side,
+    price,
+    zoneLow: setup.entryZone.bottom,
+    zoneHigh: setup.entryZone.top,
+    invalidation: setup.invalidation,
+    target: setup.target,
+    ladder: setup.targetsLadder ?? null,
+    magnet: setup.magnet ?? null,
+    candles1m: ohlcv1m,
+    candles15m: extras?.candles15m ?? [],
+    candles1h: ohlcv1h,
+    htfScore: quality.htf.score,
+    btcRs: quality.btcRs,
+    bookImb: bookImb,
+    bookOk: fuel.bookOk,
+    acceptanceOk: quality.acceptanceOk,
+    structureOk: quality.structureOk,
+  })
+
+  const qualityNote = [
+    quality.htf.summary,
+    move.summary,
+    quality.acceptanceNote,
+    quality.structureNote,
+    quality.strengthNote,
+  ].join(' · ')
+
   let narrative: string
   if (lifecycle === 'READY') {
-    narrative = `READY: зона + реакция + топливо → цель ${setup.target}`
+    narrative = `READY → ${move.summary}`
+  } else if (move.chopping && (lifecycle === 'TOUCH' || lifecycle === 'REACTION' || lifecycle === 'FUEL')) {
+    narrative = `ТОПТАНИЕ/СЖАТИЕ · ${move.summary}`
   } else if (lifecycle === 'FUEL') {
-    narrative = `FUEL: стакан за сторону · ждём 1m реакцию · ${fuel.fuelNote}`
+    narrative = `FUEL: ${fuel.fuelNote} · ${move.summary}`
   } else if (lifecycle === 'REACTION') {
-    narrative = `REACTION: ${fuel.reactionNote} · ждём топливо стакана`
+    narrative = `REACTION: ${fuel.reactionNote} · ${move.summary}`
   } else if (lifecycle === 'TOUCH') {
-    narrative = `TOUCH — ${fuel.reactionNote}`
+    narrative = `TOUCH — ${move.summary}`
   } else if (lifecycle === 'APPROACH') {
-    narrative = `APPROACH (${distToZonePct >= 0 ? '+' : ''}${distToZonePct.toFixed(2)}%) — смотрим закрепление`
+    narrative = `APPROACH (${distToZonePct >= 0 ? '+' : ''}${distToZonePct.toFixed(2)}%) — ${quality.htf.summary}`
   } else if (status === 'ARMED') {
-    narrative = `Частично (${met} MET, ${pending} PENDING)`
+    narrative = `Частично (${met} MET, ${pending} PENDING) · ${move.summary}`
   } else {
     narrative =
       distToZonePct > 0
-        ? `FAR · выше зоны на ${distToZonePct.toFixed(2)}%`
-        : `FAR · ниже зоны на ${Math.abs(distToZonePct).toFixed(2)}%`
+        ? `FAR · выше зоны на ${distToZonePct.toFixed(2)}% · ${quality.htf.summary}`
+        : `FAR · ниже зоны на ${Math.abs(distToZonePct).toFixed(2)}% · ${quality.htf.summary}`
   }
 
   return {
@@ -418,6 +580,14 @@ export function evaluateWatchSnapshot(
     bookOk: fuel.bookOk,
     reactionOk: fuel.reactionOk,
     fuelOk: fuel.fuelOk,
+    acceptanceOk: quality.acceptanceOk,
+    structureOk: quality.structureOk,
+    strengthOk: quality.strengthOk && !quality.strengthVeto,
+    btcRs: quality.btcRs,
+    qualityNote,
+    htfSummary: quality.htf.summary,
+    htfScore: quality.htf.score,
+    movePotential: move,
   }
 }
 
@@ -466,12 +636,35 @@ function formatDigestBlock(
     }`,
     `Лимит: ${fmtPx(s.limitEntry)} (${snap.distToLimitPct >= 0 ? '+' : ''}${snap.distToLimitPct.toFixed(2)}%)`,
     `SL: ${fmtPx(s.invalidation)} · TP: ${fmtPx(s.target)}`,
+    `Закреп: ${snap.acceptanceOk ? '✓' : '·'} · Структура: ${snap.structureOk === false ? '✗' : '✓'} · Сила: ${snap.strengthOk ? '✓' : '·'}${
+      snap.btcRs != null
+        ? ` RS ${snap.btcRs >= 0 ? '+' : ''}${snap.btcRs.toFixed(1)}%`
+        : ''
+    }`,
+    snap.htfSummary
+      ? `HTF: ${snap.htfSummary}${
+          snap.htfScore != null
+            ? ` (${snap.htfScore >= 0 ? '+' : ''}${snap.htfScore})`
+            : ''
+        }`
+      : '',
+    snap.movePotential
+      ? [
+          `📈 Потенциал: ~${snap.movePotential.potentialPct.toFixed(2)}% → ${snap.movePotential.targetLabel} @ ${fmtPx(snap.movePotential.targetPrice)}`,
+          snap.movePotential.chopping
+            ? ` · coil ${snap.movePotential.coilScore}/12 · fail-break ×${snap.movePotential.failedBreaks} · 1R~${snap.movePotential.pReach1}% 2R~${snap.movePotential.pReach2}% 3R~${snap.movePotential.pReach3}%`
+            : ` · coil ${snap.movePotential.coilScore}/12 · 1R~${snap.movePotential.pReach1}% 2R~${snap.movePotential.pReach2}% 3R~${snap.movePotential.pReach3}%`,
+          ...(snap.movePotential.lines.slice(0, 2).map((l) => `  · ${l}`)),
+        ].join('\n')
+      : '',
     `Возраст watch: ${ageMin} мин`,
     snap.narrative,
     nextStep,
     'Условия:',
     ...preLines,
-  ].join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 /** Live win% for watch: zone progress + path vs SL/TP (not a static snapshot). */
@@ -485,6 +678,11 @@ function liveWatchWinPct(
   else if (snap.status === 'INVALIDATED') p = Math.min(p, 28)
 
   if (snap.inZone) p += 6
+
+  // Coiled chop + failed breaks in our favor → higher live win%
+  const mv = snap.movePotential
+  if (mv?.chopping && mv.failedBreaks >= 2 && mv.bias === setup.side) p += 7
+  else if (mv?.chopping && mv.coilScore >= 6) p += 4
 
   // Price progressing toward TP from limit
   const risk = Math.abs(setup.limitEntry - setup.invalidation)
@@ -620,15 +818,34 @@ function formatLifecyclePhase(
       snap.narrative,
       `Цена: ${fmtPx(snap.price)}`,
       `Зона: ${fmtPx(s.entryZone.bottom)} – ${fmtPx(s.entryZone.top)}`,
-      `Лимит: ${fmtPx(s.limitEntry)} · TP: ${fmtPx(s.target)} · SL: ${fmtPx(s.invalidation)}`,
-      `Реакция: ${snap.reactionOk ? '✓' : '·'} · Стакан: ${snap.bookOk ? '✓' : '·'} · Топливо: ${snap.fuelOk ? '✓' : '·'}`,
+      s.targetsLadder
+        ? `Лимит: ${fmtPx(s.limitEntry)} · 1R ${fmtPx(s.targetsLadder.r1)} → 2R ${fmtPx(s.targetsLadder.r2)} → 3R ${fmtPx(s.targetsLadder.r3)} · SL ${fmtPx(s.invalidation)}`
+        : `Лимит: ${fmtPx(s.limitEntry)} · TP: ${fmtPx(s.target)} · SL: ${fmtPx(s.invalidation)}`,
+      s.magnet ? `Магнит: ${s.magnet.label} @ ${fmtPx(s.magnet.price)}` : null,
+      `Реакция: ${snap.reactionOk ? '✓' : '·'} · Закреп: ${snap.acceptanceOk ? '✓' : '·'} · Стакан: ${snap.bookOk ? '✓' : '·'}`,
+      `Структура: ${snap.structureOk ? '✓' : '✗'} · Сила: ${snap.strengthOk ? '✓' : '·'}${
+        snap.btcRs != null ? ` (RS ${snap.btcRs >= 0 ? '+' : ''}${snap.btcRs.toFixed(1)}%)` : ''
+      }`,
+      snap.htfSummary
+        ? `HTF: ${snap.htfSummary}`
+        : null,
+      snap.movePotential
+        ? `📈 ${snap.movePotential.summary}`
+        : null,
+      snap.qualityNote ? `· ${snap.qualityNote}` : null,
       `Win% сетапа: ~${Math.round(s.probability)}%`,
-    ].join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n'),
     dedupeKey: `watch:${w.watchId}:phase:${phase}:${Math.floor(Date.now() / 120_000)}`,
   }
 }
 
-function formatReady(w: WatchedSetupRecord, price: number): WatchAlert {
+function formatReady(
+  w: WatchedSetupRecord,
+  price: number,
+  snap?: WatchEvalSnapshot
+): WatchAlert {
   const s = w.setup
   const icon = s.side === 'LONG' ? '🟢' : '🔴'
   const isJewel =
@@ -650,17 +867,34 @@ function formatReady(w: WatchedSetupRecord, price: number): WatchAlert {
       `Лимит (вход): ${s.limitEntry}`,
       `Зона: ${s.entryZone.bottom} – ${s.entryZone.top}`,
       `Стоп / Inv: ${s.invalidation}`,
-      `Цель (TP): ${s.target}`,
+      s.targetsLadder
+        ? `TP: 1R ${s.targetsLadder.r1} (~${s.targetsLadder.pReach1}%) → 2R ${s.targetsLadder.r2} (~${s.targetsLadder.pReach2}%) → 3R ${s.targetsLadder.r3} (~${s.targetsLadder.pReach3}%)`
+        : `Цель (TP): ${s.target}`,
+      s.magnet
+        ? `Магнит: ${s.magnet.label} @ ${s.magnet.price}`
+        : null,
+      s.globalView
+        ? `Глобально: ${s.globalView.bias} — ${s.globalView.summary}`
+        : null,
+      snap?.qualityNote
+        ? `Качество: ${snap.qualityNote}`
+        : 'Качество: закреп + структура + сила стороны ✓',
       `Вероятность: ~${Math.round(s.probability)}%`,
       '',
       `Условие: ${s.triggerSummary}`,
       ...(s.reasoning?.slice(0, 3) ?? []),
-    ].join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n'),
     dedupeKey: `watch:${w.watchId}:READY`,
   }
 }
 
-function formatInvalidated(w: WatchedSetupRecord, price: number): WatchAlert {
+function formatInvalidated(
+  w: WatchedSetupRecord,
+  price: number,
+  snap?: WatchEvalSnapshot
+): WatchAlert {
   return {
     chatId: w.chatId,
     title: `⛔ Сетап снят · ${w.symbol}`,
@@ -669,8 +903,11 @@ function formatInvalidated(w: WatchedSetupRecord, price: number): WatchAlert {
       `Статус: INVALIDATED`,
       `Цена: ${price}`,
       `Inv: ${w.setup.invalidation}`,
-      'HTF close / слом условий — слежение остановлено.',
-    ].join('\n'),
+      snap?.narrative ?? 'HTF close / слом условий — слежение остановлено.',
+      snap?.qualityNote ? `Причина: ${snap.qualityNote}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
     dedupeKey: `watch:${w.watchId}:INVALIDATED`,
   }
 }
@@ -743,6 +980,12 @@ function isBounceLike(setup: ConditionalSetupPayload): boolean {
 
 /**
  * Pullback already played / geometry wrong / zone too far → needs rebuild.
+ *
+ * Side-aware:
+ * - LONG bounce: wait BELOW zone (SSL). Leaving UP after touch = played.
+ * - SHORT bounce: wait BELOW resistance (BSL above). Leaving DOWN after touch
+ *   is a normal rejection — NOT stale. Leaving UP (breakout) = stale.
+ * - Being "far" in the correct waiting direction is WAIT, not kill.
  */
 function pullbackStaleReason(
   setup: ConditionalSetupPayload,
@@ -754,41 +997,65 @@ function pullbackStaleReason(
   const zone = setup.entryZone
   const mid = (zone.top + zone.bottom) / 2
   const recent = ohlcv1m.slice(-40)
+  const distPct = ((mid - price) / price) * 100
+  const absDist = Math.abs(distPct)
 
-  const touched = recent.some((c) =>
-    setup.side === 'LONG' ? c[3] <= zone.top * 1.002 : c[2] >= zone.bottom * 0.998
-  )
-  const leftZone =
-    setup.side === 'LONG'
-      ? price > zone.top * 1.004
-      : price < zone.bottom * 0.996
+  const touched = recent.some((c) => {
+    const [, , high, low] = c
+    return low <= zone.top * 1.002 && high >= zone.bottom * 0.998
+  })
 
-  // Цена уже сходила в зону и ушла — откат отыгран, старый лимит мёртв
-  if (touched && leftZone && setup.status !== 'READY') {
-    return 'откат уже был: цена касалась зоны и ушла'
+  if (setup.side === 'LONG') {
+    // Bounce played: dipped into zone and recovered ABOVE it
+    const leftUp = price > zone.top * 1.004
+    if (touched && leftUp && setup.status !== 'READY') {
+      return 'откат LONG отыгран: касание SSL и уход вверх'
+    }
+    // Broken: closed through SSL without READY
+    if (price < zone.bottom * 0.992) {
+      return 'цена пробила SSL вниз — нужна новая зона'
+    }
+    // Geometry broken: waiting for dip but zone sits clearly above price
+    if (mid > price * 1.008 && absDist > 1.2) {
+      return 'зона LONG выше цены — геометрия отката устарела'
+    }
+    // Far only if waiting distance is extreme (still below zone is OK up to ~7%)
+    const waitingBelow = mid <= price * 1.002
+    if (waitingBelow && absDist > 7.5) {
+      return `зона LONG далеко снизу (${absDist.toFixed(2)}%) — ищу ближе SSL`
+    }
+    return null
   }
 
-  // LONG ждал покупку снизу, а зона выше цены — это не откат вниз
-  if (setup.side === 'LONG' && mid > price * 1.003) {
-    return 'зона выше цены — сценарий отката устарел'
-  }
-  // SHORT ждал продажу сверху, а зона ниже
-  if (setup.side === 'SHORT' && mid < price * 0.997) {
-    return 'зона ниже цены — сценарий отката устарел'
+  // SHORT — resistance / BSL ideally ABOVE price
+  const leftDown = price < zone.bottom * 0.996
+  const brokeUp = price > zone.top * 1.004
+
+  // Rejection down after touch = SHORT thesis alive, keep watching
+  if (touched && leftDown && !brokeUp) {
+    return null
   }
 
-  // Пробой зоны без READY
-  if (setup.side === 'LONG' && price < zone.bottom * 0.992) {
-    return 'цена пробила зону вниз — нужна новая SSL'
+  // Breakout above BSL without READY → stale, need new resistance
+  if (touched && brokeUp && setup.status !== 'READY') {
+    return 'BSL пробита вверх — шорт-откат устарел, нужна новая зона'
   }
-  if (setup.side === 'SHORT' && price > zone.top * 1.008) {
-    return 'цена пробила зону вверх — нужна новая BSL'
+  if (price > zone.top * 1.008) {
+    return 'цена пробила BSL вверх — нужна новая зона'
   }
 
-  // Слишком далеко ждать
-  const distPct = Math.abs(((mid - price) / price) * 100)
-  if (distPct > 2.8) {
-    return `зона слишком далеко (${distPct.toFixed(2)}%)`
+  // Zone below price: only stale if it's not a fresh breakout-retest short
+  // (retest of broken level from above can still be valid — keep until far)
+  if (mid < price * 0.997) {
+    if (absDist > 5.5) {
+      return `зона SHORT далеко под ценой (${absDist.toFixed(2)}%) — ищу BSL выше`
+    }
+    return null
+  }
+
+  // Waiting below BSL (correct) — "far" is normal; only rebuild if extreme
+  if (mid >= price && absDist > 8.5) {
+    return `BSL далеко сверху (${absDist.toFixed(2)}%) — ищу ближе`
   }
 
   return null
@@ -912,6 +1179,9 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     bySymbol.set(key, arr)
   }
 
+  // BTC 1h once per cycle — live RS for alts during watch
+  const btc1h = await fetchKlines('BTC_USDT', 'Min60', 48)
+
   for (const [mexcSym, watches] of bySymbol) {
     const [c1m, c15, c1h, c4h, c1d, bookImb] = await Promise.all([
       fetchKlines(mexcSym, 'Min1', 60),
@@ -1012,7 +1282,14 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
           c1m,
           c1h,
           c4h,
-          bookImb
+          bookImb,
+          {
+            candles15m: c15,
+            candles4h: c4h,
+            candles1d: c1d,
+            btc1h: mexcSym === 'BTC_USDT' ? null : btc1h,
+            symbol: mexcSym,
+          }
         )
       }
 
@@ -1051,11 +1328,11 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       }
 
       if (price && status === 'READY' && !working.readyNotified) {
-        alerts.push(formatReady(updated, price))
+        alerts.push(formatReady(updated, price, snap))
         updated.readyNotified = true
       }
       if (price && status === 'INVALIDATED' && !working.invalidatedNotified) {
-        alerts.push(formatInvalidated(updated, price))
+        alerts.push(formatInvalidated(updated, price, snap))
         updated.invalidatedNotified = true
       }
 

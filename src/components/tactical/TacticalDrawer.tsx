@@ -1041,6 +1041,35 @@ const TacticalDrawer = () => {
             </div>
           </CollapsibleSection>
 
+          <button
+            type="button"
+            onClick={() => {
+              haptic.impact()
+              requestAnimationFrame(() => {
+                document
+                  .getElementById('live-signal-cta')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                // Second tap path: auto-trigger after scroll settles
+                window.setTimeout(() => {
+                  document.getElementById('live-signal-cta')?.click()
+                }, 280)
+              })
+            }}
+            className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-3 text-left"
+          >
+            <div>
+              <div className="font-mono text-[12px] font-bold uppercase tracking-wider text-amber-100">
+                Найти сигнал
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
+                Самое вероятное движение сейчас · зоны · SMC
+              </div>
+            </div>
+            <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
+              GO
+            </span>
+          </button>
+
           <LiveChart
             symbol={signal.internalSymbol}
             flatSymbol={signal.symbol}

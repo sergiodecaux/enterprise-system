@@ -263,12 +263,13 @@ export function detectAbsorption(candles: Candle[], lookback = 10): AbsorptionRe
 }
 
 function gradeOf(total: number, style: Style): ScoreGrade {
+  // Slightly lower A floors — otherwise BTC/alts rarely clear without raid+absorption
   const t =
     style === 'SCALP'
-      ? { ap: 11, a: 9, b: 7 }
+      ? { ap: 10, a: 8, b: 6 }
       : style === 'SWING'
-        ? { ap: 9, a: 7, b: 5 }
-        : { ap: 10, a: 8, b: 6 }
+        ? { ap: 8, a: 6, b: 4 }
+        : { ap: 9, a: 7, b: 5 }
   if (total >= t.ap) return 'A+'
   if (total >= t.a) return 'A'
   if (total >= t.b) return 'B'
@@ -402,7 +403,7 @@ export function buildBotScoreCard(opts: {
   }
 
   // 6. HTF zone quality 0–1
-  if (opts.hasHtfZone && opts.zoneStrength >= 6) {
+  if (opts.hasHtfZone && opts.zoneStrength >= 5) {
     total += 1
     factors.push(`✅ HTF зона сила ${opts.zoneStrength}/10`)
   } else if (opts.hasHtfZone) {
@@ -446,7 +447,8 @@ export function buildBotScoreCard(opts: {
   const grade = gradeOf(total, opts.style)
   return {
     grade,
-    ready: grade === 'A+' || grade === 'A',
+    // B is actionable for limit-in-zone setups; A+/A preferred
+    ready: grade === 'A+' || grade === 'A' || grade === 'B',
     total,
     max,
     percent: Math.round((total / max) * 100),

@@ -485,12 +485,12 @@ export function deriveAdaptiveGates(
 ): BotAdaptiveGates {
   const blocked: string[] = []
   const boosted: string[] = []
-  let minMemeScore = 72
-  let minSniperScore = 82
+  let minMemeScore = 62
+  let minSniperScore = 76
 
   for (const s of analytics.bySetup) {
     const n = s.wins + s.losses
-    if (n < 5) continue
+    if (n < 8) continue
     const parsed = parseBotSetup(s.setup)
     // Block only the specific composite tag — never the whole base family
     if (s.winRate < 38 || s.expectancyR < -0.15) {
@@ -507,28 +507,25 @@ export function deriveAdaptiveGates(
 
   const meme = analytics.byAlertType.find((x) => x.alertType === 'MEME')
   if (meme && meme.wins + meme.losses >= 8) {
-    // Soft floor only — cold streak must not silence healthy tags
-    if (meme.winRate < 42) minMemeScore = 80
-    else if (meme.winRate < 50) minMemeScore = 76
-    else if (meme.winRate >= 60) minMemeScore = 70
+    // Cap cold-streak floor — never silence healthy impulse tags
+    if (meme.winRate < 42) minMemeScore = 66
+    else if (meme.winRate < 50) minMemeScore = 64
+    else if (meme.winRate >= 60) minMemeScore = 60
   }
 
   const sniper = analytics.byAlertType.find((x) => x.alertType === 'SNIPER')
   if (sniper && sniper.wins + sniper.losses >= 6) {
-    if (sniper.winRate < 45) minSniperScore = 86
-    else if (sniper.winRate >= 60) minSniperScore = 78
+    // Never raise sniper floor so high that BTC/alts go silent
+    if (sniper.winRate < 45) minSniperScore = 80
+    else if (sniper.winRate >= 60) minSniperScore = 72
   }
-
-  const squeezeBlocked = blocked.some(
-    (b) => b === 'SQUEEZE' || b.startsWith('SQUEEZE_')
-  )
 
   return {
     minMemeScore,
     minSniperScore,
     blockedSetups: blocked,
     boostedSetups: boosted,
-    requireHighBrokenForSqueeze: squeezeBlocked || (meme?.winRate ?? 100) < 48,
+    requireHighBrokenForSqueeze: false,
     winPctBySetup: buildWinPctCalibration(analytics),
     updatedAt: Date.now(),
     sampleSize: analytics.resolved,

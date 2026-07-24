@@ -13,6 +13,7 @@
  */
 
 import { runMarketScan, type TradePlanPayload } from './scanner'
+import { BOT_ENGINE } from './botEngine'
 import {
   analyzeUserZone,
   parseZoneArg,
@@ -219,9 +220,14 @@ async function handleTelegram(
   }
 
   if (path === '/telegram/webhook' && request.method === 'POST') {
-    const update = (await request.json()) as TelegramUpdate
-    await processWebhook(env, update)
-    return json({ ok: true })
+    try {
+      const update = (await request.json()) as TelegramUpdate
+      await processWebhook(env, update)
+      return json({ ok: true })
+    } catch (err) {
+      console.error('[webhook] failed', err)
+      return json({ ok: false, error: String(err) }, 200)
+    }
   }
 
   if (path === '/telegram/subscribe' && request.method === 'POST') {
@@ -407,7 +413,8 @@ async function broadcastAlert(
       }
     } else {
       const prev = memoryDedup.get(payload.dedupeKey)
-      if (prev && Date.now() - prev < 3600_000) {
+      const ttlMs = payload.type === 'MEME' ? 900_000 : 3600_000
+      if (prev && Date.now() - prev < ttlMs) {
         return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
       }
     }
@@ -422,7 +429,7 @@ async function broadcastAlert(
     if (ok && payload.dedupeKey) {
       if (env.SUBSCRIBERS) {
         await env.SUBSCRIBERS.put(DEDUP_PREFIX + payload.dedupeKey, '1', {
-          expirationTtl: 3600,
+          expirationTtl: payload.type === 'MEME' ? 900 : 3600,
         })
       } else {
         memoryDedup.set(payload.dedupeKey, Date.now())
@@ -433,8 +440,8 @@ async function broadcastAlert(
 
   const subs = await listSubscribers(env)
   for (const sub of subs) {
-    if (payload.type === 'SNIPER' && !sub.sniper) continue
-    if (payload.type === 'MEME' && !sub.meme) continue
+    if (payload.type === 'SNIPER' && sub.sniper === false) continue
+    if (payload.type === 'MEME' && sub.meme === false) continue
     const ok = await tgSend(env, sub.chatId, message)
     if (ok) sent++
     else failed++
@@ -443,7 +450,8 @@ async function broadcastAlert(
   if (sent > 0 && payload.dedupeKey) {
     if (env.SUBSCRIBERS) {
       await env.SUBSCRIBERS.put(DEDUP_PREFIX + payload.dedupeKey, '1', {
-        expirationTtl: 3600,
+        // Memes rotate fast — 15m; sniper/system 60m
+        expirationTtl: payload.type === 'MEME' ? 900 : 3600,
       })
     } else {
       memoryDedup.set(payload.dedupeKey, Date.now())
@@ -619,72 +627,97 @@ async function runCronScan(env: Env): Promise<{
 
   const heartbeat = await maybeHeartbeat(env)
   const gates = await getAdaptiveGates(env)
-  const alerts = await runMarketScan(gates)
+
+  // MEME first + broadcast immediately (don't wait 40–90s sniper scan)
   let sent = 0
   let skipped = 0
   let paperComments = 0
   let journalLogged = 0
+  const seenDedup = new Set<string>()
+  const allAlerts: Awaited<ReturnType<typeof runMarketScan>> = []
 
-  for (const a of alerts) {
-    const r = await broadcastAlert(env, {
-      type: a.type,
-      title: a.title,
-      text: a.text,
-      dedupeKey: a.dedupeKey,
-    })
-    if (r.skipped) {
-      skipped++
-      continue
-    }
-    sent += r.sent
+  const deliver = async (
+    a: Awaited<ReturnType<typeof runMarketScan>>[number]
+  ) => {
+    if (seenDedup.has(a.dedupeKey)) return
+    seenDedup.add(a.dedupeKey)
+    allAlerts.push(a)
 
-    if (a.tradePlan) {
-      const logged = await recordBotAlert(env, {
-        alertType: a.type,
-        score: a.score,
+    // Chased SNIPER: silent watch handoff only — no entry spam
+    if (!a.watchOnly) {
+      const r = await broadcastAlert(env, {
+        type: a.type,
+        title: a.title,
+        text: a.text,
         dedupeKey: a.dedupeKey,
-        plan: a.tradePlan,
       })
-      if (logged) journalLogged++
-    }
-
-    if (r.sent > 0 && a.tradePlan) {
-      const paper = await createPaperTradeFromPlan(env, {
-        ...a.tradePlan,
-        alertType: a.type,
-      })
-      if (paper.comment) {
-        const cr = await broadcastAlert(env, {
-          type: 'SYSTEM',
-          title: paper.comment.title,
-          text: paper.comment.text,
-          dedupeKey: paper.comment.dedupeKey,
-        })
-        paperComments += cr.sent
+      if (r.skipped) {
+        skipped++
+      } else {
+        sent += r.sent
       }
 
-      // Price already left zone → auto watch pullback for matching subscribers
-      if (a.needsPullbackWatch) {
-        try {
-          const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
-          const subs = await listSubscribers(env)
-          for (const sub of subs) {
-            if (a.type === 'SNIPER' && !sub.sniper) continue
-            if (a.type === 'MEME' && !sub.meme) continue
-            await createWatchesBatch(env, {
-              chatId: sub.chatId,
-              symbol: a.tradePlan.symbol,
-              internalSymbol: a.tradePlan.symbol,
-              setups: [setup],
-              ttlHours: 12,
-            })
-          }
-        } catch (err) {
-          console.error('[cron] pullback watch failed', err)
+      if (r.sent > 0 && a.tradePlan) {
+        const logged = await recordBotAlert(env, {
+          alertType: a.type,
+          score: a.score,
+          dedupeKey: a.dedupeKey,
+          plan: a.tradePlan,
+        })
+        if (logged) journalLogged++
+
+        const paper = await createPaperTradeFromPlan(env, {
+          ...a.tradePlan,
+          alertType: a.type,
+        })
+        if (paper.comment) {
+          const cr = await broadcastAlert(env, {
+            type: 'SYSTEM',
+            title: paper.comment.title,
+            text: paper.comment.text,
+            dedupeKey: paper.comment.dedupeKey,
+          })
+          paperComments += cr.sent
         }
       }
     }
+
+    if (a.needsPullbackWatch && a.tradePlan) {
+      try {
+        const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
+        const subs = await listSubscribers(env)
+        for (const sub of subs) {
+          if (a.type === 'SNIPER' && sub.sniper === false) continue
+          if (a.type === 'MEME' && sub.meme === false) continue
+          await createWatchesBatch(env, {
+            chatId: sub.chatId,
+            symbol: a.tradePlan.symbol,
+            internalSymbol: a.tradePlan.symbol,
+            setups: [setup],
+            ttlHours: 12,
+          })
+        }
+      } catch (err) {
+        console.error('[cron] pullback watch failed', err)
+      }
+    }
   }
+
+  try {
+    const memeAlerts = await runMarketScan(gates, 'meme')
+    for (const a of memeAlerts) await deliver(a)
+  } catch (err) {
+    console.error('[cron] meme scan failed', err)
+  }
+
+  try {
+    const sniperAlerts = await runMarketScan(gates, 'sniper')
+    for (const a of sniperAlerts) await deliver(a)
+  } catch (err) {
+    console.error('[cron] sniper scan failed', err)
+  }
+
+  const alerts = allAlerts
 
   // No actionable signals → tell subscribers + favorites under watch (every ~10 min)
   let idlePulses = 0
@@ -853,6 +886,25 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
   const username = msg.from?.username ?? msg.chat.username
   const { cmd } = parseCommand(msg.text)
 
+  try {
+    await dispatchCommand(env, chatId, username, cmd, msg.text)
+  } catch (err) {
+    console.error('[cmd]', cmd, err)
+    await tgSend(
+      env,
+      chatId,
+      `⚠️ Ошибка команды /${cmd || '?'}: <code>${String(err).slice(0, 180)}</code>\nПопробуй /ping`
+    )
+  }
+}
+
+async function dispatchCommand(
+  env: Env,
+  chatId: number,
+  username: string | undefined,
+  cmd: string,
+  text: string
+): Promise<void> {
   if (cmd === 'start') {
     await upsertSubscriber(env, {
       chatId,
@@ -952,7 +1004,7 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
         meme: true,
       })
     }
-    const { arg } = parseCommand(msg.text)
+    const { arg } = parseCommand(text)
     const parsed = parseZoneArg(arg)
     if ('error' in parsed) {
       await tgSend(env, chatId, parsed.error)
@@ -1018,7 +1070,7 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
   }
 
   if (cmd === 'zoneoff' || cmd === 'зонастоп') {
-    const { arg } = parseCommand(msg.text)
+    const { arg } = parseCommand(text)
     const sym = resolveMexcSymbol(arg.split(/\s+/)[0] || '')
     if (!sym) {
       await tgSend(env, chatId, 'Формат: /zoneoff BTC')

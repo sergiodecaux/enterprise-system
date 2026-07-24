@@ -40,7 +40,13 @@ const ZoneVariantsPanel = ({
           Варианты на зонах
         </div>
         <div className="font-mono text-[9px] text-holo/35">
-          {zones.length} зон · {setups.length} сделок · слежение в боте
+          {zones.length} зон · {setups.length} сделок ·{' '}
+          {setups[0]?.tradeStyle === 'SCALP'
+            ? '#SCALP'
+            : setups[0]?.tradeStyle === 'SWING'
+              ? '#SWING'
+              : '#INTRA'}{' '}
+          · бот
         </div>
       </div>
 
@@ -88,7 +94,12 @@ const ZoneVariantsPanel = ({
                     {s.side}
                   </span>
                   <span className="ml-2 font-mono text-[10px] text-holo/50">
-                    {isBreak ? 'слом' : 'отскок'}
+                    {s.tradeStyle === 'SCALP'
+                      ? '#SCALP'
+                      : s.tradeStyle === 'SWING'
+                        ? '#SWING'
+                        : '#INTRA'}{' '}
+                    · {isBreak ? 'слом' : 'отскок'}
                   </span>
                   <div className="mt-0.5 font-mono text-[11px] text-holo">
                     {s.title}

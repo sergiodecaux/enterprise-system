@@ -5,7 +5,12 @@
 
 import type { PathPoint } from '../prediction/types'
 import type { FoundTradeZone } from './findTradeZones'
-import type { ConditionalSetup, SetupPrecondition } from '../setups/types'
+import type {
+  ConditionalSetup,
+  SetupPrecondition,
+  SetupTradeStyle,
+} from '../setups/types'
+import { HORIZON_PROFILES } from './horizonProfiles'
 
 function path(
   points: { t: number; p: number; label?: string; key?: boolean }[]
@@ -18,47 +23,91 @@ function path(
   }))
 }
 
+function scalePath(points: PathPoint[], scale: number): PathPoint[] {
+  return points.map((p) => ({
+    ...p,
+    timeOffsetSeconds: Math.round(p.timeOffsetSeconds * scale),
+  }))
+}
+
+/** Retarget TP by style: farther flight for INTRA/SWING toward structural magnet */
+function styleTarget(
+  z: FoundTradeZone,
+  style: SetupTradeStyle
+): { target: number; invalidation: number } {
+  const prof = HORIZON_PROFILES[style]
+  const dir = z.side === 'LONG' ? 1 : -1
+  const risk = Math.abs(z.limitEntry - z.invalidation) * prof.riskPad
+  const inv =
+    z.side === 'LONG'
+      ? z.limitEntry - risk
+      : z.limitEntry + risk
+  // Blend structural zone target with R-multiple flight
+  const struct = z.target
+  const byR = z.limitEntry + dir * risk * prof.rMultiples[1]
+  const aligned =
+    (z.side === 'LONG' && struct > z.limitEntry) ||
+    (z.side === 'SHORT' && struct < z.limitEntry)
+  let target = aligned
+    ? z.limitEntry + dir * Math.max(Math.abs(struct - z.limitEntry), Math.abs(byR - z.limitEntry)) * (0.55 + 0.45 * Math.min(prof.tpMult, 2))
+    : byR
+  // Prefer farther of structural vs R for swing
+  if (style === 'SWING' && aligned) {
+    target =
+      z.side === 'LONG'
+        ? Math.max(struct, byR)
+        : Math.min(struct, byR)
+  }
+  return { target, invalidation: inv }
+}
+
 /** Bounce: touch zone → reclaim → target opposite liquidity */
-export function buildZoneBouncePath(z: FoundTradeZone, price: number): PathPoint[] {
+export function buildZoneBouncePath(
+  z: FoundTradeZone,
+  price: number,
+  pathScale = 1
+): PathPoint[] {
   const t0 = 0
   const touch = Math.max(900, Math.abs(z.distancePct) * 120)
-  if (z.side === 'LONG') {
-    return path([
-      { t: t0, p: price, label: 'сейчас' },
-      { t: touch, p: z.mid, label: 'касание SSL', key: true },
-      { t: touch + 1800, p: z.limitEntry, label: 'лимит' },
-      { t: touch + 7200, p: z.target, label: 'TP', key: true },
-    ])
-  }
-  return path([
-    { t: t0, p: price, label: 'сейчас' },
-    { t: touch, p: z.mid, label: 'касание BSL', key: true },
-    { t: touch + 1800, p: z.limitEntry, label: 'лимит' },
-    { t: touch + 7200, p: z.target, label: 'TP', key: true },
-  ])
+  const base =
+    z.side === 'LONG'
+      ? path([
+          { t: t0, p: price, label: 'сейчас' },
+          { t: touch, p: z.mid, label: 'касание SSL', key: true },
+          { t: touch + 1800, p: z.limitEntry, label: 'лимит' },
+          { t: touch + 7200, p: z.target, label: 'TP', key: true },
+        ])
+      : path([
+          { t: t0, p: price, label: 'сейчас' },
+          { t: touch, p: z.mid, label: 'касание BSL', key: true },
+          { t: touch + 1800, p: z.limitEntry, label: 'лимит' },
+          { t: touch + 7200, p: z.target, label: 'TP', key: true },
+        ])
+  return scalePath(base, pathScale)
 }
 
 /** Break: sweep through zone → continuation to next liquidity */
-export function buildZoneBreakPath(z: FoundTradeZone, price: number): PathPoint[] {
+export function buildZoneBreakPath(
+  z: FoundTradeZone,
+  price: number,
+  pathScale = 1
+): PathPoint[] {
   const touch = Math.max(900, Math.abs(z.distancePct) * 100)
-  if (z.side === 'LONG') {
-    const breakPx = z.invalidation
-    const cont = z.mid * 0.985
-    return path([
-      { t: 0, p: price, label: 'сейчас' },
-      { t: touch, p: z.mid, label: 'свип SSL', key: true },
-      { t: touch + 1200, p: breakPx, label: 'слом' },
-      { t: touch + 5400, p: cont, label: 'продолжение', key: true },
-    ])
-  }
-  const breakPx = z.invalidation
-  const cont = z.mid * 1.015
-  return path([
-    { t: 0, p: price, label: 'сейчас' },
-    { t: touch, p: z.mid, label: 'свип BSL', key: true },
-    { t: touch + 1200, p: breakPx, label: 'слом' },
-    { t: touch + 5400, p: cont, label: 'продолжение', key: true },
-  ])
+  const base =
+    z.side === 'LONG'
+      ? path([
+          { t: 0, p: price, label: 'сейчас' },
+          { t: touch, p: z.mid, label: 'свип SSL', key: true },
+          { t: touch + 1200, p: z.invalidation, label: 'слом' },
+          { t: touch + 5400, p: z.mid * 0.985, label: 'продолжение', key: true },
+        ])
+      : path([
+          { t: 0, p: price, label: 'сейчас' },
+          { t: touch, p: z.mid, label: 'свип BSL', key: true },
+          { t: touch + 1200, p: z.invalidation, label: 'слом' },
+          { t: touch + 5400, p: z.mid * 1.015, label: 'продолжение', key: true },
+        ])
+  return scalePath(base, pathScale)
 }
 
 function statusFromPre(pre: SetupPrecondition[]): ConditionalSetup['status'] {
@@ -148,6 +197,7 @@ export function scoreZoneWinPct(opts: {
 
 /**
  * For each found zone: bounce setup + break/stop-run alternative.
+ * `tradeStyle` shapes TP distance, path duration, and #SCALP/#INTRA/#SWING tag.
  */
 export function buildZoneTradeVariants(
   zones: FoundTradeZone[],
@@ -155,11 +205,24 @@ export function buildZoneTradeVariants(
   bookImbalance: number | null,
   symbol?: string,
   internalSymbol?: string,
-  btcRs?: number | null
+  btcRs?: number | null,
+  tradeStyle: SetupTradeStyle = 'INTRADAY'
 ): ConditionalSetup[] {
   const out: ConditionalSetup[] = []
+  const prof = HORIZON_PROFILES[tradeStyle]
 
   for (const z of zones) {
+    const dist = Math.abs(z.distancePct)
+    if (dist > prof.maxDistPct) continue
+    if (dist < prof.minDistPct && tradeStyle !== 'SCALP') continue
+
+    const styled = styleTarget(z, tradeStyle)
+    const zStyled: FoundTradeZone = {
+      ...z,
+      target: styled.target,
+      invalidation: styled.invalidation,
+    }
+
     const inZone =
       price >= z.bottom * 0.998 && price <= z.top * 1.002
     const bookForBounce =
@@ -186,49 +249,69 @@ export function buildZoneTradeVariants(
       },
       {
         id: 'confirm',
-        label: 'Реакция / reclaim',
+        label:
+          tradeStyle === 'SWING'
+            ? 'HTF закреп / дневная реакция'
+            : tradeStyle === 'INTRADAY'
+              ? 'Реакция 15m–1h'
+              : 'Реакция / reclaim',
         status: 'PENDING',
       },
     ]
 
     const bounceSide = z.side
-    const bounceWin = scoreZoneWinPct({
-      kind: 'bounce',
-      side: bounceSide,
-      zone: z,
-      bookImbalance,
-      btcRs,
-    })
+    const bounceWin = Math.round(
+      Math.min(
+        86,
+        Math.max(
+          28,
+          scoreZoneWinPct({
+            kind: 'bounce',
+            side: bounceSide,
+            zone: zStyled,
+            bookImbalance,
+            btcRs,
+          }) + prof.winAdj
+        )
+      )
+    )
 
     out.push({
-      id: `${z.id}_bounce`,
+      id: `${z.id}_bounce_${tradeStyle.toLowerCase()}`,
       kind: z.source === 'SSL' ? 'BOUNCE_SSL' : z.source === 'BSL' ? 'BOUNCE_BSL' : 'SURGICAL',
       side: bounceSide,
-      title: `↗ Отскок · ${z.label}`,
+      title: `${prof.tag} ↗ ${prof.label} · ${z.label}`,
       probability: bounceWin,
       preconditions: bouncePre,
       entryZone: { top: z.top, bottom: z.bottom },
       limitEntry: z.limitEntry,
-      target: z.target,
-      invalidation: z.invalidation,
-      triggerSummary: `Отскок от ${z.source}: лимит ${z.limitEntry.toPrecision(6)} → TP ${z.target.toPrecision(6)} · ~${bounceWin}%`,
+      target: styled.target,
+      invalidation: styled.invalidation,
+      triggerSummary: `${prof.tag} отскок ${z.source}: вход ${z.limitEntry.toPrecision(6)} → TP ${styled.target.toPrecision(6)} · ~${bounceWin}%`,
       reasoning: [
-        'Основной сценарий: ликвидность собрана → реакция',
-        `SL за зоной @ ${z.invalidation.toPrecision(6)}`,
+        `${prof.label}: ликвидность → реакция → полёт к ${styled.target.toPrecision(6)}`,
+        `SL ${styled.invalidation.toPrecision(6)} · R≈${prof.rMultiples.join('/')}`,
         `Дистанция ${z.distancePct.toFixed(2)}% · сила ${z.strength}/10`,
       ],
-      chartPath: buildZoneBouncePath(z, price),
+      chartPath: buildZoneBouncePath(zStyled, price, prof.pathScale),
       status: statusFromPre(bouncePre),
       symbol,
       internalSymbol,
       createdAt: Date.now(),
+      tradeStyle,
     })
+
+    // Break alt — keep for SCALP/INTRA; for SWING only if near zone
+    if (tradeStyle === 'SWING' && dist > 3.5) continue
 
     const breakSide: 'LONG' | 'SHORT' = z.side === 'LONG' ? 'SHORT' : 'LONG'
     const breakEntry =
       z.side === 'LONG' ? z.invalidation * 0.999 : z.invalidation * 1.001
+    const breakRisk = Math.abs(breakEntry - z.mid) * prof.riskPad
     const breakTp =
-      z.side === 'LONG' ? z.mid * 0.982 : z.mid * 1.018
+      breakSide === 'LONG'
+        ? breakEntry + breakRisk * prof.rMultiples[1]
+        : breakEntry - breakRisk * prof.rMultiples[1]
     const breakInv = z.mid
     const bookForBreak =
       bookImbalance == null
@@ -245,13 +328,21 @@ export function buildZoneTradeVariants(
       target: breakTp,
       invalidation: breakInv,
     }
-    const breakWin = scoreZoneWinPct({
-      kind: 'break',
-      side: breakSide,
-      zone: breakZone,
-      bookImbalance,
-      btcRs,
-    })
+    const breakWin = Math.round(
+      Math.min(
+        80,
+        Math.max(
+          24,
+          scoreZoneWinPct({
+            kind: 'break',
+            side: breakSide,
+            zone: breakZone,
+            bookImbalance,
+            btcRs,
+          }) + Math.floor(prof.winAdj / 2)
+        )
+      )
+    )
 
     const breakPre: SetupPrecondition[] = [
       {
@@ -272,10 +363,10 @@ export function buildZoneTradeVariants(
     ]
 
     out.push({
-      id: `${z.id}_break`,
+      id: `${z.id}_break_${tradeStyle.toLowerCase()}`,
       kind: 'STOP_THEN_REVERSE',
       side: breakSide,
-      title: `↯ Слом · ${z.label}`,
+      title: `${prof.tag} ↯ Слом · ${z.label}`,
       probability: breakWin,
       preconditions: breakPre,
       entryZone: {
@@ -285,16 +376,17 @@ export function buildZoneTradeVariants(
       limitEntry: breakEntry,
       target: breakTp,
       invalidation: breakInv,
-      triggerSummary: `Слом ${z.source}: если заберут стопы → ${breakSide} к ${breakTp.toPrecision(6)} · ~${breakWin}%`,
+      triggerSummary: `${prof.tag} слом ${z.source}: ${breakSide} → ${breakTp.toPrecision(6)} · ~${breakWin}%`,
       reasoning: [
-        'Альтернатива: ложный отскок / stop-run через зону',
+        `${prof.label} альтернатива: stop-run через зону`,
         `Inv (возврат в зону) @ ${breakInv.toPrecision(6)}`,
       ],
-      chartPath: buildZoneBreakPath(z, price),
+      chartPath: buildZoneBreakPath(breakZone, price, prof.pathScale),
       status: statusFromPre(breakPre),
       symbol,
       internalSymbol,
       createdAt: Date.now(),
+      tradeStyle,
     })
   }
 

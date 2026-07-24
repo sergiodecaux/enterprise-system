@@ -387,6 +387,81 @@ export async function pushCoinSignalAlert(
   })
 }
 
+/** Ack: бот следит за ранжированными вероятными сделками (1R/2R/3R + магнит) */
+export async function pushProbableTradesAck(opts: {
+  symbol: string
+  displayName?: string
+  price: number
+  globalBias: string
+  globalSummary: string
+  magnetLabel?: string
+  magnetPrice?: number
+  trades: {
+    side: 'LONG' | 'SHORT'
+    title: string
+    probability: number
+    limitEntry: number
+    invalidation: number
+    r1: number
+    r2: number
+    r3: number
+    p1: number
+    p2: number
+    p3: number
+  }[]
+  chatId?: number
+}): Promise<{ ok: boolean; reason?: string }> {
+  const apiSymbol = toApiSymbol(opts.symbol)
+  if (!apiSymbol.endsWith('_USDT') || apiSymbol.length < 7) {
+    return { ok: false, reason: `bad_symbol:${opts.symbol}→${apiSymbol}` }
+  }
+  if (opts.chatId == null) {
+    return { ok: false, reason: 'no_chat_id' }
+  }
+
+  const name = opts.displayName ?? opts.symbol.replace('_USDT', '/USDT')
+  const lines = opts.trades.slice(0, 6).map((t, i) => {
+    const icon = t.side === 'LONG' ? '🟢' : '🔴'
+    return [
+      `${i + 1}. ${icon} ${t.side} · ${t.title} · ~${Math.round(t.probability)}%`,
+      `   вход ${fmt(t.limitEntry)} · SL ${fmt(t.invalidation)}`,
+      `   1R ${fmt(t.r1)} (~${t.p1}%) → 2R ${fmt(t.r2)} (~${t.p2}%) → 3R ${fmt(t.r3)} (~${t.p3}%)`,
+    ].join('\n')
+  })
+
+  const magnetLine =
+    opts.magnetPrice != null && opts.magnetLabel
+      ? `Магнит: ${opts.magnetLabel} @ ${fmt(opts.magnetPrice)}`
+      : null
+
+  const result = await sendTelegramAlert({
+    type: 'SETUP_WATCH',
+    title: `🎲 Вероятные сделки · ${name}`,
+    text: [
+      `Монета: ${name} (${apiSymbol})`,
+      `Цена: ${fmt(opts.price)}`,
+      `Глобально: ${opts.globalBias}`,
+      opts.globalSummary,
+      magnetLine,
+      '',
+      'Ранг сделок:',
+      ...(lines.length ? lines : ['(пусто)']),
+      '',
+      'Бот ведёт фазы APPROACH→READY. Не входи до READY.',
+      '2R — основная цель полёта; 3R — магнит, если сценарий жив.',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    dedupeKey: `probable_trades:${apiSymbol}:${opts.chatId}:${Math.floor(Date.now() / 30_000)}`,
+    chatId: opts.chatId,
+  })
+
+  if (!result.ok) {
+    return { ok: false, reason: result.reason ?? 'send_failed' }
+  }
+  return { ok: true }
+}
+
 /** Ack: бот начал следить за зонами — ждите ювелирный сигнал */
 export async function pushZoneWatchAck(opts: {
   symbol: string

@@ -30,6 +30,13 @@ import {
   getMarketContext,
   type MarketContext,
 } from './marketContext'
+import {
+  buildGlobalScanContext,
+  globalAllowsStyle,
+  globalProbabilityFactors,
+  type GlobalScanContext,
+} from './globalScanContext'
+import { readCandleTape, isImpulseLate } from './candleTape'
 
 const MEXC = 'https://contract.mexc.com'
 
@@ -37,7 +44,7 @@ const MEXC = 'https://contract.mexc.com'
  * Liquidity floors — obscure / region-missing listings rarely sit in top volume.
  * RF MEXC search usually shows liquid USDT-M perps only.
  */
-const MIN_MEME_QUOTE_VOL = 750_000
+const MIN_MEME_QUOTE_VOL = 200_000
 const MIN_MOVER_QUOTE_VOL = 3_000_000
 const MIN_OPEN_INTEREST = 4_000
 /** Only alert from top-N liquid USDT perps by 24h quote volume */
@@ -93,9 +100,13 @@ export interface ScanAlert {
   winPct: number
   style: 'SCALP' | 'INTRADAY' | 'SWING' | 'OTHER'
   align: 'WITH_TREND' | 'COUNTER'
+  /** Alignment with BTC D/4H/1H global picture (for INTRA/SWING ranking) */
+  globalAlignScore?: number
   tradePlan?: TradePlanPayload
   /** Price already left zone — auto-create pullback watches for subscribers */
   needsPullbackWatch?: boolean
+  /** Chased SNIPER: no TG entry alert — only pullback watch handoff */
+  watchOnly?: boolean
 }
 
 interface TickerRow {
@@ -315,11 +326,13 @@ function volumeSpike(candles: Candle[]): {
   const base = candles.slice(-25, -1)
   const avg = base.reduce((s, c) => s + c[5], 0) / base.length
   if (avg <= 0) return { detected: false, mult: 0, movePct: 0 }
-  const last = candles[candles.length - 1]
+  // Prefer last CLOSED bar — forming bar often under-reports volume mid-minute
+  const last = candles.length >= 2 ? candles[candles.length - 2]! : candles[candles.length - 1]!
   const mult = last[5] / avg
-  const movePct = ((last[4] - last[1]) / last[1]) * 100
+  const movePct = last[1] > 0 ? ((last[4] - last[1]) / last[1]) * 100 : 0
   return {
-    detected: mult >= 3 && Math.abs(movePct) >= 1.2,
+    // Soft detect — callers apply their own mult/move floors
+    detected: mult >= 2.2 && Math.abs(movePct) >= 0.7,
     mult,
     movePct,
   }
@@ -484,8 +497,11 @@ function isPriceChased(
   return price < zoneLow
 }
 
-/** Hard floor — bot only emits setups with win% ≥ 60 */
+/** Hard floor — sniper ≥60; meme rescue lower when impulse strong */
 const MIN_WIN_PCT = 60
+const MIN_WIN_PCT_MEME = 48
+
+export type ScanMode = 'all' | 'meme' | 'sniper'
 
 type TradeStyle = 'SCALP' | 'INTRADAY' | 'SWING'
 type TrendAlign = 'WITH_TREND' | 'COUNTER'
@@ -599,22 +615,36 @@ function applyBookAndStrength(
   bookImb: number | null,
   rs: number | null,
   isBtc: boolean,
-  softForMeme = false
+  softMode: 'hard' | 'meme' | 'major' = 'hard'
 ): { score: number; note: string } | null {
   let s = score
   const notes: string[] = []
+  const soft = softMode !== 'hard'
+  const bookAgainst =
+    softMode === 'meme' ? 42 : softMode === 'major' ? 32 : 22
+  const bookAlign =
+    softMode === 'meme' ? 12 : softMode === 'major' ? 14 : 18
+  const rsWeak = softMode === 'meme' ? -14 : softMode === 'major' ? -10 : -6
+  const rsStrong = softMode === 'meme' ? 14 : softMode === 'major' ? 10 : 6
 
   if (bookImb != null) {
     const aligned =
-      (side === 'LONG' && bookImb >= 18) || (side === 'SHORT' && bookImb <= -18)
+      (side === 'LONG' && bookImb >= bookAlign) ||
+      (side === 'SHORT' && bookImb <= -bookAlign)
     const against =
-      (side === 'LONG' && bookImb <= (softForMeme ? -32 : -25)) ||
-      (side === 'SHORT' && bookImb >= (softForMeme ? 32 : 25))
+      (side === 'LONG' && bookImb <= -bookAgainst) ||
+      (side === 'SHORT' && bookImb >= bookAgainst)
     if (against) {
-      return null
-    }
-    if (aligned) {
-      s += 6
+      if (soft) {
+        s -= softMode === 'meme' ? 5 : 6
+        notes.push(
+          `Стакан против (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%) −${softMode === 'meme' ? 5 : 6}`
+        )
+      } else {
+        return null
+      }
+    } else if (aligned) {
+      s += softMode === 'meme' ? 4 : softMode === 'major' ? 5 : 6
       notes.push(`Стакан за вход (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%)`)
     } else {
       notes.push(`Стакан нейтрален (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%)`)
@@ -624,26 +654,32 @@ function applyBookAndStrength(
   }
 
   if (!isBtc && rs != null) {
-    const weakCut = softForMeme ? -10 : -6
-    const strongCut = softForMeme ? 10 : 6
     if (side === 'LONG') {
-      if (rs <= weakCut) return null
-      if (rs >= 3) {
+      if (rs <= rsWeak) {
+        if (soft) {
+          s -= softMode === 'meme' ? 4 : 5
+          notes.push(coinStrengthLabel(rs, false))
+        } else return null
+      } else if (rs >= 3) {
         s += Math.min(8, 3 + rs * 0.4)
         notes.push(coinStrengthLabel(rs, false))
       } else if (rs < -1.5) {
-        s -= softForMeme ? 2 : 4
+        s -= soft ? 2 : 4
         notes.push(coinStrengthLabel(rs, false))
       } else {
         notes.push(coinStrengthLabel(rs, false))
       }
     } else {
-      if (rs >= strongCut) return null
-      if (rs <= -3) {
+      if (rs >= rsStrong) {
+        if (soft) {
+          s -= softMode === 'meme' ? 4 : 5
+          notes.push(coinStrengthLabel(rs, false))
+        } else return null
+      } else if (rs <= -3) {
         s += Math.min(8, 3 + Math.abs(rs) * 0.4)
         notes.push(coinStrengthLabel(rs, false))
       } else if (rs > 1.5) {
-        s -= softForMeme ? 2 : 4
+        s -= soft ? 2 : 4
         notes.push(coinStrengthLabel(rs, false))
       } else {
         notes.push(coinStrengthLabel(rs, false))
@@ -921,16 +957,18 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
   if (BLUE_CHIPS.has(t.symbol)) return false
   const price = Number(t.lastPrice)
   const vol = quoteVol(t)
-  // Memes / micro-caps: allow up to $50 (was $25 — cut many liquid names)
-  return price > 0 && price <= 50 && vol >= MIN_MEME_QUOTE_VOL
+  // Memes / micro-caps — price ceiling was killing many liquid pumps
+  return price > 0 && price <= 250 && vol >= MIN_MEME_QUOTE_VOL
 }
 
 /**
  * Full 24/7 scan cycle. Returns alerts to broadcast.
  * @param gates optional adaptive filters from bot journal outcomes
+ * @param mode 'meme' = only meme universe (fast path for early TG send)
  */
 export async function runMarketScan(
-  gates?: BotAdaptiveGates | null
+  gates?: BotAdaptiveGates | null,
+  mode: ScanMode = 'all'
 ): Promise<ScanAlert[]> {
   const [tradable, tickers] = await Promise.all([
     fetchTradableSymbols(),
@@ -967,7 +1005,7 @@ export async function runMarketScan(
       (a, b) =>
         Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
     )
-    .slice(0, 20)
+    .slice(0, 48)
 
   const movers = liquidUniverse
     .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
@@ -986,11 +1024,21 @@ export async function runMarketScan(
   const alerts: ScanAlert[] = []
   const seen = new Set<string>()
 
-  // BTC 1h once per cycle — relative strength + market regime
-  const btc1h = await fetchKlines('BTC_USDT', 'Min60', 48)
+  // BTC HTF once per cycle — global picture for INTRA / SWING
+  const [btc1h, btc4h, btc1d] = await Promise.all([
+    fetchKlines('BTC_USDT', 'Min60', 48),
+    fetchKlines('BTC_USDT', 'Hour4', 90),
+    fetchKlines('BTC_USDT', 'Day1', 60),
+  ])
   const btcRegime: MarketRegime = detectMarketRegime(btc1h)
   const winCal: WinPctCalibrationEntry[] = gates?.winPctBySetup ?? []
   const marketCtx = await getMarketContext()
+  const globalCtx: GlobalScanContext = buildGlobalScanContext({
+    btc1h,
+    btc4h,
+    btc1d,
+    marketCtx,
+  })
 
   const analyze = async (t: TickerRow, preferMeme: boolean) => {
     if (seen.has(t.symbol)) return
@@ -1003,7 +1051,8 @@ export async function runMarketScan(
     // No candles = not really tradeable / bad symbol
     if (candles.length < 40) return
 
-    if (toxicChop(candles)) return
+    // Toxic chop: skip thin alts only (majors wick in trend)
+    if (!preferMeme && !isMajor && toxicChop(candles)) return
 
     const price = Number(t.lastPrice)
     if (!(price > 0)) return
@@ -1084,10 +1133,43 @@ export async function runMarketScan(
         style,
         align,
         scoreAdj,
-        type === 'MEME'
+        type === 'MEME' || isMajor
       )
       if (!regimeGate.ok) return
       scoreAdj = regimeGate.scoreAdj
+
+      // Global BTC picture — hard gate for SNIPER INTRA/SWING only.
+      // MEME (pump/squeeze/ignition) is LTF impulse: soft score nudge, never silence.
+      let globalAlignScore = 0
+      if (type === 'MEME') {
+        const soft = globalAllowsStyle({
+          g: globalCtx,
+          side,
+          style,
+          align,
+          score: scoreAdj,
+          isBtc,
+        })
+        globalAlignScore = soft.alignScore
+        // Keep meme alive even if global says no — mild haircut only
+        if (!soft.ok) {
+          scoreAdj = Math.max(0, scoreAdj - 3)
+        } else {
+          scoreAdj = soft.scoreAdj
+        }
+      } else {
+        const globalGate = globalAllowsStyle({
+          g: globalCtx,
+          side,
+          style,
+          align,
+          score: scoreAdj,
+          isBtc,
+        })
+        if (!globalGate.ok) return
+        scoreAdj = globalGate.scoreAdj
+        globalAlignScore = globalGate.alignScore
+      }
 
       const gated = applyBookAndStrength(
         side,
@@ -1095,7 +1177,7 @@ export async function runMarketScan(
         bookImb,
         rs,
         isBtc,
-        type === 'MEME'
+        type === 'MEME' ? 'meme' : isMajor ? 'major' : 'hard'
       )
       if (!gated) return
       scoreAdj = gated.score
@@ -1111,26 +1193,62 @@ export async function runMarketScan(
         })
         toxCache.set(side, tox)
       }
-      if (tox.toxic) return
+      if (tox.toxic) {
+        if (type === 'MEME') {
+          scoreAdj = Math.max(0, scoreAdj - 8)
+        } else {
+          return
+        }
+      }
       if (tox.scorePenalty > 0) {
         scoreAdj = Math.max(0, scoreAdj - tox.scorePenalty)
       }
 
-      // Adaptive gates from bot journal — block weak tags only, not whole families
-      if (gates) {
-        if (isSetupBlocked(gates, setup, composite) && scoreAdj < 95) return
-        const min =
-          type === 'MEME' ? gates.minMemeScore : gates.minSniperScore
-        const boost = isSetupBoosted(gates, setup, composite) ? -4 : 0
-        if (scoreAdj < min + boost) return
-      }
+      // ── Zones + tape ──────────────────────────────────────────────
+      const smart = findSmartZone(side, price, liqMap, atr, {
+        relaxed: isMajor || type === 'MEME',
+      })
+      const waitingPullback =
+        smart != null &&
+        (smart.phase === 'FAR' ||
+          smart.phase === 'APPROACH' ||
+          isPriceChased(side, price, smart.zoneLow, smart.zoneHigh))
 
-      // Prefer Mini App–parity HTF SSL/BSL (4H/D only). No LTF fake zones.
-      const smart = findSmartZone(side, price, liqMap, atr)
-      // Without real HTF zone SNIPER is noise — skip entirely
-      if (!smart && type === 'SNIPER') return
-      // Meme without HTF zone: only allow very strong raw score
-      if (!smart && type === 'MEME' && scoreAdj < 88) return
+      const tape = readCandleTape(candles, side)
+
+      if (type === 'MEME') {
+        // MEME = LTF impulse. Original bot emitted pumps without HTF zones.
+        // Only silence if already extremely extended (chase of a finished run).
+        if (isImpulseLate(candles, side, 5.5)) return
+        scoreAdj = Math.min(99, Math.max(0, scoreAdj + Math.min(4, tape.scoreAdj)))
+        // Zone is a bonus, never required
+        if (smart) {
+          scoreAdj = Math.min(
+            99,
+            scoreAdj + 2 + (smart.tf === '1D' ? 2 : 0)
+          )
+        }
+      } else {
+        const lateThr = isMajor ? 3.2 : 2.4
+        if (!waitingPullback) {
+          if (tape.late) return
+          if (isImpulseLate(candles, side, lateThr)) return
+          if (!tape.ok) return
+        } else if (smart?.phase === 'TOUCH' && !tape.ok) {
+          return
+        }
+        scoreAdj = Math.min(99, Math.max(0, scoreAdj + tape.scoreAdj))
+
+        if (!smart) return
+        const minStr = isMajor ? 4 : 5
+        if (smart.strength < minStr) return
+        scoreAdj = Math.min(
+          99,
+          scoreAdj +
+            Math.round(liqMap.liquidityBoost * 3) +
+            (smart.tf === '1D' ? 4 : 2)
+        )
+      }
 
       const fuel = smart
         ? assessZoneFuel({
@@ -1142,15 +1260,18 @@ export async function runMarketScan(
             bookImb,
           })
         : null
-      if (smart) {
-        // Require meaningful HTF strength for sniper (5+/10 = solid 4H MEDIUM)
-        if (type === 'SNIPER' && smart.strength < 5) return
-        scoreAdj = Math.min(
-          99,
-          scoreAdj +
-            Math.round(liqMap.liquidityBoost * 3) +
-            (smart.tf === '1D' ? 4 : 2)
-        )
+      // SNIPER strength already gated above; meme uses zone only as fuel nudge
+
+      // Adaptive journal: blocked tags — SNIPER only.
+      // MEME cold-streak blocks were silencing the whole impulse channel.
+      if (gates) {
+        if (
+          type === 'SNIPER' &&
+          isSetupBlocked(gates, setup, composite) &&
+          scoreAdj < 95
+        ) {
+          return
+        }
       }
       if (fuel) scoreAdj = Math.max(0, Math.min(99, scoreAdj + fuel.scoreAdj))
 
@@ -1197,13 +1318,38 @@ export async function runMarketScan(
         tp: tpPx,
         toxicBook: false,
       })
-      // SNIPER: only A+/A; MEME: allow B+ (not SKIP)
+      // SNIPER: A+/A ready; B allowed for majors with solid score
       if (type === 'SNIPER' && !scoreCard.ready) return
-      if (type === 'MEME' && scoreCard.grade === 'SKIP') return
+      if (
+        type === 'SNIPER' &&
+        scoreCard.grade === 'B' &&
+        !(isMajor && scoreAdj >= 70)
+      ) {
+        return
+      }
+      // MEME: ScoreCard is informational — only kill total trash
+      if (type === 'MEME' && scoreCard.grade === 'SKIP' && scoreAdj < 62) return
       if (scoreCard.grade === 'A+') scoreAdj = Math.min(99, scoreAdj + 4)
       else if (scoreCard.grade === 'A') scoreAdj = Math.min(99, scoreAdj + 2)
+      else if (scoreCard.grade === 'B') scoreAdj = Math.min(99, scoreAdj + 1)
+
+      // Min score AFTER boosts
+      if (gates) {
+        const min =
+          type === 'MEME'
+            ? Math.min(gates.minMemeScore, 64)
+            : Math.min(gates.minSniperScore, isMajor ? 76 : 80)
+        const boost = isSetupBoosted(gates, setup, composite) ? -4 : 0
+        if (scoreAdj < min + boost) return
+      }
 
       const zAdj = zoneProbabilityAdj(smart, fuel)
+      const gProb = globalProbabilityFactors({
+        g: globalCtx,
+        side,
+        style,
+        alignScore: globalAlignScore,
+      })
       const prior = computeSetupProbability({
         score: scoreAdj,
         align,
@@ -1221,17 +1367,31 @@ export async function runMarketScan(
         zoneFactors: zAdj.factors,
         marketCtx,
       })
-      const cal = calibrateWinPct(prior.winPct, composite, winCal)
-      // Soft floor: cold streak must not silence healthy high-score tags
+      const priorWin = Math.max(
+        20,
+        Math.min(92, prior.winPct + gProb.adj)
+      )
+      const cal = calibrateWinPct(priorWin, composite, winCal)
+      const winFloor = type === 'MEME' ? MIN_WIN_PCT_MEME : MIN_WIN_PCT
       let winPct = cal.winPct
       if (
-        winPct < MIN_WIN_PCT &&
-        prior.winPct >= MIN_WIN_PCT &&
-        scoreAdj >= (type === 'MEME' ? 76 : 84)
+        winPct < winFloor &&
+        priorWin >= winFloor &&
+        scoreAdj >= (type === 'MEME' ? 72 : 84)
       ) {
-        winPct = MIN_WIN_PCT
+        winPct = winFloor
       }
-      if (winPct < MIN_WIN_PCT) return
+      if (winPct < winFloor) return
+      // INTRA/SWING SNIPER: prefer setups that agree with global picture
+      if (
+        type === 'SNIPER' &&
+        (style === 'INTRADAY' || style === 'SWING') &&
+        align === 'WITH_TREND' &&
+        globalAlignScore < 1 &&
+        winPct < (isMajor ? 64 : 72)
+      ) {
+        return
+      }
 
       // Final live check — detail + book + funding endpoint
       if (!(await isSymbolTradableNow(t.symbol, minVol))) return
@@ -1249,6 +1409,10 @@ export async function runMarketScan(
           }
         : atrPlan
       const chased = isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
+      // Outside zone = limit-wait alert (broadcast). Only silence meme if late impulse
+      // already handled above. Never silent-kill BTC/alt zone setups.
+      const watchOnly = false
+      if (type === 'MEME' && chased && !smart) return
 
       const obiStr =
         bookImb == null
@@ -1282,25 +1446,24 @@ export async function runMarketScan(
           : reason.length > 140
             ? `${reason.slice(0, 137)}…`
             : reason,
-        `Bias 1h ${bias1h} / 4h ${bias4h} · режим BTC ${btcRegime}`,
-        marketCtx.lines[0] ??
-          (ctx.pullback
-            ? `Локальный откат 15m (${bias15}) в глобальный ${ctx.global}.`
-            : `Сигнал ${align === 'WITH_TREND' ? 'по тренду' : 'контртренд'} · ${styleLabel(style)}.`),
+        globalCtx.summary,
+        `Монета: 1h ${bias1h} / 4h ${bias4h} · BTC align ${globalAlignScore >= 0 ? '+' : ''}${globalAlignScore}`,
       ].slice(0, 3)
 
       const probFactors = [
         ...prior.factors,
+        ...gProb.factors.slice(0, 3),
         cal.source === 'PRIOR'
-          ? `журнал: мало данных → модель ${prior.winPct}%`
-          : `журнал ⊕ ${cal.sampleN} сделок (${cal.source}): ${prior.winPct}% → ${winPct}%`,
+          ? `журнал: мало данных → модель ${priorWin}%`
+          : `журнал ⊕ ${cal.sampleN} сделок (${cal.source}): ${priorWin}% → ${winPct}%`,
       ]
 
       const contextLines = [
-        `1h bias: ${bias1h} · 4h bias: ${bias4h} · 15m: ${bias15}`,
+        ...globalCtx.lines,
+        `Монета 1h: ${bias1h} · 4h: ${bias4h} · 15m: ${bias15}`,
         `OBI: ${obiStr} · RS: ${rsStr}`,
-        `Режим рынка: ${btcRegime}`,
-        ...marketCtx.lines,
+        `Режим BTC 1H: ${btcRegime} · 4H: ${globalCtx.regime4h}`,
+        ...marketCtx.lines.filter((l) => !globalCtx.lines.includes(l)),
         gated.note,
         `Тренд: глобальный ${ctx.global} · локальный ${ctx.local}${
           ctx.pullback ? ' · откат в тренд' : ''
@@ -1316,6 +1479,7 @@ export async function runMarketScan(
         } · boost ${liqMap.liquidityBoost.toFixed(2)}`,
         `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M · RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
         ...tox.notes,
+        `Свечи: ${tape.pattern} — ${tape.note}`,
         ...extras,
       ]
 
@@ -1350,7 +1514,13 @@ export async function runMarketScan(
         winPct,
         style,
         align,
-        needsPullbackWatch: chased || smart?.phase === 'FAR' || smart?.phase === 'APPROACH',
+        globalAlignScore,
+        watchOnly,
+        needsPullbackWatch:
+          watchOnly ||
+          chased ||
+          smart?.phase === 'FAR' ||
+          smart?.phase === 'APPROACH',
         tradePlan: {
           side,
           symbol: t.symbol,
@@ -1405,8 +1575,7 @@ export async function runMarketScan(
     } else if (
       deeplyNeg &&
       !highBroken &&
-      (spike.detected || chg >= 10) &&
-      !gates?.requireHighBrokenForSqueeze
+      (spike.detected || chg >= 10)
     ) {
       await push(
         'LONG',
@@ -1450,8 +1619,8 @@ export async function runMarketScan(
     }
 
     // ── VOLUME PUMP / DUMP · SCALP (+ INTRA twin when strong) ──────
-    const spikeMultMin = preferMeme ? 3.2 : isMajor ? 2.8 : 4
-    const spikeMoveMin = preferMeme ? 1.5 : isMajor ? 1.2 : 2
+    const spikeMultMin = preferMeme ? 2.2 : isMajor ? 2.2 : 4
+    const spikeMoveMin = preferMeme ? 0.7 : isMajor ? 0.7 : 2
     if (
       spike.detected &&
       spike.mult >= spikeMultMin &&
@@ -1460,8 +1629,8 @@ export async function runMarketScan(
       const isLong = spike.movePct > 0
       const side: Side = isLong ? 'LONG' : 'SHORT'
       const align = classifyAlign(side, bias15 !== 'FLAT' ? bias15 : htfBias)
-      const baseScore = Math.min(95, (preferMeme ? 62 : 58) + spike.mult * 5)
-      const score = align === 'COUNTER' ? baseScore + 6 : baseScore
+      const baseScore = Math.min(95, (preferMeme ? 70 : 58) + spike.mult * 5)
+      const score = align === 'COUNTER' ? baseScore + 4 : baseScore
       await push(
         side,
         isLong ? 'PUMP' : 'DUMP',
@@ -1492,6 +1661,38 @@ export async function runMarketScan(
       if (preferMeme) return
     }
 
+    // ── MEME session mover fallback (when no clean 1m spike yet) ────
+    if (preferMeme && Math.abs(chg) >= 8 && rsi >= 55 && chg > 0) {
+      await push(
+        'LONG',
+        'PUMP',
+        Math.min(88, 66 + Math.abs(chg) * 0.4),
+        `Мем-ход +${chg.toFixed(1)}% / 24h, RSI ${rsi.toFixed(0)}${
+          spike.detected ? `, объём ×${spike.mult.toFixed(1)}` : ''
+        }.`,
+        ['#MEME #SESSION'],
+        'MEME',
+        `cron:meme_session:${t.symbol}:L`,
+        'SCALP',
+        'WITH_TREND'
+      )
+      return
+    }
+    if (preferMeme && Math.abs(chg) >= 10 && rsi <= 45 && chg < 0) {
+      await push(
+        'SHORT',
+        'DUMP',
+        Math.min(88, 66 + Math.abs(chg) * 0.35),
+        `Мем-дамп ${chg.toFixed(1)}% / 24h, RSI ${rsi.toFixed(0)}.`,
+        ['#MEME #SESSION'],
+        'MEME',
+        `cron:meme_session:${t.symbol}:S`,
+        'SCALP',
+        'WITH_TREND'
+      )
+      return
+    }
+
     // ── MAJORS / LIQUID: explicit SCALP & INTRA × TREND / COUNTER ──
     if (!preferMeme && (isMajor || volUsd >= MIN_MOVER_QUOTE_VOL)) {
       const sessionMove = Math.abs(chg)
@@ -1503,11 +1704,12 @@ export async function runMarketScan(
             : null
 
       // SCALP WITH_TREND — short impulse in direction of 15m/1h
+      const scalpMoveMin = isMajor ? 0.7 : 1.2
       if (
         trendSide &&
-        ((trendSide === 'LONG' && bias15 === 'BULL' && rsi >= 50 && rsi <= 70) ||
-          (trendSide === 'SHORT' && bias15 === 'BEAR' && rsi <= 50 && rsi >= 30)) &&
-        (spike.detected || sessionMove >= 1.2)
+        ((trendSide === 'LONG' && bias15 === 'BULL' && rsi >= 48 && rsi <= 72) ||
+          (trendSide === 'SHORT' && bias15 === 'BEAR' && rsi <= 52 && rsi >= 28)) &&
+        (spike.detected || sessionMove >= scalpMoveMin)
       ) {
         await push(
           trendSide,
@@ -1527,9 +1729,9 @@ export async function runMarketScan(
       // SCALP COUNTER — local exhaustion vs HTF
       if (
         htfBias !== 'FLAT' &&
-        sessionMove >= 2.5 &&
-        ((htfBias === 'BULL' && rsi >= 72 && chg > 0) ||
-          (htfBias === 'BEAR' && rsi <= 28 && chg < 0))
+        sessionMove >= (isMajor ? 1.6 : 2.5) &&
+        ((htfBias === 'BULL' && rsi >= (isMajor ? 68 : 72) && chg > 0) ||
+          (htfBias === 'BEAR' && rsi <= (isMajor ? 32 : 28) && chg < 0))
       ) {
         const side: Side = htfBias === 'BULL' ? 'SHORT' : 'LONG'
         await push(
@@ -1548,9 +1750,9 @@ export async function runMarketScan(
       // INTRADAY WITH_TREND
       if (
         trendSide &&
-        sessionMove >= 1.8 &&
-        ((trendSide === 'LONG' && rsi >= 52 && rsi <= 72 && chg > 0) ||
-          (trendSide === 'SHORT' && rsi <= 48 && rsi >= 28 && chg < 0))
+        sessionMove >= (isMajor ? 1.0 : 1.8) &&
+        ((trendSide === 'LONG' && rsi >= 50 && rsi <= 74 && chg > 0) ||
+          (trendSide === 'SHORT' && rsi <= 50 && rsi >= 26 && chg < 0))
       ) {
         await push(
           trendSide,
@@ -1570,9 +1772,9 @@ export async function runMarketScan(
       // INTRADAY COUNTER (exhaustion)
       if (
         htfBias !== 'FLAT' &&
-        sessionMove >= 3.5 &&
-        ((htfBias === 'BULL' && rsi >= 72 && chg > 0) ||
-          (htfBias === 'BEAR' && rsi <= 28 && chg < 0))
+        sessionMove >= (isMajor ? 2.2 : 3.5) &&
+        ((htfBias === 'BULL' && rsi >= (isMajor ? 68 : 72) && chg > 0) ||
+          (htfBias === 'BEAR' && rsi <= (isMajor ? 32 : 28) && chg < 0))
       ) {
         const side: Side = htfBias === 'BULL' ? 'SHORT' : 'LONG'
         await push(
@@ -1590,34 +1792,47 @@ export async function runMarketScan(
         )
       }
 
-      // SWING WITH TREND (4h) — no early return; can coexist
+      // SWING WITH TREND — coin 4h + BTC Daily/4H global picture
       if (
         bias4h !== 'FLAT' &&
-        sessionMove >= 2.2 &&
-        ((bias4h === 'BULL' && chg > 0 && rsi >= 50 && rsi <= 68) ||
-          (bias4h === 'BEAR' && chg < 0 && rsi <= 50 && rsi >= 32))
+        sessionMove >= (isMajor ? 1.0 : 1.6) &&
+        ((bias4h === 'BULL' && chg > 0 && rsi >= 46 && rsi <= 72) ||
+          (bias4h === 'BEAR' && chg < 0 && rsi <= 54 && rsi >= 28))
       ) {
         const side: Side = bias4h === 'BULL' ? 'LONG' : 'SHORT'
-        await push(
-          side,
-          side === 'LONG' ? 'SWING_LONG' : 'SWING_SHORT',
-          Math.min(91, 70 + sessionMove),
-          `Свинг по тренду 4h ${bias4h}: 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(
-            1
-          )}%, RSI ${rsi.toFixed(0)}.`,
-          ['#SWING #TREND'],
-          'SNIPER',
-          `cron:swing_trend:${t.symbol}:${side}`,
-          'SWING',
-          'WITH_TREND'
-        )
+        const globalOk =
+          globalCtx.preferSwingSide == null ||
+          globalCtx.preferSwingSide === side ||
+          globalCtx.btcGlobal === 'FLAT'
+        if (globalOk) {
+          await push(
+            side,
+            side === 'LONG' ? 'SWING_LONG' : 'SWING_SHORT',
+            Math.min(
+              93,
+              72 +
+                sessionMove +
+                (globalCtx.preferSwingSide === side ? 4 : 0) +
+                (globalCtx.dayColor === (side === 'LONG' ? 'GREEN' : 'RED')
+                  ? 3
+                  : 0)
+            ),
+            `Свинг по глобали: BTC D ${globalCtx.btcBias1d}/${globalCtx.dayColor}, 4H ${globalCtx.btcBias4h}; монета 4h ${bias4h}, 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%, RSI ${rsi.toFixed(0)}.`,
+            ['#SWING #TREND', '#GLOBAL'],
+            'SNIPER',
+            `cron:swing_trend:${t.symbol}:${side}`,
+            'SWING',
+            'WITH_TREND'
+          )
+        }
       }
 
-      // SWING COUNTER
+      // SWING COUNTER — only with extreme RSI + F&G (gated in globalAllowsStyle)
       if (
         bias4h !== 'FLAT' &&
-        sessionMove >= 6 &&
-        ((bias4h === 'BULL' && rsi >= 78) || (bias4h === 'BEAR' && rsi <= 22))
+        sessionMove >= (isMajor ? 3.5 : 6) &&
+        ((bias4h === 'BULL' && rsi >= (isMajor ? 72 : 78)) ||
+          (bias4h === 'BEAR' && rsi <= (isMajor ? 28 : 22)))
       ) {
         const side: Side = bias4h === 'BULL' ? 'SHORT' : 'LONG'
         await push(
@@ -1634,6 +1849,73 @@ export async function runMarketScan(
           'COUNTER'
         )
       }
+
+      // GLOBAL INTRA — BTC 4H picture + coin pullback into HTF zone
+      const gIntra = globalCtx.preferIntraSide
+      if (
+        gIntra &&
+        (bias4h === (gIntra === 'LONG' ? 'BULL' : 'BEAR') ||
+          bias1h === (gIntra === 'LONG' ? 'BULL' : 'BEAR') ||
+          (bias15 !== (gIntra === 'LONG' ? 'BULL' : 'BEAR') &&
+            bias4h === (gIntra === 'LONG' ? 'BULL' : 'BEAR')))
+      ) {
+        const pullbackIntoTrend =
+          (gIntra === 'LONG' &&
+            (bias15 === 'BEAR' || bias15 === 'FLAT') &&
+            rsi <= 55) ||
+          (gIntra === 'SHORT' &&
+            (bias15 === 'BULL' || bias15 === 'FLAT') &&
+            rsi >= 45)
+        if (pullbackIntoTrend || sessionMove >= 1.2) {
+          await push(
+            gIntra,
+            gIntra === 'LONG' ? 'GLOBAL_INTRA_LONG' : 'GLOBAL_INTRA_SHORT',
+            Math.min(
+              92,
+              74 +
+                (pullbackIntoTrend ? 5 : 0) +
+                (globalCtx.h4Color === (gIntra === 'LONG' ? 'GREEN' : 'RED')
+                  ? 3
+                  : 0) +
+                Math.min(6, sessionMove)
+            ),
+            `Интрадей от глобали BTC: 4H ${globalCtx.btcBias4h}/${globalCtx.h4Color}, D ${globalCtx.btcBias1d}; монета ждёт зону (${bias15}/${bias1h}), RSI ${rsi.toFixed(0)}.`,
+            ['#INTRA #TREND', '#GLOBAL'],
+            'SNIPER',
+            `cron:global_intra:${t.symbol}:${gIntra}`,
+            'INTRADAY',
+            'WITH_TREND'
+          )
+        }
+      }
+
+      // GLOBAL SWING — Daily BTC closed in direction + coin HTF agrees
+      const gSwing = globalCtx.preferSwingSide
+      if (
+        gSwing &&
+        bias4h === (gSwing === 'LONG' ? 'BULL' : 'BEAR') &&
+        (globalCtx.dayColor === (gSwing === 'LONG' ? 'GREEN' : 'RED') ||
+          globalCtx.btcBias1d === (gSwing === 'LONG' ? 'BULL' : 'BEAR'))
+      ) {
+        await push(
+          gSwing,
+          gSwing === 'LONG' ? 'GLOBAL_SWING_LONG' : 'GLOBAL_SWING_SHORT',
+          Math.min(
+            94,
+            76 +
+              (globalCtx.regime4h === 'TRENDING_STRONG' ? 4 : 0) +
+              (globalCtx.dayColor === (gSwing === 'LONG' ? 'GREEN' : 'RED')
+                ? 3
+                : 0)
+          ),
+          `Свинг от глобали: день BTC ${globalCtx.dayColor}, D-bias ${globalCtx.btcBias1d}, 4H ${globalCtx.btcBias4h}/${globalCtx.regime4h}; монета 4h ${bias4h}.`,
+          ['#SWING #TREND', '#GLOBAL'],
+          'SNIPER',
+          `cron:global_swing:${t.symbol}:${gSwing}`,
+          'SWING',
+          'WITH_TREND'
+        )
+      }
     }
 
     // ── LEGACY MAJOR PULSE (fallback if nothing else fired for symbol) ─
@@ -1645,9 +1927,9 @@ export async function runMarketScan(
       const impulse = Math.abs(spike.movePct)
       const sessionMove = Math.abs(chg)
       if (
-        (spike.detected && impulse >= 0.8 && sessionMove >= 2) ||
-        (sessionMove >= 4 && rsi > 62 && chg > 0) ||
-        (sessionMove >= 4 && rsi < 38 && chg < 0)
+        (spike.detected && impulse >= 0.5 && sessionMove >= 1.2) ||
+        (sessionMove >= 2.5 && rsi > 58 && chg > 0) ||
+        (sessionMove >= 2.5 && rsi < 42 && chg < 0)
       ) {
         const isLong = chg >= 0
         const side: Side = isLong ? 'LONG' : 'SHORT'
@@ -1703,9 +1985,14 @@ export async function runMarketScan(
     }
   }
 
-  for (const t of memes) {
-    await analyze(t, true)
-    await new Promise((r) => setTimeout(r, 80))
+  if (mode !== 'sniper') {
+    for (const t of memes) {
+      await analyze(t, true)
+      await new Promise((r) => setTimeout(r, 50))
+    }
+  }
+  if (mode === 'meme') {
+    return rankAndSelectAlerts(alerts.filter((a) => a.type === 'MEME'))
   }
   for (const t of majors) {
     await analyze(t, false)
@@ -1728,7 +2015,9 @@ export async function runMarketScan(
  */
 export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
   const byWin = (a: ScanAlert, b: ScanAlert) =>
-    b.winPct - a.winPct || b.score - a.score
+    (b.globalAlignScore ?? 0) - (a.globalAlignScore ?? 0) ||
+    b.winPct - a.winPct ||
+    b.score - a.score
 
   const sniper = alerts.filter((a) => a.type === 'SNIPER')
   const meme = alerts.filter((a) => a.type === 'MEME')
@@ -1751,8 +2040,11 @@ export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
     ...pick(sniper, 'SCALP', 'COUNTER', 1),
     ...pick(sniper, 'INTRADAY', 'WITH_TREND', 2),
     ...pick(sniper, 'INTRADAY', 'COUNTER', 1),
-    ...pick(sniper, 'SWING', null, 1),
-    ...meme.sort(byWin).slice(0, 2),
+    ...pick(sniper, 'SWING', 'WITH_TREND', 2),
+    ...pick(sniper, 'SWING', 'COUNTER', 1),
+    ...meme
+      .sort((a, b) => b.score - a.score || b.winPct - a.winPct)
+      .slice(0, 4),
   ]
 
   // Dedupe by dedupeKey while preserving slot order
@@ -1762,6 +2054,23 @@ export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
     if (seen.has(a.dedupeKey)) continue
     seen.add(a.dedupeKey)
     picked.push(a)
+  }
+
+  // Always try to keep ≥1 blue-chip / BTC sniper in the лента
+  const isBlue = (a: ScanAlert) => {
+    const sym = a.tradePlan?.symbol ?? ''
+    return (
+      sym === 'BTC_USDT' ||
+      sym === 'ETH_USDT' ||
+      BLUE_CHIPS.has(sym)
+    )
+  }
+  if (!picked.some((a) => a.type === 'SNIPER' && isBlue(a))) {
+    const blue = [...sniper].filter(isBlue).sort(byWin)[0]
+    if (blue && !seen.has(blue.dedupeKey)) {
+      seen.add(blue.dedupeKey)
+      picked.unshift(blue)
+    }
   }
 
   // Fill empty corridors from leftover snipers by win%

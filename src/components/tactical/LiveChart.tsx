@@ -43,15 +43,26 @@ import {
   refreshZoneSetups,
   type FoundTradeZone,
 } from '../../engine/zones/findTradeZones'
-import { pushJewelEntryAlert, pushZoneWatchAck } from '../../api/telegram/formatters'
+import { findProbableTrades, findLiveSignal } from '../../engine/trades'
+import type { LiveSignalResult } from '../../engine/trades'
+import {
+  pushJewelEntryAlert,
+  pushProbableTradesAck,
+  pushZoneWatchAck,
+} from '../../api/telegram/formatters'
 import ZonePathOverlay from './ZonePathOverlay'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
+import ProbableTradesPanel from './ProbableTradesPanel'
+import SignalNowPanel from './SignalNowPanel'
 import { buildGlobalFibonacci } from '../../engine/zones/globalFibonacci'
+import { horizonToStyle } from '../../engine/zones/horizonProfiles'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
 import {
   buildConditionalSetups,
   type ConditionalSetup,
+  type TradeGlobalView,
+  type TradeMagnet,
 } from '../../engine/setups'
 import {
   createWatchedSetup,
@@ -140,6 +151,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
   const [foundChartZones, setFoundChartZones] = useState<LiquidityZone[]>([])
   const [zonesMode, setZonesMode] = useState(false)
+  const [tradesMode, setTradesMode] = useState(false)
+  const [signalMode, setSignalMode] = useState(false)
+  const [liveSignal, setLiveSignal] = useState<LiveSignalResult | null>(null)
+  const [tradesGlobalView, setTradesGlobalView] =
+    useState<TradeGlobalView | null>(null)
+  const [tradesMagnet, setTradesMagnet] = useState<TradeMagnet | null>(null)
   const jewelSentRef = useRef<Set<string>>(new Set())
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
@@ -383,6 +400,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     setPickedSetups(setups)
     setShowSetupPicker(true)
     setShowForecast(true)
+    setZonesMode(false)
+    setTradesMode(false)
+    setTradesGlobalView(null)
+    setTradesMagnet(null)
     haptic.impact()
   }, [
     signal,
@@ -400,6 +421,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       return
     }
     jewelSentRef.current = new Set()
+    const tradeStyle = horizonToStyle(forecastHorizon)
     const result = findTradeZones({
       candles,
       candles1d,
@@ -411,10 +433,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       forecast,
       liquidityMap: eqLiquidityMap,
       bookImbalance: orderBookMetrics?.imbalance ?? null,
+      tradeStyle,
     })
     setFoundZones(result.zones)
     setFoundChartZones(result.chartZones)
     setZonesMode(true)
+    setTradesMode(false)
+    setTradesGlobalView(null)
+    setTradesMagnet(null)
     setLiquidityMap(symbol, result.liquidityMap)
     setPickedSetups(result.setups)
     setShowSetupPicker(true)
@@ -541,17 +567,19 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     const longZ = result.nearestLong
     const shortZ = result.nearestShort
+    const styleTag =
+      tradeStyle === 'SCALP' ? '#SCALP' : tradeStyle === 'SWING' ? '#SWING' : '#INTRA'
     if (chatId && isTelegramAlertsConfigured()) {
       showAlert(
         serverWatches > 0
-          ? `👁 На сервере ${serverWatches} сетапов · отчёт каждые 5 мин · жди 💎`
-          : `Зоны: ${result.zones.length} · мониторинг бота не активен`
+          ? `👁 ${styleTag}: ${serverWatches} сетапов на сервере · жди 💎`
+          : `${styleTag} зоны: ${result.zones.length} · мониторинг бота не активен`
       )
     } else if (!chatId) {
       /* already alerted above */
     } else {
       showAlert(
-        `Зоны: ${result.zones.length}` +
+        `${styleTag} зоны: ${result.zones.length}` +
           (longZ ? ` · LONG @ ${longZ.mid.toPrecision(5)}` : '') +
           (shortZ ? ` · SHORT @ ${shortZ.mid.toPrecision(5)}` : '')
       )
@@ -574,6 +602,232 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     resolveChatId,
     telegramSettings.sniper,
     telegramSettings.meme,
+    forecastHorizon,
+  ])
+
+  const handleFindProbableTrades = useCallback(async () => {
+    if (!(currentPrice > 0) || candles.length < 20) {
+      showAlert('Нужны свечи и цена — подождите загрузку графика')
+      return
+    }
+    jewelSentRef.current = new Set()
+    setZonesMode(false)
+
+    const tradeStyle = horizonToStyle(forecastHorizon)
+    const result = findProbableTrades({
+      candles,
+      candles1d,
+      symbol,
+      flatSymbol,
+      price: currentPrice,
+      signal,
+      mmIntent: mmSnap,
+      forecast,
+      liquidityMap: eqLiquidityMap,
+      bookImbalance: orderBookMetrics?.imbalance ?? null,
+      fearGreed: fearGreedValue,
+      maxTrades: 8,
+      tradeStyle,
+    })
+
+    setFoundZones(result.zones)
+    setFoundChartZones(result.chartZones)
+    setTradesMode(true)
+    setTradesGlobalView(result.globalView)
+    setTradesMagnet(result.magnet)
+    setLiquidityMap(symbol, result.liquidityMap)
+    setPickedSetups(result.trades)
+    setShowSetupPicker(true)
+    setShowForecast(true)
+    if (result.trades[0]) setSelectedSetupId(result.trades[0].id)
+    haptic.success()
+
+    const chatId = resolveChatId()
+    const autoWatch = result.trades.slice(0, 6)
+
+    if (!isTelegramAlertsConfigured()) {
+      showAlert('Прокси бота не настроен (VITE_MEXC_PROXY_URL)')
+    } else if (!chatId) {
+      showAlert('Нет chatId — открой Mini App из Telegram или /start у бота')
+    } else {
+      try {
+        await subscribeTelegramAlerts({
+          chatId,
+          sniper: telegramSettings.sniper !== false,
+          meme: telegramSettings.meme !== false,
+        })
+      } catch {
+        /* best-effort */
+      }
+
+      const ack = await pushProbableTradesAck({
+        symbol: flatSymbol,
+        displayName: signal?.displayName,
+        price: currentPrice,
+        globalBias: result.globalView.bias,
+        globalSummary: result.globalView.summary,
+        magnetLabel: result.magnet?.label,
+        magnetPrice: result.magnet?.price,
+        trades: result.trades.map((t) => ({
+          side: t.side,
+          title: t.title,
+          probability: t.probability,
+          limitEntry: t.limitEntry,
+          invalidation: t.invalidation,
+          r1: t.targetsLadder?.r1 ?? t.target,
+          r2: t.targetsLadder?.r2 ?? t.target,
+          r3: t.targetsLadder?.r3 ?? t.target,
+          p1: t.targetsLadder?.pReach1 ?? Math.round(t.probability),
+          p2: t.targetsLadder?.pReach2 ?? Math.round(t.probability * 0.55),
+          p3: t.targetsLadder?.pReach3 ?? Math.round(t.probability * 0.3),
+        })),
+        chatId,
+      })
+
+      if (!ack.ok) {
+        const hint =
+          ack.reason === 'need_start' || ack.reason === 'tg_send_failed'
+            ? 'Напиши боту /start, потом снова «Сделки»'
+            : ack.reason === 'network'
+              ? 'Нет связи с worker'
+              : `Не удалось отправить в бот (${ack.reason ?? 'error'})`
+        showAlert(hint)
+      }
+    }
+
+    let serverWatches = 0
+    if (chatId && isTelegramAlertsConfigured() && autoWatch.length > 0) {
+      try {
+        const watches = await createWatchedSetupsBatch({
+          chatId,
+          setups: autoWatch,
+          symbol: flatSymbol,
+          internalSymbol: symbol,
+          ttlHours: 48,
+        })
+        serverWatches = watches.length
+        for (const watch of watches) upsertWatchedSetup(watch)
+      } catch {
+        /* local fallback */
+      }
+      if (serverWatches === 0) {
+        for (const setup of autoWatch) {
+          upsertWatchedSetup({
+            watchId: `local_${setup.id}`,
+            chatId,
+            symbol: flatSymbol,
+            internalSymbol: symbol,
+            setup,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 48 * 3600_000,
+            lastStatus: setup.status,
+            readyNotified: false,
+            invalidatedNotified: false,
+            updatedAt: Date.now(),
+          })
+        }
+        showAlert(
+          'Сделки на экране, но серверный мониторинг не включился — /start и снова «Сделки»'
+        )
+      }
+    }
+
+    if (chatId && isTelegramAlertsConfigured() && serverWatches > 0) {
+      showAlert(
+        `🎲 ${serverWatches} сделок на сервере · ${result.globalView.bias} · магнит ${
+          result.magnet ? result.magnet.label : 'R-лестница'
+        }`
+      )
+    } else if (!chatId) {
+      /* already alerted */
+    } else {
+      showAlert(
+        `Сделки: ${result.trades.length} · ${result.globalView.bias}` +
+          (result.trades[0]
+            ? ` · топ ${result.trades[0].side} ~${Math.round(result.trades[0].probability)}%`
+            : '')
+      )
+    }
+  }, [
+    currentPrice,
+    candles,
+    candles1d,
+    symbol,
+    flatSymbol,
+    signal,
+    mmSnap,
+    forecast,
+    eqLiquidityMap,
+    orderBookMetrics,
+    fearGreedValue,
+    setLiquidityMap,
+    upsertWatchedSetup,
+    showAlert,
+    haptic,
+    resolveChatId,
+    telegramSettings.sniper,
+    telegramSettings.meme,
+    forecastHorizon,
+  ])
+
+  const handleFindLiveSignal = useCallback(() => {
+    if (!(currentPrice > 0) || candles.length < 20) {
+      showAlert('Нужны свечи и цена — подождите загрузку графика')
+      return
+    }
+    setZonesMode(false)
+    setTradesMode(false)
+
+    const tradeStyle = horizonToStyle(forecastHorizon)
+    const result = findLiveSignal({
+      candles,
+      candles1d,
+      symbol,
+      flatSymbol,
+      price: currentPrice,
+      signal,
+      mmIntent: mmSnap,
+      forecast,
+      liquidityMap: eqLiquidityMap,
+      bookImbalance: orderBookMetrics?.imbalance ?? null,
+      fearGreed: fearGreedValue,
+      tradeStyle,
+    })
+
+    setLiveSignal(result)
+    setSignalMode(true)
+    setFoundZones(result.zones)
+    setFoundChartZones(result.chartZones)
+    setTradesGlobalView(result.globalView)
+    setTradesMagnet(result.magnet)
+    setLiquidityMap(symbol, result.liquidityMap)
+    setPickedSetups(result.trades)
+    setShowSetupPicker(true)
+    setShowForecast(true)
+    if (result.bestSetup) setSelectedSetupId(result.bestSetup.id)
+    else if (result.trades[0]) setSelectedSetupId(result.trades[0].id)
+    haptic.success()
+
+    const p = result.primary
+    showAlert(
+      `Сигнал: ${p.side !== 'FLAT' ? p.side + ' · ' : ''}${p.title} · ~${p.winPct}%\n${result.phaseLabel}`
+    )
+  }, [
+    currentPrice,
+    candles,
+    candles1d,
+    symbol,
+    flatSymbol,
+    signal,
+    mmSnap,
+    forecast,
+    eqLiquidityMap,
+    orderBookMetrics,
+    fearGreedValue,
+    setLiquidityMap,
+    showAlert,
+    haptic,
+    forecastHorizon,
   ])
 
   const watchingIds = useMemo(() => {
@@ -1255,6 +1509,40 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   return (
     <div className="space-y-2">
+      {/* Full-width CTA — always visible above TF toolbar (Telegram mobile) */}
+      <button
+        id="live-signal-cta"
+        type="button"
+        onClick={() => {
+          if (signalMode) {
+            setSignalMode(false)
+            setLiveSignal(null)
+            haptic.impact()
+            return
+          }
+          handleFindLiveSignal()
+        }}
+        className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+          signalMode
+            ? 'border-amber-400/60 bg-amber-500/20'
+            : 'border-amber-400/45 bg-gradient-to-r from-amber-500/20 to-amber-600/10'
+        }`}
+      >
+        <div>
+          <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-100">
+            {signalMode ? 'Скрыть сигнал' : 'Найти сигнал'}
+          </div>
+          <div className="mt-0.5 font-mono text-[9px] text-amber-100/55">
+            {signalMode && liveSignal
+              ? `${liveSignal.primary.side !== 'FLAT' ? liveSignal.primary.side + ' · ' : ''}${liveSignal.primary.title} · ${liveSignal.primary.winPct}%`
+              : 'Тест зоны · SMC hunt · варианты развития прямо сейчас'}
+          </div>
+        </div>
+        <span className="shrink-0 rounded-md border border-amber-300/40 bg-amber-400/20 px-2 py-1 font-mono text-[10px] font-bold text-amber-50">
+          {signalMode ? 'ON' : 'GO'}
+        </span>
+      </button>
+
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-xs uppercase tracking-wider text-holo/40">
@@ -1341,6 +1629,29 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           <button
             type="button"
             onClick={() => {
+              if (signalMode) {
+                setSignalMode(false)
+                setLiveSignal(null)
+                haptic.impact()
+                return
+              }
+              handleFindLiveSignal()
+            }}
+            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              signalMode
+                ? 'border border-amber-400/55 bg-amber-500/20 text-amber-100'
+                : 'border border-amber-400/35 bg-amber-500/10 text-amber-200/90 hover:bg-amber-500/20'
+            }`}
+            title="Самый вероятный ход сейчас: тест зоны / SMC hunt / варианты развития"
+          >
+            Сигнал
+            {signalMode && liveSignal
+              ? ` · ${liveSignal.primary.winPct}%`
+              : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               if (zonesMode) {
                 setZonesMode(false)
                 setFoundChartZones([])
@@ -1348,6 +1659,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 haptic.impact()
                 return
               }
+              setSignalMode(false)
+              setLiveSignal(null)
               void handleFindZones()
             }}
             className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
@@ -1355,15 +1668,56 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 ? 'border border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
                 : 'border border-hull-border text-holo/40 hover:text-holo/70'
             }`}
-            title="Найти зоны ликвидности LONG/SHORT и следить для ювелирного входа"
+            title={`Зоны под горизонт ${forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon} (переключи SCALP→INTRA→SWING слева)`}
           >
-            Зоны{foundZones.length > 0 ? ` · ${foundZones.length}` : ''}
+            Зоны
+            {foundZones.length > 0 && zonesMode
+              ? ` · ${foundZones.length}`
+              : ''}
+            {zonesMode
+              ? ` · ${horizonToStyle(forecastHorizon) === 'INTRADAY' ? 'INTRA' : horizonToStyle(forecastHorizon)}`
+              : ''}
           </button>
           <button
             type="button"
-            onClick={handlePickSetups}
+            onClick={() => {
+              if (tradesMode) {
+                setTradesMode(false)
+                setTradesGlobalView(null)
+                setTradesMagnet(null)
+                setPickedSetups([])
+                setShowSetupPicker(false)
+                haptic.impact()
+                return
+              }
+              setSignalMode(false)
+              setLiveSignal(null)
+              void handleFindProbableTrades()
+            }}
             className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showSetupPicker
+              tradesMode
+                ? 'border border-sky-400/50 bg-sky-500/15 text-sky-300'
+                : 'border border-hull-border text-holo/40 hover:text-holo/70'
+            }`}
+            title={`Вероятные сделки под ${forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon}: путь, 1R/2R/3R, магнит → бот`}
+          >
+            Сделки
+            {tradesMode && pickedSetups.length > 0
+              ? ` · ${pickedSetups.length}`
+              : ''}
+            {tradesMode
+              ? ` · ${horizonToStyle(forecastHorizon) === 'INTRADAY' ? 'INTRA' : horizonToStyle(forecastHorizon)}`
+              : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSignalMode(false)
+              setLiveSignal(null)
+              handlePickSetups()
+            }}
+            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              showSetupPicker && !zonesMode && !tradesMode && !signalMode
                 ? 'border border-matrix/50 bg-matrix/15 text-matrix'
                 : 'border border-hull-border text-holo/40 hover:text-holo/70'
             }`}
@@ -1488,7 +1842,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             lastCandleTs={lastCandleTs}
           />
         )}
-        {zonesMode && pickedSetups.some((s) => s.chartPath?.length) && chartReady > 0 && (
+        {(zonesMode || tradesMode || signalMode) &&
+          pickedSetups.some((s) => s.chartPath?.length) &&
+          chartReady > 0 && (
           <ZonePathOverlay
             chart={chartRef.current}
             series={candleRef.current}
@@ -1542,6 +1898,24 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </>
       )}
 
+      {signalMode && liveSignal && (
+        <SignalNowPanel
+          result={liveSignal}
+          selectedId={selectedSetupId}
+          watchingIds={watchingIds}
+          busy={watchBusy}
+          onSelectSetup={(s) => {
+            setSelectedSetupId(s.id)
+            haptic.impact()
+          }}
+          onWatchSetup={(s) => void handleWatchSetup(s)}
+          onSelectScenario={(sc) => {
+            if (sc.setupId) setSelectedSetupId(sc.setupId)
+            haptic.impact()
+          }}
+        />
+      )}
+
       {zonesMode && (
         <ZoneVariantsPanel
           zones={foundZones}
@@ -1557,7 +1931,23 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {showSetupPicker && !zonesMode && (
+      {tradesMode && (
+        <ProbableTradesPanel
+          trades={pickedSetups}
+          globalView={tradesGlobalView}
+          magnet={tradesMagnet}
+          selectedId={selectedSetupId}
+          watchingIds={watchingIds}
+          busy={watchBusy}
+          onSelect={(s) => {
+            setSelectedSetupId(s.id)
+            haptic.impact()
+          }}
+          onWatch={(s) => void handleWatchSetup(s)}
+        />
+      )}
+
+      {showSetupPicker && !zonesMode && !tradesMode && !signalMode && (
         <SetupPickerPanel
           setups={pickedSetups}
           selectedId={selectedSetupId}
