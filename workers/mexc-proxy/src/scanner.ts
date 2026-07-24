@@ -37,6 +37,7 @@ import {
   type GlobalScanContext,
 } from './globalScanContext'
 import { readCandleTape, isImpulseLate } from './candleTape'
+import { assessMemeAntiManipulation } from './memeAntiManipulation'
 
 const MEXC = 'https://contract.mexc.com'
 
@@ -44,11 +45,23 @@ const MEXC = 'https://contract.mexc.com'
  * Liquidity floors — obscure / region-missing listings rarely sit in top volume.
  * RF MEXC search usually shows liquid USDT-M perps only.
  */
-const MIN_MEME_QUOTE_VOL = 200_000
+const MIN_MEME_QUOTE_VOL = 150_000
 const MIN_MOVER_QUOTE_VOL = 3_000_000
 const MIN_OPEN_INTEREST = 4_000
 /** Only alert from top-N liquid USDT perps by 24h quote volume */
 const TOP_LIQUID_PERPS = 200
+const memeOiHistory = new Map<string, { oi: number; at: number }>()
+
+function observeMemeOi(symbol: string, oi: number): number | null {
+  if (!(oi > 0)) return null
+  const now = Date.now()
+  const previous = memeOiHistory.get(symbol)
+  memeOiHistory.set(symbol, { oi, at: now })
+  if (!previous || now - previous.at > 15 * 60_000 || !(previous.oi > 0)) {
+    return null
+  }
+  return ((oi - previous.oi) / previous.oi) * 100
+}
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -82,6 +95,8 @@ export interface TradePlanPayload {
   invalidate: number
   sl: number
   tp: number
+  target1?: number
+  target3?: number
   /** SSL / BSL / ATR — same vocabulary as Mini App */
   zoneSource?: 'SSL' | 'BSL' | 'SWING' | 'ATR'
   zoneStrength?: number
@@ -323,17 +338,42 @@ function volumeSpike(candles: Candle[]): {
   movePct: number
 } {
   if (candles.length < 30) return { detected: false, mult: 0, movePct: 0 }
-  const base = candles.slice(-25, -1)
+  const closed = candles.length >= 2 ? candles.slice(0, -1) : candles
+  if (closed.length < 26) return { detected: false, mult: 0, movePct: 0 }
+  // Baseline excludes the recent window we scan for spikes
+  const base = closed.slice(-30, -8)
+  if (base.length < 10) return { detected: false, mult: 0, movePct: 0 }
   const avg = base.reduce((s, c) => s + c[5], 0) / base.length
   if (avg <= 0) return { detected: false, mult: 0, movePct: 0 }
-  // Prefer last CLOSED bar — forming bar often under-reports volume mid-minute
-  const last = candles.length >= 2 ? candles[candles.length - 2]! : candles[candles.length - 1]!
-  const mult = last[5] / avg
-  const movePct = last[1] > 0 ? ((last[4] - last[1]) / last[1]) * 100 : 0
+
+  // Best spike among last ~8 closed minutes (cron is */2 — don't miss the pump bar)
+  let best = { mult: 0, movePct: 0 }
+  for (const c of closed.slice(-8)) {
+    const mult = c[5] / avg
+    const movePct = c[1] > 0 ? ((c[4] - c[1]) / c[1]) * 100 : 0
+    if (mult > best.mult) best = { mult, movePct }
+  }
   return {
-    // Soft detect — callers apply their own mult/move floors
-    detected: mult >= 2.2 && Math.abs(movePct) >= 0.7,
-    mult,
+    detected: best.mult >= 1.8 && Math.abs(best.movePct) >= 0.5,
+    mult: best.mult,
+    movePct: best.movePct,
+  }
+}
+
+/** Net move over last N closed 1m bars — catches pumps mid-run */
+function burstMove(
+  candles: Candle[],
+  bars = 5
+): { detected: boolean; movePct: number } {
+  const closed = candles.length >= 2 ? candles.slice(0, -1) : candles
+  if (closed.length < bars + 1) return { detected: false, movePct: 0 }
+  const slice = closed.slice(-bars)
+  const a = slice[0]![1]
+  const b = slice[slice.length - 1]![4]
+  if (!(a > 0)) return { detected: false, movePct: 0 }
+  const movePct = ((b - a) / a) * 100
+  return {
+    detected: Math.abs(movePct) >= 2.5,
     movePct,
   }
 }
@@ -442,6 +482,103 @@ function buildLevels(
     return { sl: entry - risk, tp: entry + reward }
   }
   return { sl: entry + risk, tp: entry - reward }
+}
+
+interface MemeTargetPlan {
+  tp1: number
+  tp2: number
+  tp3: number
+  source1: string
+  source2: string
+  source3: string
+}
+
+function buildMemeTargetPlan(
+  side: Side,
+  entry: number,
+  sl: number,
+  atr: number,
+  candles: Candle[],
+  style: TradeStyle
+): MemeTargetPlan {
+  const riskPct = entry > 0 ? (Math.abs(entry - sl) / entry) * 100 : 0
+  const atrPct = entry > 0 ? (atr / entry) * 100 : 0
+  const floors =
+    style === 'SCALP'
+      ? [0.8, 1.8, 3.2]
+      : style === 'SWING'
+        ? [2, 5, 8]
+        : [1.2, 2.8, 5]
+  const caps =
+    style === 'SCALP' ? [2, 4.5, 7] : style === 'SWING' ? [4, 9, 14] : [3, 6, 10]
+  const riskMultiples = [1.2, 2.4, 4]
+  const atrMultiples = [1.2, 2.5, 4]
+  const closed = candles.length >= 2 ? candles.slice(0, -1) : candles
+  const recent = closed.slice(-90)
+  const rawLevels = recent.flatMap((c) =>
+    side === 'LONG' ? [c[2]] : [c[3]]
+  )
+
+  const target = (
+    index: number,
+    previous: number | null
+  ): { price: number; source: string } => {
+    const previousPct =
+      previous == null
+        ? 0
+        : side === 'LONG'
+          ? ((previous - entry) / entry) * 100
+          : ((entry - previous) / entry) * 100
+    const desiredPct = Math.min(
+      caps[index]!,
+      Math.max(
+        floors[index]!,
+        riskPct * riskMultiples[index]!,
+        atrPct * atrMultiples[index]!,
+        previousPct + (index === 1 ? 0.8 : index === 2 ? 1.2 : 0)
+      )
+    )
+    const projected =
+      side === 'LONG'
+        ? entry * (1 + desiredPct / 100)
+        : entry * (1 - desiredPct / 100)
+    const minDistance = desiredPct
+    const maxDistance = caps[index]!
+    const candidates = rawLevels
+      .map((price) => ({
+        price,
+        distance:
+          side === 'LONG'
+            ? ((price - entry) / entry) * 100
+            : ((entry - price) / entry) * 100,
+      }))
+      .filter(
+        (level) =>
+          level.distance >= minDistance &&
+          level.distance <= maxDistance &&
+          (previous == null ||
+            (side === 'LONG'
+              ? level.price > previous * 1.001
+              : level.price < previous * 0.999))
+      )
+      .sort((a, b) => a.distance - b.distance)
+    const liquidity = candidates[0]
+    return liquidity
+      ? { price: liquidity.price, source: 'локальная ликвидность' }
+      : { price: projected, source: 'ATR/импульс' }
+  }
+
+  const t1 = target(0, null)
+  const t2 = target(1, t1.price)
+  const t3 = target(2, t2.price)
+  return {
+    tp1: t1.price,
+    tp2: t2.price,
+    tp3: t3.price,
+    source1: t1.source,
+    source2: t2.source,
+    source3: t3.source,
+  }
 }
 
 /**
@@ -620,10 +757,11 @@ function applyBookAndStrength(
   let s = score
   const notes: string[] = []
   const soft = softMode !== 'hard'
+  // Meme: kill against sooner; require clearer alignment to boost
   const bookAgainst =
-    softMode === 'meme' ? 42 : softMode === 'major' ? 32 : 22
+    softMode === 'meme' ? 22 : softMode === 'major' ? 32 : 22
   const bookAlign =
-    softMode === 'meme' ? 12 : softMode === 'major' ? 14 : 18
+    softMode === 'meme' ? 15 : softMode === 'major' ? 14 : 18
   const rsWeak = softMode === 'meme' ? -14 : softMode === 'major' ? -10 : -6
   const rsStrong = softMode === 'meme' ? 14 : softMode === 'major' ? 10 : 6
 
@@ -635,21 +773,37 @@ function applyBookAndStrength(
       (side === 'LONG' && bookImb <= -bookAgainst) ||
       (side === 'SHORT' && bookImb >= bookAgainst)
     if (against) {
+      // Meme: hard-kill if book clearly against (was soft → spam)
+      if (softMode === 'meme') {
+        return null
+      }
       if (soft) {
-        s -= softMode === 'meme' ? 5 : 6
+        s -= 6
         notes.push(
-          `Стакан против (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%) −${softMode === 'meme' ? 5 : 6}`
+          `Стакан против (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%) −6`
         )
       } else {
         return null
       }
     } else if (aligned) {
-      s += softMode === 'meme' ? 4 : softMode === 'major' ? 5 : 6
+      s += softMode === 'meme' ? 6 : softMode === 'major' ? 5 : 6
       notes.push(`Стакан за вход (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%)`)
     } else {
-      notes.push(`Стакан нейтрален (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%)`)
+      // Meme: neutral book is weak — haircut, caller may still require align
+      if (softMode === 'meme') {
+        s -= 4
+        notes.push(
+          `Стакан нейтрален (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%) −4`
+        )
+      } else {
+        notes.push(`Стакан нейтрален (OBI ${bookImb >= 0 ? '+' : ''}${bookImb.toFixed(0)}%)`)
+      }
     }
   } else {
+    if (softMode === 'meme') {
+      // No book → no meme alert (стакан обязателен)
+      return null
+    }
     notes.push('Стакан: нет данных')
   }
 
@@ -881,6 +1035,7 @@ function formatTradeAlert(opts: {
   probFactors: string[]
   chased: boolean
   zoneLines?: string[]
+  targetLines?: string[]
   extras?: string[]
 }): { title: string; text: string } {
   const name = opts.symbol.replace('_USDT', '/USDT')
@@ -933,7 +1088,11 @@ function formatTradeAlert(opts: {
     ...entryBlock,
     '',
     `Стоп: ${fmt(opts.sl)} (${pct(opts.entryIdeal, opts.sl)})`,
-    `Цель (ближ. ликвидность): ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
+    ...(opts.targetLines?.length
+      ? opts.targetLines
+      : [
+          `Цель (ближ. ликвидность): ${fmt(opts.tp)} (${pct(opts.entryIdeal, opts.tp)})`,
+        ]),
     '',
     `Причина: ${opts.reason}`,
     '',
@@ -999,13 +1158,27 @@ export async function runMarketScan(
 
   const liquidSet = new Set(liquidUniverse.map((t) => t.symbol))
 
-  const memes = liquidUniverse
-    .filter((t) => isMemeCandidate(t, liquidSet))
+  // MEME universe: hottest 24h movers — NOT limited to top-volume slice only
+  // (pumps often sit outside top-200 by quote vol until after the move).
+  const memes = tickers
+    .filter((t) => {
+      if (!tradable.has(t.symbol)) return false
+      if (!t.symbol.endsWith('_USDT')) return false
+      if (t.symbol.includes('USDC')) return false
+      if (BLUE_CHIPS.has(t.symbol)) return false
+      const price = Number(t.lastPrice)
+      const vol = quoteVol(t)
+      const chgAbs = Math.abs(Number(t.riseFallRate) * 100)
+      if (!(price > 0) || price > 250) return false
+      if (vol < MIN_MEME_QUOTE_VOL) return false
+      // Need a real move — filter noise before spending book/toxicity
+      return chgAbs >= 6
+    })
     .sort(
       (a, b) =>
         Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
     )
-    .slice(0, 48)
+    .slice(0, 8)
 
   const movers = liquidUniverse
     .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
@@ -1023,13 +1196,17 @@ export async function runMarketScan(
 
   const alerts: ScanAlert[] = []
   const seen = new Set<string>()
+  const memeDeepSymbols = new Set<string>()
 
   // BTC HTF once per cycle — global picture for INTRA / SWING
-  const [btc1h, btc4h, btc1d] = await Promise.all([
-    fetchKlines('BTC_USDT', 'Min60', 48),
-    fetchKlines('BTC_USDT', 'Hour4', 90),
-    fetchKlines('BTC_USDT', 'Day1', 60),
-  ])
+  const [btc1h, btc4h, btc1d] =
+    mode === 'meme'
+      ? [await fetchKlines('BTC_USDT', 'Min60', 48), [], []]
+      : await Promise.all([
+          fetchKlines('BTC_USDT', 'Min60', 48),
+          fetchKlines('BTC_USDT', 'Hour4', 90),
+          fetchKlines('BTC_USDT', 'Day1', 60),
+        ])
   const btcRegime: MarketRegime = detectMarketRegime(btc1h)
   const winCal: WinPctCalibrationEntry[] = gates?.winPctBySetup ?? []
   const marketCtx = await getMarketContext()
@@ -1043,7 +1220,8 @@ export async function runMarketScan(
   const analyze = async (t: TickerRow, preferMeme: boolean) => {
     if (seen.has(t.symbol)) return
     seen.add(t.symbol)
-    if (!liquidSet.has(t.symbol)) return
+    // Sniper must be in liquid universe; memes may come from hotter mover list
+    if (!preferMeme && !liquidSet.has(t.symbol)) return
 
     const isMajor = BLUE_CHIPS.has(t.symbol)
     const isBtc = t.symbol === 'BTC_USDT'
@@ -1060,17 +1238,25 @@ export async function runMarketScan(
     const chg = Number(t.riseFallRate) * 100
     const funding = Number(t.fundingRate ?? 0)
     const fundingPct = funding * 100
+    const oiChangePct = preferMeme
+      ? observeMemeOi(t.symbol, Number(t.holdVol ?? 0))
+      : null
     const atr = calcAtr(candles)
     if (!(atr > 0)) return
 
     // Bias: 15m/1h timing; Zones: ALWAYS 4H + Daily (never 15m as zone source)
+    // MEME fast path: skip HTF klines — otherwise 28×4 requests kill the cron.
     let bias15: 'BULL' | 'BEAR' | 'FLAT' = 'FLAT'
     let bias1h: 'BULL' | 'BEAR' | 'FLAT' = 'FLAT'
     let bias4h: 'BULL' | 'BEAR' | 'FLAT' = 'FLAT'
     let c1h: Candle[] = []
     let c4h: Candle[] = []
     let c1d: Candle[] = []
-    {
+    if (preferMeme) {
+      bias15 = chg >= 2 ? 'BULL' : chg <= -2 ? 'BEAR' : 'FLAT'
+      bias1h = bias15
+      bias4h = 'FLAT'
+    } else {
       const frames = await Promise.all([
         fetchKlines(t.symbol, 'Min15', 64),
         fetchKlines(t.symbol, 'Min60', 48),
@@ -1087,22 +1273,38 @@ export async function runMarketScan(
     const htfBias =
       bias4h !== 'FLAT' ? bias4h : bias1h !== 'FLAT' ? bias1h : bias15
 
-    const bookImb = await fetchBookImbalance(t.symbol)
-    const rs = isBtc ? null : relStrengthVsBtc(c1h, btc1h)
-    const liqMap = buildHtfLiquidityMap({
-      candles4h: c4h,
-      candles1d: c1d,
-      candles1h: c1h,
-      price,
-    })
+    // Load depth only when this symbol actually has a trigger. All meme movers
+    // still get the cheap candle scan; only the hottest three candidates spend
+    // the deep-book request budget before Telegram delivery.
+    let bookImb: number | null = null
+    let bookLoaded = false
+    const rs = isBtc || preferMeme ? null : relStrengthVsBtc(c1h, btc1h)
+    const liqMap = preferMeme
+      ? {
+          equalHighs: [] as never[],
+          equalLows: [] as never[],
+          nearestBSL: null,
+          nearestSSL: null,
+          liquidityBoost: 0,
+          primaryTf: '4H' as const,
+        }
+      : buildHtfLiquidityMap({
+          candles4h: c4h,
+          candles1d: c1d,
+          candles1h: c1h,
+          price,
+        })
     const toxCache = new Map<Side, Awaited<ReturnType<typeof assessBookToxicity>>>()
 
     const spike = volumeSpike(candles)
-    const ignition = flatlineIgnition(candles)
+    const burst = burstMove(candles, 5)
+    const ignition = preferMeme
+      ? { detected: false, mult: 0, movePct: 0 }
+      : flatlineIgnition(candles)
     const highBroken = brokeLocalHigh(candles)
     const closes = candles.map((c) => c[4])
     const rsi = calcRsi(closes)
-    const backside = lowerHighAndBreak(candles) && rsi > 70
+    const backside = !preferMeme && lowerHighAndBreak(candles) && rsi > 70
     const volUsd = quoteVol(t)
     const minVol = preferMeme ? MIN_MEME_QUOTE_VOL : MIN_MOVER_QUOTE_VOL
 
@@ -1117,6 +1319,19 @@ export async function runMarketScan(
       style: TradeStyle,
       alignOverride?: TrendAlign
     ) => {
+      if (!bookLoaded) {
+        if (type === 'MEME') {
+          if (
+            !memeDeepSymbols.has(t.symbol) &&
+            memeDeepSymbols.size >= 2
+          ) {
+            return
+          }
+          memeDeepSymbols.add(t.symbol)
+        }
+        bookImb = await fetchBookImbalance(t.symbol)
+        bookLoaded = true
+      }
       const ctx = resolveTrendContext(side, bias15, bias1h, bias4h)
       const align = alignOverride ?? ctx.align
       const composite = `${setup}_${style}_${align === 'WITH_TREND' ? 'TREND' : 'COUNTER'}`
@@ -1182,26 +1397,56 @@ export async function runMarketScan(
       if (!gated) return
       scoreAdj = gated.score
 
-      // Spoof / iceberg — veto toxic books, soft-penalize warnings
-      let tox = toxCache.get(side)
-      if (!tox) {
-        tox = await assessBookToxicity({
-          symbol: t.symbol,
-          side,
-          mid: price,
-          mexcJson,
-        })
-        toxCache.set(side, tox)
+      // Spoof / iceberg — sniper hard; meme soft-kill on toxic, always assess
+      let tox: Awaited<ReturnType<typeof assessBookToxicity>> = {
+        toxic: false,
+        scorePenalty: 0,
+        notes: [],
+        persistentBook: 'UNKNOWN',
       }
-      if (tox.toxic) {
-        if (type === 'MEME') {
-          scoreAdj = Math.max(0, scoreAdj - 8)
-        } else {
-          return
+      {
+        let cached = toxCache.get(side)
+        if (!cached) {
+          cached = await assessBookToxicity({
+            symbol: t.symbol,
+            side,
+            mid: price,
+            mexcJson,
+          })
+          toxCache.set(side, cached)
+        }
+        tox = cached
+        if (tox.toxic) {
+          if (type !== 'MEME' || tox.persistentBook === 'AGAINST') {
+            return
+          }
+          // A single vanishing wall is noisy on memes: penalize it, but only
+          // persistent pressure against the trade is a hard veto.
+        }
+        if (tox.scorePenalty > 0) {
+          const penalty =
+            type === 'MEME' ? Math.min(12, tox.scorePenalty) : tox.scorePenalty
+          scoreAdj = Math.max(0, scoreAdj - penalty)
         }
       }
-      if (tox.scorePenalty > 0) {
-        scoreAdj = Math.max(0, scoreAdj - tox.scorePenalty)
+
+      const tape = readCandleTape(candles, side)
+      const antiManip =
+        type === 'MEME'
+          ? assessMemeAntiManipulation({
+              side,
+              sessionChangePct: chg,
+              candles,
+              bookImbalance: bookImb,
+              persistentBook: tox.persistentBook,
+              tapePattern: tape.pattern,
+              oiChangePct,
+              fundingPct,
+            })
+          : null
+      if (antiManip && !antiManip.ok) return
+      if (antiManip?.evidence) {
+        scoreAdj = Math.min(99, scoreAdj + Math.min(5, antiManip.evidence))
       }
 
       // ── Zones + tape ──────────────────────────────────────────────
@@ -1214,20 +1459,16 @@ export async function runMarketScan(
           smart.phase === 'APPROACH' ||
           isPriceChased(side, price, smart.zoneLow, smart.zoneHigh))
 
-      const tape = readCandleTape(candles, side)
-
       if (type === 'MEME') {
-        // MEME = LTF impulse. Original bot emitted pumps without HTF zones.
-        // Only silence if already extremely extended (chase of a finished run).
-        if (isImpulseLate(candles, side, 5.5)) return
-        scoreAdj = Math.min(99, Math.max(0, scoreAdj + Math.min(4, tape.scoreAdj)))
-        // Zone is a bonus, never required
-        if (smart) {
-          scoreAdj = Math.min(
-            99,
-            scoreAdj + 2 + (smart.tf === '1D' ? 2 : 0)
-          )
-        }
+        if (isImpulseLate(candles, side, 6.5)) return
+        // Need candle confirm OR strong book alignment
+        const bookAligned =
+          bookImb != null &&
+          ((side === 'LONG' && bookImb >= 15) ||
+            (side === 'SHORT' && bookImb <= -15))
+        if (!tape.ok && !bookAligned) return
+        if (!tape.ok) scoreAdj = Math.max(0, scoreAdj - 6)
+        else scoreAdj = Math.min(99, Math.max(0, scoreAdj + tape.scoreAdj))
       } else {
         const lateThr = isMajor ? 3.2 : 2.4
         if (!waitingPullback) {
@@ -1318,7 +1559,8 @@ export async function runMarketScan(
         tp: tpPx,
         toxicBook: false,
       })
-      // SNIPER: A+/A ready; B allowed for majors with solid score
+      // MEME: need solid score + book already gated
+      if (type === 'MEME' && scoreAdj < 70) return
       if (type === 'SNIPER' && !scoreCard.ready) return
       if (
         type === 'SNIPER' &&
@@ -1327,20 +1569,19 @@ export async function runMarketScan(
       ) {
         return
       }
-      // MEME: ScoreCard is informational — only kill total trash
-      if (type === 'MEME' && scoreCard.grade === 'SKIP' && scoreAdj < 62) return
       if (scoreCard.grade === 'A+') scoreAdj = Math.min(99, scoreAdj + 4)
       else if (scoreCard.grade === 'A') scoreAdj = Math.min(99, scoreAdj + 2)
       else if (scoreCard.grade === 'B') scoreAdj = Math.min(99, scoreAdj + 1)
 
       // Min score AFTER boosts
-      if (gates) {
-        const min =
-          type === 'MEME'
-            ? Math.min(gates.minMemeScore, 64)
-            : Math.min(gates.minSniperScore, isMajor ? 76 : 80)
+      if (gates && type === 'SNIPER') {
+        const min = Math.min(gates.minSniperScore, isMajor ? 76 : 80)
         const boost = isSetupBoosted(gates, setup, composite) ? -4 : 0
         if (scoreAdj < min + boost) return
+      }
+      if (gates && type === 'MEME') {
+        const min = Math.min(gates.minMemeScore, 72)
+        if (scoreAdj < min) return
       }
 
       const zAdj = zoneProbabilityAdj(smart, fuel)
@@ -1371,13 +1612,22 @@ export async function runMarketScan(
         20,
         Math.min(92, prior.winPct + gProb.adj)
       )
-      const cal = calibrateWinPct(priorWin, composite, winCal)
+      let cal = calibrateWinPct(priorWin, composite, winCal)
       const winFloor = type === 'MEME' ? MIN_WIN_PCT_MEME : MIN_WIN_PCT
       let winPct = cal.winPct
-      if (
+      // Meme confidence stays conservative until enough real outcomes exist.
+      if (type === 'MEME') {
+        const memePrior = Math.max(
+          winFloor,
+          Math.min(72, Math.round(38 + scoreAdj * 0.34))
+        )
+        cal = calibrateWinPct(memePrior, composite, winCal)
+        const cap = cal.sampleN >= 20 ? 78 : 72
+        winPct = Math.min(cap, cal.winPct)
+      } else if (
         winPct < winFloor &&
         priorWin >= winFloor &&
-        scoreAdj >= (type === 'MEME' ? 72 : 84)
+        scoreAdj >= 84
       ) {
         winPct = winFloor
       }
@@ -1393,10 +1643,23 @@ export async function runMarketScan(
         return
       }
 
-      // Final live check — detail + book + funding endpoint
-      if (!(await isSymbolTradableNow(t.symbol, minVol))) return
+      // Final live check — skip for MEME (3 extra API calls were killing throughput)
+      if (type !== 'MEME' && !(await isSymbolTradableNow(t.symbol, minVol))) {
+        return
+      }
 
       const atrPlan = buildEntryPlan(side, price, atr, style)
+      const memeTargets =
+        type === 'MEME' && !smart
+          ? buildMemeTargetPlan(
+              side,
+              atrPlan.entryIdeal,
+              atrPlan.sl,
+              atr,
+              candles,
+              style
+            )
+          : null
       const plan = smart
         ? {
             signalPrice: price,
@@ -1407,12 +1670,27 @@ export async function runMarketScan(
             sl: smart.invalidate,
             tp: smart.target,
           }
-        : atrPlan
-      const chased = isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
-      // Outside zone = limit-wait alert (broadcast). Only silence meme if late impulse
-      // already handled above. Never silent-kill BTC/alt zone setups.
+        : memeTargets
+          ? {
+              ...atrPlan,
+              tp: memeTargets.tp2,
+              target1: memeTargets.tp1,
+              target3: memeTargets.tp3,
+            }
+          : atrPlan
+      const chased =
+        type === 'MEME'
+          ? false
+          : isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
       const watchOnly = false
-      if (type === 'MEME' && chased && !smart) return
+      const targetLines = memeTargets
+        ? [
+            `TP1 35%: ${fmt(memeTargets.tp1)} (${pct(plan.entryIdeal, memeTargets.tp1)}) · ${memeTargets.source1}`,
+            `TP2 45%: ${fmt(memeTargets.tp2)} (${pct(plan.entryIdeal, memeTargets.tp2)}) · ${memeTargets.source2}`,
+            `TP3 runner 20%: ${fmt(memeTargets.tp3)} (${pct(plan.entryIdeal, memeTargets.tp3)}) · ${memeTargets.source3}`,
+            `Держать до TP2, пока OBI/лента за ${side}; после TP1 стоп → BE.`,
+          ]
+        : undefined
 
       const obiStr =
         bookImb == null
@@ -1479,6 +1757,7 @@ export async function runMarketScan(
         } · boost ${liqMap.liquidityBoost.toFixed(2)}`,
         `24h: ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}% · Vol ≈ $${(volUsd / 1e6).toFixed(2)}M · RSI ${rsi.toFixed(0)} · FR ${fundingPct.toFixed(3)}%`,
         ...tox.notes,
+        ...(antiManip?.notes ?? []),
         `Свечи: ${tape.pattern} — ${tape.note}`,
         ...extras,
       ]
@@ -1503,6 +1782,7 @@ export async function runMarketScan(
         contextLines,
         probFactors,
         zoneLines,
+        targetLines,
         chased,
       })
       alerts.push({
@@ -1516,7 +1796,9 @@ export async function runMarketScan(
         align,
         globalAlignScore,
         watchOnly,
+        // MEME always gets server follow-up watch (стакан/реакция после сигнала)
         needsPullbackWatch:
+          type === 'MEME' ||
           watchOnly ||
           chased ||
           smart?.phase === 'FAR' ||
@@ -1532,6 +1814,8 @@ export async function runMarketScan(
           invalidate: plan.invalidate,
           sl: plan.sl,
           tp: plan.tp,
+          target1: 'target1' in plan ? plan.target1 : undefined,
+          target3: 'target3' in plan ? plan.target3 : undefined,
           zoneSource: smart?.source ?? 'ATR',
           zoneStrength: smart?.strength,
           zoneTouches: smart?.touches,
@@ -1618,9 +1902,9 @@ export async function runMarketScan(
       if (preferMeme) return
     }
 
-    // ── VOLUME PUMP / DUMP · SCALP (+ INTRA twin when strong) ──────
-    const spikeMultMin = preferMeme ? 2.2 : isMajor ? 2.2 : 4
-    const spikeMoveMin = preferMeme ? 0.7 : isMajor ? 0.7 : 2
+    // ── VOLUME PUMP / DUMP · SCALP ─────────────────────────────────
+    const spikeMultMin = preferMeme ? 2.6 : isMajor ? 2.2 : 4
+    const spikeMoveMin = preferMeme ? 1.0 : isMajor ? 0.7 : 2
     if (
       spike.detected &&
       spike.mult >= spikeMultMin &&
@@ -1629,7 +1913,7 @@ export async function runMarketScan(
       const isLong = spike.movePct > 0
       const side: Side = isLong ? 'LONG' : 'SHORT'
       const align = classifyAlign(side, bias15 !== 'FLAT' ? bias15 : htfBias)
-      const baseScore = Math.min(95, (preferMeme ? 70 : 58) + spike.mult * 5)
+      const baseScore = Math.min(95, (preferMeme ? 74 : 58) + spike.mult * 4)
       const score = align === 'COUNTER' ? baseScore + 4 : baseScore
       await push(
         side,
@@ -1644,29 +1928,33 @@ export async function runMarketScan(
         'SCALP',
         align
       )
-      // Strong spike → also emit INTRADAY twin (same side/align)
-      if (spike.mult >= spikeMultMin + 1.2 && Math.abs(spike.movePct) >= spikeMoveMin + 0.8) {
-        await push(
-          side,
-          isLong ? 'PUMP' : 'DUMP',
-          Math.min(96, score + 2),
-          `Сильный импульс ×${spike.mult.toFixed(1)} → интрадей ${alignLabel(align)}.`,
-          [],
-          preferMeme ? 'MEME' : 'SNIPER',
-          `cron:spike_intra:${t.symbol}:${isLong ? 'PUMP' : 'DUMP'}`,
-          'INTRADAY',
-          align
-        )
-      }
       if (preferMeme) return
     }
 
-    // ── MEME session mover fallback (when no clean 1m spike yet) ────
-    if (preferMeme && Math.abs(chg) >= 8 && rsi >= 55 && chg > 0) {
+    // ── MEME 5m burst — only strong + book will still gate in push ─
+    if (preferMeme && burst.detected && Math.abs(burst.movePct) >= 3.5) {
+      const isLong = burst.movePct > 0
+      const side: Side = isLong ? 'LONG' : 'SHORT'
+      await push(
+        side,
+        isLong ? 'PUMP' : 'DUMP',
+        Math.min(88, 72 + Math.abs(burst.movePct)),
+        `Импульс 5м ${burst.movePct >= 0 ? '+' : ''}${burst.movePct.toFixed(1)}% · 24h ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%.`,
+        ['#MEME #BURST'],
+        'MEME',
+        `cron:meme_burst:${t.symbol}:${isLong ? 'L' : 'S'}`,
+        'SCALP',
+        'WITH_TREND'
+      )
+      return
+    }
+
+    // ── MEME session — only big day movers (book/tape gate in push) ─
+    if (preferMeme && Math.abs(chg) >= 12 && chg > 0 && rsi >= 52) {
       await push(
         'LONG',
         'PUMP',
-        Math.min(88, 66 + Math.abs(chg) * 0.4),
+        Math.min(86, 70 + Math.abs(chg) * 0.25),
         `Мем-ход +${chg.toFixed(1)}% / 24h, RSI ${rsi.toFixed(0)}${
           spike.detected ? `, объём ×${spike.mult.toFixed(1)}` : ''
         }.`,
@@ -1678,11 +1966,11 @@ export async function runMarketScan(
       )
       return
     }
-    if (preferMeme && Math.abs(chg) >= 10 && rsi <= 45 && chg < 0) {
+    if (preferMeme && Math.abs(chg) >= 14 && chg < 0 && rsi <= 48) {
       await push(
         'SHORT',
         'DUMP',
-        Math.min(88, 66 + Math.abs(chg) * 0.35),
+        Math.min(86, 70 + Math.abs(chg) * 0.2),
         `Мем-дамп ${chg.toFixed(1)}% / 24h, RSI ${rsi.toFixed(0)}.`,
         ['#MEME #SESSION'],
         'MEME',
@@ -1988,7 +2276,7 @@ export async function runMarketScan(
   if (mode !== 'sniper') {
     for (const t of memes) {
       await analyze(t, true)
-      await new Promise((r) => setTimeout(r, 50))
+      await new Promise((r) => setTimeout(r, 15))
     }
   }
   if (mode === 'meme') {
@@ -2044,7 +2332,7 @@ export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
     ...pick(sniper, 'SWING', 'COUNTER', 1),
     ...meme
       .sort((a, b) => b.score - a.score || b.winPct - a.winPct)
-      .slice(0, 4),
+      .slice(0, 2),
   ]
 
   // Dedupe by dedupeKey while preserving slot order

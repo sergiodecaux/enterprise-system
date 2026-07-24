@@ -11,6 +11,8 @@ export interface ToxicityResult {
   /** Soft warning lines for alert extras */
   notes: string[]
   scorePenalty: number
+  /** Direction persisted across independent depth snapshots. */
+  persistentBook: 'ALIGNED' | 'AGAINST' | 'MIXED' | 'UNKNOWN'
 }
 
 interface DepthLevel {
@@ -34,6 +36,13 @@ function median(nums: number[]): number {
   const s = [...nums].sort((a, b) => a - b)
   const m = Math.floor(s.length / 2)
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2
+}
+
+function depthImbalance(asks: DepthLevel[], bids: DepthLevel[]): number | null {
+  const ask = asks.reduce((sum, level) => sum + level.vol, 0)
+  const bid = bids.reduce((sum, level) => sum + level.vol, 0)
+  const total = ask + bid
+  return total > 0 ? ((bid - ask) / total) * 100 : null
 }
 
 /**
@@ -70,7 +79,12 @@ export async function assessBookToxicity(opts: {
   const asks2 = parseLevels(snap2?.data?.asks)
   const bids2 = parseLevels(snap2?.data?.bids)
   if (!asks1.length || !bids1.length || !asks2.length || !bids2.length) {
-    return { toxic: false, notes: ['Стакан: нет данных для spoof/iceberg'], scorePenalty: 0 }
+    return {
+      toxic: false,
+      notes: ['Стакан: нет данных для spoof/iceberg'],
+      scorePenalty: 0,
+      persistentBook: 'UNKNOWN',
+    }
   }
 
   const mid = opts.mid
@@ -78,6 +92,29 @@ export async function assessBookToxicity(opts: {
   const bidVols = bids1.map((l) => l.vol)
   const medAsk = median(askVols) || 1
   const medBid = median(bidVols) || 1
+  const obi1 = depthImbalance(asks1, bids1)
+  const obi2 = depthImbalance(asks2, bids2)
+  let persistentBook: ToxicityResult['persistentBook'] = 'UNKNOWN'
+  if (obi1 != null && obi2 != null) {
+    const aligned =
+      (opts.side === 'LONG' && obi1 >= 10 && obi2 >= 10) ||
+      (opts.side === 'SHORT' && obi1 <= -10 && obi2 <= -10)
+    const against =
+      (opts.side === 'LONG' && obi1 <= -10 && obi2 <= -10) ||
+      (opts.side === 'SHORT' && obi1 >= 10 && obi2 >= 10)
+    persistentBook = aligned ? 'ALIGNED' : against ? 'AGAINST' : 'MIXED'
+    if (aligned) {
+      notes.push(
+        `Стакан устойчиво за ${opts.side}: OBI ${obi1.toFixed(0)}% → ${obi2.toFixed(0)}%`
+      )
+    } else if (against) {
+      toxic = true
+      scorePenalty += 18
+      notes.push(
+        `Стакан устойчиво против ${opts.side}: OBI ${obi1.toFixed(0)}% → ${obi2.toFixed(0)}%`
+      )
+    }
+  }
 
   // Spoof: large wall disappears (>65% vol) within 350ms near mid
   const checkSpoof = (
@@ -174,5 +211,10 @@ export async function assessBookToxicity(opts: {
     }
   }
 
-  return { toxic, notes: notes.slice(0, 3), scorePenalty }
+  return {
+    toxic,
+    notes: notes.slice(0, 4),
+    scorePenalty,
+    persistentBook,
+  }
 }

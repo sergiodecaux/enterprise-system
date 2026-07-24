@@ -1,7 +1,7 @@
 /** Bumped on each user-visible bot engine change — shown in /status /scan /alerts */
 export const BOT_ENGINE = {
-  id: 'meme-alive-v2',
-  label: 'MEME impulse path restored · spike×2.2 · no HTF/ScoreCard kill',
+  id: 'meme-results-v9',
+  label: 'Meme targets + visible signal outcomes',
   deployedNote:
-    'Мемы снова: скан 48 монет, PUMP без обязательной HTF-зоны и ScoreCard. Late только >5.5%. Session ±8% fallback. Sniper/зоны BTC — как в majors-alive.',
+    'Каждый новый сигнал получает финальный статус в Telegram: WIN / LOSS / BE / NO ENTRY / TIMEOUT с PnL, MFE и MAE. Результаты проверяются до тяжёлого мониторинга.',
 } as const

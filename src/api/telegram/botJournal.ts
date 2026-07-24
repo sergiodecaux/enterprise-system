@@ -13,10 +13,17 @@ export interface BotJournalEntryDto {
   entryPrice: number
   sl: number
   tp: number
+  /** TP1 partial; tp is the main TP2 */
+  target1?: number
+  /** Runner target */
+  target3?: number
   invalidate: number
+  zoneLow?: number
+  zoneHigh?: number
+  filledAt?: number | null
   createdAt: number
   expiresAt: number
-  status: 'OPEN' | 'WIN' | 'LOSS' | 'TIMEOUT' | 'INVALIDATED'
+  status: 'OPEN' | 'WIN' | 'LOSS' | 'BE' | 'TIMEOUT' | 'INVALIDATED'
   resolvedAt: number | null
   exitPrice: number | null
   pnlPercent: number | null

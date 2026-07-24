@@ -2,17 +2,20 @@
  * Journal of bot/cron scanner signals → outcomes for Lab + adaptive filters.
  * Persisted in Cloudflare KV, exposed to Mini App via HTTP.
  */
+import { listPaperTrades, type PaperTrade } from './paperTrades'
 
 const JOURNAL_KEY = 'telegram:bot_journal'
 const GATES_KEY = 'telegram:bot_gates'
 const MAX_ENTRIES = 400
 const OPEN_TTL_MS = 4 * 60 * 60_000
 const MEXC = 'https://contract.mexc.com'
+const RESULT_NOTIFICATIONS_SINCE = 1_784_898_000_000
 
 export type BotJournalStatus =
   | 'OPEN'
   | 'WIN'
   | 'LOSS'
+  | 'BE'
   | 'TIMEOUT'
   | 'INVALIDATED'
 
@@ -29,7 +32,12 @@ export interface BotJournalEntry {
   entryPrice: number
   sl: number
   tp: number
+  target1?: number
+  target3?: number
   invalidate: number
+  zoneLow?: number
+  zoneHigh?: number
+  filledAt?: number | null
   createdAt: number
   expiresAt: number
   status: BotJournalStatus
@@ -120,6 +128,8 @@ export interface TradePlanLike {
   invalidate: number
   sl: number
   tp: number
+  target1?: number
+  target3?: number
 }
 
 interface Env {
@@ -203,7 +213,12 @@ export async function recordBotAlert(
     entryPrice: input.plan.entryIdeal || input.plan.signalPrice,
     sl: input.plan.sl,
     tp: input.plan.tp,
+    target1: input.plan.target1,
+    target3: input.plan.target3,
     invalidate: input.plan.invalidate,
+    zoneLow: input.plan.zoneLow,
+    zoneHigh: input.plan.zoneHigh,
+    filledAt: null,
     createdAt: Date.now(),
     expiresAt: Date.now() + OPEN_TTL_MS,
     status: 'OPEN',
@@ -222,35 +237,144 @@ export async function recordBotAlert(
   return entry
 }
 
-async function fetchLastPrice(symbol: string): Promise<number | null> {
+async function fetchLastPrices(): Promise<Map<string, number>> {
+  const prices = new Map<string, number>()
   try {
-    const res = await fetch(
-      `${MEXC}/api/v1/contract/ticker?symbol=${encodeURIComponent(symbol)}`
-    )
-    if (!res.ok) return null
+    const res = await fetch(`${MEXC}/api/v1/contract/ticker`)
+    if (!res.ok) return prices
     const json = (await res.json()) as {
-      data?: { lastPrice?: number; fairPrice?: number }
+      data?: Array<{
+        symbol?: string
+        lastPrice?: number
+        fairPrice?: number
+      }>
     }
-    const p = Number(json.data?.lastPrice ?? json.data?.fairPrice ?? 0)
-    return p > 0 ? p : null
+    for (const row of json.data ?? []) {
+      const symbol = String(row.symbol ?? '')
+      const price = Number(row.lastPrice ?? row.fairPrice ?? 0)
+      if (symbol && price > 0) prices.set(symbol, price)
+    }
   } catch {
-    return null
+    // Best effort: next cron retries.
+  }
+  return prices
+}
+
+function matchingPaper(
+  entry: BotJournalEntry,
+  papers: PaperTrade[]
+): PaperTrade | null {
+  const matches = papers.filter(
+    (paper) =>
+      paper.symbol === entry.symbol &&
+      paper.side === entry.side &&
+      paper.setup === entry.setup &&
+      Math.abs(paper.createdAt - entry.createdAt) <= 15_000
+  )
+  return (
+    matches.sort(
+      (a, b) =>
+        Math.abs(a.createdAt - entry.createdAt) -
+        Math.abs(b.createdAt - entry.createdAt)
+    )[0] ?? null
+  )
+}
+
+function paperOutcome(
+  entry: BotJournalEntry,
+  paper: PaperTrade
+): Pick<
+  BotJournalEntry,
+  'status' | 'exitPrice' | 'pnlPercent' | 'rMultiple' | 'resolveSource'
+> | null {
+  if (paper.status !== 'CLOSED' || !paper.closeReason) return null
+
+  const fill = paper.fillPrice ?? entry.entryPrice
+  let status: BotJournalStatus
+  let exit = fill
+  if (paper.closeReason === 'tp') {
+    status = 'WIN'
+    exit = paper.tp
+  } else if (paper.closeReason === 'sl') {
+    status = paper.beSent ? 'BE' : 'LOSS'
+    exit = paper.sl
+  } else if (paper.closeReason === 'trail') {
+    exit = paper.trailingStop ?? fill
+    const pnl = pnlPct(entry.side, fill, exit)
+    status = Math.abs(pnl) < 0.05 ? 'BE' : pnl > 0 ? 'WIN' : 'LOSS'
+  } else if (
+    paper.closeReason === 'invalidate' ||
+    paper.closeReason === 'timeout_waiting'
+  ) {
+    status = 'INVALIDATED'
+  } else {
+    status = 'TIMEOUT'
+  }
+
+  const pnl = status === 'INVALIDATED' ? 0 : pnlPct(entry.side, fill, exit)
+  return {
+    status,
+    exitPrice: exit,
+    pnlPercent: Number(pnl.toFixed(3)),
+    rMultiple:
+      status === 'INVALIDATED'
+        ? 0
+        : Number(rMult(entry.side, fill, entry.sl, exit).toFixed(3)),
+    resolveSource: status === 'TIMEOUT' ? 'TIMEOUT' : 'AUTO',
   }
 }
 
 /**
  * Resolve OPEN bot journal rows vs live price (TP / SL / invalidate / timeout).
  */
-export async function resolveBotJournal(env: Env): Promise<number> {
+export interface BotJournalResolution {
+  changed: number
+  outcomes: BotJournalEntry[]
+}
+
+export async function resolveBotJournal(
+  env: Env
+): Promise<BotJournalResolution> {
   const list = await listJournal(env)
+  const papers = await listPaperTrades(env)
+  const prices = await fetchLastPrices()
   const now = Date.now()
   let changed = 0
+  const outcomes: BotJournalEntry[] = []
 
   for (let i = 0; i < list.length; i++) {
     const e = list[i]
+    const paper = matchingPaper(e, papers)
+    if (paper) {
+      const outcome = paperOutcome(e, paper)
+      if (outcome) {
+        if (
+          e.status !== outcome.status ||
+          e.exitPrice !== outcome.exitPrice ||
+          e.pnlPercent !== outcome.pnlPercent
+        ) {
+          list[i] = {
+            ...e,
+            ...outcome,
+            resolvedAt: paper.closedAt ?? now,
+          }
+          if (
+            e.createdAt >= RESULT_NOTIFICATIONS_SINCE &&
+            e.status === 'OPEN' &&
+            outcome.status !== 'OPEN'
+          ) {
+            outcomes.push(list[i]!)
+          }
+          changed++
+        }
+        continue
+      }
+      // Paper lifecycle owns fill, BE and trailing while the trade is active.
+      if (paper.status === 'WAITING' || paper.status === 'OPEN') continue
+    }
     if (e.status !== 'OPEN') continue
 
-    const price = await fetchLastPrice(e.symbol)
+    const price = prices.get(e.symbol) ?? null
     if (price == null) {
       if (now >= e.expiresAt) {
         list[i] = {
@@ -267,43 +391,98 @@ export async function resolveBotJournal(env: Env): Promise<number> {
       continue
     }
 
-    const fav = pnlPct(e.side, e.entryPrice, price)
-    const mfePercent = Math.max(e.mfePercent, fav)
-    const maePercent = Math.max(e.maePercent, -fav)
-
-    let status: BotJournalStatus | null = null
-    if (e.side === 'LONG') {
-      if (price >= e.tp) status = 'WIN'
-      else if (price <= e.sl || price <= e.invalidate) status = 'LOSS'
-    } else {
-      if (price <= e.tp) status = 'WIN'
-      else if (price >= e.sl || price >= e.invalidate) status = 'LOSS'
+    // Journal starts as waiting for the limit zone. Do not award a WIN when
+    // price ran directly to target without giving the planned pullback entry.
+    let working = e
+    if (!working.filledAt) {
+      const zoneLow = working.zoneLow ?? working.entryPrice
+      const zoneHigh = working.zoneHigh ?? working.entryPrice
+      const noEntry =
+        (working.side === 'LONG' && price >= working.invalidate) ||
+        (working.side === 'SHORT' && price <= working.invalidate)
+      const touched =
+        working.side === 'LONG'
+          ? price <= zoneHigh && price > working.sl
+          : price >= zoneLow && price < working.sl
+      if (noEntry && !touched) {
+        list[i] = {
+          ...working,
+          status: 'INVALIDATED',
+          resolvedAt: now,
+          exitPrice: working.entryPrice,
+          pnlPercent: 0,
+          rMultiple: 0,
+          resolveSource: 'AUTO',
+        }
+        if (working.createdAt >= RESULT_NOTIFICATIONS_SINCE) {
+          outcomes.push(list[i]!)
+        }
+        changed++
+        continue
+      }
+      if (!touched) {
+        if (now >= working.expiresAt) {
+          list[i] = {
+            ...working,
+            status: 'INVALIDATED',
+            resolvedAt: now,
+            exitPrice: working.entryPrice,
+            pnlPercent: 0,
+            rMultiple: 0,
+            resolveSource: 'TIMEOUT',
+          }
+          if (working.createdAt >= RESULT_NOTIFICATIONS_SINCE) {
+            outcomes.push(list[i]!)
+          }
+          changed++
+        }
+        continue
+      }
+      working = { ...working, filledAt: now }
+      list[i] = working
+      changed++
     }
 
-    if (!status && now >= e.expiresAt) {
+    const fav = pnlPct(working.side, working.entryPrice, price)
+    const mfePercent = Math.max(working.mfePercent, fav)
+    const maePercent = Math.max(working.maePercent, -fav)
+
+    let status: BotJournalStatus | null = null
+    if (working.side === 'LONG') {
+      if (price >= working.tp) status = 'WIN'
+      else if (price <= working.sl) status = 'LOSS'
+    } else {
+      if (price <= working.tp) status = 'WIN'
+      else if (price >= working.sl) status = 'LOSS'
+    }
+
+    if (!status && now >= working.expiresAt) {
       status = 'TIMEOUT'
     }
 
     if (status) {
       const exit = price
-      const pnl = pnlPct(e.side, e.entryPrice, exit)
+      const pnl = pnlPct(working.side, working.entryPrice, exit)
       list[i] = {
-        ...e,
+        ...working,
         status,
         resolvedAt: now,
         exitPrice: exit,
         pnlPercent: Number(pnl.toFixed(3)),
         rMultiple: Number(
-          rMult(e.side, e.entryPrice, e.sl, exit).toFixed(3)
+          rMult(working.side, working.entryPrice, working.sl, exit).toFixed(3)
         ),
         mfePercent: Number(mfePercent.toFixed(3)),
         maePercent: Number(maePercent.toFixed(3)),
         resolveSource: status === 'TIMEOUT' ? 'TIMEOUT' : 'AUTO',
       }
+      if (working.createdAt >= RESULT_NOTIFICATIONS_SINCE) {
+        outcomes.push(list[i]!)
+      }
       changed++
     } else {
       list[i] = {
-        ...e,
+        ...working,
         mfePercent: Number(mfePercent.toFixed(3)),
         maePercent: Number(maePercent.toFixed(3)),
       }
@@ -317,7 +496,7 @@ export async function resolveBotJournal(env: Env): Promise<number> {
     await recomputeAndSaveGates(env)
   }
 
-  return changed
+  return { changed, outcomes }
 }
 
 function setupStats(
@@ -331,14 +510,15 @@ function setupStats(
       (alertType === 'ALL' || e.alertType === alertType)
   )
   const wins = subset.filter((e) => e.status === 'WIN')
-  const losses = subset.filter(
-    (e) => e.status === 'LOSS' || e.status === 'INVALIDATED'
-  )
+  const losses = subset.filter((e) => e.status === 'LOSS')
   const timeouts = subset.filter((e) => e.status === 'TIMEOUT')
   const open = subset.filter((e) => e.status === 'OPEN')
   const decided = wins.length + losses.length
   const winRate = decided > 0 ? (wins.length / decided) * 100 : 0
-  const withR = subset.filter((e) => e.rMultiple != null && e.status !== 'OPEN')
+  const withR = subset.filter(
+    (e) =>
+      e.rMultiple != null && (e.status === 'WIN' || e.status === 'LOSS')
+  )
   const avgR = avg(withR.map((e) => e.rMultiple!))
   const avgWinR = avg(wins.map((e) => e.rMultiple ?? 0))
   const avgLossR = avg(losses.map((e) => Math.abs(e.rMultiple ?? 0)))
@@ -370,9 +550,7 @@ export function computeBotAnalytics(
   entries: BotJournalEntry[]
 ): BotJournalAnalytics {
   const wins = entries.filter((e) => e.status === 'WIN')
-  const losses = entries.filter(
-    (e) => e.status === 'LOSS' || e.status === 'INVALIDATED'
-  )
+  const losses = entries.filter((e) => e.status === 'LOSS')
   const timeouts = entries.filter((e) => e.status === 'TIMEOUT')
   const open = entries.filter((e) => e.status === 'OPEN')
   const decided = wins.length + losses.length
@@ -388,9 +566,7 @@ export function computeBotAnalytics(
     (t) => {
       const subset = entries.filter((e) => e.alertType === t)
       const w = subset.filter((e) => e.status === 'WIN')
-      const l = subset.filter(
-        (e) => e.status === 'LOSS' || e.status === 'INVALIDATED'
-      )
+      const l = subset.filter((e) => e.status === 'LOSS')
       const d = w.length + l.length
       return {
         setup: t,
@@ -403,7 +579,11 @@ export function computeBotAnalytics(
         winRate: d > 0 ? (w.length / d) * 100 : 0,
         avgR: avg(
           subset
-            .filter((e) => e.rMultiple != null)
+            .filter(
+              (e) =>
+                e.rMultiple != null &&
+                (e.status === 'WIN' || e.status === 'LOSS')
+            )
             .map((e) => e.rMultiple!)
         ),
         avgPnl: avg(
@@ -686,7 +866,7 @@ export async function getBotJournalPayload(env: Env): Promise<{
   const gates = await getAdaptiveGates(env)
   return {
     analytics,
-    entries: entries.slice(0, 80),
+    entries: entries.slice(0, 160),
     gates,
   }
 }
@@ -737,13 +917,14 @@ export function computeCorridorStats(
   const rows: CorridorWrRow[] = []
   for (const [key, subset] of buckets) {
     const wins = subset.filter((e) => e.status === 'WIN').length
-    const losses = subset.filter(
-      (e) => e.status === 'LOSS' || e.status === 'INVALIDATED'
-    ).length
+    const losses = subset.filter((e) => e.status === 'LOSS').length
     const decided = wins + losses
     if (decided < 1) continue
     const rs = subset
-      .filter((e) => e.rMultiple != null)
+      .filter(
+        (e) =>
+          e.rMultiple != null && (e.status === 'WIN' || e.status === 'LOSS')
+      )
       .map((e) => e.rMultiple!)
     const expectancyR =
       rs.length > 0 ? rs.reduce((a, b) => a + b, 0) / rs.length : 0

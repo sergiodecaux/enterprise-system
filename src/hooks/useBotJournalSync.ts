@@ -6,9 +6,9 @@ import {
 } from '../api/telegram/botJournal'
 
 /**
- * Pulls bot/cron journal analytics from worker into Mini App Lab.
+ * Pulls bot/cron trades from Worker into the Mini App.
  */
-export function useBotJournalSync(pollMs = 120_000) {
+export function useBotJournalSync(pollMs = 30_000) {
   const [payload, setPayload] = useState<BotJournalPayload | null>(() =>
     loadCachedBotJournal()
   )

@@ -50,6 +50,8 @@ import {
 } from './marketPulse'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
+const LAST_SCAN_KEY = 'telegram:last_scan_status'
+const LAST_TG_KEY = 'telegram:last_delivery_status'
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -170,6 +172,21 @@ async function handleTelegram(
   if (path === '/telegram/health') {
     const subs = await listSubscribers(env)
     const watches = await countActiveWatches(env)
+    const lastScanRaw = env.SUBSCRIBERS
+      ? await env.SUBSCRIBERS.get(LAST_SCAN_KEY)
+      : null
+    const lastDeliveryRaw = env.SUBSCRIBERS
+      ? await env.SUBSCRIBERS.get(LAST_TG_KEY)
+      : null
+    let lastScan: unknown = null
+    let lastDelivery: unknown = null
+    try {
+      lastScan = lastScanRaw ? JSON.parse(lastScanRaw) : null
+      lastDelivery = lastDeliveryRaw ? JSON.parse(lastDeliveryRaw) : null
+    } catch {
+      lastScan = null
+      lastDelivery = null
+    }
     return json({
       ok: true,
       bot: 'Enterprisesystem_bot',
@@ -186,6 +203,8 @@ async function handleTelegram(
       scalpTopN: 3,
       mode: '24/7',
       note: BOT_ENGINE.deployedNote,
+      lastScan,
+      lastDelivery,
     })
   }
 
@@ -494,20 +513,26 @@ function planToPullbackWatch(
 ): ConditionalSetupPayload {
   const top = Math.max(plan.zoneLow, plan.zoneHigh)
   const bottom = Math.min(plan.zoneLow, plan.zoneHigh)
-  const id = `pb_${plan.symbol}_${plan.setup}_${Math.floor(Date.now() / 60_000)}`
+  const id = `pb_${alertType}_${plan.symbol}_${plan.setup}`
   const src = plan.zoneSource ?? 'ATR'
   const phase = plan.zonePhase ?? 'FAR'
   return {
     id,
     kind: plan.side === 'LONG' ? 'BOUNCE_SSL' : 'BOUNCE_BSL',
     side: plan.side,
-    title: `${src} · ${phase} · ${plan.setup}`,
+    title:
+      alertType === 'MEME'
+        ? `MEME follow · ${plan.setup}`
+        : `${src} · ${phase} · ${plan.setup}`,
     probability: winPct,
     preconditions: [
       {
         id: 'touch',
-        label: `Ждём касание зоны ${bottom}–${top}`,
-        status: phase === 'TOUCH' ? 'MET' : 'PENDING',
+        label:
+          alertType === 'MEME'
+            ? `Контроль входа ${bottom}–${top}`
+            : `Ждём касание зоны ${bottom}–${top}`,
+        status: phase === 'TOUCH' || alertType === 'MEME' ? 'MET' : 'PENDING',
       },
       {
         id: 'book',
@@ -516,14 +541,18 @@ function planToPullbackWatch(
       },
       {
         id: 'confirm',
-        label: 'Реакция / reclaim в зоне',
+        label:
+          alertType === 'MEME'
+            ? 'Удержание / не слом структуры'
+            : 'Реакция / reclaim в зоне',
         status: 'PENDING',
       },
     ],
     entryZone: { top, bottom },
     limitEntry: plan.entryIdeal,
     target: plan.tp,
-    invalidation: plan.invalidate,
+    // plan.invalidate is the maximum chase price, not the setup stop.
+    invalidation: plan.sl,
     triggerSummary:
       plan.targetLabel ??
       `${alertType}: ${src} → цель ${plan.tp} · фаза ${phase}`,
@@ -596,27 +625,17 @@ async function runCronScan(env: Env): Promise<{
   if (!env.TELEGRAM_BOT_TOKEN) {
     return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
   }
-
-  // Watches / digests FIRST so 5-min monitoring is never starved by market scan
-  let watchAlerts = 0
-  try {
-    const wa = await monitorWatchedSetups(env)
-    for (const a of wa) {
-      const r = await broadcastAlert(env, {
-        type: 'SETUP_WATCH',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-        chatId: a.chatId,
-      })
-      watchAlerts += r.sent
-      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
-        await markChatDigestSent(env, a.chatId)
-      }
-    }
-  } catch (err) {
-    console.error('[cron] watch monitor failed', err)
+  const scanStartedAt = Date.now()
+  if (env.SUBSCRIBERS) {
+    await env.SUBSCRIBERS.put(
+      LAST_SCAN_KEY,
+      JSON.stringify({ status: 'RUNNING', startedAt: scanStartedAt })
+    )
   }
+
+  // Signal delivery has priority over watch digests in the Worker subrequest
+  // budget. Watches run after fresh scans so they cannot starve Telegram alerts.
+  let watchAlerts = 0
 
   // One-shot announce when engine version changes (so chat shows the update)
   try {
@@ -630,9 +649,12 @@ async function runCronScan(env: Env): Promise<{
 
   // MEME first + broadcast immediately (don't wait 40–90s sniper scan)
   let sent = 0
+  let failed = 0
   let skipped = 0
   let paperComments = 0
   let journalLogged = 0
+  let journalResolved = 0
+  let resultAlerts = 0
   const seenDedup = new Set<string>()
   const allAlerts: Awaited<ReturnType<typeof runMarketScan>> = []
 
@@ -643,7 +665,9 @@ async function runCronScan(env: Env): Promise<{
     seenDedup.add(a.dedupeKey)
     allAlerts.push(a)
 
-    // Chased SNIPER: silent watch handoff only — no entry spam
+    // Chased SNIPER: silent watch handoff only — no entry spam.
+    // Broadcast alerts get a watch only after a message was actually delivered.
+    let shouldCreateWatch = a.watchOnly
     if (!a.watchOnly) {
       const r = await broadcastAlert(env, {
         type: a.type,
@@ -655,7 +679,9 @@ async function runCronScan(env: Env): Promise<{
         skipped++
       } else {
         sent += r.sent
+        failed += r.failed
       }
+      shouldCreateWatch = r.sent > 0
 
       if (r.sent > 0 && a.tradePlan) {
         const logged = await recordBotAlert(env, {
@@ -682,7 +708,13 @@ async function runCronScan(env: Env): Promise<{
       }
     }
 
-    if (a.needsPullbackWatch && a.tradePlan) {
+    // Follow delivered MEME alerts and intentional silent pullback watches.
+    // Do not create duplicate watches when Telegram alert dedupe skipped a scan.
+    if (
+      shouldCreateWatch &&
+      a.tradePlan &&
+      (a.type === 'MEME' || a.needsPullbackWatch)
+    ) {
       try {
         const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
         const subs = await listSubscribers(env)
@@ -694,7 +726,7 @@ async function runCronScan(env: Env): Promise<{
             symbol: a.tradePlan.symbol,
             internalSymbol: a.tradePlan.symbol,
             setups: [setup],
-            ttlHours: 12,
+            ttlHours: a.type === 'MEME' ? 6 : 12,
           })
         }
       } catch (err) {
@@ -710,11 +742,72 @@ async function runCronScan(env: Env): Promise<{
     console.error('[cron] meme scan failed', err)
   }
 
+  // Resolve and publish signal outcomes before expensive sniper/watch analysis.
+  // This guarantees the user sees WIN / LOSS / BE / NO ENTRY for every signal.
+  try {
+    const resolution = await resolveBotJournal(env)
+    journalResolved = resolution.changed
+    for (const outcome of resolution.outcomes) {
+      const icon =
+        outcome.status === 'WIN'
+          ? '🎯'
+          : outcome.status === 'LOSS'
+            ? '🛑'
+            : outcome.status === 'BE'
+              ? '🛡'
+              : outcome.status === 'INVALIDATED'
+                ? '⏭'
+                : '⏱'
+      const statusLabel =
+        outcome.status === 'INVALIDATED' ? 'NO ENTRY' : outcome.status
+      const r = await broadcastAlert(env, {
+        type: 'SYSTEM',
+        title: `${icon} Результат ${outcome.displayName} · ${statusLabel}`,
+        text: [
+          `${outcome.side} · ${outcome.setup}`,
+          outcome.status === 'INVALIDATED'
+            ? 'Лимитную зону не дали или цена ушла дальше — сделка не открывалась.'
+            : `Вход ${outcome.entryPrice} → выход ${outcome.exitPrice ?? '—'}`,
+          `Результат: ${statusLabel}${
+            outcome.pnlPercent != null
+              ? ` · ${outcome.pnlPercent >= 0 ? '+' : ''}${outcome.pnlPercent.toFixed(2)}%`
+              : ''
+          }`,
+          `MFE +${outcome.mfePercent.toFixed(2)}% · MAE −${outcome.maePercent.toFixed(2)}%`,
+        ].join('\n'),
+        dedupeKey: `journal:result:${outcome.id}:${outcome.status}`,
+      })
+      resultAlerts += r.sent
+      failed += r.failed
+    }
+  } catch (err) {
+    console.error('[cron] journal result failed', err)
+  }
+
   try {
     const sniperAlerts = await runMarketScan(gates, 'sniper')
     for (const a of sniperAlerts) await deliver(a)
   } catch (err) {
     console.error('[cron] sniper scan failed', err)
+  }
+
+  try {
+    const wa = await monitorWatchedSetups(env)
+    for (const a of wa) {
+      const r = await broadcastAlert(env, {
+        type: 'SETUP_WATCH',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+        chatId: a.chatId,
+      })
+      watchAlerts += r.sent
+      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
+        await markChatDigestSent(env, a.chatId)
+      }
+    }
+  } catch (err) {
+    console.error('[cron] watch monitor failed', err)
   }
 
   const alerts = allAlerts
@@ -769,17 +862,10 @@ async function runCronScan(env: Env): Promise<{
     paperComments += cr.sent
   }
 
-  // Resolve bot journal outcomes + refresh adaptive gates
-  let journalResolved = 0
-  try {
-    journalResolved = await resolveBotJournal(env)
-  } catch {
-    /* best-effort */
-  }
-
-  return {
+  const result = {
     alerts: alerts.length,
     sent,
+    failed,
     skipped,
     heartbeat,
     paperComments,
@@ -787,7 +873,21 @@ async function runCronScan(env: Env): Promise<{
     idlePulses,
     journalLogged,
     journalResolved,
+    resultAlerts,
   }
+  if (env.SUBSCRIBERS) {
+    await env.SUBSCRIBERS.put(
+      LAST_SCAN_KEY,
+      JSON.stringify({
+        status: 'COMPLETED',
+        startedAt: scanStartedAt,
+        completedAt: Date.now(),
+        durationMs: Date.now() - scanStartedAt,
+        ...result,
+      })
+    )
+  }
+  return result
 }
 
 // ── Subscribers KV ───────────────────────────────────────────────────────────
@@ -1233,8 +1333,35 @@ async function tgSend(
         disable_web_page_preview: true,
       }),
     })
+    if (env.SUBSCRIBERS) {
+      const errorText = res.ok ? null : (await res.text()).slice(0, 500)
+      await env.SUBSCRIBERS.put(
+        LAST_TG_KEY,
+        JSON.stringify({
+          ok: res.ok,
+          chatId,
+          status: res.status,
+          at: Date.now(),
+          length: text.length,
+          error: errorText,
+        })
+      )
+    }
     return res.ok
-  } catch {
+  } catch (error) {
+    if (env.SUBSCRIBERS) {
+      await env.SUBSCRIBERS.put(
+        LAST_TG_KEY,
+        JSON.stringify({
+          ok: false,
+          chatId,
+          status: 0,
+          at: Date.now(),
+          length: text.length,
+          error: String(error).slice(0, 500),
+        })
+      )
+    }
     return false
   }
 }

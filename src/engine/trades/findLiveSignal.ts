@@ -19,6 +19,10 @@ import type {
 import { findProbableTrades } from './findProbableTrades'
 import { buildZoneTradeVariants } from '../zones/zoneScenarios'
 import type { FoundTradeZone } from '../zones/findTradeZones'
+import {
+  analyzeLiveMarket,
+  type LiveMarketRead,
+} from './liveMarketRead'
 
 export type LiveSignalPhase =
   | 'IN_ZONE'
@@ -66,6 +70,8 @@ export interface LiveSignalResult {
   /** How price is being driven (SMC / MM) */
   driveNarrative: string
   smcLines: string[]
+  /** Trader-style: zone reaction, hour close, bounce → D1/W */
+  liveMarket: LiveMarketRead | null
 }
 
 function distPct(price: number, level: number): number {
@@ -203,6 +209,7 @@ function scenarioFromSetup(
 export function findLiveSignal(input: {
   candles: OhlcvCandle[]
   candles1d?: OhlcvCandle[]
+  candles1h?: OhlcvCandle[]
   symbol: string
   flatSymbol: string
   price: number
@@ -232,11 +239,28 @@ export function findLiveSignal(input: {
     input.tradeStyle ?? 'INTRADAY'
   )
 
+  const liveMarket = analyzeLiveMarket({
+    price,
+    candles: input.candles,
+    candles1h: input.candles1h,
+    candles1d: input.candles1d,
+    zones: base.zones,
+  })
+
   const { phase, label: phaseLabel } = phaseOf({
     price,
     zones: base.zones,
     mm,
   })
+  // Prefer live reaction label when more specific
+  const phaseLabelLive =
+    liveMarket.reaction === 'BOUNCE_NO_HOLD' ||
+    liveMarket.reaction === 'BOUNCE_HELD' ||
+    liveMarket.reaction === 'CONSOLIDATING' ||
+    liveMarket.reaction === 'BREAKING'
+      ? liveMarket.reactionNote
+      : phaseLabel
+
   const { narrative, lines: smcLines } = buildDriveNarrative(
     mm,
     base.liquidityMap,
@@ -244,6 +268,22 @@ export function findLiveSignal(input: {
   )
 
   const scenarios: LiveScenario[] = []
+
+  // Bounce plan as first-class scenario
+  if (liveMarket.nearestBounce) {
+    const b = liveMarket.nearestBounce
+    scenarios.push({
+      id: 'sc_htf_bounce',
+      kind:
+        liveMarket.reaction === 'BREAKING' ? 'ZONE_BREAK' : 'ZONE_TEST_BOUNCE',
+      side: b.side,
+      title: `${b.side} от ${b.zoneLabel}`,
+      winPct: b.winPct,
+      summary: b.thesis,
+      steps: b.steps,
+      invalidation: `SL ${b.invalidation.toPrecision(6)}`,
+    })
+  }
 
   for (const v of zoneVariants.slice(0, 6)) {
     const isBreak = v.id.includes('_break_') || v.kind === 'STOP_THEN_REVERSE'
@@ -291,6 +331,25 @@ export function findLiveSignal(input: {
     )
   }
 
+  if (
+    liveMarket.reaction === 'BOUNCE_NO_HOLD' ||
+    liveMarket.reaction === 'EXTENDED'
+  ) {
+    scenarios.push({
+      id: 'sc_wait_zone',
+      kind: 'WAIT',
+      side: 'FLAT',
+      title: 'Ждать зону / reclaim',
+      winPct: 40,
+      summary: liveMarket.whatNow,
+      steps: liveMarket.nearestBounce?.steps.slice(0, 3) ?? [
+        'Не догонять mid-impulse',
+        'Лимит на ближайшей SSL/BSL',
+        'Цель — D1/W магнит по дню',
+      ],
+    })
+  }
+
   const sc = input.signal?.scoreCard
   if (sc && sc.grade === 'SKIP') {
     scenarios.push({
@@ -317,7 +376,7 @@ export function findLiveSignal(input: {
   })
   uniq.sort((a, b) => b.winPct - a.winPct)
 
-  let primary = uniq[0]
+  let primary = uniq.find((s) => s.id === 'sc_htf_bounce') ?? uniq[0]
   if (!primary) {
     primary = {
       id: 'sc_empty',
@@ -328,6 +387,17 @@ export function findLiveSignal(input: {
       summary: 'Мало данных — обнови график / смени ТФ',
       steps: ['Дождись свечей', 'Проверь ликвидность 4H/D'],
     }
+  } else if (
+    liveMarket.reaction === 'BOUNCE_NO_HOLD' ||
+    liveMarket.reaction === 'BREAKING'
+  ) {
+    const wait = uniq.find((s) => s.kind === 'WAIT')
+    if (wait && wait.winPct + 5 >= primary.winPct - 10) {
+      primary = {
+        ...wait,
+        summary: `${liveMarket.whatNow} ${wait.summary}`,
+      }
+    }
   } else if (phase === 'IN_ZONE' || phase === 'APPROACHING') {
     const zoneSc = uniq.find(
       (s) => s.kind === 'ZONE_TEST_BOUNCE' || s.kind === 'ZONE_BREAK'
@@ -336,17 +406,6 @@ export function findLiveSignal(input: {
   } else if (phase === 'HUNTING') {
     const hunt = uniq.find((s) => s.kind === 'MM_HUNT')
     if (hunt && hunt.winPct >= primary.winPct - 6) primary = hunt
-  } else if (phase === 'EXTENDED') {
-    const wait = uniq.find((s) => s.kind === 'WAIT')
-    const bounce = uniq.find((s) => s.kind === 'ZONE_TEST_BOUNCE')
-    primary = wait ?? bounce ?? primary
-    if (primary.kind !== 'WAIT' && primary.kind !== 'ZONE_TEST_BOUNCE') {
-      primary = {
-        ...primary,
-        title: `Не догонять · ждать ${bounce?.title ?? 'зону'}`,
-        summary: `${phaseLabel}. ${primary.summary}`,
-      }
-    }
   }
 
   const bestSetup =
@@ -366,7 +425,7 @@ export function findLiveSignal(input: {
 
   return {
     phase,
-    phaseLabel,
+    phaseLabel: phaseLabelLive,
     primary,
     scenarios: uniq.slice(0, 6),
     bestSetup,
@@ -377,6 +436,7 @@ export function findLiveSignal(input: {
     magnet: base.magnet,
     liquidityMap: base.liquidityMap,
     driveNarrative: narrative,
-    smcLines,
+    smcLines: [...liveMarket.lines.slice(0, 4), ...smcLines].slice(0, 10),
+    liveMarket,
   }
 }

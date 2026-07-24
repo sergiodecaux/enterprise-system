@@ -210,11 +210,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const lastCandleTs =
     candles.length > 0 ? Math.floor(candles[candles.length - 1][0] / 1000) : 0
 
-  const { alignment, liquidityMap, candles1d, isLoading: mtfLoading } = useMultiTFAnalysis(
-    symbol,
-    currentPrice,
-    true
-  )
+  const {
+    alignment,
+    liquidityMap,
+    candles1d,
+    candles1h,
+    isLoading: mtfLoading,
+  } = useMultiTFAnalysis(symbol, currentPrice, true)
 
   const globalFib = useMemo(() => {
     // Chart TF first: last swing H/L on what user sees; daily only if too few bars
@@ -782,6 +784,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const result = findLiveSignal({
       candles,
       candles1d,
+      candles1h,
       symbol,
       flatSymbol,
       price: currentPrice,
@@ -809,13 +812,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     haptic.success()
 
     const p = result.primary
+    const lm = result.liveMarket
     showAlert(
-      `Сигнал: ${p.side !== 'FLAT' ? p.side + ' · ' : ''}${p.title} · ~${p.winPct}%\n${result.phaseLabel}`
+      `Сигнал: ${p.side !== 'FLAT' ? p.side + ' · ' : ''}${p.title} · ~${p.winPct}%\n${
+        lm?.whatNow ?? result.phaseLabel
+      }`
     )
   }, [
     currentPrice,
     candles,
     candles1d,
+    candles1h,
     symbol,
     flatSymbol,
     signal,
