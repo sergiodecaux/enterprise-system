@@ -6,10 +6,13 @@
 
 const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 5
+/** Cap concurrent meme impulses — journal showed too many open at once */
+const MAX_ACTIVE_MEME = 2
+const MEME_SYMBOL_COOLDOWN_MS = 45 * 60_000
 const WAITING_TTL_MS = 45 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
 /** Memes are short impulse trades — don't hold for hours */
-const OPEN_TTL_MEME_MS = 90 * 60_000
+const OPEN_TTL_MEME_MS = 75 * 60_000
 /** Meme setups — comment at least every cron cycle (~2 min) */
 const PULSE_MEME_MS = 2 * 60_000
 /** Regular alts / sniper — every ~5 min */
@@ -674,6 +677,26 @@ export async function createPaperTradeFromPlan(
     return { created: false, comment: null }
   }
 
+  const isMeme = plan.alertType === 'MEME'
+  if (isMeme) {
+    const activeMemes = pruned.filter(
+      (t) =>
+        t.alertType === 'MEME' &&
+        (t.status === 'WAITING' || t.status === 'OPEN')
+    )
+    if (activeMemes.length >= MAX_ACTIVE_MEME) {
+      return { created: false, comment: null }
+    }
+    // Same symbol any side within cooldown — LMWR flipped LONG→SHORT same hour.
+    const recentSame = pruned.find(
+      (t) =>
+        t.symbol === plan.symbol &&
+        t.alertType === 'MEME' &&
+        now - t.createdAt < MEME_SYMBOL_COOLDOWN_MS
+    )
+    if (recentSame) return { created: false, comment: null }
+  }
+
   const dup = pruned.find(
     (t) =>
       (t.status === 'WAITING' || t.status === 'OPEN') &&
@@ -681,8 +704,6 @@ export async function createPaperTradeFromPlan(
       t.side === plan.side
   )
   if (dup) return { created: false, comment: null }
-
-  const isMeme = plan.alertType === 'MEME'
   // Memes enter at market immediately — waiting for TA zones kills the move.
   const fill = isMeme ? plan.signalPrice || plan.entryIdeal : null
   const trade: PaperTrade = {

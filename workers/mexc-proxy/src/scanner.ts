@@ -704,16 +704,30 @@ function buildMemeImpulsePlan(
 } {
   const entryIdeal = signalPrice
   const band = signalPrice * 0.0015
-  const fallbackSl =
-    side === 'LONG' ? signalPrice * 0.988 : signalPrice * 1.012
-  const fallbackTp =
-    side === 'LONG' ? signalPrice * 1.022 : signalPrice * 0.978
-  const fallbackTp1 =
-    side === 'LONG' ? signalPrice * 1.01 : signalPrice * 0.99
-  const sl = orderFlow.slPrice ?? fallbackSl
-  const tp = orderFlow.tpPrice ?? fallbackTp
-  const tp1 = orderFlow.tp1Price ?? fallbackTp1
-  // Soft chase cap — memes already enter at market; used only as hard skip.
+  const minRisk = 0.014
+  const maxRisk = 0.028
+  let sl = orderFlow.slPrice ?? (side === 'LONG' ? signalPrice * 0.986 : signalPrice * 1.014)
+  let tp = orderFlow.tpPrice ?? (side === 'LONG' ? signalPrice * 1.028 : signalPrice * 0.972)
+  let tp1 = orderFlow.tp1Price ?? (side === 'LONG' ? signalPrice * 1.016 : signalPrice * 0.984)
+  // Clamp risk — micro-stops from near walls were the main LOSS pattern.
+  const riskPct =
+    side === 'LONG'
+      ? (entryIdeal - sl) / entryIdeal
+      : (sl - entryIdeal) / entryIdeal
+  if (!(riskPct >= minRisk) || riskPct > maxRisk) {
+    sl =
+      side === 'LONG'
+        ? entryIdeal * (1 - Math.min(maxRisk, Math.max(minRisk, riskPct || minRisk)))
+        : entryIdeal * (1 + Math.min(maxRisk, Math.max(minRisk, riskPct || minRisk)))
+  }
+  const risk = Math.abs(entryIdeal - sl)
+  if (side === 'LONG') {
+    if (tp1 < entryIdeal + risk * 1.2) tp1 = entryIdeal + risk * 1.2
+    if (tp < entryIdeal + risk * 1.8) tp = entryIdeal + risk * 1.8
+  } else {
+    if (tp1 > entryIdeal - risk * 1.2) tp1 = entryIdeal - risk * 1.2
+    if (tp > entryIdeal - risk * 1.8) tp = entryIdeal - risk * 1.8
+  }
   const invalidate =
     side === 'LONG' ? signalPrice * 1.035 : signalPrice * 0.965
   return {
@@ -727,8 +741,8 @@ function buildMemeImpulsePlan(
     target1: tp1,
     target3:
       side === 'LONG'
-        ? Math.max(tp * 1.012, signalPrice * 1.035)
-        : Math.min(tp * 0.988, signalPrice * 0.965),
+        ? Math.max(tp * 1.01, signalPrice * 1.04)
+        : Math.min(tp * 0.99, signalPrice * 0.96),
   }
 }
 
@@ -2034,9 +2048,9 @@ export async function runMarketScan(
       })
     }
 
-    // ── MEME: pure order-flow / trap-flip — never TA zones ──
+    // ── MEME: selective order-flow only — not every tick ──
     if (preferMeme) {
-      if (!orderFlow?.ready || !orderFlow.side || orderFlow.confidence < 72) {
+      if (!orderFlow?.ready || !orderFlow.side || orderFlow.confidence < 84) {
         return
       }
       const side = orderFlow.side
@@ -2045,6 +2059,24 @@ export async function runMarketScan(
       const isRemoval = orderFlow.kind.endsWith('_REMOVED')
       const isWallPressure =
         orderFlow.kind.includes('_WALL_') && !isRemoval && !isTrap
+      // TRAP_FLIP was 6 LOSS / 3 WIN — only allow high-conviction traps.
+      if (
+        isTrap &&
+        (orderFlow.flowSharePct < 64 ||
+          orderFlow.wallMultiple < 4.5 ||
+          Math.abs(orderFlow.priceMoveBps) < 5)
+      ) {
+        return
+      }
+      // Soft OBI-only entries need strong building pressure.
+      if (
+        !isTrap &&
+        !isRemoval &&
+        !isWallPressure &&
+        (orderFlow.flowSharePct < 62 || Math.abs(orderFlow.obi) < 22)
+      ) {
+        return
+      }
       const setup = isTrap
         ? 'TRAP_FLIP'
         : isRemoval
@@ -2581,9 +2613,10 @@ export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
     ...pick(sniper, 'INTRADAY', 'COUNTER', 1),
     ...pick(sniper, 'SWING', 'WITH_TREND', 2),
     ...pick(sniper, 'SWING', 'COUNTER', 1),
+    // One meme max per cycle — overtrading traps filled the book with noise.
     ...meme
       .sort((a, b) => b.score - a.score || b.winPct - a.winPct)
-      .slice(0, 2),
+      .slice(0, 1),
   ]
 
   // Dedupe by dedupeKey while preserving slot order

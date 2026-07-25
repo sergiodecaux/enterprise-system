@@ -136,7 +136,10 @@ function nearestVolume(
     .reduce((sum, level) => sum + level.vol, 0)
 }
 
-/** Nearest opposing wall used as soft TP; nearest same-side wall as SL cushion. */
+/**
+ * Book SL/TP with hard floors. Near-touch walls made 0.05% stops and
+ * exploded R-multiples on noise — never allow SL closer than 1.4%.
+ */
 function bookLevels(
   side: BookDirection,
   mid: number,
@@ -147,26 +150,38 @@ function bookLevels(
   const medBid = median(bids.map((l) => l.vol)) || 1
   const strongAsks = asks.filter((l) => l.vol >= medAsk * 2.2 && l.price > mid)
   const strongBids = bids.filter((l) => l.vol >= medBid * 2.2 && l.price < mid)
+  const minRisk = 0.014
+  const maxRisk = 0.028
 
   if (side === 'LONG') {
-    const slWall = strongBids[0]?.price ?? mid * 0.988
-    const tp1Wall = strongAsks[0]?.price ?? mid * 1.012
-    const tpWall = strongAsks[1]?.price ?? strongAsks[0]?.price ?? mid * 1.028
-    return {
-      sl: Math.min(slWall, mid * 0.992),
-      tp1: Math.max(tp1Wall, mid * 1.008),
-      tp: Math.max(tpWall, mid * 1.018),
-    }
+    // Prefer the 2nd support wall — first is often spoof noise under mid.
+    const slWall = strongBids[1]?.price ?? strongBids[0]?.price ?? mid * (1 - minRisk)
+    let sl = Math.min(slWall, mid * (1 - minRisk))
+    if ((mid - sl) / mid < minRisk) sl = mid * (1 - minRisk)
+    if ((mid - sl) / mid > maxRisk) sl = mid * (1 - maxRisk)
+    const tp1Wall = strongAsks[0]?.price ?? mid * 1.016
+    const tpWall = strongAsks[1]?.price ?? strongAsks[0]?.price ?? mid * 1.032
+    let tp1 = Math.max(tp1Wall, mid * 1.012)
+    let tp = Math.max(tpWall, mid * 1.024)
+    // Keep RR ≥ 1.5 vs risk
+    const risk = mid - sl
+    if (tp1 - mid < risk * 1.2) tp1 = mid + risk * 1.2
+    if (tp - mid < risk * 1.8) tp = mid + risk * 1.8
+    return { sl, tp1, tp }
   }
 
-  const slWall = strongAsks[0]?.price ?? mid * 1.012
-  const tp1Wall = strongBids[0]?.price ?? mid * 0.988
-  const tpWall = strongBids[1]?.price ?? strongBids[0]?.price ?? mid * 0.972
-  return {
-    sl: Math.max(slWall, mid * 1.008),
-    tp1: Math.min(tp1Wall, mid * 0.992),
-    tp: Math.min(tpWall, mid * 0.982),
-  }
+  const slWall = strongAsks[1]?.price ?? strongAsks[0]?.price ?? mid * (1 + minRisk)
+  let sl = Math.max(slWall, mid * (1 + minRisk))
+  if ((sl - mid) / mid < minRisk) sl = mid * (1 + minRisk)
+  if ((sl - mid) / mid > maxRisk) sl = mid * (1 + maxRisk)
+  const tp1Wall = strongBids[0]?.price ?? mid * 0.984
+  const tpWall = strongBids[1]?.price ?? strongBids[0]?.price ?? mid * 0.968
+  let tp1 = Math.min(tp1Wall, mid * 0.988)
+  let tp = Math.min(tpWall, mid * 0.976)
+  const risk = sl - mid
+  if (mid - tp1 < risk * 1.2) tp1 = mid - risk * 1.2
+  if (mid - tp < risk * 1.8) tp = mid - risk * 1.8
+  return { sl, tp1, tp }
 }
 
 interface RemovedWall {
@@ -330,30 +345,40 @@ function analyzePersistentPressure(
     current.mid
   )
   if (!askWall && !bidWall) {
-    const longBook = older.obi >= 10 && previous.obi >= 10 && current.obi >= 12
-    const shortBook =
-      older.obi <= -10 && previous.obi <= -10 && current.obi <= -12
-    if (!longBook && !shortBook) {
-      return emptyEvent('Стакан: устойчивого направленного дисбаланса нет')
+    // Pre-impulse only: OBI must be BUILDING across three snapshots, not flat noise.
+    const buildingLong =
+      older.obi >= 8 &&
+      previous.obi > older.obi + 3 &&
+      current.obi > previous.obi + 3 &&
+      current.obi >= 22
+    const buildingShort =
+      older.obi <= -8 &&
+      previous.obi < older.obi - 3 &&
+      current.obi < previous.obi - 3 &&
+      current.obi <= -22
+    if (!buildingLong && !buildingShort) {
+      return emptyEvent(
+        'Стакан: нет нарастающего дисбаланса (жду pre-impulse, не каждый тик)'
+      )
     }
-    const side: BookDirection = longBook ? 'LONG' : 'SHORT'
+    const side: BookDirection = buildingLong ? 'LONG' : 'SHORT'
     const flow = dealFlow(deals, current.at)
     const flowShare = side === 'LONG' ? flow.buyShare : 100 - flow.buyShare
     const priceMoveBps =
       ((current.mid - previous.mid) / previous.mid) * 10_000
     const priceNotAgainst =
-      side === 'LONG' ? priceMoveBps >= -2 : priceMoveBps <= 2
+      side === 'LONG' ? priceMoveBps >= -1 : priceMoveBps <= 1
     const bestAsk = asks[0]?.price ?? current.mid
     const bestBid = bids[0]?.price ?? current.mid
     const spreadBps = ((bestAsk - bestBid) / current.mid) * 10_000
-    const flowAligned = flowShare >= 55
-    const ready = flowAligned && priceNotAgainst && spreadBps <= 80
+    const flowAligned = flowShare >= 60
+    const ready = flowAligned && priceNotAgainst && spreadBps <= 60
     const confidence = Math.min(
-      86,
+      88,
       Math.round(
-        64 +
-          Math.min(10, Math.abs(current.obi) * 0.25) +
-          (flowAligned ? 7 : 0) +
+        68 +
+          Math.min(12, Math.abs(current.obi) * 0.22) +
+          (flowAligned ? 8 : 0) +
           (priceNotAgainst ? 4 : 0)
       )
     )
@@ -414,26 +439,32 @@ function analyzePersistentPressure(
   const obiChange = current.obi - previous.obi
   const priceMoveBps =
     ((current.mid - previous.mid) / previous.mid) * 10_000
-  const flowAligned = flowShare >= 55
-  const obiAligned = side === 'LONG' ? current.obi >= 10 : current.obi <= -10
-  const priceAligned = side === 'LONG' ? priceMoveBps >= -1 : priceMoveBps <= 1
+  const flowAligned = flowShare >= 58
+  const obiAligned = side === 'LONG' ? current.obi >= 14 : current.obi <= -14
+  const priceAligned = side === 'LONG' ? priceMoveBps >= 0 : priceMoveBps <= 0
+  const building =
+    side === 'LONG'
+      ? previous.obi < current.obi && older != null && older.obi <= previous.obi
+      : previous.obi > current.obi && older != null && older.obi >= previous.obi
   const bestAsk = asks[0]?.price ?? current.mid
   const bestBid = bids[0]?.price ?? current.mid
   const spreadBps = ((bestAsk - bestBid) / current.mid) * 10_000
   const ready =
     wall.persisted &&
+    wall.multiple >= 4 &&
     flowAligned &&
     obiAligned &&
     priceAligned &&
-    spreadBps <= 80
+    building &&
+    spreadBps <= 60
   const confidence = Math.min(
     90,
     Math.round(
-      58 +
+      60 +
         Math.min(16, (wall.multiple - 3.2) * 3) +
         (flowAligned ? 7 : 0) +
         (obiAligned ? 6 : 0) +
-        (priceAligned ? 5 : 0)
+        (building ? 6 : 0)
     )
   )
   const label = wall.side === 'BID' ? 'BID-поддержка' : 'ASK-сопротивление'
@@ -541,22 +572,24 @@ function analyzeEvent(
       : obiChange <= -6 || current.obi <= -12
   const priceMoveBps =
     ((current.mid - previous.mid) / previous.mid) * 10_000
-  const alignedPrice = side === 'LONG' ? priceMoveBps >= 2 : priceMoveBps <= -2
-  const alignedFlow = flowShare >= 55
+  const alignedPrice = side === 'LONG' ? priceMoveBps >= 5 : priceMoveBps <= -5
+  const alignedFlow = flowShare >= 62
   const bestAsk = asks[0]?.price ?? current.mid
   const bestBid = bids[0]?.price ?? current.mid
   const spreadBps = ((bestAsk - bestBid) / current.mid) * 10_000
 
-  // Spoof/trap: wall never persisted (appeared then yanked) or relocated nearby.
-  // Enter WITH the vacuum — this is the classic meme trap flip.
-  const isTrap = !wall.persisted || wall.relocated
+  // Trap = spoof wall yanked WITHOUT relocation. Relocated walls are noise — skip.
+  // Require price already moving through the vacuum (not every vanish).
+  const isTrap = !wall.persisted && !wall.relocated
   const trapReady =
     isTrap &&
-    !wall.relocated &&
+    wall.multiple >= 4.5 &&
+    wall.dropPct >= 75 &&
+    wall.crossed &&
     alignedFlow &&
-    (alignedPrice || alignedObi) &&
-    spreadBps <= 100 &&
-    wall.dropPct >= 65
+    alignedPrice &&
+    alignedObi &&
+    spreadBps <= 55
 
   const confirmations = [alignedFlow, alignedObi, alignedPrice].filter(
     Boolean
@@ -564,21 +597,22 @@ function analyzeEvent(
   const releaseReady =
     wall.persisted &&
     !wall.relocated &&
-    spreadBps <= 80 &&
+    wall.multiple >= 4 &&
+    wall.dropPct >= 70 &&
+    wall.crossed &&
+    spreadBps <= 55 &&
     alignedFlow &&
-    confirmations >= 2
+    confirmations >= 3
 
   const ready = trapReady || releaseReady
   const confidence = Math.min(
     96,
     Math.round(
-      (isTrap ? 56 : 50) +
+      (isTrap ? 62 : 58) +
         Math.min(18, (wall.multiple - 3.2) * 3) +
-        Math.min(10, (wall.dropPct - 60) * 0.3) +
-        confirmations * 8 +
-        (wall.crossed ? 5 : 0) +
-        (isTrap && trapReady ? 6 : 0) -
-        (wall.relocated ? 20 : 0)
+        Math.min(10, (wall.dropPct - 70) * 0.35) +
+        confirmations * 7 +
+        (wall.crossed ? 6 : 0)
     )
   )
   const wallLabel = wall.side === 'ASK' ? 'ASK-продавца' : 'BID-покупателя'

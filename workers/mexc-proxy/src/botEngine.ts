@@ -1,7 +1,7 @@
 /** Bumped on each user-visible bot engine change — shown in /status /scan /alerts */
 export const BOT_ENGINE = {
-  id: 'meme-book-impulse-v17',
-  label: 'Dedicated meme order-flow impulse strategy',
+  id: 'meme-selective-v18',
+  label: 'Selective pre-impulse meme order-flow',
   deployedNote:
-    'Мемы отделены от альтов: вход по рынку на вакууме/ловушке стакана, без ожидания TA-зон. SL/TP из ближайших стен; выход по развороту OBI+потока или трейлу ~1.2%.',
+    'Меньше сделок: только нарастающий OBI / сильный vacuum / редкий trap. SL ≥1.4%, RR≥1.5, max 1 мем/цикл и 2 активных, cooldown 45м на монету.',
 } as const

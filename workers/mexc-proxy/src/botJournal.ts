@@ -236,12 +236,25 @@ export async function recordBotAlert(
   }
 ): Promise<BotJournalEntry | null> {
   const list = await listJournal(env)
+  const nowGate = Date.now()
   if (
     list.some(
       (e) =>
         e.status === 'OPEN' &&
         (e.dedupeKey === input.dedupeKey ||
           (e.symbol === input.plan.symbol && e.side === input.plan.side))
+    )
+  ) {
+    return null
+  }
+  // Memes: block same symbol any side for 45m (trap flip spam).
+  if (
+    input.alertType === 'MEME' &&
+    list.some(
+      (e) =>
+        e.alertType === 'MEME' &&
+        e.symbol === input.plan.symbol &&
+        nowGate - e.createdAt < 45 * 60_000
     )
   ) {
     return null
