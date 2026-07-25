@@ -33,7 +33,6 @@ import {
   monitorWatchedSetups,
   markChatDigestSent,
   countActiveWatches,
-  watchSummaryLines,
   type ConditionalSetupPayload,
 } from './watchedSetups'
 import {
@@ -43,11 +42,6 @@ import {
   resolveBotJournal,
   formatCorridorWrReport,
 } from './botJournal'
-import {
-  buildIdlePulseText,
-  markIdlePulseSent,
-  shouldSendIdlePulse,
-} from './marketPulse'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 const LAST_SCAN_KEY = 'telegram:last_scan_status'
@@ -73,6 +67,87 @@ const DEDUP_PREFIX = 'telegram:dedup:'
 /** In-memory fallback when KV not bound (dev / first deploy) */
 const memorySubs = new Map<number, Subscriber>()
 const memoryDedup = new Map<string, number>()
+const memoryRuntime = new Map<string, string>()
+
+function runtimeCacheRequest(key: string): Request {
+  return new Request(
+    `https://enterprise-system-runtime.invalid/${encodeURIComponent(key)}`
+  )
+}
+
+async function runtimeGet(key: string): Promise<string | null> {
+  try {
+    const response = await caches.default.match(runtimeCacheRequest(key))
+    if (response) return response.text()
+  } catch {
+    // Cache API may be unavailable in local development.
+  }
+  return memoryRuntime.get(key) ?? null
+}
+
+async function runtimePut(key: string, value: string): Promise<void> {
+  memoryRuntime.set(key, value)
+  try {
+    await caches.default.put(
+      runtimeCacheRequest(key),
+      new Response(value, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      })
+    )
+  } catch {
+    // In-memory fallback is enough for local development.
+  }
+}
+
+function latestBookTimestamp(raw: string | null): number {
+  if (!raw) return 0
+  try {
+    const parsed = JSON.parse(raw) as Record<string, Array<{ at?: number }>>
+    return Math.max(
+      0,
+      ...Object.values(parsed).flatMap((snapshots) =>
+        (Array.isArray(snapshots) ? snapshots : []).map((snapshot) =>
+          Number(snapshot.at ?? 0)
+        )
+      )
+    )
+  } catch {
+    return 0
+  }
+}
+
+function createOrderBookStateStore(env: Env) {
+  let persistedAt = 0
+  return {
+    async get(key: string): Promise<string | null> {
+      const [cached, persisted] = await Promise.all([
+        runtimeGet(`book:${key}`),
+        env.SUBSCRIBERS?.get(key) ?? Promise.resolve(null),
+      ])
+      persistedAt = latestBookTimestamp(persisted)
+      return cached ?? persisted
+    },
+    async put(key: string, value: string): Promise<void> {
+      await runtimePut(`book:${key}`, value)
+      // Cache keeps the 2-minute sequence fast. KV is only a cold-start
+      // checkpoint every 6 minutes: <=240 writes/day instead of 720.
+      if (
+        env.SUBSCRIBERS &&
+        Date.now() - persistedAt >= 6 * 60_000
+      ) {
+        try {
+          await env.SUBSCRIBERS.put(key, value)
+          persistedAt = Date.now()
+        } catch {
+          // Today's exhausted quota recovers automatically after reset.
+        }
+      }
+    },
+  }
+}
 
 interface Env {
   TELEGRAM_BOT_TOKEN?: string
@@ -172,12 +247,10 @@ async function handleTelegram(
   if (path === '/telegram/health') {
     const subs = await listSubscribers(env)
     const watches = await countActiveWatches(env)
-    const lastScanRaw = env.SUBSCRIBERS
-      ? await env.SUBSCRIBERS.get(LAST_SCAN_KEY)
-      : null
-    const lastDeliveryRaw = env.SUBSCRIBERS
-      ? await env.SUBSCRIBERS.get(LAST_TG_KEY)
-      : null
+    const [lastScanRaw, lastDeliveryRaw] = await Promise.all([
+      runtimeGet(LAST_SCAN_KEY),
+      runtimeGet(LAST_TG_KEY),
+    ])
     let lastScan: unknown = null
     let lastDelivery: unknown = null
     try {
@@ -424,18 +497,14 @@ async function broadcastAlert(
   payload: AlertPayload
 ): Promise<{ ok: boolean; sent: number; failed: number; skipped?: string }> {
   if (payload.dedupeKey) {
-    if (env.SUBSCRIBERS) {
-      const dedupKey = DEDUP_PREFIX + payload.dedupeKey
-      const exists = await env.SUBSCRIBERS.get(dedupKey)
-      if (exists) {
-        return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
-      }
-    } else {
-      const prev = memoryDedup.get(payload.dedupeKey)
-      const ttlMs = payload.type === 'MEME' ? 900_000 : 3600_000
-      if (prev && Date.now() - prev < ttlMs) {
-        return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
-      }
+    const dedupKey = DEDUP_PREFIX + payload.dedupeKey
+    const [cached, prev] = await Promise.all([
+      runtimeGet(dedupKey),
+      Promise.resolve(memoryDedup.get(payload.dedupeKey)),
+    ])
+    const ttlMs = payload.type === 'MEME' ? 900_000 : 3600_000
+    if (cached || (prev && Date.now() - prev < ttlMs)) {
+      return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
     }
   }
 
@@ -446,13 +515,8 @@ async function broadcastAlert(
   if (payload.chatId) {
     const ok = await tgSend(env, payload.chatId, message)
     if (ok && payload.dedupeKey) {
-      if (env.SUBSCRIBERS) {
-        await env.SUBSCRIBERS.put(DEDUP_PREFIX + payload.dedupeKey, '1', {
-          expirationTtl: payload.type === 'MEME' ? 900 : 3600,
-        })
-      } else {
-        memoryDedup.set(payload.dedupeKey, Date.now())
-      }
+      memoryDedup.set(payload.dedupeKey, Date.now())
+      await runtimePut(DEDUP_PREFIX + payload.dedupeKey, '1')
     }
     return { ok, sent: ok ? 1 : 0, failed: ok ? 0 : 1 }
   }
@@ -467,14 +531,8 @@ async function broadcastAlert(
   }
 
   if (sent > 0 && payload.dedupeKey) {
-    if (env.SUBSCRIBERS) {
-      await env.SUBSCRIBERS.put(DEDUP_PREFIX + payload.dedupeKey, '1', {
-        // Memes rotate fast — 15m; sniper/system 60m
-        expirationTtl: payload.type === 'MEME' ? 900 : 3600,
-      })
-    } else {
-      memoryDedup.set(payload.dedupeKey, Date.now())
-    }
+    memoryDedup.set(payload.dedupeKey, Date.now())
+    await runtimePut(DEDUP_PREFIX + payload.dedupeKey, '1')
   }
 
   return { ok: true, sent, failed }
@@ -485,9 +543,7 @@ async function maybeHeartbeat(env: Env): Promise<number> {
   if (subs.length === 0) return 0
 
   let last = 0
-  if (env.SUBSCRIBERS) {
-    last = Number((await env.SUBSCRIBERS.get(HEARTBEAT_KEY)) || 0)
-  }
+  last = Number((await runtimeGet(HEARTBEAT_KEY)) || 0)
   if (Date.now() - last < HEARTBEAT_MS) return 0
 
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
@@ -498,9 +554,7 @@ async function maybeHeartbeat(env: Env): Promise<number> {
     dedupeKey: `heartbeat:${Math.floor(Date.now() / HEARTBEAT_MS)}`,
   })
 
-  if (env.SUBSCRIBERS) {
-    await env.SUBSCRIBERS.put(HEARTBEAT_KEY, String(Date.now()))
-  }
+  await runtimePut(HEARTBEAT_KEY, String(Date.now()))
   return r.sent
 }
 
@@ -579,7 +633,11 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
   if (!env.TELEGRAM_BOT_TOKEN) return
   const key = `${ENGINE_ANNOUNCE_KEY}:${BOT_ENGINE.id}`
   if (env.SUBSCRIBERS) {
-    const done = await env.SUBSCRIBERS.get(key)
+    const [runtimeDone, done] = await Promise.all([
+      runtimeGet(key),
+      env.SUBSCRIBERS.get(key),
+    ])
+    if (runtimeDone) return
     if (done) return
   } else {
     return
@@ -605,9 +663,15 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
     if (ok) sent++
   }
   if (sent > 0 || subs.length === 0) {
-    await env.SUBSCRIBERS.put(key, String(Date.now()), {
-      expirationTtl: 60 * 60 * 24 * 90,
-    })
+    const at = String(Date.now())
+    await runtimePut(key, at)
+    try {
+      await env.SUBSCRIBERS.put(key, at, {
+        expirationTtl: 60 * 60 * 24 * 90,
+      })
+    } catch {
+      // Runtime cache prevents repeated announcements until KV quota resets.
+    }
   }
 }
 
@@ -626,12 +690,10 @@ async function runCronScan(env: Env): Promise<{
     return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
   }
   const scanStartedAt = Date.now()
-  if (env.SUBSCRIBERS) {
-    await env.SUBSCRIBERS.put(
-      LAST_SCAN_KEY,
-      JSON.stringify({ status: 'RUNNING', startedAt: scanStartedAt })
-    )
-  }
+  await runtimePut(
+    LAST_SCAN_KEY,
+    JSON.stringify({ status: 'RUNNING', startedAt: scanStartedAt })
+  )
 
   // Signal delivery has priority over watch digests in the Worker subrequest
   // budget. Watches run after fresh scans so they cannot starve Telegram alerts.
@@ -644,7 +706,13 @@ async function runCronScan(env: Env): Promise<{
     console.error('[cron] engine announce failed', err)
   }
 
-  const heartbeat = await maybeHeartbeat(env)
+  let heartbeat = 0
+  try {
+    heartbeat = await maybeHeartbeat(env)
+  } catch (err) {
+    // A depleted KV write quota must not stop market scanning.
+    console.error('[cron] heartbeat persist failed', err)
+  }
   const gates = await getAdaptiveGates(env)
 
   // MEME first + broadcast immediately (don't wait 40–90s sniper scan)
@@ -713,7 +781,7 @@ async function runCronScan(env: Env): Promise<{
     if (
       shouldCreateWatch &&
       a.tradePlan &&
-      (a.type === 'MEME' || a.needsPullbackWatch)
+      a.needsPullbackWatch
     ) {
       try {
         const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
@@ -735,15 +803,8 @@ async function runCronScan(env: Env): Promise<{
     }
   }
 
-  try {
-    const memeAlerts = await runMarketScan(gates, 'meme')
-    for (const a of memeAlerts) await deliver(a)
-  } catch (err) {
-    console.error('[cron] meme scan failed', err)
-  }
-
-  // Resolve and publish signal outcomes before expensive sniper/watch analysis.
-  // This guarantees the user sees WIN / LOSS / BE / NO ENTRY for every signal.
+  // Resolve and publish outcomes before any market scan consumes the request
+  // budget. Old lifecycle events must not disappear behind depth requests.
   try {
     const resolution = await resolveBotJournal(env)
     journalResolved = resolution.changed
@@ -784,11 +845,33 @@ async function runCronScan(env: Env): Promise<{
     console.error('[cron] journal result failed', err)
   }
 
+  // Fresh order-flow signals are next. Sniper and watch monitoring remain last.
   try {
-    const sniperAlerts = await runMarketScan(gates, 'sniper')
-    for (const a of sniperAlerts) await deliver(a)
+    const memeAlerts = await runMarketScan(
+      gates,
+      'meme',
+      createOrderBookStateStore(env)
+    )
+    for (const a of memeAlerts) await deliver(a)
   } catch (err) {
-    console.error('[cron] sniper scan failed', err)
+    console.error('[cron] meme scan failed', err)
+  }
+
+  // Entry confirmation and trade management are more important than a new
+  // sniper scan. Run them while the request budget is still available.
+  try {
+    const comments = await monitorPaperTrades(env)
+    for (const c of comments) {
+      const cr = await broadcastAlert(env, {
+        type: 'SYSTEM',
+        title: c.title,
+        text: c.text,
+        dedupeKey: c.dedupeKey,
+      })
+      paperComments += cr.sent
+    }
+  } catch (err) {
+    console.error('[cron] paper trade monitor failed', err)
   }
 
   try {
@@ -810,57 +893,18 @@ async function runCronScan(env: Env): Promise<{
     console.error('[cron] watch monitor failed', err)
   }
 
+  try {
+    const sniperAlerts = await runMarketScan(gates, 'sniper')
+    for (const a of sniperAlerts) await deliver(a)
+  } catch (err) {
+    console.error('[cron] sniper scan failed', err)
+  }
+
   const alerts = allAlerts
 
-  // No actionable signals → tell subscribers + favorites under watch (every ~10 min)
+  // No-signal idle pulses are disabled: after depth analysis they consumed the
+  // remaining request budget and obscured actual delivery health.
   let idlePulses = 0
-  if (sent === 0 && (await shouldSendIdlePulse(env))) {
-    try {
-      const subs = await listSubscribers(env)
-      const shared = await buildIdlePulseText({ activeWatches: 0 })
-      for (const sub of subs) {
-        const lines = await watchSummaryLines(env, sub.chatId, 5)
-        const text =
-          lines.length > 0
-            ? [
-                shared.text.replace(
-                  /\n👁[\s\S]*$/m,
-                  ''
-                ).trimEnd(),
-                '',
-                `👁 Ваши сетапы под слежением: ${lines.length}`,
-                ...lines,
-                '',
-                'Когда появится сетап ≥60% win — пришлю сразу.',
-                'Коридоры: SCALP×TREND/COUNTER · INTRA×TREND/COUNTER · SWING · MEME — с явной вероятностью.',
-              ].join('\n')
-            : shared.text
-        const r = await broadcastAlert(env, {
-          type: 'SYSTEM',
-          title: shared.title,
-          text,
-          dedupeKey: `idle_pulse:${sub.chatId}:${Math.floor(Date.now() / (10 * 60_000))}`,
-          chatId: sub.chatId,
-        })
-        idlePulses += r.sent
-      }
-      if (idlePulses > 0) await markIdlePulseSent(env)
-    } catch (err) {
-      console.error('[cron] idle pulse failed', err)
-    }
-  }
-
-  // Narrate open / waiting paper trades
-  const comments = await monitorPaperTrades(env)
-  for (const c of comments) {
-    const cr = await broadcastAlert(env, {
-      type: 'SYSTEM',
-      title: c.title,
-      text: c.text,
-      dedupeKey: c.dedupeKey,
-    })
-    paperComments += cr.sent
-  }
 
   const result = {
     alerts: alerts.length,
@@ -875,18 +919,16 @@ async function runCronScan(env: Env): Promise<{
     journalResolved,
     resultAlerts,
   }
-  if (env.SUBSCRIBERS) {
-    await env.SUBSCRIBERS.put(
-      LAST_SCAN_KEY,
-      JSON.stringify({
-        status: 'COMPLETED',
-        startedAt: scanStartedAt,
-        completedAt: Date.now(),
-        durationMs: Date.now() - scanStartedAt,
-        ...result,
-      })
-    )
-  }
+  await runtimePut(
+    LAST_SCAN_KEY,
+    JSON.stringify({
+      status: 'COMPLETED',
+      startedAt: scanStartedAt,
+      completedAt: Date.now(),
+      durationMs: Date.now() - scanStartedAt,
+      ...result,
+    })
+  )
   return result
 }
 
@@ -1333,35 +1375,31 @@ async function tgSend(
         disable_web_page_preview: true,
       }),
     })
-    if (env.SUBSCRIBERS) {
-      const errorText = res.ok ? null : (await res.text()).slice(0, 500)
-      await env.SUBSCRIBERS.put(
-        LAST_TG_KEY,
-        JSON.stringify({
-          ok: res.ok,
-          chatId,
-          status: res.status,
-          at: Date.now(),
-          length: text.length,
-          error: errorText,
-        })
-      )
-    }
+    const errorText = res.ok ? null : (await res.text()).slice(0, 500)
+    await runtimePut(
+      LAST_TG_KEY,
+      JSON.stringify({
+        ok: res.ok,
+        chatId,
+        status: res.status,
+        at: Date.now(),
+        length: text.length,
+        error: errorText,
+      })
+    )
     return res.ok
   } catch (error) {
-    if (env.SUBSCRIBERS) {
-      await env.SUBSCRIBERS.put(
-        LAST_TG_KEY,
-        JSON.stringify({
-          ok: false,
-          chatId,
-          status: 0,
-          at: Date.now(),
-          length: text.length,
-          error: String(error).slice(0, 500),
-        })
-      )
-    }
+    await runtimePut(
+      LAST_TG_KEY,
+      JSON.stringify({
+        ok: false,
+        chatId,
+        status: 0,
+        at: Date.now(),
+        length: text.length,
+        error: String(error).slice(0, 500),
+      })
+    )
     return false
   }
 }

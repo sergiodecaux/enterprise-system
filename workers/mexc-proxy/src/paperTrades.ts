@@ -8,6 +8,8 @@ const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 5
 const WAITING_TTL_MS = 45 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
+/** Memes are short impulse trades — don't hold for hours */
+const OPEN_TTL_MEME_MS = 90 * 60_000
 /** Meme setups — comment at least every cron cycle (~2 min) */
 const PULSE_MEME_MS = 2 * 60_000
 /** Regular alts / sniper — every ~5 min */
@@ -47,6 +49,9 @@ export interface PaperTrade {
   tp: number
   status: PaperStatus
   fillPrice: number | null
+  /** First zone touch; a trade opens only after directional reclaim. */
+  zoneTouchedAt?: number | null
+  zoneTouchPrice?: number | null
   peak: number | null
   trailingStop: number | null
   createdAt: number
@@ -101,6 +106,36 @@ interface MarketBrief {
 }
 
 const memoryPapers: PaperTrade[] = []
+
+function paperCacheRequest(): Request {
+  return new Request('https://enterprise-system-runtime.invalid/paper-trades')
+}
+
+async function readPaperCache(): Promise<PaperTrade[] | null> {
+  try {
+    const response = await caches.default.match(paperCacheRequest())
+    if (!response) return null
+    return (await response.json()) as PaperTrade[]
+  } catch {
+    return null
+  }
+}
+
+async function writePaperCache(list: PaperTrade[]): Promise<void> {
+  try {
+    await caches.default.put(
+      paperCacheRequest(),
+      new Response(JSON.stringify(list), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      })
+    )
+  } catch {
+    // Memory remains available in a warm isolate.
+  }
+}
 
 function fmt(p: number): string {
   if (!(p > 0)) return '—'
@@ -596,6 +631,8 @@ function buildCommentary(opts: {
 }
 
 export async function listPaperTrades(env: PaperEnv): Promise<PaperTrade[]> {
+  const cached = await readPaperCache()
+  if (cached) return cached
   if (!env.SUBSCRIBERS) return [...memoryPapers]
   const raw = await env.SUBSCRIBERS.get(PAPER_KEY)
   if (!raw) return [...memoryPapers]
@@ -612,8 +649,7 @@ async function savePaperTrades(
 ): Promise<void> {
   memoryPapers.length = 0
   memoryPapers.push(...list)
-  if (!env.SUBSCRIBERS) return
-  await env.SUBSCRIBERS.put(PAPER_KEY, JSON.stringify(list))
+  await writePaperCache(list)
 }
 
 function activeCount(list: PaperTrade[]): number {
@@ -646,6 +682,9 @@ export async function createPaperTradeFromPlan(
   )
   if (dup) return { created: false, comment: null }
 
+  const isMeme = plan.alertType === 'MEME'
+  // Memes enter at market immediately — waiting for TA zones kills the move.
+  const fill = isMeme ? plan.signalPrice || plan.entryIdeal : null
   const trade: PaperTrade = {
     id: `${plan.symbol}:${plan.side}:${now}`,
     symbol: plan.symbol,
@@ -659,15 +698,21 @@ export async function createPaperTradeFromPlan(
     invalidate: plan.invalidate,
     sl: plan.sl,
     tp: plan.tp,
-    status: 'WAITING',
-    fillPrice: null,
-    peak: null,
-    trailingStop: null,
+    status: isMeme ? 'OPEN' : 'WAITING',
+    fillPrice: fill,
+    zoneTouchedAt: isMeme ? now : null,
+    zoneTouchPrice: fill,
+    peak: fill,
+    trailingStop: fill
+      ? plan.side === 'LONG'
+        ? fill * 0.988
+        : fill * 1.012
+      : null,
     createdAt: now,
-    openedAt: null,
-    expiresAt: now + WAITING_TTL_MS,
+    openedAt: isMeme ? now : null,
+    expiresAt: now + (isMeme ? OPEN_TTL_MEME_MS : WAITING_TTL_MS),
     closedAt: null,
-    lastPulseAt: null,
+    lastPulseAt: now,
     closeReason: null,
     beSent: false,
     tpSent: false,
@@ -680,22 +725,35 @@ export async function createPaperTradeFromPlan(
   await savePaperTrades(env, pruned)
 
   const icon = plan.side === 'LONG' ? '🟢' : '🔴'
-  const cadence = plan.alertType === 'MEME' ? 'каждые ~2 мин' : 'каждые ~5 мин'
-  const comment: PaperComment = {
-    alertType: 'SYSTEM',
-    title: `${icon} Пример: беру ${nameOf(plan.symbol)} в работу`,
-    text: [
-      `Это учебная (бумажная) сделка — как если бы я вошёл по плану.`,
-      `Сторона: ${plan.side} · ${plan.setup}`,
-      `Зона лимитки: ${fmt(plan.zoneLow)} – ${fmt(plan.zoneHigh)}`,
-      `Ориентир: ${fmt(plan.entryIdeal)} · SL ${fmt(plan.sl)} · TP ${fmt(plan.tp)}`,
-      plan.side === 'LONG'
-        ? `Инвалидация выше ${fmt(plan.invalidate)} — не догоняю.`
-        : `Инвалидация ниже ${fmt(plan.invalidate)} — не догоняю.`,
-      `Дальше пишу, что происходит с монетой (${cadence}): давление, объём, вероятность успеха.`,
-    ].join('\n'),
-    dedupeKey: `paper:wait:${trade.id}`,
-  }
+  const cadence = isMeme ? 'каждые ~2 мин' : 'каждые ~5 мин'
+  const comment: PaperComment = isMeme
+    ? {
+        alertType: 'SYSTEM',
+        title: `${icon} MEME ВХОД ${plan.side} ${nameOf(plan.symbol)}`,
+        text: [
+          `Вошёл по рынку сразу — мемы не ждут TA-зону.`,
+          `Сетап: ${plan.setup}`,
+          `Вход: ${fmt(fill!)} · SL стакан ${fmt(plan.sl)} · TP стена ${fmt(plan.tp)}`,
+          `Выход: TP / трейл ~1.2% / разворот OBI+потока.`,
+          `Сопровождение ${cadence}.`,
+        ].join('\n'),
+        dedupeKey: `paper:fill:${trade.id}`,
+      }
+    : {
+        alertType: 'SYSTEM',
+        title: `${icon} Кандидат ${nameOf(plan.symbol)} · ВХОДА НЕТ`,
+        text: [
+          `Сейчас позиция НЕ открыта. Бот только поставил сценарий под наблюдение.`,
+          `Сторона: ${plan.side} · ${plan.setup}`,
+          `Зона лимитки: ${fmt(plan.zoneLow)} – ${fmt(plan.zoneHigh)}`,
+          `Ориентир: ${fmt(plan.entryIdeal)} · SL ${fmt(plan.sl)} · TP ${fmt(plan.tp)}`,
+          plan.side === 'LONG'
+            ? `Инвалидация выше ${fmt(plan.invalidate)} — не догоняю.`
+            : `Инвалидация ниже ${fmt(plan.invalidate)} — не догоняю.`,
+          `После касания нужен повторный сигнал свечи, агрессивных сделок и OBI (${cadence}).`,
+        ].join('\n'),
+        dedupeKey: `paper:wait:${trade.id}`,
+      }
 
   return { created: true, comment }
 }
@@ -713,6 +771,30 @@ function invalidatedWithoutFill(t: PaperTrade, snap: TickerSnap): boolean {
   return snap.low <= t.invalidate && !touchesZone(t, snap)
 }
 
+function confirmsEntry(
+  t: PaperTrade,
+  snap: TickerSnap,
+  brief: MarketBrief
+): boolean {
+  if (!t.zoneTouchedAt) return false
+  const pressureAligned =
+    t.side === 'LONG'
+      ? brief.pressure === 'BUYERS'
+      : brief.pressure === 'SELLERS'
+  const tapeAligned =
+    t.side === 'LONG'
+      ? brief.candleBias === 'UP' && brief.move1mPct > 0
+      : brief.candleBias === 'DOWN' && brief.move1mPct < 0
+  const bookAligned =
+    brief.bookImb != null &&
+    (t.side === 'LONG' ? brief.bookImb >= 8 : brief.bookImb <= -8)
+  const reclaimed =
+    t.side === 'LONG'
+      ? snap.last >= t.entryIdeal && snap.last <= t.zoneHigh * 1.003
+      : snap.last <= t.entryIdeal && snap.last >= t.zoneLow * 0.997
+  return reclaimed && pressureAligned && tapeAligned && bookAligned
+}
+
 function hitTp(t: PaperTrade, snap: TickerSnap): boolean {
   if (t.side === 'LONG') return snap.high >= t.tp
   return snap.low <= t.tp
@@ -728,7 +810,8 @@ function updateTrail(t: PaperTrade, price: number): {
   trailingStop: number
   moved: boolean
 } {
-  const trailPct = 0.02
+  // Memes: tight trail. Alts: wider.
+  const trailPct = isMemeTrade(t) ? 0.012 : 0.02
   let peak = t.peak ?? t.fillPrice ?? t.entryIdeal
   if (t.side === 'LONG' && price > peak) peak = price
   if (t.side === 'SHORT' && price < peak) peak = price
@@ -740,7 +823,7 @@ function updateTrail(t: PaperTrade, price: number): {
   const moved =
     prev != null &&
     t.fillPrice != null &&
-    Math.abs(trailingStop - prev) / t.fillPrice > 0.005 &&
+    Math.abs(trailingStop - prev) / t.fillPrice > (isMemeTrade(t) ? 0.003 : 0.005) &&
     ((t.side === 'LONG' && trailingStop > prev) ||
       (t.side === 'SHORT' && trailingStop < prev))
 
@@ -749,10 +832,38 @@ function updateTrail(t: PaperTrade, price: number): {
 
 function trailHit(t: PaperTrade, snap: TickerSnap): boolean {
   if (t.trailingStop == null || t.fillPrice == null || t.peak == null) return false
+  const arm = isMemeTrade(t) ? 0.012 : 0.03
   if (t.side === 'LONG') {
-    return snap.low <= t.trailingStop && t.peak > t.fillPrice * 1.03
+    return snap.low <= t.trailingStop && t.peak > t.fillPrice * (1 + arm)
   }
-  return snap.high >= t.trailingStop && t.peak < t.fillPrice * 0.97
+  return snap.high >= t.trailingStop && t.peak < t.fillPrice * (1 - arm)
+}
+
+function memeBookExit(
+  t: PaperTrade,
+  brief: MarketBrief
+): { exit: boolean; reason: string } {
+  if (!isMemeTrade(t)) return { exit: false, reason: '' }
+  const againstBook =
+    brief.bookImb != null &&
+    (t.side === 'LONG' ? brief.bookImb <= -18 : brief.bookImb >= 18)
+  const againstFlow =
+    t.side === 'LONG' ? brief.buyShare <= 0.4 : brief.buyShare >= 0.6
+  const againstTape =
+    t.side === 'LONG' ? brief.move1mPct <= -0.45 : brief.move1mPct >= 0.45
+  if (againstBook && againstFlow) {
+    return {
+      exit: true,
+      reason: 'Стакан и агрессивный поток развернулись — выхожу из мема',
+    }
+  }
+  if (againstBook && againstTape) {
+    return {
+      exit: true,
+      reason: 'OBI против + 1м против — импульс мема сломан',
+    }
+  }
+  return { exit: false, reason: '' }
 }
 
 /**
@@ -814,8 +925,46 @@ export async function monitorPaperTrades(
         continue
       }
 
-      if (touchesZone(t, snap)) {
-        const fill = clampFill(t, snap.last)
+      if (!t.zoneTouchedAt && touchesZone(t, snap)) {
+        t.zoneTouchedAt = now
+        t.zoneTouchPrice = clampFill(t, snap.last)
+        t.lastPulseAt = now
+        t.lastWinPct = winPct
+        dirty = true
+        comments.push({
+          alertType: 'SYSTEM',
+          title: `👀 Зона коснулась: жду подтверждение ${nameOf(t.symbol)}`,
+          text: [
+            `Это ещё НЕ вход. Цена коснулась ${fmt(t.zoneTouchPrice)}.`,
+            `Открою ${t.side} только после возврата за ${fmt(t.entryIdeal)},`,
+            `если свеча, агрессивный поток и OBI одновременно подтвердят направление.`,
+            brief.pressureLabel,
+          ].join('\n'),
+          dedupeKey: `paper:touch:${t.id}`,
+        })
+        continue
+      }
+
+      if (t.zoneTouchedAt) {
+        const failedBeforeEntry =
+          t.side === 'LONG' ? snap.low <= t.sl : snap.high >= t.sl
+        if (failedBeforeEntry) {
+          t.status = 'CLOSED'
+          t.closedAt = now
+          t.closeReason = 'invalidate'
+          dirty = true
+          comments.push({
+            alertType: 'SYSTEM',
+            title: `⏭ Вход отменён ${nameOf(t.symbol)}`,
+            text: `После касания зоны подтверждения стакана не было, цена нарушила SL-уровень. Сделка не открывалась.`,
+            dedupeKey: `paper:unconfirmed:${t.id}`,
+          })
+          continue
+        }
+      }
+
+      if (confirmsEntry(t, snap, brief)) {
+        const fill = snap.last
         t.status = 'OPEN'
         t.fillPrice = fill
         t.openedAt = now
@@ -829,7 +978,7 @@ export async function monitorPaperTrades(
           alertType: 'SYSTEM',
           title: `✅ Пример: вошёл ${t.side} ${nameOf(t.symbol)}`,
           text: [
-            `Лимитка в зоне исполнилась (бумажно).`,
+            `ВХОД ПОДТВЕРЖДЁН: ретест удержан, свеча + поток сделок + OBI совпали.`,
             `Вход: ${fmt(fill)} · SL ${fmt(t.sl)} · TP ${fmt(t.tp)}`,
             `Стартовая вероятность успеха: ${winPct}%`,
             brief.pressureLabel,
@@ -892,7 +1041,8 @@ export async function monitorPaperTrades(
       })
     }
 
-    if (!t.beSent && favorR >= 0.6) {
+    const beR = isMemeTrade(t) ? 0.4 : 0.6
+    if (!t.beSent && favorR >= beR) {
       t.beSent = true
       t.sl = fill
       dirty = true
@@ -900,12 +1050,31 @@ export async function monitorPaperTrades(
         alertType: 'SYSTEM',
         title: `🛡 Пример: BE ${nameOf(t.symbol)}`,
         text: [
-          `Есть +0.6R — в примере стоп перевожу в безубыток (${fmt(fill)}).`,
+          `Есть +${beR}R — стоп в безубыток (${fmt(fill)}).`,
           `Вероятность ${winPct}% · ${brief.pressureLabel}`,
           `Цель всё ещё ${fmt(t.tp)}.`,
         ].join('\n'),
         dedupeKey: `paper:be:${t.id}`,
       })
+    }
+
+    const bookFlip = memeBookExit(t, brief)
+    if (bookFlip.exit) {
+      t.status = 'CLOSED'
+      t.closedAt = now
+      t.closeReason = 'trail'
+      dirty = true
+      comments.push({
+        alertType: 'SYSTEM',
+        title: `⏹ MEME выход ${nameOf(t.symbol)}`,
+        text: [
+          bookFlip.reason,
+          `Вход ${fmt(fill)} → ${fmt(snap.last)} · ${unreal.toFixed(2)}%`,
+          brief.pressureLabel,
+        ].join('\n'),
+        dedupeKey: `paper:bookflip:${t.id}`,
+      })
+      continue
     }
 
     if (hitTp(t, snap) && !t.tpSent) {

@@ -137,6 +137,36 @@ interface Env {
 }
 
 const memoryJournal: BotJournalEntry[] = []
+
+function journalCacheRequest(): Request {
+  return new Request('https://enterprise-system-runtime.invalid/bot-journal')
+}
+
+async function readJournalCache(): Promise<BotJournalEntry[] | null> {
+  try {
+    const response = await caches.default.match(journalCacheRequest())
+    if (!response) return null
+    return (await response.json()) as BotJournalEntry[]
+  } catch {
+    return null
+  }
+}
+
+async function writeJournalCache(list: BotJournalEntry[]): Promise<void> {
+  try {
+    await caches.default.put(
+      journalCacheRequest(),
+      new Response(JSON.stringify(list), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      })
+    )
+  } catch {
+    // Warm-isolate memory remains as a fallback.
+  }
+}
 let memoryGates: BotAdaptiveGates | null = null
 
 function avg(nums: number[]): number {
@@ -165,6 +195,8 @@ function rMult(
 }
 
 async function listJournal(env: Env): Promise<BotJournalEntry[]> {
+  const cached = await readJournalCache()
+  if (cached) return cached
   if (!env.SUBSCRIBERS) return [...memoryJournal]
   const raw = await env.SUBSCRIBERS.get(JOURNAL_KEY)
   if (!raw) return [...memoryJournal]
@@ -177,15 +209,21 @@ async function listJournal(env: Env): Promise<BotJournalEntry[]> {
 
 async function saveJournal(
   env: Env,
-  list: BotJournalEntry[]
+  list: BotJournalEntry[],
+  checkpoint = false
 ): Promise<void> {
   const trimmed = list
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, MAX_ENTRIES)
   memoryJournal.length = 0
   memoryJournal.push(...trimmed)
-  if (!env.SUBSCRIBERS) return
-  await env.SUBSCRIBERS.put(JOURNAL_KEY, JSON.stringify(trimmed))
+  await writeJournalCache(trimmed)
+  if (!env.SUBSCRIBERS || !checkpoint) return
+  try {
+    await env.SUBSCRIBERS.put(JOURNAL_KEY, JSON.stringify(trimmed))
+  } catch {
+    // New signals continue through Telegram/cache while daily KV is exhausted.
+  }
 }
 
 export async function recordBotAlert(
@@ -198,19 +236,28 @@ export async function recordBotAlert(
   }
 ): Promise<BotJournalEntry | null> {
   const list = await listJournal(env)
-  if (list.some((e) => e.dedupeKey === input.dedupeKey && e.status === 'OPEN')) {
+  if (
+    list.some(
+      (e) =>
+        e.status === 'OPEN' &&
+        (e.dedupeKey === input.dedupeKey ||
+          (e.symbol === input.plan.symbol && e.side === input.plan.side))
+    )
+  ) {
     return null
   }
 
+  const now = Date.now()
+  const memeImpulse = input.alertType === 'MEME'
   const entry: BotJournalEntry = {
-    id: `bj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+    id: `bj_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
     symbol: input.plan.symbol,
     displayName: input.plan.symbol.replace('_USDT', '/USDT'),
     side: input.plan.side,
     alertType: input.alertType,
     setup: input.plan.setup,
     score: input.score,
-    entryPrice: input.plan.entryIdeal || input.plan.signalPrice,
+    entryPrice: input.plan.signalPrice || input.plan.entryIdeal,
     sl: input.plan.sl,
     tp: input.plan.tp,
     target1: input.plan.target1,
@@ -218,9 +265,10 @@ export async function recordBotAlert(
     invalidate: input.plan.invalidate,
     zoneLow: input.plan.zoneLow,
     zoneHigh: input.plan.zoneHigh,
-    filledAt: null,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + OPEN_TTL_MS,
+    // Memes enter at market immediately — no zone wait accounting.
+    filledAt: memeImpulse ? now : null,
+    createdAt: now,
+    expiresAt: now + (memeImpulse ? 90 * 60_000 : OPEN_TTL_MS),
     status: 'OPEN',
     resolvedAt: null,
     exitPrice: null,
@@ -233,7 +281,7 @@ export async function recordBotAlert(
   }
 
   list.unshift(entry)
-  await saveJournal(env, list)
+  await saveJournal(env, list, true)
   return entry
 }
 
@@ -489,7 +537,7 @@ export async function resolveBotJournal(
     }
   }
 
-  if (changed > 0) await saveJournal(env, list)
+  if (changed > 0) await saveJournal(env, list, outcomes.length > 0)
 
   // Refresh adaptive gates after resolves
   if (changed > 0) {
@@ -832,7 +880,11 @@ async function recomputeAndSaveGates(env: Env): Promise<BotAdaptiveGates> {
   const gates = deriveAdaptiveGates(analytics)
   memoryGates = gates
   if (env.SUBSCRIBERS) {
-    await env.SUBSCRIBERS.put(GATES_KEY, JSON.stringify(gates))
+    try {
+      await env.SUBSCRIBERS.put(GATES_KEY, JSON.stringify(gates))
+    } catch {
+      // Adaptive gates remain available in memory for this runtime.
+    }
   }
   return gates
 }

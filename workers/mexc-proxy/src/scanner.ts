@@ -38,8 +38,63 @@ import {
 } from './globalScanContext'
 import { readCandleTape, isImpulseLate } from './candleTape'
 import { assessMemeAntiManipulation } from './memeAntiManipulation'
+import {
+  readOrderBookEvent,
+  type OrderBookEvent,
+  type OrderBookSnapshot,
+} from './orderBookReader'
 
 const MEXC = 'https://contract.mexc.com'
+const ORDER_BOOK_STATE_KEY = 'scanner:meme_order_book_v1'
+
+interface OrderBookStateStore {
+  get(key: string): Promise<string | null>
+  put(key: string, value: string): Promise<unknown>
+}
+
+async function loadOrderBookState(
+  store?: OrderBookStateStore
+): Promise<Record<string, OrderBookSnapshot[]>> {
+  if (!store) return {}
+  try {
+    const raw = await store.get(ORDER_BOOK_STATE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<
+      string,
+      OrderBookSnapshot | OrderBookSnapshot[]
+    >
+    if (!parsed || typeof parsed !== 'object') return {}
+    return Object.fromEntries(
+      Object.entries(parsed).map(([symbol, value]) => [
+        symbol,
+        Array.isArray(value) ? value.slice(-3) : [value],
+      ])
+    )
+  } catch {
+    return {}
+  }
+}
+
+async function saveOrderBookState(
+  store: OrderBookStateStore | undefined,
+  state: Record<string, OrderBookSnapshot[]>
+): Promise<void> {
+  if (!store) return
+  const cutoff = Date.now() - 15 * 60_000
+  const fresh = Object.fromEntries(
+    Object.entries(state)
+      .filter(([, snapshots]) => (snapshots.at(-1)?.at ?? 0) >= cutoff)
+      .sort(
+        (a, b) => (b[1].at(-1)?.at ?? 0) - (a[1].at(-1)?.at ?? 0)
+      )
+      .slice(0, 24)
+  )
+  try {
+    await store.put(ORDER_BOOK_STATE_KEY, JSON.stringify(fresh))
+  } catch {
+    // Best effort. A missing write only delays the next event by one cycle.
+  }
+}
 
 /**
  * Liquidity floors — obscure / region-missing listings rarely sit in top volume.
@@ -163,14 +218,19 @@ type Candle = [number, number, number, number, number, number]
 type Side = 'LONG' | 'SHORT'
 
 async function mexcJson<T>(path: string): Promise<T | null> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5_000)
   try {
     const res = await fetch(`${MEXC}${path}`, {
       headers: { Accept: 'application/json', 'User-Agent': 'EnterpriseSystem/2.0' },
+      signal: controller.signal,
     })
     if (!res.ok) return null
     return (await res.json()) as T
   } catch {
     return null
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -621,6 +681,55 @@ function buildEntryPlan(
   const invalidate = signalPrice - chase
   const { sl, tp } = buildLevels('SHORT', entryIdeal, atr, style)
   return { signalPrice, entryIdeal, zoneLow, zoneHigh, invalidate, sl, tp }
+}
+
+/**
+ * Meme impulse plan: enter NOW at market. No TA pullback zone.
+ * SL/TP come from live book walls when available.
+ */
+function buildMemeImpulsePlan(
+  side: Side,
+  signalPrice: number,
+  orderFlow: OrderBookEvent
+): {
+  signalPrice: number
+  entryIdeal: number
+  zoneLow: number
+  zoneHigh: number
+  invalidate: number
+  sl: number
+  tp: number
+  target1?: number
+  target3?: number
+} {
+  const entryIdeal = signalPrice
+  const band = signalPrice * 0.0015
+  const fallbackSl =
+    side === 'LONG' ? signalPrice * 0.988 : signalPrice * 1.012
+  const fallbackTp =
+    side === 'LONG' ? signalPrice * 1.022 : signalPrice * 0.978
+  const fallbackTp1 =
+    side === 'LONG' ? signalPrice * 1.01 : signalPrice * 0.99
+  const sl = orderFlow.slPrice ?? fallbackSl
+  const tp = orderFlow.tpPrice ?? fallbackTp
+  const tp1 = orderFlow.tp1Price ?? fallbackTp1
+  // Soft chase cap — memes already enter at market; used only as hard skip.
+  const invalidate =
+    side === 'LONG' ? signalPrice * 1.035 : signalPrice * 0.965
+  return {
+    signalPrice,
+    entryIdeal,
+    zoneLow: entryIdeal - band,
+    zoneHigh: entryIdeal + band,
+    invalidate,
+    sl,
+    tp,
+    target1: tp1,
+    target3:
+      side === 'LONG'
+        ? Math.max(tp * 1.012, signalPrice * 1.035)
+        : Math.min(tp * 0.988, signalPrice * 0.965),
+  }
 }
 
 /** Price already left the limit zone → do not chase, wait pullback */
@@ -1127,7 +1236,8 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
  */
 export async function runMarketScan(
   gates?: BotAdaptiveGates | null,
-  mode: ScanMode = 'all'
+  mode: ScanMode = 'all',
+  orderBookStore?: OrderBookStateStore
 ): Promise<ScanAlert[]> {
   const [tradable, tickers] = await Promise.all([
     fetchTradableSymbols(),
@@ -1172,13 +1282,13 @@ export async function runMarketScan(
       if (!(price > 0) || price > 250) return false
       if (vol < MIN_MEME_QUOTE_VOL) return false
       // Need a real move — filter noise before spending book/toxicity
-      return chgAbs >= 6
+      return chgAbs >= 3
     })
     .sort(
       (a, b) =>
         Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
     )
-    .slice(0, 8)
+    .slice(0, 12)
 
   const movers = liquidUniverse
     .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
@@ -1197,11 +1307,53 @@ export async function runMarketScan(
   const alerts: ScanAlert[] = []
   const seen = new Set<string>()
   const memeDeepSymbols = new Set<string>()
+  const orderFlowBySymbol = new Map<string, OrderBookEvent>()
+
+  // MEME signals are born from a change in the book, not from a static OBI.
+  // One KV read/write preserves snapshots across isolated Worker invocations.
+  if (mode === 'meme') {
+    const orderBookState = await loadOrderBookState(orderBookStore)
+    const reads: Array<{
+      symbol: string
+      read: Awaited<ReturnType<typeof readOrderBookEvent>>
+    }> = []
+    // MEXC drops depth/deals responses when all symbols request three snapshots
+    // simultaneously. Two-symbol batches preserve complete books without
+    // turning the scan into a slow fully sequential loop.
+    for (let start = 0; start < memes.length; start += 2) {
+      const batch = await Promise.all(
+        memes.slice(start, start + 2).map(async (ticker, offset) => {
+          const index = start + offset
+          return {
+            symbol: ticker.symbol,
+            read: await readOrderBookEvent({
+              symbol: ticker.symbol,
+              previous: orderBookState[ticker.symbol]?.at(-1),
+              older: orderBookState[ticker.symbol]?.at(-2),
+              allowLiveSequence: index < 8,
+              mexcJson,
+            }),
+          }
+        })
+      )
+      reads.push(...batch)
+    }
+    for (const { symbol, read } of reads) {
+      orderFlowBySymbol.set(symbol, read.event)
+      if (read.snapshot) {
+        orderBookState[symbol] = [
+          ...(orderBookState[symbol] ?? []),
+          read.snapshot,
+        ].slice(-3)
+      }
+    }
+    await saveOrderBookState(orderBookStore, orderBookState)
+  }
 
   // BTC HTF once per cycle — global picture for INTRA / SWING
   const [btc1h, btc4h, btc1d] =
     mode === 'meme'
-      ? [await fetchKlines('BTC_USDT', 'Min60', 48), [], []]
+      ? [[], [], []]
       : await Promise.all([
           fetchKlines('BTC_USDT', 'Min60', 48),
           fetchKlines('BTC_USDT', 'Hour4', 90),
@@ -1209,7 +1361,21 @@ export async function runMarketScan(
         ])
   const btcRegime: MarketRegime = detectMarketRegime(btc1h)
   const winCal: WinPctCalibrationEntry[] = gates?.winPctBySetup ?? []
-  const marketCtx = await getMarketContext()
+  const marketCtx: MarketContext =
+    mode === 'meme'
+      ? {
+          fearGreed: null,
+          fearGreedLabel: 'n/a',
+          newsScore: 0,
+          newsLabel: 'NEUTRAL',
+          newsHeadlines: [],
+          coinNews: {},
+          btcDominance: null,
+          btcDomDelta24h: null,
+          fetchedAt: Date.now(),
+          lines: ['Meme order-flow: внешний контекст не блокирует сигнал'],
+        }
+      : await getMarketContext()
   const globalCtx: GlobalScanContext = buildGlobalScanContext({
     btc1h,
     btc4h,
@@ -1222,6 +1388,10 @@ export async function runMarketScan(
     seen.add(t.symbol)
     // Sniper must be in liquid universe; memes may come from hotter mover list
     if (!preferMeme && !liquidSet.has(t.symbol)) return
+    const orderFlow = preferMeme ? orderFlowBySymbol.get(t.symbol) : undefined
+    // A meme trade is not created from RSI, a 24h move, or one static wall.
+    // Wait until a wall removal is confirmed by tape plus book/price response.
+    if (preferMeme && (!orderFlow?.ready || !orderFlow.side)) return
 
     const isMajor = BLUE_CHIPS.has(t.symbol)
     const isBtc = t.symbol === 'BTC_USDT'
@@ -1276,8 +1446,8 @@ export async function runMarketScan(
     // Load depth only when this symbol actually has a trigger. All meme movers
     // still get the cheap candle scan; only the hottest three candidates spend
     // the deep-book request budget before Telegram delivery.
-    let bookImb: number | null = null
-    let bookLoaded = false
+    let bookImb: number | null = orderFlow?.obi ?? null
+    let bookLoaded = Boolean(orderFlow)
     const rs = isBtc || preferMeme ? null : relStrengthVsBtc(c1h, btc1h)
     const liqMap = preferMeme
       ? {
@@ -1335,6 +1505,8 @@ export async function runMarketScan(
       const ctx = resolveTrendContext(side, bias15, bias1h, bias4h)
       const align = alignOverride ?? ctx.align
       const composite = `${setup}_${style}_${align === 'WITH_TREND' ? 'TREND' : 'COUNTER'}`
+      const bookPrimary =
+        type === 'MEME' && orderFlow?.ready === true && orderFlow.side === side
 
       // Counter-trend needs a stronger raw score before win% mapping
       let scoreAdj =
@@ -1343,20 +1515,22 @@ export async function runMarketScan(
         scoreAdj = Math.min(99, scoreAdj + 4) // HTF trend + LTF pullback
       }
 
-      const regimeGate = regimeAllows(
-        btcRegime,
-        style,
-        align,
-        scoreAdj,
-        type === 'MEME' || isMajor
-      )
-      if (!regimeGate.ok) return
-      scoreAdj = regimeGate.scoreAdj
+      if (!bookPrimary) {
+        const regimeGate = regimeAllows(
+          btcRegime,
+          style,
+          align,
+          scoreAdj,
+          type === 'MEME' || isMajor
+        )
+        if (!regimeGate.ok) return
+        scoreAdj = regimeGate.scoreAdj
+      }
 
       // Global BTC picture — hard gate for SNIPER INTRA/SWING only.
       // MEME (pump/squeeze/ignition) is LTF impulse: soft score nudge, never silence.
       let globalAlignScore = 0
-      if (type === 'MEME') {
+      if (type === 'MEME' && !bookPrimary) {
         const soft = globalAllowsStyle({
           g: globalCtx,
           side,
@@ -1386,16 +1560,20 @@ export async function runMarketScan(
         globalAlignScore = globalGate.alignScore
       }
 
-      const gated = applyBookAndStrength(
-        side,
-        scoreAdj,
-        bookImb,
-        rs,
-        isBtc,
-        type === 'MEME' ? 'meme' : isMajor ? 'major' : 'hard'
-      )
-      if (!gated) return
-      scoreAdj = gated.score
+      let bookGateNote = 'Стакан: подтверждён live order-flow'
+      if (!bookPrimary) {
+        const gated = applyBookAndStrength(
+          side,
+          scoreAdj,
+          bookImb,
+          rs,
+          isBtc,
+          type === 'MEME' ? 'meme' : isMajor ? 'major' : 'hard'
+        )
+        if (!gated) return
+        scoreAdj = gated.score
+        bookGateNote = gated.note
+      }
 
       // Spoof / iceberg — sniper hard; meme soft-kill on toxic, always assess
       let tox: Awaited<ReturnType<typeof assessBookToxicity>> = {
@@ -1404,7 +1582,14 @@ export async function runMarketScan(
         notes: [],
         persistentBook: 'UNKNOWN',
       }
-      {
+      if (bookPrimary && orderFlow) {
+        tox = {
+          toxic: false,
+          scorePenalty: 0,
+          notes: orderFlow.notes,
+          persistentBook: 'ALIGNED',
+        }
+      } else {
         let cached = toxCache.get(side)
         if (!cached) {
           cached = await assessBookToxicity({
@@ -1432,7 +1617,7 @@ export async function runMarketScan(
 
       const tape = readCandleTape(candles, side)
       const antiManip =
-        type === 'MEME'
+        type === 'MEME' && !bookPrimary
           ? assessMemeAntiManipulation({
               side,
               sessionChangePct: chg,
@@ -1450,9 +1635,11 @@ export async function runMarketScan(
       }
 
       // ── Zones + tape ──────────────────────────────────────────────
-      const smart = findSmartZone(side, price, liqMap, atr, {
-        relaxed: isMajor || type === 'MEME',
-      })
+      const smart = bookPrimary
+        ? null
+        : findSmartZone(side, price, liqMap, atr, {
+            relaxed: isMajor || type === 'MEME',
+          })
       const waitingPullback =
         smart != null &&
         (smart.phase === 'FAR' ||
@@ -1460,15 +1647,17 @@ export async function runMarketScan(
           isPriceChased(side, price, smart.zoneLow, smart.zoneHigh))
 
       if (type === 'MEME') {
-        if (isImpulseLate(candles, side, 6.5)) return
+        if (!bookPrimary && isImpulseLate(candles, side, 6.5)) return
         // Need candle confirm OR strong book alignment
         const bookAligned =
           bookImb != null &&
           ((side === 'LONG' && bookImb >= 15) ||
             (side === 'SHORT' && bookImb <= -15))
-        if (!tape.ok && !bookAligned) return
-        if (!tape.ok) scoreAdj = Math.max(0, scoreAdj - 6)
-        else scoreAdj = Math.min(99, Math.max(0, scoreAdj + tape.scoreAdj))
+        if (!bookPrimary && !tape.ok && !bookAligned) return
+        if (!bookPrimary) {
+          if (!tape.ok) scoreAdj = Math.max(0, scoreAdj - 6)
+          else scoreAdj = Math.min(99, Math.max(0, scoreAdj + tape.scoreAdj))
+        }
       } else {
         const lateThr = isMajor ? 3.2 : 2.4
         if (!waitingPullback) {
@@ -1648,9 +1837,13 @@ export async function runMarketScan(
         return
       }
 
-      const atrPlan = buildEntryPlan(side, price, atr, style)
+      // MEME = pure order-flow impulse. Never wait a TA pullback zone.
+      const atrPlan =
+        bookPrimary && orderFlow
+          ? buildMemeImpulsePlan(side, price, orderFlow)
+          : buildEntryPlan(side, price, atr, style)
       const memeTargets =
-        type === 'MEME' && !smart
+        type === 'MEME' && !bookPrimary && !smart
           ? buildMemeTargetPlan(
               side,
               atrPlan.entryIdeal,
@@ -1660,37 +1853,47 @@ export async function runMarketScan(
               style
             )
           : null
-      const plan = smart
-        ? {
-            signalPrice: price,
-            entryIdeal: smart.limitEntry,
-            zoneLow: smart.zoneLow,
-            zoneHigh: smart.zoneHigh,
-            invalidate: smart.invalidate,
-            sl: smart.invalidate,
-            tp: smart.target,
-          }
-        : memeTargets
+      const plan = bookPrimary
+        ? atrPlan
+        : smart
           ? {
-              ...atrPlan,
-              tp: memeTargets.tp2,
-              target1: memeTargets.tp1,
-              target3: memeTargets.tp3,
+              signalPrice: price,
+              entryIdeal: smart.limitEntry,
+              zoneLow: smart.zoneLow,
+              zoneHigh: smart.zoneHigh,
+              invalidate: smart.invalidate,
+              sl: smart.invalidate,
+              tp: smart.target,
             }
-          : atrPlan
+          : memeTargets
+            ? {
+                ...atrPlan,
+                tp: memeTargets.tp2,
+                target1: memeTargets.tp1,
+                target3: memeTargets.tp3,
+              }
+            : atrPlan
       const chased =
         type === 'MEME'
           ? false
           : isPriceChased(side, price, plan.zoneLow, plan.zoneHigh)
       const watchOnly = false
-      const targetLines = memeTargets
+      const targetLines = bookPrimary && orderFlow
         ? [
-            `TP1 35%: ${fmt(memeTargets.tp1)} (${pct(plan.entryIdeal, memeTargets.tp1)}) · ${memeTargets.source1}`,
-            `TP2 45%: ${fmt(memeTargets.tp2)} (${pct(plan.entryIdeal, memeTargets.tp2)}) · ${memeTargets.source2}`,
-            `TP3 runner 20%: ${fmt(memeTargets.tp3)} (${pct(plan.entryIdeal, memeTargets.tp3)}) · ${memeTargets.source3}`,
-            `Держать до TP2, пока OBI/лента за ${side}; после TP1 стоп → BE.`,
+            `ВХОД: РЫНОК сейчас @ ${fmt(plan.entryIdeal)} — без ожидания зоны`,
+            `SL стакан: ${fmt(plan.sl)} (${pct(plan.entryIdeal, plan.sl)})`,
+            `TP1 стена: ${fmt(('target1' in plan && plan.target1) || plan.tp)} (${pct(plan.entryIdeal, ('target1' in plan && plan.target1) || plan.tp)})`,
+            `TP2 стена: ${fmt(plan.tp)} (${pct(plan.entryIdeal, plan.tp)})`,
+            `Выход раньше, если OBI/поток развернутся против ${side}.`,
           ]
-        : undefined
+        : memeTargets
+          ? [
+              `TP1 35%: ${fmt(memeTargets.tp1)} (${pct(plan.entryIdeal, memeTargets.tp1)}) · ${memeTargets.source1}`,
+              `TP2 45%: ${fmt(memeTargets.tp2)} (${pct(plan.entryIdeal, memeTargets.tp2)}) · ${memeTargets.source2}`,
+              `TP3 runner 20%: ${fmt(memeTargets.tp3)} (${pct(plan.entryIdeal, memeTargets.tp3)}) · ${memeTargets.source3}`,
+              `Держать до TP2, пока OBI/лента за ${side}; после TP1 стоп → BE.`,
+            ]
+          : undefined
 
       const obiStr =
         bookImb == null
@@ -1712,7 +1915,13 @@ export async function runMarketScan(
             ...conf.lines,
             `Цель полёта: ${smart.targetLabel}`,
           ]
-        : [
+        : bookPrimary && orderFlow
+          ? [
+              `Стратегия MEME ORDER-FLOW · ${orderFlow.kind}${orderFlow.trap ? ' · TRAP' : ''}`,
+              ...orderFlow.notes,
+              `Не жду TA-зону — вход по рынку на импульсе/ловушке.`,
+            ]
+          : [
             '⚠️ Нет HTF SSL/BSL 4H+ — только meme/ATR fallback',
             `ScoreCard ${scoreCard.grade}: ${scoreCard.total}/${scoreCard.max}`,
             ...conf.lines,
@@ -1742,7 +1951,7 @@ export async function runMarketScan(
         `OBI: ${obiStr} · RS: ${rsStr}`,
         `Режим BTC 1H: ${btcRegime} · 4H: ${globalCtx.regime4h}`,
         ...marketCtx.lines.filter((l) => !globalCtx.lines.includes(l)),
-        gated.note,
+        bookGateNote,
         `Тренд: глобальный ${ctx.global} · локальный ${ctx.local}${
           ctx.pullback ? ' · откат в тренд' : ''
         }`,
@@ -1796,13 +2005,13 @@ export async function runMarketScan(
         align,
         globalAlignScore,
         watchOnly,
-        // MEME always gets server follow-up watch (стакан/реакция после сигнала)
         needsPullbackWatch:
-          type === 'MEME' ||
-          watchOnly ||
-          chased ||
-          smart?.phase === 'FAR' ||
-          smart?.phase === 'APPROACH',
+          !bookPrimary &&
+          (type === 'MEME' ||
+            watchOnly ||
+            chased ||
+            smart?.phase === 'FAR' ||
+            smart?.phase === 'APPROACH'),
         tradePlan: {
           side,
           symbol: t.symbol,
@@ -1823,6 +2032,48 @@ export async function runMarketScan(
           zonePhase: smart?.phase,
         },
       })
+    }
+
+    // ── MEME: pure order-flow / trap-flip — never TA zones ──
+    if (preferMeme) {
+      if (!orderFlow?.ready || !orderFlow.side || orderFlow.confidence < 72) {
+        return
+      }
+      const side = orderFlow.side
+      const wallSide = side === 'LONG' ? 'ASK' : 'BID'
+      const isTrap = orderFlow.trap || orderFlow.kind.startsWith('TRAP_')
+      const isRemoval = orderFlow.kind.endsWith('_REMOVED')
+      const isWallPressure =
+        orderFlow.kind.includes('_WALL_') && !isRemoval && !isTrap
+      const setup = isTrap
+        ? 'TRAP_FLIP'
+        : isRemoval
+          ? 'BOOK_RELEASE'
+          : isWallPressure
+            ? 'BOOK_PRESSURE'
+            : 'ORDER_FLOW'
+      await push(
+        side,
+        setup,
+        orderFlow.confidence,
+        isTrap
+          ? `Ловушка стакана: ${wallSide}-стена снята без удержания — переворот в ${side}. Поток ${orderFlow.flowSharePct.toFixed(0)}%. Вход по рынку.`
+          : isRemoval
+            ? `${wallSide}-стена снята ${orderFlow.wallDropPct.toFixed(0)}% — вакуум. Поток за ${side} ${orderFlow.flowSharePct.toFixed(0)}%. Вход по рынку.`
+            : isWallPressure
+              ? `Давление стены + поток ${orderFlow.flowSharePct.toFixed(0)}% за ${side}. Вход по рынку.`
+              : `OBI/поток ${orderFlow.flowSharePct.toFixed(0)}% за ${side}. Вход по рынку, без TA-зоны.`,
+        [
+          '#MEME #ORDERFLOW',
+          isTrap ? '#TRAP' : '#IMPULSE',
+          ...orderFlow.notes,
+        ],
+        'MEME',
+        `cron:${setup.toLowerCase()}:${t.symbol}:${side}:${Math.round((orderFlow.wallPrice ?? price) * 1e6)}`,
+        'SCALP',
+        'WITH_TREND'
+      )
+      return
     }
 
     // ── SHORT SQUEEZE → LONG (MEME / COUNTER) ──────────────────────

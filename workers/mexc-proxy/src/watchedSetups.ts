@@ -1168,8 +1168,20 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   const next: WatchedSetupRecord[] = []
   const snapshots = new Map<string, WatchEvalSnapshot>()
 
-  const active = list.filter((w) => w.expiresAt > now)
+  // Legacy meme watches duplicated paper/order-flow monitoring and consumed
+  // six market requests per symbol. v10 tracks memes through persistent book
+  // snapshots, so remove those records silently instead of sending stale
+  // cancellation spam.
+  const active = list.filter(
+    (w) => w.expiresAt > now && !w.setup.title.startsWith('MEME follow')
+  )
   const expired = list.filter((w) => w.expiresAt <= now)
+  if (active.length === 0) {
+    // Avoid burning a KV write every two minutes when there is nothing to
+    // monitor. Save only once when stale records actually need pruning.
+    if (list.length > 0) await saveWatches(env, [])
+    return []
+  }
 
   const bySymbol = new Map<string, WatchedSetupRecord[]>()
   for (const w of active) {
