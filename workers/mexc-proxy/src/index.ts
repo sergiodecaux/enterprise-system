@@ -733,6 +733,37 @@ async function runCronScan(env: Env): Promise<{
     seenDedup.add(a.dedupeKey)
     allAlerts.push(a)
 
+    // MEME: silent until real market entry. No "probable" alert, no watch,
+    // no journal ghost that later becomes INVALIDATED / NO ENTRY spam.
+    if (a.type === 'MEME') {
+      if (!a.tradePlan) return
+      const paper = await createPaperTradeFromPlan(env, {
+        ...a.tradePlan,
+        alertType: 'MEME',
+      })
+      if (!paper.created || !paper.comment) {
+        skipped++
+        return
+      }
+      const logged = await recordBotAlert(env, {
+        alertType: 'MEME',
+        score: a.score,
+        dedupeKey: a.dedupeKey,
+        plan: a.tradePlan,
+      })
+      if (logged) journalLogged++
+      const cr = await broadcastAlert(env, {
+        type: 'SYSTEM',
+        title: paper.comment.title,
+        text: paper.comment.text,
+        dedupeKey: paper.comment.dedupeKey,
+      })
+      paperComments += cr.sent
+      sent += cr.sent
+      failed += cr.failed
+      return
+    }
+
     // Chased SNIPER: silent watch handoff only — no entry spam.
     // Broadcast alerts get a watch only after a message was actually delivered.
     let shouldCreateWatch = a.watchOnly
@@ -776,8 +807,7 @@ async function runCronScan(env: Env): Promise<{
       }
     }
 
-    // Follow delivered MEME alerts and intentional silent pullback watches.
-    // Do not create duplicate watches when Telegram alert dedupe skipped a scan.
+    // Silent pullback watches for sniper only (MEME returns above).
     if (
       shouldCreateWatch &&
       a.tradePlan &&
@@ -788,13 +818,12 @@ async function runCronScan(env: Env): Promise<{
         const subs = await listSubscribers(env)
         for (const sub of subs) {
           if (a.type === 'SNIPER' && sub.sniper === false) continue
-          if (a.type === 'MEME' && sub.meme === false) continue
           await createWatchesBatch(env, {
             chatId: sub.chatId,
             symbol: a.tradePlan.symbol,
             internalSymbol: a.tradePlan.symbol,
             setups: [setup],
-            ttlHours: a.type === 'MEME' ? 6 : 12,
+            ttlHours: 12,
           })
         }
       } catch (err) {
@@ -809,6 +838,8 @@ async function runCronScan(env: Env): Promise<{
     const resolution = await resolveBotJournal(env)
     journalResolved = resolution.changed
     for (const outcome of resolution.outcomes) {
+      // Never announce "probable" no-entries — chat only cares about real fills.
+      if (outcome.status === 'INVALIDATED') continue
       const icon =
         outcome.status === 'WIN'
           ? '🎯'
@@ -816,19 +847,14 @@ async function runCronScan(env: Env): Promise<{
             ? '🛑'
             : outcome.status === 'BE'
               ? '🛡'
-              : outcome.status === 'INVALIDATED'
-                ? '⏭'
-                : '⏱'
-      const statusLabel =
-        outcome.status === 'INVALIDATED' ? 'NO ENTRY' : outcome.status
+              : '⏱'
+      const statusLabel = outcome.status
       const r = await broadcastAlert(env, {
         type: 'SYSTEM',
         title: `${icon} Результат ${outcome.displayName} · ${statusLabel}`,
         text: [
           `${outcome.side} · ${outcome.setup}`,
-          outcome.status === 'INVALIDATED'
-            ? 'Лимитную зону не дали или цена ушла дальше — сделка не открывалась.'
-            : `Вход ${outcome.entryPrice} → выход ${outcome.exitPrice ?? '—'}`,
+          `Вход ${outcome.entryPrice} → выход ${outcome.exitPrice ?? '—'}`,
           `Результат: ${statusLabel}${
             outcome.pnlPercent != null
               ? ` · ${outcome.pnlPercent >= 0 ? '+' : ''}${outcome.pnlPercent.toFixed(2)}%`

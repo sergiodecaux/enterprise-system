@@ -2059,15 +2059,9 @@ export async function runMarketScan(
       const isRemoval = orderFlow.kind.endsWith('_REMOVED')
       const isWallPressure =
         orderFlow.kind.includes('_WALL_') && !isRemoval && !isTrap
-      // TRAP_FLIP was 6 LOSS / 3 WIN — only allow high-conviction traps.
-      if (
-        isTrap &&
-        (orderFlow.flowSharePct < 64 ||
-          orderFlow.wallMultiple < 4.5 ||
-          Math.abs(orderFlow.priceMoveBps) < 5)
-      ) {
-        return
-      }
+      // TRAP_FLIP: 3 WIN / 8 LOSS, 14/17 all-meme losses never went green.
+      // Spoof vanish ≠ impulse — skip traps entirely; keep vacuum/pressure/OBI.
+      if (isTrap) return
       // Soft OBI-only entries need strong building pressure.
       if (
         !isTrap &&

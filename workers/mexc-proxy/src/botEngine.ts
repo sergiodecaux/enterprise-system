@@ -1,7 +1,7 @@
 /** Bumped on each user-visible bot engine change — shown in /status /scan /alerts */
 export const BOT_ENGINE = {
-  id: 'meme-selective-v18',
-  label: 'Selective pre-impulse meme order-flow',
+  id: 'meme-entry-only-v19',
+  label: 'Meme chat = filled entries only',
   deployedNote:
-    'Меньше сделок: только нарастающий OBI / сильный vacuum / редкий trap. SL ≥1.4%, RR≥1.5, max 1 мем/цикл и 2 активных, cooldown 45м на монету.',
+    'В чат только факт входа/сопровождение/результат. Без вероятных алертов и NO ENTRY. Trap-flip выключен (3W/8L). BOOK_RELEASE / pressure / building OBI.',
 } as const
