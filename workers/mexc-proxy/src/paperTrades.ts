@@ -4,6 +4,17 @@
  * Comments cover pressure / structure / updated win probability — not fluff.
  */
 
+import {
+  applyPredatorOutcome,
+  loadPredatorRisk,
+  savePredatorRisk,
+} from './liquidationEcho'
+import {
+  applyVaneOutcome,
+  loadVaneRisk,
+  saveVaneRisk,
+} from './vane/portfolioRisk'
+
 const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 5
 /** Cap concurrent meme impulses — journal showed too many open at once */
@@ -13,8 +24,11 @@ const WAITING_TTL_MS = 45 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
 /** Memes are short impulse trades — don't hold for hours */
 const OPEN_TTL_MEME_MS = 75 * 60_000
-/** Meme setups — comment at least every cron cycle (~2 min) */
-const PULSE_MEME_MS = 2 * 60_000
+/** Predator echo: impulse dies in seconds */
+const OPEN_TTL_ECHO_MS = 90_000
+const ECHO_TIME_STOP_MS = 12_000
+/** Meme setups — less chat noise; stats still resolve every cron */
+const PULSE_MEME_MS = 6 * 60_000
 /** Regular alts / sniper — every ~5 min */
 const PULSE_ALT_MS = 5 * 60_000
 const MEXC = 'https://contract.mexc.com'
@@ -35,6 +49,10 @@ export interface TradePlan {
   sl: number
   tp: number
   alertType: AlertKind
+  /** Vane path HOLD | FLIP */
+  vanePath?: 'HOLD' | 'FLIP'
+  vaneTier?: 'TIER1' | 'TIER2'
+  vaneScore?: number
 }
 
 export interface PaperTrade {
@@ -69,6 +87,9 @@ export interface PaperTrade {
   waitingAnnounced: boolean
   /** Last published success probability 0–100 */
   lastWinPct: number | null
+  vanePath?: 'HOLD' | 'FLIP'
+  vaneTier?: 'TIER1' | 'TIER2'
+  vaneScore?: number
 }
 
 export interface PaperComment {
@@ -76,6 +97,8 @@ export interface PaperComment {
   text: string
   dedupeKey: string
   alertType: AlertKind | 'SYSTEM'
+  /** Telegram bot channel: meme Predator bot vs sniper/alts bot */
+  route?: 'meme' | 'sniper'
 }
 
 interface PaperEnv {
@@ -627,6 +650,7 @@ function buildCommentary(opts: {
 
   return {
     alertType: 'SYSTEM',
+    route: t.alertType === 'SNIPER' ? 'sniper' : 'meme',
     title,
     text: lines.join('\n'),
     dedupeKey: `paper:pulse:${t.id}:${Math.floor(Date.now() / pulseMs(t))}`,
@@ -731,7 +755,15 @@ export async function createPaperTradeFromPlan(
       : null,
     createdAt: now,
     openedAt: isMeme ? now : null,
-    expiresAt: now + (isMeme ? OPEN_TTL_MEME_MS : WAITING_TTL_MS),
+    expiresAt:
+      now +
+      (plan.setup === 'LIQUIDATION_ECHO'
+        ? OPEN_TTL_ECHO_MS
+        : isMeme
+          ? OPEN_TTL_MEME_MS
+          : plan.vanePath === 'FLIP'
+            ? 75 * 60_000
+            : WAITING_TTL_MS),
     closedAt: null,
     lastPulseAt: now,
     closeReason: null,
@@ -740,6 +772,9 @@ export async function createPaperTradeFromPlan(
     trailMovedSent: false,
     waitingAnnounced: true,
     lastWinPct: null,
+    vanePath: plan.vanePath,
+    vaneTier: plan.vaneTier,
+    vaneScore: plan.vaneScore,
   }
 
   pruned.push(trade)
@@ -747,31 +782,48 @@ export async function createPaperTradeFromPlan(
 
   const icon = plan.side === 'LONG' ? '🟢' : '🔴'
   const cadence = isMeme ? 'каждые ~2 мин' : 'каждые ~5 мин'
+  const isEcho = plan.setup === 'LIQUIDATION_ECHO'
+  const isVane = plan.setup.startsWith('VANE_')
+  const route: 'meme' | 'sniper' = isMeme ? 'meme' : 'sniper'
+  const flipTtl =
+    plan.vanePath === 'FLIP' ? 'TTL ретеста ~60–75 мин' : `Сопровождение ${cadence}`
   const comment: PaperComment = isMeme
     ? {
         alertType: 'SYSTEM',
-        title: `${icon} MEME ВХОД ${plan.side} ${nameOf(plan.symbol)}`,
-        text: [
-          `Вошёл по рынку сразу — мемы не ждут TA-зону.`,
-          `Сетап: ${plan.setup}`,
-          `Вход: ${fmt(fill!)} · SL стакан ${fmt(plan.sl)} · TP стена ${fmt(plan.tp)}`,
-          `Выход: TP / трейл ~1.2% / разворот OBI+потока.`,
-          `Сопровождение ${cadence}.`,
-        ].join('\n'),
+        route,
+        title: `${icon} ${isEcho ? 'PREDATOR' : 'MEME'} ВХОД ${plan.side} ${nameOf(plan.symbol)}`,
+        text: isEcho
+          ? [
+              `Liquidation Echo · Post-Only fill (maker).`,
+              `Вход ${fmt(fill!)} · TP +1.1% ${fmt(plan.tp)} · SL −0.7% ${fmt(plan.sl)}`,
+              `Time-stop 12с → выход лимитом в спред (без market).`,
+              `RR ~1:1.6 · unit 10% equity.`,
+            ].join('\n')
+          : [
+              `Limit-chase (post-only).`,
+              `Сетап: ${plan.setup}`,
+              `Лимит: ${fmt(fill!)} · SL ${fmt(plan.sl)} · TP ${fmt(plan.tp)}`,
+              `Сопровождение ${cadence}.`,
+            ].join('\n'),
         dedupeKey: `paper:fill:${trade.id}`,
       }
     : {
         alertType: 'SYSTEM',
-        title: `${icon} Кандидат ${nameOf(plan.symbol)} · ВХОДА НЕТ`,
+        route,
+        title: isVane
+          ? `${icon} VANE ${plan.vanePath ?? 'HOLD'} ${plan.side} ${nameOf(plan.symbol)}`
+          : `${icon} ЗОНА ${nameOf(plan.symbol)} · жду реакцию`,
         text: [
-          `Сейчас позиция НЕ открыта. Бот только поставил сценарий под наблюдение.`,
+          isVane
+            ? `Флюгер: ${plan.vanePath ?? 'HOLD'} · ${plan.vaneTier ?? 'TIER2'} · score ${plan.vaneScore ?? '—'}/100`
+            : `Сценарий под наблюдение (как в Mini App): зона → подтверждение → вход.`,
           `Сторона: ${plan.side} · ${plan.setup}`,
           `Зона лимитки: ${fmt(plan.zoneLow)} – ${fmt(plan.zoneHigh)}`,
           `Ориентир: ${fmt(plan.entryIdeal)} · SL ${fmt(plan.sl)} · TP ${fmt(plan.tp)}`,
           plan.side === 'LONG'
             ? `Инвалидация выше ${fmt(plan.invalidate)} — не догоняю.`
             : `Инвалидация ниже ${fmt(plan.invalidate)} — не догоняю.`,
-          `После касания нужен повторный сигнал свечи, агрессивных сделок и OBI (${cadence}).`,
+          `Жду касание + реакцию стакана/CVD (${flipTtl}).`,
         ].join('\n'),
         dedupeKey: `paper:wait:${trade.id}`,
       }
@@ -798,6 +850,7 @@ function confirmsEntry(
   brief: MarketBrief
 ): boolean {
   if (!t.zoneTouchedAt) return false
+  if (t.setup.startsWith('VANE_')) return confirmsVaneEntry(t, snap, brief)
   const pressureAligned =
     t.side === 'LONG'
       ? brief.pressure === 'BUYERS'
@@ -814,6 +867,82 @@ function confirmsEntry(
       ? snap.last >= t.entryIdeal && snap.last <= t.zoneHigh * 1.003
       : snap.last <= t.entryIdeal && snap.last >= t.zoneLow * 0.997
   return reclaimed && pressureAligned && tapeAligned && bookAligned
+}
+
+/** Vane: stricter book + tape; FLIP needs reject from zone edge */
+function confirmsVaneEntry(
+  t: PaperTrade,
+  snap: TickerSnap,
+  brief: MarketBrief
+): boolean {
+  if (!t.zoneTouchedAt) return false
+  const bookAligned =
+    brief.bookImb != null &&
+    (t.side === 'LONG' ? brief.bookImb >= 12 : brief.bookImb <= -12)
+  const pressureAligned =
+    t.side === 'LONG'
+      ? brief.pressure === 'BUYERS'
+      : brief.pressure === 'SELLERS'
+  const tapeAligned =
+    t.side === 'LONG'
+      ? brief.move1mPct > 0.05 && brief.candleBias !== 'DOWN'
+      : brief.move1mPct < -0.05 && brief.candleBias !== 'UP'
+  const inBand =
+    snap.last >= t.zoneLow * 0.997 && snap.last <= t.zoneHigh * 1.003
+  if (t.vanePath === 'FLIP') {
+    // Retest fill: price back at broken zone, book against origin break
+    return inBand && bookAligned && pressureAligned && tapeAligned
+  }
+  const reclaimed =
+    t.side === 'LONG'
+      ? snap.last >= t.entryIdeal && snap.last <= t.zoneHigh * 1.003
+      : snap.last <= t.entryIdeal && snap.last >= t.zoneLow * 0.997
+  return reclaimed && bookAligned && pressureAligned && tapeAligned
+}
+
+async function updatePredatorRiskOnClose(
+  env: PaperEnv,
+  t: PaperTrade,
+  exitPrice: number
+): Promise<void> {
+  if (t.setup !== 'LIQUIDATION_ECHO' || t.fillPrice == null) return
+  const kv = env.SUBSCRIBERS
+    ? {
+        get: (key: string) => env.SUBSCRIBERS!.get(key),
+        put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+      }
+    : undefined
+  const risk = await loadPredatorRisk(kv)
+  const pricePnl = pnlPct(t.side, t.fillPrice, exitPrice)
+  const margin = Math.max(2, risk.equityUsd * 0.1)
+  // 10x: +1.1% price ≈ +11% on margin
+  const pnlUsd = margin * (pricePnl / 100) * 10
+  const next = applyPredatorOutcome(risk, pnlUsd, pricePnl < -0.15)
+  await savePredatorRisk(kv, next)
+}
+
+async function updateVaneRiskOnClose(
+  env: PaperEnv,
+  t: PaperTrade,
+  exitPrice: number
+): Promise<void> {
+  if (!t.setup.startsWith('VANE_') || t.fillPrice == null) return
+  const kv = env.SUBSCRIBERS
+    ? {
+        get: (key: string) => env.SUBSCRIBERS!.get(key),
+        put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+      }
+    : undefined
+  const risk = await loadVaneRisk(kv)
+  const pricePnl = pnlPct(t.side, t.fillPrice, exitPrice)
+  // Approximate margin impact at ~20x for day PnL tracking
+  const dayPnlPct = pricePnl * 0.2 * ((t.vaneTier === 'TIER1' ? 1.75 : 0.75) / 1.75)
+  const next = applyVaneOutcome(risk, {
+    symbol: t.symbol,
+    pnlPct: dayPnlPct,
+    isLoss: pricePnl < -0.1,
+  })
+  await saveVaneRisk(kv, next)
 }
 
 function hitTp(t: PaperTrade, snap: TickerSnap): boolean {
@@ -1062,7 +1191,8 @@ export async function monitorPaperTrades(
       })
     }
 
-    const beR = isMemeTrade(t) ? 0.4 : 0.6
+    // Memes: early BE at 0.4R was locking Q/SHIB/ON into ~0R exits before TP.
+    const beR = isMemeTrade(t) ? 1.0 : 0.6
     if (!t.beSent && favorR >= beR) {
       t.beSent = true
       t.sl = fill
@@ -1079,8 +1209,41 @@ export async function monitorPaperTrades(
       })
     }
 
+    // Predator: 12s time-stop → maker exit at Best Ask (long) / Best Bid (short).
+    if (
+      t.setup === 'LIQUIDATION_ECHO' &&
+      t.openedAt != null &&
+      now - t.openedAt >= ECHO_TIME_STOP_MS &&
+      !hitTp(t, snap) &&
+      !hitSl(t, snap)
+    ) {
+      const exit =
+        t.side === 'LONG'
+          ? snap.ask1 > 0
+            ? snap.ask1
+            : snap.last
+          : snap.bid1 > 0
+            ? snap.bid1
+            : snap.last
+      t.status = 'CLOSED'
+      t.closedAt = now
+      t.closeReason = 'time_stop'
+      dirty = true
+      await updatePredatorRiskOnClose(env, t, exit)
+      comments.push({
+        alertType: 'SYSTEM',
+        title: `⏱ PREDATOR time-stop ${nameOf(t.symbol)}`,
+        text: [
+          `12с без TP — maker exit в спред (не market).`,
+          `Вход ${fmt(fill)} → ${fmt(exit)} · ${pnlPct(t.side, fill, exit).toFixed(2)}%`,
+        ].join('\n'),
+        dedupeKey: `paper:timestop:${t.id}`,
+      })
+      continue
+    }
+
     const bookFlip = memeBookExit(t, brief)
-    if (bookFlip.exit) {
+    if (bookFlip.exit && t.setup !== 'LIQUIDATION_ECHO') {
       t.status = 'CLOSED'
       t.closedAt = now
       t.closeReason = 'trail'
@@ -1106,13 +1269,14 @@ export async function monitorPaperTrades(
       dirty = true
       const exit =
         t.side === 'LONG' ? Math.max(snap.last, t.tp) : Math.min(snap.last, t.tp)
+      await updatePredatorRiskOnClose(env, t, exit)
+      await updateVaneRiskOnClose(env, t, exit)
       comments.push({
         alertType: 'SYSTEM',
-        title: `🎯 Пример: цель ${nameOf(t.symbol)}`,
+        title: `🎯 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : t.setup.startsWith('VANE_') ? 'VANE' : 'Пример'}: цель ${nameOf(t.symbol)}`,
         text: [
-          `Учебная сделка закрыта по TP.`,
+          `Закрыто по TP (maker target).`,
           `Вход ${fmt(fill)} → ~${fmt(exit)} · ${pnlPct(t.side, fill, exit).toFixed(2)}%`,
-          `Финальная вероятность перед выходом была ${winPct}%`,
           brief.pressureLabel,
         ].join('\n'),
         dedupeKey: `paper:tp:${t.id}`,
@@ -1144,14 +1308,15 @@ export async function monitorPaperTrades(
       t.closedAt = now
       t.closeReason = 'sl'
       dirty = true
+      await updatePredatorRiskOnClose(env, t, t.sl)
+      await updateVaneRiskOnClose(env, t, t.sl)
       comments.push({
         alertType: 'SYSTEM',
-        title: `🛑 Пример: стоп ${nameOf(t.symbol)}`,
+        title: `🛑 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : 'Пример'}: стоп ${nameOf(t.symbol)}`,
         text: [
-          `Стоп по учебному плану. Без догона.`,
-          `Результат ${pnlPct(t.side, fill, t.sl).toFixed(2)}% · win% перед стопом ${winPct}%`,
+          `Стоп за минимумом волны (Last Price). Без догона.`,
+          `Результат ${pnlPct(t.side, fill, t.sl).toFixed(2)}%`,
           brief.pressureLabel,
-          `Риск отработан — жду следующий сетап.`,
         ].join('\n'),
         dedupeKey: `paper:sl:${t.id}`,
       })
@@ -1178,6 +1343,11 @@ export async function monitorPaperTrades(
   }
 
   if (dirty) await savePaperTrades(env, list)
+  for (const c of comments) {
+    if (c.route) continue
+    const trade = list.find((p) => c.dedupeKey.includes(p.id))
+    c.route = trade?.alertType === 'SNIPER' ? 'sniper' : 'meme'
+  }
   return comments
 }
 

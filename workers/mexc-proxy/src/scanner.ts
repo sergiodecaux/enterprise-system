@@ -43,6 +43,11 @@ import {
   type OrderBookEvent,
   type OrderBookSnapshot,
 } from './orderBookReader'
+import {
+  biasForSymbol,
+  resolveHotMemeWatchlist,
+  type HotMemeWatchlist,
+} from './hotMemeWatchlist'
 
 const MEXC = 'https://contract.mexc.com'
 const ORDER_BOOK_STATE_KEY = 'scanner:meme_order_book_v1'
@@ -158,6 +163,9 @@ export interface TradePlanPayload {
   zoneTouches?: number
   targetLabel?: string
   zonePhase?: 'FAR' | 'APPROACH' | 'TOUCH'
+  vanePath?: 'HOLD' | 'FLIP'
+  vaneTier?: 'TIER1' | 'TIER2'
+  vaneScore?: number
 }
 
 export interface ScanAlert {
@@ -684,8 +692,8 @@ function buildEntryPlan(
 }
 
 /**
- * Meme impulse plan: enter NOW at market. No TA pullback zone.
- * SL/TP come from live book walls when available.
+ * Meme plan: post-only limit at Best Bid/Ask (LIMIT_CHASE).
+ * Scalp checklist: SL ~0.8%, TP ~2% (before nearest density when book gives levels).
  */
 function buildMemeImpulsePlan(
   side: Side,
@@ -702,36 +710,44 @@ function buildMemeImpulsePlan(
   target1?: number
   target3?: number
 } {
-  const entryIdeal = signalPrice
-  const band = signalPrice * 0.0015
-  const minRisk = 0.014
-  const maxRisk = 0.028
-  let sl = orderFlow.slPrice ?? (side === 'LONG' ? signalPrice * 0.986 : signalPrice * 1.014)
-  let tp = orderFlow.tpPrice ?? (side === 'LONG' ? signalPrice * 1.028 : signalPrice * 0.972)
-  let tp1 = orderFlow.tp1Price ?? (side === 'LONG' ? signalPrice * 1.016 : signalPrice * 0.984)
-  // Clamp risk — micro-stops from near walls were the main LOSS pattern.
+  const entryIdeal =
+    orderFlow.wallPrice && orderFlow.wallPrice > 0
+      ? orderFlow.wallPrice
+      : signalPrice
+  const band = entryIdeal * 0.0008
+  const slFloor = 0.008
+  const slCeil = 0.012
+  const tpTarget = 0.02
+  let sl =
+    orderFlow.slPrice ??
+    (side === 'LONG' ? entryIdeal * (1 - slFloor) : entryIdeal * (1 + slFloor))
+  let tp =
+    orderFlow.tpPrice ??
+    (side === 'LONG' ? entryIdeal * (1 + tpTarget) : entryIdeal * (1 - tpTarget))
+  let tp1 =
+    orderFlow.tp1Price ??
+    (side === 'LONG' ? entryIdeal * 1.015 : entryIdeal * 0.985)
   const riskPct =
     side === 'LONG'
       ? (entryIdeal - sl) / entryIdeal
       : (sl - entryIdeal) / entryIdeal
-  if (!(riskPct >= minRisk) || riskPct > maxRisk) {
+  if (!(riskPct >= slFloor) || riskPct > slCeil) {
     sl =
       side === 'LONG'
-        ? entryIdeal * (1 - Math.min(maxRisk, Math.max(minRisk, riskPct || minRisk)))
-        : entryIdeal * (1 + Math.min(maxRisk, Math.max(minRisk, riskPct || minRisk)))
+        ? entryIdeal * (1 - Math.min(slCeil, Math.max(slFloor, riskPct || slFloor)))
+        : entryIdeal * (1 + Math.min(slCeil, Math.max(slFloor, riskPct || slFloor)))
   }
-  const risk = Math.abs(entryIdeal - sl)
   if (side === 'LONG') {
-    if (tp1 < entryIdeal + risk * 1.2) tp1 = entryIdeal + risk * 1.2
-    if (tp < entryIdeal + risk * 1.8) tp = entryIdeal + risk * 1.8
+    if (tp < entryIdeal * (1 + 0.015)) tp = entryIdeal * (1 + tpTarget)
+    if (tp1 < entryIdeal * 1.012) tp1 = entryIdeal * 1.015
   } else {
-    if (tp1 > entryIdeal - risk * 1.2) tp1 = entryIdeal - risk * 1.2
-    if (tp > entryIdeal - risk * 1.8) tp = entryIdeal - risk * 1.8
+    if (tp > entryIdeal * (1 - 0.015)) tp = entryIdeal * (1 - tpTarget)
+    if (tp1 > entryIdeal * 0.988) tp1 = entryIdeal * 0.985
   }
   const invalidate =
-    side === 'LONG' ? signalPrice * 1.035 : signalPrice * 0.965
+    side === 'LONG' ? entryIdeal * 1.012 : entryIdeal * 0.988
   return {
-    signalPrice,
+    signalPrice: entryIdeal,
     entryIdeal,
     zoneLow: entryIdeal - band,
     zoneHigh: entryIdeal + band,
@@ -740,9 +756,7 @@ function buildMemeImpulsePlan(
     tp,
     target1: tp1,
     target3:
-      side === 'LONG'
-        ? Math.max(tp * 1.01, signalPrice * 1.04)
-        : Math.min(tp * 0.99, signalPrice * 0.96),
+      side === 'LONG' ? entryIdeal * 1.03 : entryIdeal * 0.97,
   }
 }
 
@@ -1243,6 +1257,17 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
   return price > 0 && price <= 250 && vol >= MIN_MEME_QUOTE_VOL
 }
 
+export interface MarketScanOptions {
+  orderBookStore?: OrderBookStateStore
+  /** KV for sticky daily hot-meme watchlist */
+  watchlistKv?: {
+    get(key: string): Promise<string | null>
+    put(key: string, value: string): Promise<unknown>
+  }
+  /** Keep open paper meme symbols on the watchlist */
+  pinSymbols?: string[]
+}
+
 /**
  * Full 24/7 scan cycle. Returns alerts to broadcast.
  * @param gates optional adaptive filters from bot journal outcomes
@@ -1251,8 +1276,21 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
 export async function runMarketScan(
   gates?: BotAdaptiveGates | null,
   mode: ScanMode = 'all',
-  orderBookStore?: OrderBookStateStore
+  orderBookStoreOrOpts?: OrderBookStateStore | MarketScanOptions
 ): Promise<ScanAlert[]> {
+  const rawOpts = orderBookStoreOrOpts as MarketScanOptions | OrderBookStateStore | undefined
+  const opts: MarketScanOptions =
+    rawOpts &&
+    typeof rawOpts === 'object' &&
+    ('watchlistKv' in rawOpts ||
+      'pinSymbols' in rawOpts ||
+      'orderBookStore' in rawOpts)
+      ? (rawOpts as MarketScanOptions)
+      : rawOpts
+        ? { orderBookStore: rawOpts as OrderBookStateStore }
+        : {}
+  const orderBookStore = opts.orderBookStore
+
   const [tradable, tickers] = await Promise.all([
     fetchTradableSymbols(),
     fetchTickers(),
@@ -1282,27 +1320,42 @@ export async function runMarketScan(
 
   const liquidSet = new Set(liquidUniverse.map((t) => t.symbol))
 
-  // MEME universe: hottest 24h movers — NOT limited to top-volume slice only
-  // (pumps often sit outside top-200 by quote vol until after the move).
-  const memes = tickers
-    .filter((t) => {
-      if (!tradable.has(t.symbol)) return false
-      if (!t.symbol.endsWith('_USDT')) return false
-      if (t.symbol.includes('USDC')) return false
-      if (BLUE_CHIPS.has(t.symbol)) return false
-      const price = Number(t.lastPrice)
-      const vol = quoteVol(t)
-      const chgAbs = Math.abs(Number(t.riseFallRate) * 100)
-      if (!(price > 0) || price > 250) return false
-      if (vol < MIN_MEME_QUOTE_VOL) return false
-      // Need a real move — filter noise before spending book/toxicity
-      return chgAbs >= 3
+  // MEME: sticky daily watchlist of top pumps/dumps — deep-watch ONLY these.
+  let hotWatchlist: HotMemeWatchlist | null = null
+  let memes: TickerRow[] = []
+  if (mode === 'meme' || mode === 'all') {
+    hotWatchlist = await resolveHotMemeWatchlist(opts.watchlistKv, tickers, {
+      blueChips: BLUE_CHIPS,
+      tradable,
+      pinSymbols: opts.pinSymbols,
     })
-    .sort(
-      (a, b) =>
-        Math.abs(Number(b.riseFallRate)) - Math.abs(Number(a.riseFallRate))
-    )
-    .slice(0, 12)
+    const bySym = new Map(tickers.map((t) => [t.symbol, t]))
+    memes = hotWatchlist.entries
+      .map((e) => bySym.get(e.symbol))
+      .filter((t): t is TickerRow => Boolean(t))
+    // Fallback if watchlist empty (quiet session): ephemeral top movers.
+    if (!memes.length) {
+      memes = tickers
+        .filter((t) => {
+          if (!tradable.has(t.symbol)) return false
+          if (!t.symbol.endsWith('_USDT')) return false
+          if (t.symbol.includes('USDC')) return false
+          if (BLUE_CHIPS.has(t.symbol)) return false
+          const price = Number(t.lastPrice)
+          const vol = quoteVol(t)
+          const chgAbs = Math.abs(Number(t.riseFallRate) * 100)
+          if (!(price > 0) || price > 250) return false
+          if (vol < MIN_MEME_QUOTE_VOL) return false
+          return chgAbs >= 3
+        })
+        .sort(
+          (a, b) =>
+            Math.abs(Number(b.riseFallRate)) -
+            Math.abs(Number(a.riseFallRate))
+        )
+        .slice(0, 8)
+    }
+  }
 
   const movers = liquidUniverse
     .filter((t) => quoteVol(t) >= MIN_MOVER_QUOTE_VOL)
@@ -1336,15 +1389,23 @@ export async function runMarketScan(
     // turning the scan into a slow fully sequential loop.
     for (let start = 0; start < memes.length; start += 2) {
       const batch = await Promise.all(
-        memes.slice(start, start + 2).map(async (ticker, offset) => {
-          const index = start + offset
+        memes.slice(start, start + 2).map(async (ticker) => {
+          const bias = biasForSymbol(hotWatchlist, ticker.symbol)
+          const chg = Number(ticker.riseFallRate) * 100
+          const oiVel = observeMemeOi(
+            ticker.symbol,
+            Number(ticker.holdVol ?? 0)
+          )
           return {
             symbol: ticker.symbol,
             read: await readOrderBookEvent({
               symbol: ticker.symbol,
               previous: orderBookState[ticker.symbol]?.at(-1),
               older: orderBookState[ticker.symbol]?.at(-2),
-              allowLiveSequence: index < 8,
+              allowLiveSequence: true,
+              dayBias: bias,
+              chg24hPct: chg,
+              oiChangePct: oiVel,
               mexcJson,
             }),
           }
@@ -2048,56 +2109,72 @@ export async function runMarketScan(
       })
     }
 
-    // ── MEME: selective order-flow only — not every tick ──
+    // ── MEME: MM-manipulation join (absorption / spoof-sweep / cascade) ──
     if (preferMeme) {
-      if (!orderFlow?.ready || !orderFlow.side || orderFlow.confidence < 84) {
-        return
-      }
-      const side = orderFlow.side
-      const wallSide = side === 'LONG' ? 'ASK' : 'BID'
-      const isTrap = orderFlow.trap || orderFlow.kind.startsWith('TRAP_')
-      const isRemoval = orderFlow.kind.endsWith('_REMOVED')
-      const isWallPressure =
-        orderFlow.kind.includes('_WALL_') && !isRemoval && !isTrap
-      // TRAP_FLIP: 3 WIN / 8 LOSS, 14/17 all-meme losses never went green.
-      // Spoof vanish ≠ impulse — skip traps entirely; keep vacuum/pressure/OBI.
-      if (isTrap) return
-      // Soft OBI-only entries need strong building pressure.
       if (
-        !isTrap &&
-        !isRemoval &&
-        !isWallPressure &&
-        (orderFlow.flowSharePct < 62 || Math.abs(orderFlow.obi) < 22)
+        !orderFlow?.ready ||
+        !orderFlow.side ||
+        orderFlow.confidence < 84 ||
+        orderFlow.kind === 'WASH_SKIP'
       ) {
         return
       }
-      const setup = isTrap
-        ? 'TRAP_FLIP'
-        : isRemoval
+      const side = orderFlow.side
+      const dayBias = biasForSymbol(hotWatchlist, t.symbol)
+      // Cascade may fade an overextended pump; other patterns stay WITH day.
+      const isCascade = orderFlow.kind.startsWith('LIQ_CASCADE')
+      const isMm =
+        orderFlow.kind.startsWith('ABSORPTION') ||
+        orderFlow.kind.startsWith('SPOOF_SWEEP') ||
+        orderFlow.kind === 'CVD_DIVERGENCE' ||
+        isCascade
+      if (!isMm) {
+        // Classic release/pressure fallback — still WITH day bias.
+        if (dayBias === 'PUMP' && side !== 'LONG') return
+        if (dayBias === 'DUMP' && side !== 'SHORT') return
+        if (
+          orderFlow.flowSharePct < 66 ||
+          Math.abs(orderFlow.priceMoveBps) < 8
+        ) {
+          return
+        }
+      } else if (!isCascade) {
+        if (dayBias === 'PUMP' && side !== 'LONG') return
+        if (dayBias === 'DUMP' && side !== 'SHORT') return
+      }
+      const setup = orderFlow.mmPattern
+        ? orderFlow.mmPattern
+        : orderFlow.kind.endsWith('_REMOVED')
           ? 'BOOK_RELEASE'
-          : isWallPressure
+          : orderFlow.kind.includes('_WALL_')
             ? 'BOOK_PRESSURE'
             : 'ORDER_FLOW'
+      const dayTag =
+        dayBias === 'PUMP'
+          ? 'дневной памп'
+          : dayBias === 'DUMP'
+            ? 'дневной дамп'
+            : 'hotlist'
       await push(
         side,
         setup,
         orderFlow.confidence,
-        isTrap
-          ? `Ловушка стакана: ${wallSide}-стена снята без удержания — переворот в ${side}. Поток ${orderFlow.flowSharePct.toFixed(0)}%. Вход по рынку.`
-          : isRemoval
-            ? `${wallSide}-стена снята ${orderFlow.wallDropPct.toFixed(0)}% — вакуум. Поток за ${side} ${orderFlow.flowSharePct.toFixed(0)}%. Вход по рынку.`
-            : isWallPressure
-              ? `Давление стены + поток ${orderFlow.flowSharePct.toFixed(0)}% за ${side}. Вход по рынку.`
-              : `OBI/поток ${orderFlow.flowSharePct.toFixed(0)}% за ${side}. Вход по рынку, без TA-зоны.`,
         [
-          '#MEME #ORDERFLOW',
-          isTrap ? '#TRAP' : '#IMPULSE',
+          `${dayTag} · ${setup} · ${side}`,
+          `Limit-chase (post-only) @ ${orderFlow.wallPrice ?? price}`,
+          `SL~0.8% / TP~2% · join MM, не против стены`,
+          ...orderFlow.notes.slice(0, 3),
+        ].join('\n'),
+        [
+          '#MEME #MM',
+          dayBias === 'PUMP' ? '#PUMPDAY' : '#DUMPDAY',
+          `#${setup}`,
           ...orderFlow.notes,
         ],
         'MEME',
         `cron:${setup.toLowerCase()}:${t.symbol}:${side}:${Math.round((orderFlow.wallPrice ?? price) * 1e6)}`,
         'SCALP',
-        'WITH_TREND'
+        isCascade ? 'COUNTER' : 'WITH_TREND'
       )
       return
     }
@@ -2607,7 +2684,7 @@ export function rankAndSelectAlerts(alerts: ScanAlert[]): ScanAlert[] {
     ...pick(sniper, 'INTRADAY', 'COUNTER', 1),
     ...pick(sniper, 'SWING', 'WITH_TREND', 2),
     ...pick(sniper, 'SWING', 'COUNTER', 1),
-    // One meme max per cycle — overtrading traps filled the book with noise.
+    // High-WR meme focus: at most one best setup per cycle.
     ...meme
       .sort((a, b) => b.score - a.score || b.winPct - a.winPct)
       .slice(0, 1),

@@ -1,13 +1,11 @@
 /**
  * Dedicated meme order-flow reader.
  *
- * Memes are not waited in TA zones. Signals come from:
- * 1) real wall release (liquidity vacuum),
- * 2) spoof/trap wall pull + aggressive flow flip,
- * 3) persistent book pressure with tape confirmation.
- *
- * SL/TP are taken from the live book, not ATR/HTF geometry.
+ * Priority: MM manipulation patterns (absorption / spoof-sweep / cascade),
+ * then classic wall release / pressure. Entry is LIMIT_CHASE (maker), not market.
  */
+
+import { detectMmSignal, type MmSignal } from './mmPatterns'
 
 export type BookDirection = 'LONG' | 'SHORT'
 export type RawDepthLevel = [number, number, number]
@@ -34,10 +32,19 @@ export interface OrderBookEvent {
     | 'ASK_WALL_RESISTANCE'
     | 'BUY_FLOW_IMBALANCE'
     | 'SELL_FLOW_IMBALANCE'
+    | 'ABSORPTION_LONG'
+    | 'ABSORPTION_SHORT'
+    | 'SPOOF_SWEEP_LONG'
+    | 'SPOOF_SWEEP_SHORT'
+    | 'LIQ_CASCADE_LONG'
+    | 'LIQ_CASCADE_SHORT'
+    | 'CVD_DIVERGENCE'
+    | 'WASH_SKIP'
     | 'CONFLICT'
     | 'NO_EVENT'
-  /** MARKET = chase the impulse now; RETEST is unused for memes */
-  entryMode: 'MARKET' | 'RETEST'
+  /** LIMIT_CHASE = post-only at best bid/ask; MARKET legacy */
+  entryMode: 'MARKET' | 'RETEST' | 'LIMIT_CHASE'
+  mmPattern?: string | null
   wallPrice: number | null
   wallDropPct: number
   wallMultiple: number
@@ -79,7 +86,8 @@ const emptyEvent = (note: string): OrderBookEvent => ({
   side: null,
   confidence: 0,
   kind: 'NO_EVENT',
-  entryMode: 'MARKET',
+  entryMode: 'LIMIT_CHASE',
+  mmPattern: null,
   wallPrice: null,
   wallDropPct: 0,
   wallMultiple: 0,
@@ -96,6 +104,76 @@ const emptyEvent = (note: string): OrderBookEvent => ({
   tp1Price: null,
   notes: [note],
 })
+
+function mmToEvent(signal: MmSignal, mid: number, asks: Level[], bids: Level[]): OrderBookEvent {
+  const bestAsk = asks[0]?.price ?? mid
+  const bestBid = bids[0]?.price ?? mid
+  const spreadBps = ((bestAsk - bestBid) / mid) * 10_000
+  const kind =
+    signal.pattern === 'SPOOF_SWEEP'
+      ? signal.side === 'LONG'
+        ? 'SPOOF_SWEEP_LONG'
+        : 'SPOOF_SWEEP_SHORT'
+      : signal.pattern === 'LIQ_CASCADE'
+        ? signal.side === 'LONG'
+          ? 'LIQ_CASCADE_LONG'
+          : 'LIQ_CASCADE_SHORT'
+        : signal.pattern === 'CVD_DIVERGENCE'
+          ? 'CVD_DIVERGENCE'
+          : signal.side === 'LONG'
+            ? 'ABSORPTION_LONG'
+            : 'ABSORPTION_SHORT'
+  const flowShare =
+    signal.side === 'LONG'
+      ? signal.buyQuote30s + signal.sellQuote30s > 0
+        ? (signal.sellQuote30s / (signal.buyQuote30s + signal.sellQuote30s)) * 100
+        : 50
+      : signal.buyQuote30s + signal.sellQuote30s > 0
+        ? (signal.buyQuote30s / (signal.buyQuote30s + signal.sellQuote30s)) * 100
+        : 50
+  // For absorption LONG, "aggressive against" is sells — report sell share as confirmation metric
+  const confirmShare =
+    signal.pattern === 'ABSORPTION' || signal.pattern === 'CVD_DIVERGENCE'
+      ? signal.side === 'LONG'
+        ? (signal.sellQuote30s /
+            Math.max(1, signal.sellQuote30s + signal.buyQuote30s)) *
+          100
+        : (signal.buyQuote30s /
+            Math.max(1, signal.sellQuote30s + signal.buyQuote30s)) *
+          100
+      : signal.side === 'LONG'
+        ? 100 -
+          (signal.sellQuote30s /
+            Math.max(1, signal.sellQuote30s + signal.buyQuote30s)) *
+            100
+        : (signal.sellQuote30s /
+            Math.max(1, signal.sellQuote30s + signal.buyQuote30s)) *
+          100
+  return {
+    ready: signal.ready,
+    side: signal.side,
+    confidence: signal.confidence,
+    kind,
+    entryMode: 'LIMIT_CHASE',
+    mmPattern: signal.pattern,
+    wallPrice: signal.limitPrice,
+    wallDropPct:
+      signal.side === 'LONG' ? signal.askDepthDropPct : signal.bidDepthDropPct,
+    wallMultiple: signal.wallMultiple,
+    flowSharePct: Number((confirmShare || flowShare).toFixed(1)),
+    obi: 0,
+    obiChange: 0,
+    priceMoveBps: signal.priceMoveBps,
+    spreadBps: Number(spreadBps.toFixed(1)),
+    relocated: false,
+    wallPersisted: false,
+    trap: signal.pattern === 'SPOOF_SWEEP',
+    slPrice: signal.slPrice,
+    tpPrice: signal.tpPrice,
+    tp1Price: signal.tp1Price,
+    notes: signal.notes,
+  }
+}
 
 function median(values: number[]): number {
   if (!values.length) return 0
@@ -508,8 +586,13 @@ function analyzeEvent(
   deals: Deal[]
 ): OrderBookEvent {
   const age = current.at - previous.at
-  if (age < 700 || age > 6 * 60_000) {
-    return emptyEvent('Стакан: собираю новую последовательность снимков')
+  // Too fresh = noise. Too stale = sequence broke (cron miss / cold isolate).
+  // Callers rebuild a live 3-snap when stale; here we only reject noise.
+  if (age < 700) {
+    return emptyEvent('Стакан: снимки слишком близко — жду следующий тик')
+  }
+  if (age > 8 * 60_000) {
+    return emptyEvent('Стакан: последовательность устарела — пересобираю')
   }
 
   const prevAsks = previous.asks.map(([price, vol]) => ({ price, vol }))
@@ -572,8 +655,9 @@ function analyzeEvent(
       : obiChange <= -6 || current.obi <= -12
   const priceMoveBps =
     ((current.mid - previous.mid) / previous.mid) * 10_000
-  const alignedPrice = side === 'LONG' ? priceMoveBps >= 5 : priceMoveBps <= -5
-  const alignedFlow = flowShare >= 62
+  // Need real follow-through — post-v19 BOOK_RELEASE losses all had MFE=0.
+  const alignedPrice = side === 'LONG' ? priceMoveBps >= 8 : priceMoveBps <= -8
+  const alignedFlow = flowShare >= 64
   const bestAsk = asks[0]?.price ?? current.mid
   const bestBid = bids[0]?.price ?? current.mid
   const spreadBps = ((bestAsk - bestBid) / current.mid) * 10_000
@@ -690,6 +774,10 @@ export async function readOrderBookEvent(opts: {
   previous?: OrderBookSnapshot | null
   older?: OrderBookSnapshot | null
   allowLiveSequence?: boolean
+  /** Day bias from hotlist — MM patterns trade WITH the puppet */
+  dayBias?: 'PUMP' | 'DUMP' | null
+  chg24hPct?: number
+  oiChangePct?: number | null
   mexcJson: <T>(path: string) => Promise<T | null>
 }): Promise<OrderBookRead> {
   let current = await fetchSnapshot(opts)
@@ -699,20 +787,19 @@ export async function readOrderBookEvent(opts: {
   let older = opts.older ?? null
   let previous = opts.previous ?? null
 
-  if (opts.allowLiveSequence && (!older || !previous)) {
+  const prevAge = previous ? current.at - previous.at : Number.POSITIVE_INFINITY
+  const sequenceStale = !previous || !older || prevAge > 8 * 60_000
+  // Rebuild live 3-snap when KV/cache sequence is missing or stale — otherwise
+  // cold cron isolates stay silent for hours waiting for a valid chain.
+  if (opts.allowLiveSequence && sequenceStale) {
+    older = current
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    previous = await fetchSnapshot(opts)
     if (!previous) {
-      older = current
-      await new Promise((resolve) => setTimeout(resolve, 800))
-      previous = await fetchSnapshot(opts)
-      if (!previous) {
-        return {
-          snapshot: current,
-          event: emptyEvent('Стакан: второй live-снимок недоступен'),
-        }
+      return {
+        snapshot: current,
+        event: emptyEvent('Стакан: второй live-снимок недоступен'),
       }
-    } else if (!older) {
-      older = previous
-      previous = current
     }
     await new Promise((resolve) => setTimeout(resolve, 800))
     const latest = await fetchSnapshot(opts)
@@ -726,18 +813,78 @@ export async function readOrderBookEvent(opts: {
     }
   }
 
-  const preliminary = analyzeEvent(older, previous, current, [])
-  if (preliminary.kind === 'NO_EVENT' || preliminary.kind === 'CONFLICT') {
-    return { snapshot: current, event: preliminary }
-  }
-
-  // Always load tape for candidate events (including traps / non-persisted).
-  const deals = await opts.mexcJson<{ data?: Deal[] }>(
+  // Tape always loaded — absorption / wash need deals even without wall event.
+  const dealsJson = await opts.mexcJson<{ data?: Deal[] }>(
     `/api/v1/contract/deals/${opts.symbol}?limit=100`
   )
+  const deals = dealsJson?.data ?? []
+  const asks = current.asks.map(([price, vol]) => ({ price, vol }))
+  const bids = current.bids.map(([price, vol]) => ({ price, vol }))
+
+  const mm = detectMmSignal({
+    previous,
+    current,
+    deals,
+    dayBias: opts.dayBias ?? null,
+    chg24hPct: opts.chg24hPct ?? 0,
+    oiChangePct: opts.oiChangePct ?? null,
+  })
+  if (mm.wash.wash) {
+    return {
+      snapshot: current,
+      event: {
+        ...emptyEvent(mm.wash.reason),
+        kind: 'WASH_SKIP',
+        notes: [mm.wash.reason, 'Монета пропущена — нет реального дисбаланса'],
+      },
+    }
+  }
+  if (mm.signal) {
+    return {
+      snapshot: current,
+      event: mmToEvent(mm.signal, current.mid, asks, bids),
+    }
+  }
+  if (mm.oiBlock) {
+    return {
+      snapshot: current,
+      event: emptyEvent(mm.oiBlock),
+    }
+  }
+
+  // Fallback: classic vacuum / pressure (still LIMIT_CHASE levels).
+  const classic = analyzeEvent(older, previous, current, deals)
+  if (!classic.ready || !classic.side) {
+    return { snapshot: current, event: classic }
+  }
+  // Never fade a giant spoof wall — classic TRAP path stays disabled.
+  if (classic.trap) {
+    return {
+      snapshot: current,
+      event: emptyEvent('Классический trap отключён — ждём spoof-sweep / absorption'),
+    }
+  }
+  const limit =
+    classic.side === 'LONG'
+      ? bids[0]?.price ?? current.mid
+      : asks[0]?.price ?? current.mid
+  const sl =
+    classic.side === 'LONG' ? limit * 0.992 : limit * 1.008
+  const tp =
+    classic.side === 'LONG' ? limit * 1.02 : limit * 0.98
+  const tp1 =
+    classic.side === 'LONG' ? limit * 1.015 : limit * 0.985
   return {
     snapshot: current,
-    event: analyzeEvent(older, previous, current, deals?.data ?? []),
+    event: {
+      ...classic,
+      entryMode: 'LIMIT_CHASE',
+      wallPrice: limit,
+      slPrice: sl,
+      tpPrice: tp,
+      tp1Price: tp1,
+      notes: [...classic.notes, `Limit-chase @ ${limit}`],
+    },
   }
 }
 

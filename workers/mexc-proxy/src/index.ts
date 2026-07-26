@@ -1,19 +1,30 @@
 /**
- * Cloudflare Worker — CORS proxy (MEXC + news) + Telegram signal bot.
+ * Cloudflare Worker — CORS proxy (MEXC + news) + dual Telegram bots.
  *
  * Secrets:
- *   npx wrangler secret put TELEGRAM_BOT_TOKEN
+ *   npx wrangler secret put TELEGRAM_BOT_TOKEN          # meme / Predator
+ *   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN   # BTC/alts zones
  *   npx wrangler secret put ALERT_SECRET
  *
  * KV:
  *   binding SUBSCRIBERS (see wrangler.toml)
  *
- * Webhook (once after deploy):
- *   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<worker>/telegram/webhook"
+ * Webhooks (once after deploy):
+ *   curl "https://api.telegram.org/bot<MEME_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook"
+ *   curl "https://api.telegram.org/bot<SNIPER_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook/sniper"
+ *
+ * Crons (split budget): predator every 2m, paper on odd minutes, vane every 3m.
  */
 
-import { runMarketScan, type TradePlanPayload } from './scanner'
-import { BOT_ENGINE } from './botEngine'
+import type { ScanAlert, TradePlanPayload } from './scanner'
+import { runVaneScan } from './vane'
+import { BOT_ENGINE, SNIPER_ENGINE } from './botEngine'
+import {
+  channelForAlertType,
+  subKey,
+  tokenForChannel,
+  type TgChannel,
+} from './telegramChannels'
 import {
   analyzeUserZone,
   parseZoneArg,
@@ -30,18 +41,17 @@ import {
   createWatchesBatch,
   deleteWatch,
   listWatchesForChat,
-  monitorWatchedSetups,
-  markChatDigestSent,
   countActiveWatches,
   type ConditionalSetupPayload,
 } from './watchedSetups'
 import {
-  getAdaptiveGates,
   getBotJournalPayload,
   recordBotAlert,
   resolveBotJournal,
   formatCorridorWrReport,
 } from './botJournal'
+import { runLiquidationEchoScan } from './liquidationEcho'
+import { loadPredatorHotlist } from './predatorHotlist'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 const LAST_SCAN_KEY = 'telegram:last_scan_status'
@@ -61,11 +71,13 @@ const RSS_ALLOWED = [
   'theblock.co',
 ]
 
-const SUB_KEY = 'telegram:subscribers'
 const DEDUP_PREFIX = 'telegram:dedup:'
 
 /** In-memory fallback when KV not bound (dev / first deploy) */
-const memorySubs = new Map<number, Subscriber>()
+const memorySubs: Record<TgChannel, Map<number, Subscriber>> = {
+  meme: new Map(),
+  sniper: new Map(),
+}
 const memoryDedup = new Map<string, number>()
 const memoryRuntime = new Map<string, string>()
 
@@ -120,29 +132,28 @@ function latestBookTimestamp(raw: string | null): number {
 }
 
 function createOrderBookStateStore(env: Env) {
-  let persistedAt = 0
   return {
     async get(key: string): Promise<string | null> {
       const [cached, persisted] = await Promise.all([
         runtimeGet(`book:${key}`),
         env.SUBSCRIBERS?.get(key) ?? Promise.resolve(null),
       ])
-      persistedAt = latestBookTimestamp(persisted)
-      return cached ?? persisted
+      // Prefer the freshest sequence — cron isolates often have empty memory,
+      // and a stale Cache entry must not beat a newer KV checkpoint.
+      const cachedAt = latestBookTimestamp(cached)
+      const persistedAt = latestBookTimestamp(persisted)
+      if (cachedAt >= persistedAt) return cached ?? persisted
+      return persisted ?? cached
     },
     async put(key: string, value: string): Promise<void> {
       await runtimePut(`book:${key}`, value)
-      // Cache keeps the 2-minute sequence fast. KV is only a cold-start
-      // checkpoint every 6 minutes: <=240 writes/day instead of 720.
-      if (
-        env.SUBSCRIBERS &&
-        Date.now() - persistedAt >= 6 * 60_000
-      ) {
+      // Always checkpoint to KV. Throttling to 6m broke the 3-snap sequence on
+      // cold isolates → age>6m → empty events → multi-hour meme silence.
+      if (env.SUBSCRIBERS) {
         try {
           await env.SUBSCRIBERS.put(key, value)
-          persistedAt = Date.now()
         } catch {
-          // Today's exhausted quota recovers automatically after reset.
+          // Quota exhaustion recovers after daily reset; Cache still helps.
         }
       }
     },
@@ -151,6 +162,7 @@ function createOrderBookStateStore(env: Env) {
 
 interface Env {
   TELEGRAM_BOT_TOKEN?: string
+  TELEGRAM_SNIPER_BOT_TOKEN?: string
   ALERT_SECRET?: string
   SUBSCRIBERS?: KVNamespace
 }
@@ -169,6 +181,8 @@ interface AlertPayload {
   text: string
   dedupeKey?: string
   chatId?: number
+  /** Which Telegram bot delivers this message */
+  channel?: TgChannel
 }
 
 export default {
@@ -227,14 +241,26 @@ export default {
     return proxyFetch(target, CORS_HEADERS)
   },
 
-  /** 24/7 cron — every 2 minutes */
+  // Split crons: predator */2, paper odd minutes, vane every minute (auto-search)
   async scheduled(
-    _event: ScheduledEvent,
+    event: ScheduledEvent,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    ctx.waitUntil(runCronScan(env))
+    const role = cronRoleFromExpression(event.cron)
+    ctx.waitUntil(runCronScan(env, role))
   },
+}
+
+export type CronRole = 'predator' | 'paper' | 'vane' | 'all'
+
+function cronRoleFromExpression(cron: string): CronRole {
+  if (cron === '1-59/2 * * * *') return 'paper'
+  if (cron === '* * * * *') return 'vane'
+  if (cron === '*/2 * * * *') return 'predator'
+  // legacy every-3m vane expression
+  if (cron === '0-57/3 * * * *') return 'vane'
+  return 'all'
 }
 
 async function handleTelegram(
@@ -245,16 +271,29 @@ async function handleTelegram(
 ): Promise<Response> {
   // Health works even without token
   if (path === '/telegram/health') {
-    const subs = await listSubscribers(env)
-    const watches = await countActiveWatches(env)
-    const [lastScanRaw, lastDeliveryRaw] = await Promise.all([
-      runtimeGet(LAST_SCAN_KEY),
-      runtimeGet(LAST_TG_KEY),
+    const [memeSubs, sniperSubs] = await Promise.all([
+      listSubscribers(env, 'meme'),
+      listSubscribers(env, 'sniper'),
     ])
+    const watches = await countActiveWatches(env)
+    const kv = env.SUBSCRIBERS
+      ? {
+          get: (key: string) => env.SUBSCRIBERS!.get(key),
+          put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+        }
+      : undefined
+    const [lastScanCache, lastScanKv, lastDeliveryRaw, hotList] =
+      await Promise.all([
+        runtimeGet(LAST_SCAN_KEY),
+        env.SUBSCRIBERS?.get(LAST_SCAN_KEY) ?? Promise.resolve(null),
+        runtimeGet(LAST_TG_KEY),
+        loadPredatorHotlist(kv),
+      ])
     let lastScan: unknown = null
     let lastDelivery: unknown = null
     try {
-      lastScan = lastScanRaw ? JSON.parse(lastScanRaw) : null
+      const raw = lastScanCache ?? lastScanKv
+      lastScan = raw ? JSON.parse(raw) : null
       lastDelivery = lastDeliveryRaw ? JSON.parse(lastDeliveryRaw) : null
     } catch {
       lastScan = null
@@ -262,20 +301,47 @@ async function handleTelegram(
     }
     return json({
       ok: true,
-      bot: 'Enterprisesystem_bot',
-      engine: BOT_ENGINE.id,
-      engineLabel: BOT_ENGINE.label,
-      subscribers: subs.length,
+      bots: {
+        meme: {
+          name: 'Enterprisesystem_bot',
+          engine: BOT_ENGINE.id,
+          engineLabel: BOT_ENGINE.label,
+          subscribers: memeSubs.length,
+          hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+          note: BOT_ENGINE.deployedNote,
+        },
+        sniper: {
+          name: 'sniper-alts-bot',
+          engine: SNIPER_ENGINE.id,
+          engineLabel: SNIPER_ENGINE.label,
+          subscribers: sniperSubs.length,
+          hasToken: Boolean(env.TELEGRAM_SNIPER_BOT_TOKEN),
+          note: SNIPER_ENGINE.deployedNote,
+        },
+      },
       activeWatches: watches,
-      hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
       hasSecret: Boolean(env.ALERT_SECRET),
-      cron: '*/2 * * * *',
-      digestEveryMin: 5,
-      refreshSetupMin: 10,
-      idlePulseMin: 10,
-      scalpTopN: 3,
-      mode: '24/7',
-      note: BOT_ENGINE.deployedNote,
+      cron: {
+        predator: '*/2 * * * *',
+        paper: '1-59/2 * * * *',
+        vane: '* * * * *',
+      },
+      mode: 'auto-search 24/7: vane every 1m · predator every 2m',
+      predatorHotlist: hotList
+        ? {
+            updatedAt: hotList.updatedAt,
+            dayKey: hotList.dayKey,
+            reason: hotList.reason,
+            symbols: hotList.entries.map((e) => ({
+              symbol: e.symbol,
+              bias: e.bias,
+              chg24hPct: e.chg24hPct,
+              spreadPct: e.spreadPct,
+              oiGrowth2hPct: e.oiGrowth2hPct,
+              score: e.score,
+            })),
+          }
+        : null,
       lastScan,
       lastDelivery,
     })
@@ -294,32 +360,63 @@ async function handleTelegram(
         return json({ error: 'Unauthorized' }, 401)
       }
     }
-    if (!env.TELEGRAM_BOT_TOKEN) {
-      return json({ error: 'TELEGRAM_BOT_TOKEN missing' }, 503)
+    if (!env.TELEGRAM_BOT_TOKEN && !env.TELEGRAM_SNIPER_BOT_TOKEN) {
+      return json({ error: 'No Telegram bot token configured' }, 503)
     }
-    const result = await runCronScan(env)
+    const roleParam = new URL(request.url).searchParams.get('role')
+    const role: CronRole =
+      roleParam === 'predator' ||
+      roleParam === 'paper' ||
+      roleParam === 'vane' ||
+      roleParam === 'all'
+        ? roleParam
+        : 'all'
+    const result = await runCronScan(env, role)
     return json({ ok: true, ...result })
   }
 
-  if (!env.TELEGRAM_BOT_TOKEN) {
+  if (path === '/telegram/webhook' && request.method === 'POST') {
+    if (!env.TELEGRAM_BOT_TOKEN) {
+      return json({ error: 'TELEGRAM_BOT_TOKEN not configured' }, 503)
+    }
+    try {
+      const update = (await request.json()) as TelegramUpdate
+      await processWebhook(env, update, 'meme')
+      return json({ ok: true })
+    } catch (err) {
+      console.error('[webhook/meme] failed', err)
+      return json({ ok: false, error: String(err) }, 200)
+    }
+  }
+
+  if (path === '/telegram/webhook/sniper' && request.method === 'POST') {
+    if (!env.TELEGRAM_SNIPER_BOT_TOKEN) {
+      return json(
+        {
+          error: 'TELEGRAM_SNIPER_BOT_TOKEN not configured',
+          hint: 'npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN',
+        },
+        503
+      )
+    }
+    try {
+      const update = (await request.json()) as TelegramUpdate
+      await processWebhook(env, update, 'sniper')
+      return json({ ok: true })
+    } catch (err) {
+      console.error('[webhook/sniper] failed', err)
+      return json({ ok: false, error: String(err) }, 200)
+    }
+  }
+
+  if (!env.TELEGRAM_BOT_TOKEN && !env.TELEGRAM_SNIPER_BOT_TOKEN) {
     return json(
       {
-        error: 'TELEGRAM_BOT_TOKEN not configured',
-        hint: 'npx wrangler secret put TELEGRAM_BOT_TOKEN',
+        error: 'No Telegram bot token configured',
+        hint: 'npx wrangler secret put TELEGRAM_BOT_TOKEN (and optionally TELEGRAM_SNIPER_BOT_TOKEN)',
       },
       503
     )
-  }
-
-  if (path === '/telegram/webhook' && request.method === 'POST') {
-    try {
-      const update = (await request.json()) as TelegramUpdate
-      await processWebhook(env, update)
-      return json({ ok: true })
-    } catch (err) {
-      console.error('[webhook] failed', err)
-      return json({ ok: false, error: String(err) }, 200)
-    }
   }
 
   if (path === '/telegram/subscribe' && request.method === 'POST') {
@@ -332,25 +429,31 @@ async function handleTelegram(
     if (!body.chatId || typeof body.chatId !== 'number') {
       return json({ error: 'chatId required' }, 400)
     }
-    await upsertSubscriber(env, {
-      chatId: body.chatId,
-      username: body.username,
-      subscribedAt: Date.now(),
-      sniper: body.sniper !== false,
-      meme: body.meme !== false,
-    })
+    await upsertSubscriber(
+      env,
+      {
+        chatId: body.chatId,
+        username: body.username,
+        subscribedAt: Date.now(),
+        sniper: body.sniper !== false,
+        meme: body.meme !== false,
+      },
+      'meme'
+    )
     await tgSend(
       env,
       body.chatId,
-      '✅ Подписка активна на @Enterprisesystem_bot\n\nСигналы 24/7 (сканер каждые 2 мин) + из Mini App.\n\n/stop — отписаться\n/status — статус\n/scan — ручной прогон сканера'
+      '✅ Подписка активна на @Enterprisesystem_bot\n\nСигналы 24/7 (сканер каждые 2 мин) + из Mini App.\n\n/stop — отписаться\n/status — статус\n/scan — ручной прогон сканера',
+      'meme'
     )
     return json({ ok: true, chatId: body.chatId })
   }
 
   if (path === '/telegram/unsubscribe' && request.method === 'POST') {
-    const body = (await request.json()) as { chatId: number }
+    const body = (await request.json()) as { chatId: number; channel?: TgChannel }
     if (!body.chatId) return json({ error: 'chatId required' }, 400)
-    await removeSubscriber(env, body.chatId)
+    const ch = body.channel === 'sniper' ? 'sniper' : 'meme'
+    await removeSubscriber(env, body.chatId, ch)
     return json({ ok: true })
   }
 
@@ -376,13 +479,17 @@ async function handleTelegram(
     if (!body?.chatId || !body?.setup || !body?.symbol) {
       return json({ error: 'chatId, symbol, setup required' }, 400)
     }
-    // Ensure subscriber exists so Pages builds without VITE_ALERT_SECRET still work
-    await upsertSubscriber(env, {
-      chatId: body.chatId,
-      subscribedAt: Date.now(),
-      sniper: true,
-      meme: true,
-    })
+    // Mini App watches → sniper bot (BTC/alts zones)
+    await upsertSubscriber(
+      env,
+      {
+        chatId: body.chatId,
+        subscribedAt: Date.now(),
+        sniper: true,
+        meme: true,
+      },
+      'sniper'
+    )
     const auth = await assertAlertAuth(env, request, body.chatId)
     if (!auth.ok) return json({ error: auth.error }, 401)
     const watch = await createWatch(env, body)
@@ -400,12 +507,16 @@ async function handleTelegram(
     if (!body?.chatId || !body?.symbol || !Array.isArray(body.setups)) {
       return json({ error: 'chatId, symbol, setups required' }, 400)
     }
-    await upsertSubscriber(env, {
-      chatId: body.chatId,
-      subscribedAt: Date.now(),
-      sniper: true,
-      meme: true,
-    })
+    await upsertSubscriber(
+      env,
+      {
+        chatId: body.chatId,
+        subscribedAt: Date.now(),
+        sniper: true,
+        meme: true,
+      },
+      'sniper'
+    )
     const auth = await assertAlertAuth(env, request, body.chatId)
     if (!auth.ok) return json({ error: auth.error }, 401)
     const watches = await createWatchesBatch(env, {
@@ -415,8 +526,7 @@ async function handleTelegram(
       setups: body.setups,
       ttlHours: body.ttlHours,
     })
-    // Confirm monitoring is on the server (not only localStorage)
-    if (env.TELEGRAM_BOT_TOKEN && watches.length > 0) {
+    if (tokenForChannel(env, 'sniper') && watches.length > 0) {
       await tgSend(
         env,
         body.chatId,
@@ -426,7 +536,8 @@ async function handleTelegram(
           `Символ: ${body.symbol}`,
           `Отчёт в Telegram каждые <b>5 минут</b> · уровни сетапов обновляются каждые <b>10 минут</b>.`,
           `Cron worker: каждые 2 мин проверяет зоны / READY / INVALIDATED / устаревший откат.`,
-        ].join('\n')
+        ].join('\n'),
+        'sniper'
       )
     }
     return json({ ok: true, watches, count: watches.length })
@@ -480,8 +591,16 @@ async function assertAlertAuth(
   if (secret === env.ALERT_SECRET) return { ok: true }
 
   if (chatId != null && Number.isFinite(chatId)) {
-    const subs = await listSubscribers(env)
-    if (subs.some((s) => s.chatId === chatId)) return { ok: true }
+    const [memeSubs, sniperSubs] = await Promise.all([
+      listSubscribers(env, 'meme'),
+      listSubscribers(env, 'sniper'),
+    ])
+    if (
+      memeSubs.some((s) => s.chatId === chatId) ||
+      sniperSubs.some((s) => s.chatId === chatId)
+    ) {
+      return { ok: true }
+    }
     return {
       ok: false,
       error: 'Unauthorized: need ALERT_SECRET or /start + subscribe for this chatId',
@@ -491,16 +610,17 @@ async function assertAlertAuth(
   return { ok: false, error: 'Unauthorized: invalid ALERT_SECRET' }
 }
 
-/** Dedup + send to subscribers */
+/** Dedup + send to subscribers of the matching Telegram bot */
 async function broadcastAlert(
   env: Env,
   payload: AlertPayload
 ): Promise<{ ok: boolean; sent: number; failed: number; skipped?: string }> {
+  const channel = channelForAlertType(payload.type, payload.channel)
   if (payload.dedupeKey) {
-    const dedupKey = DEDUP_PREFIX + payload.dedupeKey
+    const dedupKey = `${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`
     const [cached, prev] = await Promise.all([
       runtimeGet(dedupKey),
-      Promise.resolve(memoryDedup.get(payload.dedupeKey)),
+      Promise.resolve(memoryDedup.get(`${channel}:${payload.dedupeKey}`)),
     ])
     const ttlMs = payload.type === 'MEME' ? 900_000 : 3600_000
     if (cached || (prev && Date.now() - prev < ttlMs)) {
@@ -513,49 +633,56 @@ async function broadcastAlert(
   let failed = 0
 
   if (payload.chatId) {
-    const ok = await tgSend(env, payload.chatId, message)
+    const ok = await tgSend(env, payload.chatId, message, channel)
     if (ok && payload.dedupeKey) {
-      memoryDedup.set(payload.dedupeKey, Date.now())
-      await runtimePut(DEDUP_PREFIX + payload.dedupeKey, '1')
+      memoryDedup.set(`${channel}:${payload.dedupeKey}`, Date.now())
+      await runtimePut(`${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`, '1')
     }
     return { ok, sent: ok ? 1 : 0, failed: ok ? 0 : 1 }
   }
 
-  const subs = await listSubscribers(env)
+  const subs = await listSubscribers(env, channel)
   for (const sub of subs) {
+    if (channel === 'sniper' && sub.sniper === false) continue
+    if (channel === 'meme' && sub.meme === false) continue
     if (payload.type === 'SNIPER' && sub.sniper === false) continue
     if (payload.type === 'MEME' && sub.meme === false) continue
-    const ok = await tgSend(env, sub.chatId, message)
+    const ok = await tgSend(env, sub.chatId, message, channel)
     if (ok) sent++
     else failed++
   }
 
   if (sent > 0 && payload.dedupeKey) {
-    memoryDedup.set(payload.dedupeKey, Date.now())
-    await runtimePut(DEDUP_PREFIX + payload.dedupeKey, '1')
+    memoryDedup.set(`${channel}:${payload.dedupeKey}`, Date.now())
+    await runtimePut(`${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`, '1')
   }
 
   return { ok: true, sent, failed }
 }
 
 async function maybeHeartbeat(env: Env): Promise<number> {
-  const subs = await listSubscribers(env)
-  if (subs.length === 0) return 0
-
-  let last = 0
-  last = Number((await runtimeGet(HEARTBEAT_KEY)) || 0)
+  let last = Number((await runtimeGet(HEARTBEAT_KEY)) || 0)
   if (Date.now() - last < HEARTBEAT_MS) return 0
 
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
-  const r = await broadcastAlert(env, {
-    type: 'SYSTEM',
-    title: 'Scanner online',
-    text: `🟢 24/7 heartbeat\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
-    dedupeKey: `heartbeat:${Math.floor(Date.now() / HEARTBEAT_MS)}`,
-  })
+  const bucket = Math.floor(Date.now() / HEARTBEAT_MS)
+  let sent = 0
+  for (const channel of ['meme', 'sniper'] as TgChannel[]) {
+    const subs = await listSubscribers(env, channel)
+    if (!subs.length || !tokenForChannel(env, channel)) continue
+    const engine = channel === 'sniper' ? SNIPER_ENGINE : BOT_ENGINE
+    const r = await broadcastAlert(env, {
+      type: 'SYSTEM',
+      channel,
+      title: 'Scanner online',
+      text: `🟢 24/7 heartbeat · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
+      dedupeKey: `heartbeat:${channel}:${bucket}`,
+    })
+    sent += r.sent
+  }
 
   await runtimePut(HEARTBEAT_KEY, String(Date.now()))
-  return r.sent
+  return sent
 }
 
 // ── Pullback auto-watch from scanner alerts ──────────────────────────────────
@@ -629,37 +756,34 @@ function planToPullbackWatch(
 
 const ENGINE_ANNOUNCE_KEY = 'telegram:engine_announced'
 
-async function maybeAnnounceEngine(env: Env): Promise<void> {
-  if (!env.TELEGRAM_BOT_TOKEN) return
-  const key = `${ENGINE_ANNOUNCE_KEY}:${BOT_ENGINE.id}`
-  if (env.SUBSCRIBERS) {
-    const [runtimeDone, done] = await Promise.all([
-      runtimeGet(key),
-      env.SUBSCRIBERS.get(key),
-    ])
-    if (runtimeDone) return
-    if (done) return
-  } else {
-    return
-  }
-  const subs = await listSubscribers(env)
+async function announceEngineToChannel(
+  env: Env,
+  channel: TgChannel,
+  engine: { id: string; label: string; deployedNote: string },
+  extraLines: string[]
+): Promise<void> {
+  if (!tokenForChannel(env, channel) || !env.SUBSCRIBERS) return
+  const key = `${ENGINE_ANNOUNCE_KEY}:${channel}:${engine.id}`
+  const [runtimeDone, done] = await Promise.all([
+    runtimeGet(key),
+    env.SUBSCRIBERS.get(key),
+  ])
+  if (runtimeDone || done) return
+
+  const subs = await listSubscribers(env, channel)
   const text = [
-    `<b>⚙ Обновление бота: ${BOT_ENGINE.id}</b>`,
-    BOT_ENGINE.label,
+    `<b>⚙ Обновление бота: ${engine.id}</b>`,
+    engine.label,
     '',
-    BOT_ENGINE.deployedNote,
+    engine.deployedNote,
     '',
-    'В каждом сигнале теперь:',
-    '· зона SSL/BSL с 4H или Daily + сила /10',
-    '· цель = ближайшая opposite HTF-ликвидность',
-    '· Fear&Greed · новости · BTC.D в вероятности',
-    '· фазы APPROACH → TOUCH → реакция → топливо',
+    ...extraLines,
     '',
     'Проверка: /status · ручной скан: /scan',
   ].join('\n')
   let sent = 0
   for (const sub of subs) {
-    const ok = await tgSend(env, sub.chatId, text)
+    const ok = await tgSend(env, sub.chatId, text, channel)
     if (ok) sent++
   }
   if (sent > 0 || subs.length === 0) {
@@ -670,12 +794,29 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
         expirationTtl: 60 * 60 * 24 * 90,
       })
     } catch {
-      // Runtime cache prevents repeated announcements until KV quota resets.
+      /* quota */
     }
   }
 }
 
-async function runCronScan(env: Env): Promise<{
+async function maybeAnnounceEngine(env: Env): Promise<void> {
+  await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
+    'Predator memes: liquidation echo, paper companion.',
+  ])
+  await announceEngineToChannel(env, 'sniper', SNIPER_ENGINE, [
+    'В каждом сигнале:',
+    '· зона SSL/BSL с 4H или Daily + сила /10',
+    '· цель = ближайшая opposite HTF-ликвидность',
+    '· Fear&Greed · новости · BTC.D в вероятности',
+    '· фазы APPROACH → TOUCH → реакция → топливо',
+  ])
+}
+
+async function runCronScan(
+  env: Env,
+  role: CronRole = 'all'
+): Promise<{
+  role: CronRole
   alerts: number
   sent: number
   skipped: number
@@ -685,37 +826,32 @@ async function runCronScan(env: Env): Promise<{
   idlePulses?: number
   journalLogged?: number
   journalResolved?: number
+  resultAlerts?: number
 }> {
-  if (!env.TELEGRAM_BOT_TOKEN) {
-    return { alerts: 0, sent: 0, skipped: 0, heartbeat: 0, paperComments: 0 }
+  if (!env.TELEGRAM_BOT_TOKEN && !env.TELEGRAM_SNIPER_BOT_TOKEN) {
+    return {
+      role,
+      alerts: 0,
+      sent: 0,
+      skipped: 0,
+      heartbeat: 0,
+      paperComments: 0,
+    }
   }
   const scanStartedAt = Date.now()
-  await runtimePut(
-    LAST_SCAN_KEY,
-    JSON.stringify({ status: 'RUNNING', startedAt: scanStartedAt })
-  )
+  const scanRunning = JSON.stringify({
+    status: 'RUNNING',
+    role,
+    startedAt: scanStartedAt,
+  })
+  await runtimePut(LAST_SCAN_KEY, scanRunning)
+  try {
+    await env.SUBSCRIBERS?.put(LAST_SCAN_KEY, scanRunning)
+  } catch {
+    /* quota */
+  }
 
-  // Signal delivery has priority over watch digests in the Worker subrequest
-  // budget. Watches run after fresh scans so they cannot starve Telegram alerts.
   let watchAlerts = 0
-
-  // One-shot announce when engine version changes (so chat shows the update)
-  try {
-    await maybeAnnounceEngine(env)
-  } catch (err) {
-    console.error('[cron] engine announce failed', err)
-  }
-
-  let heartbeat = 0
-  try {
-    heartbeat = await maybeHeartbeat(env)
-  } catch (err) {
-    // A depleted KV write quota must not stop market scanning.
-    console.error('[cron] heartbeat persist failed', err)
-  }
-  const gates = await getAdaptiveGates(env)
-
-  // MEME first + broadcast immediately (don't wait 40–90s sniper scan)
   let sent = 0
   let failed = 0
   let skipped = 0
@@ -723,18 +859,22 @@ async function runCronScan(env: Env): Promise<{
   let journalLogged = 0
   let journalResolved = 0
   let resultAlerts = 0
+  let heartbeat = 0
   const seenDedup = new Set<string>()
-  const allAlerts: Awaited<ReturnType<typeof runMarketScan>> = []
+  const allAlerts: ScanAlert[] = []
 
-  const deliver = async (
-    a: Awaited<ReturnType<typeof runMarketScan>>[number]
-  ) => {
+  const kv = env.SUBSCRIBERS
+    ? {
+        get: (key: string) => env.SUBSCRIBERS!.get(key),
+        put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+      }
+    : undefined
+
+  const deliver = async (a: ScanAlert) => {
     if (seenDedup.has(a.dedupeKey)) return
     seenDedup.add(a.dedupeKey)
     allAlerts.push(a)
 
-    // MEME: silent until real market entry. No "probable" alert, no watch,
-    // no journal ghost that later becomes INVALIDATED / NO ENTRY spam.
     if (a.type === 'MEME') {
       if (!a.tradePlan) return
       const paper = await createPaperTradeFromPlan(env, {
@@ -754,6 +894,7 @@ async function runCronScan(env: Env): Promise<{
       if (logged) journalLogged++
       const cr = await broadcastAlert(env, {
         type: 'SYSTEM',
+        channel: 'meme',
         title: paper.comment.title,
         text: paper.comment.text,
         dedupeKey: paper.comment.dedupeKey,
@@ -764,12 +905,12 @@ async function runCronScan(env: Env): Promise<{
       return
     }
 
-    // Chased SNIPER: silent watch handoff only — no entry spam.
-    // Broadcast alerts get a watch only after a message was actually delivered.
+    const alertChannel = channelForAlertType(a.type)
     let shouldCreateWatch = a.watchOnly
     if (!a.watchOnly) {
       const r = await broadcastAlert(env, {
         type: a.type,
+        channel: alertChannel,
         title: a.title,
         text: a.text,
         dedupeKey: a.dedupeKey,
@@ -794,10 +935,14 @@ async function runCronScan(env: Env): Promise<{
         const paper = await createPaperTradeFromPlan(env, {
           ...a.tradePlan,
           alertType: a.type,
+          vanePath: a.tradePlan.vanePath,
+          vaneTier: a.tradePlan.vaneTier,
+          vaneScore: a.tradePlan.vaneScore,
         })
         if (paper.comment) {
           const cr = await broadcastAlert(env, {
             type: 'SYSTEM',
+            channel: paper.comment.route ?? alertChannel,
             title: paper.comment.title,
             text: paper.comment.text,
             dedupeKey: paper.comment.dedupeKey,
@@ -807,17 +952,12 @@ async function runCronScan(env: Env): Promise<{
       }
     }
 
-    // Silent pullback watches for sniper only (MEME returns above).
-    if (
-      shouldCreateWatch &&
-      a.tradePlan &&
-      a.needsPullbackWatch
-    ) {
+    if (shouldCreateWatch && a.tradePlan && a.needsPullbackWatch) {
       try {
         const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
-        const subs = await listSubscribers(env)
+        const subs = await listSubscribers(env, 'sniper')
         for (const sub of subs) {
-          if (a.type === 'SNIPER' && sub.sniper === false) continue
+          if (sub.sniper === false) continue
           await createWatchesBatch(env, {
             chatId: sub.chatId,
             symbol: a.tradePlan.symbol,
@@ -832,165 +972,242 @@ async function runCronScan(env: Env): Promise<{
     }
   }
 
-  // Resolve and publish outcomes before any market scan consumes the request
-  // budget. Old lifecycle events must not disappear behind depth requests.
-  try {
-    const resolution = await resolveBotJournal(env)
-    journalResolved = resolution.changed
-    for (const outcome of resolution.outcomes) {
-      // Never announce "probable" no-entries — chat only cares about real fills.
-      if (outcome.status === 'INVALIDATED') continue
-      const icon =
-        outcome.status === 'WIN'
-          ? '🎯'
-          : outcome.status === 'LOSS'
-            ? '🛑'
-            : outcome.status === 'BE'
-              ? '🛡'
-              : '⏱'
-      const statusLabel = outcome.status
-      const r = await broadcastAlert(env, {
-        type: 'SYSTEM',
-        title: `${icon} Результат ${outcome.displayName} · ${statusLabel}`,
-        text: [
-          `${outcome.side} · ${outcome.setup}`,
-          `Вход ${outcome.entryPrice} → выход ${outcome.exitPrice ?? '—'}`,
-          `Результат: ${statusLabel}${
-            outcome.pnlPercent != null
-              ? ` · ${outcome.pnlPercent >= 0 ? '+' : ''}${outcome.pnlPercent.toFixed(2)}%`
-              : ''
-          }`,
-          `MFE +${outcome.mfePercent.toFixed(2)}% · MAE −${outcome.maePercent.toFixed(2)}%`,
-        ].join('\n'),
-        dedupeKey: `journal:result:${outcome.id}:${outcome.status}`,
-      })
-      resultAlerts += r.sent
-      failed += r.failed
+  const runPaper = async () => {
+    try {
+      const comments = await monitorPaperTrades(env)
+      let tgBudget = 4
+      for (const c of comments) {
+        if (tgBudget <= 0) break
+        const cr = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: c.route ?? 'meme',
+          title: c.title,
+          text: c.text,
+          dedupeKey: c.dedupeKey,
+        })
+        paperComments += cr.sent
+        if (cr.sent > 0) tgBudget--
+      }
+    } catch (err) {
+      console.error('[cron] paper trade monitor failed', err)
     }
-  } catch (err) {
-    console.error('[cron] journal result failed', err)
   }
 
-  // Fresh order-flow signals are next. Sniper and watch monitoring remain last.
-  try {
-    const memeAlerts = await runMarketScan(
-      gates,
-      'meme',
-      createOrderBookStateStore(env)
-    )
-    for (const a of memeAlerts) await deliver(a)
-  } catch (err) {
-    console.error('[cron] meme scan failed', err)
-  }
-
-  // Entry confirmation and trade management are more important than a new
-  // sniper scan. Run them while the request budget is still available.
-  try {
-    const comments = await monitorPaperTrades(env)
-    for (const c of comments) {
-      const cr = await broadcastAlert(env, {
-        type: 'SYSTEM',
-        title: c.title,
-        text: c.text,
-        dedupeKey: c.dedupeKey,
-      })
-      paperComments += cr.sent
+  const runJournal = async () => {
+    try {
+      const resolution = await resolveBotJournal(env)
+      journalResolved = resolution.changed
+      let tgBudget = 3
+      for (const outcome of resolution.outcomes) {
+        if (outcome.status === 'INVALIDATED') continue
+        if (tgBudget <= 0) break
+        const icon =
+          outcome.status === 'WIN'
+            ? '🎯'
+            : outcome.status === 'LOSS'
+              ? '🛑'
+              : outcome.status === 'BE'
+                ? '🛡'
+                : '⏱'
+        const r = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: outcome.alertType === 'SNIPER' ? 'sniper' : 'meme',
+          title: `${icon} Результат ${outcome.displayName} · ${outcome.status}`,
+          text: [
+            `${outcome.side} · ${outcome.setup}`,
+            `Вход ${outcome.entryPrice} → выход ${outcome.exitPrice ?? '—'}`,
+            `Результат: ${outcome.status}${
+              outcome.pnlPercent != null
+                ? ` · ${outcome.pnlPercent >= 0 ? '+' : ''}${outcome.pnlPercent.toFixed(2)}%`
+                : ''
+            }`,
+            `MFE +${outcome.mfePercent.toFixed(2)}% · MAE −${outcome.maePercent.toFixed(2)}%`,
+          ].join('\n'),
+          dedupeKey: `journal:result:${outcome.id}:${outcome.status}`,
+        })
+        resultAlerts += r.sent
+        failed += r.failed
+        if (r.sent > 0) tgBudget--
+      }
+    } catch (err) {
+      console.error('[cron] journal result failed', err)
     }
-  } catch (err) {
-    console.error('[cron] paper trade monitor failed', err)
   }
 
-  try {
-    const wa = await monitorWatchedSetups(env)
-    for (const a of wa) {
-      const r = await broadcastAlert(env, {
-        type: 'SETUP_WATCH',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-        chatId: a.chatId,
+  const runPredator = async () => {
+    try {
+      const papers = await listPaperTrades(env)
+      const pinSymbols = papers
+        .filter(
+          (t) =>
+            t.alertType === 'MEME' &&
+            (t.status === 'OPEN' || t.status === 'WAITING')
+        )
+        .map((t) => t.symbol)
+      const predator = await runLiquidationEchoScan({ kv, pinSymbols })
+      for (const a of predator.alerts) {
+        await deliver(a)
+      }
+      if (!predator.alerts.length && predator.skipped) {
+        console.log('[cron] predator skip:', predator.skipped)
+      }
+      // No sleep(13s) — paper cron honors echo time-stop on next ticks.
+    } catch (err) {
+      console.error('[cron] predator scan failed', err)
+    }
+  }
+
+  const runVane = async () => {
+    if (!env.TELEGRAM_SNIPER_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN) return
+    try {
+      const pinSymbols = (await listPaperTrades(env))
+        .filter(
+          (t) =>
+            t.alertType === 'SNIPER' &&
+            (t.status === 'OPEN' || t.status === 'WAITING')
+        )
+        .map((t) => t.symbol)
+      const sniperAlerts = await runVaneScan({
+        kv,
+        pinSymbols,
+        batchSize: 5,
       })
-      watchAlerts += r.sent
-      if (r.sent > 0 && a.dedupeKey.startsWith('watch_digest:')) {
-        await markChatDigestSent(env, a.chatId)
+      for (const a of sniperAlerts) {
+        await deliver(a)
+      }
+    } catch (err) {
+      console.error('[cron] vane sniper scan failed', err)
+    }
+  }
+
+  // Lightweight housekeeping only on paper ticks (or full manual scan)
+  if (role === 'paper' || role === 'all') {
+    try {
+      await maybeAnnounceEngine(env)
+    } catch (err) {
+      console.error('[cron] engine announce failed', err)
+    }
+    try {
+      heartbeat = await maybeHeartbeat(env)
+    } catch (err) {
+      console.error('[cron] heartbeat persist failed', err)
+    }
+    await runJournal()
+    await runPaper()
+  }
+
+  if (role === 'predator' || role === 'all') {
+    await runPredator()
+    // Echo time-stop needs paper monitor soon after fill — cheap pass
+    if (role === 'predator') {
+      try {
+        const comments = await monitorPaperTrades(env)
+        let tgBudget = 2
+        for (const c of comments) {
+          if (tgBudget <= 0) break
+          if (!c.title.includes('PREDATOR') && !c.dedupeKey.includes('timestop'))
+            continue
+          const cr = await broadcastAlert(env, {
+            type: 'SYSTEM',
+            channel: 'meme',
+            title: c.title,
+            text: c.text,
+            dedupeKey: c.dedupeKey,
+          })
+          paperComments += cr.sent
+          if (cr.sent > 0) tgBudget--
+        }
+      } catch (err) {
+        console.error('[cron] predator paper slice failed', err)
       }
     }
-  } catch (err) {
-    console.error('[cron] watch monitor failed', err)
   }
 
-  try {
-    const sniperAlerts = await runMarketScan(gates, 'sniper')
-    for (const a of sniperAlerts) await deliver(a)
-  } catch (err) {
-    console.error('[cron] sniper scan failed', err)
+  if (role === 'vane' || role === 'all') {
+    await runVane()
   }
-
-  const alerts = allAlerts
-
-  // No-signal idle pulses are disabled: after depth analysis they consumed the
-  // remaining request budget and obscured actual delivery health.
-  let idlePulses = 0
 
   const result = {
-    alerts: alerts.length,
+    role,
+    alerts: allAlerts.length,
     sent,
     failed,
     skipped,
     heartbeat,
     paperComments,
     watchAlerts,
-    idlePulses,
+    idlePulses: 0,
     journalLogged,
     journalResolved,
     resultAlerts,
   }
-  await runtimePut(
-    LAST_SCAN_KEY,
-    JSON.stringify({
-      status: 'COMPLETED',
-      startedAt: scanStartedAt,
-      completedAt: Date.now(),
-      durationMs: Date.now() - scanStartedAt,
-      ...result,
-    })
-  )
+  const scanDone = JSON.stringify({
+    status: 'COMPLETED',
+    startedAt: scanStartedAt,
+    completedAt: Date.now(),
+    durationMs: Date.now() - scanStartedAt,
+    ...result,
+  })
+  await runtimePut(LAST_SCAN_KEY, scanDone)
+  try {
+    await env.SUBSCRIBERS?.put(LAST_SCAN_KEY, scanDone)
+  } catch {
+    /* quota */
+  }
   return result
 }
 
 // ── Subscribers KV ───────────────────────────────────────────────────────────
 
-async function listSubscribers(env: Env): Promise<Subscriber[]> {
-  if (!env.SUBSCRIBERS) return [...memorySubs.values()]
-  const raw = await env.SUBSCRIBERS.get(SUB_KEY)
-  if (!raw) return [...memorySubs.values()]
+async function listSubscribers(
+  env: Env,
+  channel: TgChannel = 'meme'
+): Promise<Subscriber[]> {
+  const mem = memorySubs[channel]
+  if (!env.SUBSCRIBERS) return [...mem.values()]
+  const raw = await env.SUBSCRIBERS.get(subKey(channel))
+  if (!raw) return [...mem.values()]
   try {
     return JSON.parse(raw) as Subscriber[]
   } catch {
-    return [...memorySubs.values()]
+    return [...mem.values()]
   }
 }
 
-async function saveSubscribers(env: Env, list: Subscriber[]): Promise<void> {
-  memorySubs.clear()
-  for (const s of list) memorySubs.set(s.chatId, s)
+async function saveSubscribers(
+  env: Env,
+  list: Subscriber[],
+  channel: TgChannel = 'meme'
+): Promise<void> {
+  const mem = memorySubs[channel]
+  mem.clear()
+  for (const s of list) mem.set(s.chatId, s)
   if (!env.SUBSCRIBERS) return
-  await env.SUBSCRIBERS.put(SUB_KEY, JSON.stringify(list))
+  await env.SUBSCRIBERS.put(subKey(channel), JSON.stringify(list))
 }
 
-async function upsertSubscriber(env: Env, sub: Subscriber): Promise<void> {
-  const list = await listSubscribers(env)
+async function upsertSubscriber(
+  env: Env,
+  sub: Subscriber,
+  channel: TgChannel = 'meme'
+): Promise<void> {
+  const list = await listSubscribers(env, channel)
   const idx = list.findIndex((s) => s.chatId === sub.chatId)
   if (idx >= 0) list[idx] = { ...list[idx], ...sub }
   else list.push(sub)
-  await saveSubscribers(env, list)
+  await saveSubscribers(env, list, channel)
 }
 
-async function removeSubscriber(env: Env, chatId: number): Promise<void> {
-  const list = await listSubscribers(env)
+async function removeSubscriber(
+  env: Env,
+  chatId: number,
+  channel: TgChannel = 'meme'
+): Promise<void> {
+  const list = await listSubscribers(env, channel)
   await saveSubscribers(
     env,
-    list.filter((s) => s.chatId !== chatId)
+    list.filter((s) => s.chatId !== chatId),
+    channel
   )
 }
 
@@ -1016,37 +1233,41 @@ function parseCommand(text: string): { cmd: string; arg: string } {
   return { cmd, arg: rest.join(' ') }
 }
 
-async function sendDemoSignal(env: Env, chatId: number): Promise<void> {
+async function sendDemoSignal(
+  env: Env,
+  chatId: number,
+  channel: TgChannel
+): Promise<void> {
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
-  await tgSend(
-    env,
-    chatId,
-    [
-      '🟢 <b>LONG BTC/USDT · TEST</b>',
-      '',
-      'Биржа: MEXC Futures',
-      'Контракт: BTC_USDT',
-      `Сигнал @ ${now}`,
-      '',
-      'Цена сигнала: 95000.00 (уже могла уйти)',
-      'Тип входа: ЛИМИТ на откат — не маркет-chase',
-      'Зона входа: 94200.00 – 95100.00',
-      'Лимитка (ориентир): 94600.00',
-      'Не входить / не догонять выше 95450.00',
-      '',
-      'Стоп: 93800.00 (−0.85%)',
-      'Цель: 96200.00 (+1.69%)',
-      'Победа: 68%',
-      'R:R 1:2.0',
-      '',
-      'Причина: DEMO — проверка доставки. Не торговать.',
-      '',
-      '⚠️ Мем/импульс: если цена уже вне зоны — пропуск.',
-    ].join('\n')
-  )
+  const text =
+    channel === 'sniper'
+      ? [
+          '🟢 <b>LONG BTC/USDT · TEST · SNIPER</b>',
+          '',
+          'Биржа: MEXC Futures · контракт BTC_USDT',
+          `Сигнал @ ${now}`,
+          '',
+          'Тип: лимит на откат в HTF-зону (как Mini App)',
+          'Зона: 94200 – 95100 · ориентир 94600',
+          'SL 93800 · TP 96200 · P≈68% · R:R 1:2',
+          '',
+          'DEMO — проверка доставки. Не торговать.',
+        ].join('\n')
+      : [
+          '🚀 <b>PREDATOR · TEST</b>',
+          '',
+          `Сигнал @ ${now}`,
+          'Liquidation Echo demo — проверка доставки.',
+          'Не торговать.',
+        ].join('\n')
+  await tgSend(env, chatId, text, channel)
 }
 
-async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
+async function processWebhook(
+  env: Env,
+  update: TelegramUpdate,
+  channel: TgChannel
+): Promise<void> {
   const msg = update.message
   if (!msg?.text || !msg.chat?.id) return
 
@@ -1055,13 +1276,14 @@ async function processWebhook(env: Env, update: TelegramUpdate): Promise<void> {
   const { cmd } = parseCommand(msg.text)
 
   try {
-    await dispatchCommand(env, chatId, username, cmd, msg.text)
+    await dispatchCommand(env, chatId, username, cmd, msg.text, channel)
   } catch (err) {
-    console.error('[cmd]', cmd, err)
+    console.error('[cmd]', channel, cmd, err)
     await tgSend(
       env,
       chatId,
-      `⚠️ Ошибка команды /${cmd || '?'}: <code>${String(err).slice(0, 180)}</code>\nПопробуй /ping`
+      `⚠️ Ошибка команды /${cmd || '?'}: <code>${String(err).slice(0, 180)}</code>\nПопробуй /ping`,
+      channel
     )
   }
 }
@@ -1071,121 +1293,146 @@ async function dispatchCommand(
   chatId: number,
   username: string | undefined,
   cmd: string,
-  text: string
+  text: string,
+  channel: TgChannel
 ): Promise<void> {
+  const engine = channel === 'sniper' ? SNIPER_ENGINE : BOT_ENGINE
+
   if (cmd === 'start') {
-    await upsertSubscriber(env, {
-      chatId,
-      username,
-      subscribedAt: Date.now(),
-      sniper: true,
-      meme: true,
-    })
-    await tgSend(
+    await upsertSubscriber(
       env,
-      chatId,
-      '🚀 <b>ENTERPRISE SYSTEM</b> (@Enterprisesystem_bot)\n\nПодписка 24/7.\nСигналы + мониторинг твоих зон.\n\nКоманды:\n/zone BTC 94000-96000 — зона + анализ L/S\n/zones — мои зоны\n/zoneoff BTC — снять\n/status · /scan · /journal · /trades\n/test · /ping · /stop'
+      {
+        chatId,
+        username,
+        subscribedAt: Date.now(),
+        sniper: true,
+        meme: true,
+      },
+      channel
     )
-    await sendDemoSignal(env, chatId)
+    const welcome =
+      channel === 'sniper'
+        ? '🎯 <b>ENTERPRISE VANE</b>\n\nСам ищет сигналы 24/7 (каждую минуту).\nTOP-50 · hot movers + round-robin\nСильная зона → LONG · пробой+ретест → SHORT\n\nКоманды:\n/zone BTC 94000-96000\n/status · /trades · /journal\n/scan — ручной догон · /stop'
+        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · Liquidation Echo · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
+    await tgSend(env, chatId, welcome, channel)
+    await sendDemoSignal(env, chatId, channel)
     return
   }
 
   if (cmd === 'stop') {
-    await removeSubscriber(env, chatId)
-    await tgSend(env, chatId, '⏸ Подписка отключена. /start — снова включить.')
+    await removeSubscriber(env, chatId, channel)
+    await tgSend(
+      env,
+      chatId,
+      '⏸ Подписка отключена. /start — снова включить.',
+      channel
+    )
     return
   }
 
   if (cmd === 'ping' || cmd === 'test') {
-    await upsertSubscriber(env, {
-      chatId,
-      username,
-      subscribedAt: Date.now(),
-      sniper: true,
-      meme: true,
-    })
+    await upsertSubscriber(
+      env,
+      {
+        chatId,
+        username,
+        subscribedAt: Date.now(),
+        sniper: true,
+        meme: true,
+      },
+      channel
+    )
     await tgSend(
       env,
       chatId,
-      `🏓 <b>PONG</b>\nБот онлайн · chatId <code>${chatId}</code>\nРежим 24/7 · cron */2 · paper companion ON`
+      `🏓 <b>PONG</b> · ${engine.id}\nБот онлайн · chatId <code>${chatId}</code>\nКанал: ${channel} · cron */2 · paper ON`,
+      channel
     )
-    await sendDemoSignal(env, chatId)
+    await sendDemoSignal(env, chatId, channel)
     return
   }
 
   if (cmd === 'trades') {
-    const list = await listSubscribers(env)
+    const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await tgSend(env, chatId, 'Сначала /start')
+      await tgSend(env, chatId, 'Сначала /start', channel)
       return
     }
     const papers = await listPaperTrades(env)
-    await tgSend(env, chatId, formatTradesStatus(papers))
+    const filtered = papers.filter((t) =>
+      channel === 'sniper' ? t.alertType === 'SNIPER' : t.alertType === 'MEME'
+    )
+    await tgSend(env, chatId, formatTradesStatus(filtered), channel)
     return
   }
 
   if (cmd === 'scan') {
-    const list = await listSubscribers(env)
+    const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await tgSend(env, chatId, 'Сначала /start')
+      await tgSend(env, chatId, 'Сначала /start', channel)
       return
     }
-    await tgSend(env, chatId, '⏳ Сканирую рынок…')
-    const result = await runCronScan(env)
+    await tgSend(env, chatId, '⏳ Сканирую рынок…', channel)
+    const result = await runCronScan(env, channel === 'sniper' ? 'vane' : 'predator')
     if (result.alerts === 0) {
       await tgSend(
         env,
         chatId,
         [
-          `✅ Скан завершён: сильных HTF-сетапов сейчас нет.`,
+          `✅ Скан завершён: сильных сетапов сейчас нет.`,
           `Отправлено: ${result.sent} · дедуп: ${result.skipped}`,
-          `Watches/digest: ${result.watchAlerts ?? 0} · idle: ${result.idlePulses ?? 0}`,
           '',
-          `⚙ Движок: <code>${BOT_ENGINE.id}</code>`,
-          BOT_ENGINE.deployedNote,
+          `⚙ Движок: <code>${engine.id}</code>`,
+          engine.deployedNote,
           '',
-          `Бот жив — жди зону 4H/Daily или следующий cron (≤2 мин).`,
-          `/status — версия · /test — пинг`,
-        ].join('\n')
+          `/status · /test`,
+        ].join('\n'),
+        channel
       )
     } else {
       await tgSend(
         env,
         chatId,
-        `✅ Скан (${BOT_ENGINE.id}): найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}\nСопровождение: ${result.paperComments} сообщений`
+        `✅ Скан (${engine.id}): найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}\nСопровождение: ${result.paperComments} сообщений`,
+        channel
       )
     }
     return
   }
 
   if (cmd === 'zone' || cmd === 'зона') {
-    const list = await listSubscribers(env)
-    let me = list.find((s) => s.chatId === chatId)
+    const list = await listSubscribers(env, channel)
+    const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await upsertSubscriber(env, {
-        chatId,
-        username,
-        subscribedAt: Date.now(),
-        sniper: true,
-        meme: true,
-      })
+      await upsertSubscriber(
+        env,
+        {
+          chatId,
+          username,
+          subscribedAt: Date.now(),
+          sniper: true,
+          meme: true,
+        },
+        channel
+      )
     }
     const { arg } = parseCommand(text)
     const parsed = parseZoneArg(arg)
     if ('error' in parsed) {
-      await tgSend(env, chatId, parsed.error)
+      await tgSend(env, chatId, parsed.error, channel)
       return
     }
     await tgSend(
       env,
       chatId,
-      `⏳ Анализирую <code>${parsed.symbol}</code> зону ${parsed.zoneLow}–${parsed.zoneHigh}…`
+      `⏳ Анализирую <code>${parsed.symbol}</code> зону ${parsed.zoneLow}–${parsed.zoneHigh}…`,
+      channel
     )
     const result = await analyzeUserZone(parsed)
     if ('error' in result) {
-      await tgSend(env, chatId, `❌ ${result.error}`)
+      await tgSend(env, chatId, `❌ ${result.error}`, channel)
       return
     }
     const watches = await createWatchesBatch(env, {
@@ -1204,7 +1451,8 @@ async function dispatchCommand(
         watches.length
           ? `✅ Watch на сервере: <code>${watches[0]?.watchId}</code> (TTL 72ч)`
           : '⚠️ Не удалось сохранить watch',
-      ].join('\n')
+      ].join('\n'),
+      channel
     )
     return
   }
@@ -1218,7 +1466,8 @@ async function dispatchCommand(
       await tgSend(
         env,
         chatId,
-        'Нет твоих зон.\nПример: /zone BTC 94000-96000\nили /zone ETH 3200 3350 long'
+        'Нет твоих зон.\nПример: /zone BTC 94000-96000\nили /zone ETH 3200 3350 long',
+        channel
       )
       return
     }
@@ -1232,7 +1481,8 @@ async function dispatchCommand(
       chatId,
       [`<b>👤 Твои зоны (${userZones.length})</b>`, ...lines, '', '/zoneoff BTC — снять по монете'].join(
         '\n'
-      )
+      ),
+      channel
     )
     return
   }
@@ -1241,7 +1491,7 @@ async function dispatchCommand(
     const { arg } = parseCommand(text)
     const sym = resolveMexcSymbol(arg.split(/\s+/)[0] || '')
     if (!sym) {
-      await tgSend(env, chatId, 'Формат: /zoneoff BTC')
+      await tgSend(env, chatId, 'Формат: /zoneoff BTC', channel)
       return
     }
     const watches = await listWatchesForChat(env, chatId)
@@ -1251,27 +1501,29 @@ async function dispatchCommand(
         (w.setup.kind === 'USER_ZONE' || w.setup.title.includes('👤'))
     )
     if (!victims.length) {
-      await tgSend(env, chatId, `Нет USER_ZONE watch по ${sym}`)
+      await tgSend(env, chatId, `Нет USER_ZONE watch по ${sym}`, channel)
       return
     }
     let n = 0
     for (const w of victims) {
       if (await deleteWatch(env, chatId, w.watchId)) n++
     }
-    await tgSend(env, chatId, `Снято зон: ${n} по ${sym}`)
+    await tgSend(env, chatId, `Снято зон: ${n} по ${sym}`, channel)
     return
   }
 
   if (cmd === 'status') {
-    const list = await listSubscribers(env)
+    const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await tgSend(env, chatId, 'Вы не подписаны. Нажмите /start')
+      await tgSend(env, chatId, 'Вы не подписаны. Нажмите /start', channel)
       return
     }
     const papers = await listPaperTrades(env)
     const live = papers.filter(
-      (t) => t.status === 'WAITING' || t.status === 'OPEN'
+      (t) =>
+        (t.status === 'WAITING' || t.status === 'OPEN') &&
+        (channel === 'sniper' ? t.alertType === 'SNIPER' : t.alertType === 'MEME')
     ).length
     const journal = await getBotJournalPayload(env)
     const wrBlock = formatCorridorWrReport(
@@ -1279,36 +1531,80 @@ async function dispatchCommand(
       journal.entries,
       journal.gates
     )
+
+    if (channel === 'sniper') {
+      await tgSend(
+        env,
+        chatId,
+        [
+          `📊 Статус VANE · BTC/Alts`,
+          `⚙ Движок: <code>${SNIPER_ENGINE.id}</code>`,
+          SNIPER_ENGINE.label,
+          SNIPER_ENGINE.deployedNote,
+          ``,
+          `Автопоиск: каждую минуту (hot + TOP-50 rotation)`,
+          `HOLD / FLIP · TP 1.5–2% · ATR SL · R:R≥1.8`,
+          `Сделок в работе: ${live}`,
+          `Sniper alerts: ${me.sniper ? 'ON' : 'OFF'}`,
+          `Подписчиков: ${list.length}`,
+          `chatId: <code>${chatId}</code>`,
+          ``,
+          wrBlock,
+          ``,
+          `/zone · /scan · /trades · /journal`,
+        ].join('\n'),
+        channel
+      )
+      return
+    }
+
+    const hot = await loadPredatorHotlist(
+      env.SUBSCRIBERS
+        ? {
+            get: (key) => env.SUBSCRIBERS!.get(key),
+            put: (key, value) => env.SUBSCRIBERS!.put(key, value),
+          }
+        : undefined
+    )
+    const hotParts =
+      hot?.entries.map((e) => {
+        const name = e.displayName.replace('/USDT', '')
+        const tag = e.bias === 'LONG_ECHO' ? 'L-echo' : 'S-echo'
+        return `${name} ${tag} ${e.chg24hPct >= 0 ? '+' : ''}${e.chg24hPct.toFixed(0)}%`
+      }) ?? []
+    const hotLine = hotParts.length
+      ? `Predator hotlist: ${hotParts.join(', ')}`
+      : 'Predator hotlist: пуст (жду powder-keg 3–15M vol)'
     await tgSend(
       env,
       chatId,
       [
-        `📊 Статус @Enterprisesystem_bot`,
+        `📊 Статус PREDATOR`,
         `⚙ Движок: <code>${BOT_ENGINE.id}</code>`,
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: 24/7 (cron */2)`,
-        `Paper companion: ON`,
+        `Режим: PREDATOR Liquidation Echo (cron */2)`,
         `Сделок в работе: ${live}`,
-        `Sniper: ${me.sniper ? 'ON' : 'OFF'}`,
-        `Meme: ${me.meme ? 'ON' : 'OFF'}`,
+        `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
+        hotLine,
         `Подписчиков: ${list.length}`,
         `chatId: <code>${chatId}</code>`,
         ``,
         wrBlock,
         ``,
-        `/scan — прогон · /trades — сделки · /journal`,
-      ].join('\n')
+        `/scan · /trades · /journal`,
+      ].join('\n'),
+      channel
     )
     return
   }
 
   if (cmd === 'journal') {
-    const list = await listSubscribers(env)
+    const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await tgSend(env, chatId, 'Сначала /start')
+      await tgSend(env, chatId, 'Сначала /start', channel)
       return
     }
     const journal = await getBotJournalPayload(env)
@@ -1324,40 +1620,51 @@ async function dispatchCommand(
       env,
       chatId,
       [
-        `<b>📓 Журнал бота</b>`,
+        `<b>📓 Журнал · ${channel}</b>`,
         wrBlock,
         insights.length ? `\nИнсайты:\n${insights.join('\n')}` : '',
         `\nПороги: meme≥${journal.gates.minMemeScore} sniper≥${journal.gates.minSniperScore}`,
       ]
         .filter(Boolean)
-        .join('\n')
+        .join('\n'),
+      channel
     )
     return
   }
 
   if (cmd === 'sniper_on' || cmd === 'sniper_off') {
-    const list = await listSubscribers(env)
+    const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await tgSend(env, chatId, 'Сначала /start')
+      await tgSend(env, chatId, 'Сначала /start', channel)
       return
     }
     me.sniper = cmd === 'sniper_on'
-    await saveSubscribers(env, list)
-    await tgSend(env, chatId, `Sniper alerts: ${me.sniper ? 'ON ✅' : 'OFF'}`)
+    await saveSubscribers(env, list, channel)
+    await tgSend(
+      env,
+      chatId,
+      `Sniper alerts: ${me.sniper ? 'ON ✅' : 'OFF'}`,
+      channel
+    )
     return
   }
 
   if (cmd === 'meme_on' || cmd === 'meme_off') {
-    const list = await listSubscribers(env)
+    const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
-      await tgSend(env, chatId, 'Сначала /start')
+      await tgSend(env, chatId, 'Сначала /start', channel)
       return
     }
     me.meme = cmd === 'meme_on'
-    await saveSubscribers(env, list)
-    await tgSend(env, chatId, `Meme alerts: ${me.meme ? 'ON ✅' : 'OFF'}`)
+    await saveSubscribers(env, list, channel)
+    await tgSend(
+      env,
+      chatId,
+      `Meme alerts: ${me.meme ? 'ON ✅' : 'OFF'}`,
+      channel
+    )
   }
 }
 
@@ -1385,9 +1692,10 @@ function escapeHtml(s: string): string {
 async function tgSend(
   env: Env,
   chatId: number,
-  text: string
+  text: string,
+  channel: TgChannel = 'meme'
 ): Promise<boolean> {
-  const token = env.TELEGRAM_BOT_TOKEN
+  const token = tokenForChannel(env, channel)
   if (!token) return false
 
   try {
@@ -1406,6 +1714,7 @@ async function tgSend(
       LAST_TG_KEY,
       JSON.stringify({
         ok: res.ok,
+        channel,
         chatId,
         status: res.status,
         at: Date.now(),
@@ -1419,6 +1728,7 @@ async function tgSend(
       LAST_TG_KEY,
       JSON.stringify({
         ok: false,
+        channel,
         chatId,
         status: 0,
         at: Date.now(),

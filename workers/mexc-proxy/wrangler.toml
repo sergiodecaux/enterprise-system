@@ -2,9 +2,14 @@ name = "mexc-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-# Cron: 24/7 market scan → Telegram alerts (every 2 min)
+# Split roles = separate CPU budgets. Vane runs every minute and finds setups itself.
+# Cron strings must match controller.cron in scheduled() exactly.
 [triggers]
-crons = ["*/2 * * * *"]
+crons = [
+  "*/2 * * * *",      # predator (memes)
+  "1-59/2 * * * *",   # paper monitor + journal
+  "* * * * *"         # vane auto-search (hot + round-robin TOP-50)
+]
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"
@@ -13,4 +18,5 @@ preview_id = "161ce13638eb4cd296886b26e37a35bb"
 
 # Secrets (CLI):
 #   npx wrangler secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN
 #   npx wrangler secret put ALERT_SECRET

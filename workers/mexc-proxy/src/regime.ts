@@ -115,3 +115,20 @@ export function regimeAllows(
 
   return { ok: true, scoreAdj }
 }
+
+/** Vane policy: flat → fade only; trend → flip allowed; counter-fade in trend → 0.5× */
+export function vanePathAllows(
+  regime: MarketRegime,
+  path: 'HOLD' | 'FLIP'
+): { ok: boolean; sizeMult: number; reason?: string } {
+  const ranging = regime === 'RANGING' || regime === 'VOLATILE_CHOP'
+  const trending =
+    regime === 'TRENDING_STRONG' || regime === 'TRENDING_WEAK'
+  if (ranging && path === 'FLIP') {
+    return { ok: false, sizeMult: 0, reason: 'flat: flip blocked' }
+  }
+  if (trending && path === 'HOLD') {
+    return { ok: true, sizeMult: 0.5 }
+  }
+  return { ok: true, sizeMult: 1 }
+}
