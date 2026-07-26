@@ -58,25 +58,16 @@ const STABLE_BLACKLIST = new Set([
   'USDP_USDT',
 ])
 
-/** 18 ликвидных перпов — BTC + majors + активные альты */
+/** BTC + 8 ликвидных альтов — быстрый скан Mini App (остальное через поиск) */
 export const CORE_WATCHLIST = [
   'BTC/USDT:USDT',
   'ETH/USDT:USDT',
   'SOL/USDT:USDT',
-  'XRP/USDT:USDT',
   'BNB/USDT:USDT',
-  'ADA/USDT:USDT',
-  'DOGE/USDT:USDT',
+  'XRP/USDT:USDT',
   'AVAX/USDT:USDT',
   'LINK/USDT:USDT',
-  'LTC/USDT:USDT',
-  'DOT/USDT:USDT',
-  'NEAR/USDT:USDT',
-  'APT/USDT:USDT',
   'SUI/USDT:USDT',
-  'ARB/USDT:USDT',
-  'OP/USDT:USDT',
-  'INJ/USDT:USDT',
   'TON/USDT:USDT',
 ] as const
 

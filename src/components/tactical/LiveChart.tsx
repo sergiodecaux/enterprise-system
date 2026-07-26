@@ -9,7 +9,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye } from 'lucide-react'
+import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import type { EqualLevel } from '../../engine/types'
 import {
@@ -27,6 +27,8 @@ import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
 import { usePriceForecast } from '../../hooks/usePriceForecast'
 import ChartSettings from './ChartSettings'
 import ChartOverlay from './ChartOverlay'
+import DirectionArrowOverlay from './DirectionArrowOverlay'
+import { computeDirectionConsensus } from '../../engine/trend/directionConsensus'
 import SessionOverlay from './SessionOverlay'
 import VolumePanel from './VolumePanel'
 import OscillatorPanel from './OscillatorPanel'
@@ -102,6 +104,8 @@ const INDICATOR_COLORS: Record<string, string> = {
 }
 
 const CHART_HEIGHT = 340
+const CHART_HEIGHT_EXPANDED = () =>
+  Math.min(Math.round(window.innerHeight * 0.78), 720)
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
@@ -126,8 +130,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   /** Skip fitContent after first successful load for this symbol/tf */
   const fittedKeyRef = useRef<string>('')
   const userPanningRef = useRef(false)
+  const chartHeightRef = useRef(CHART_HEIGHT)
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
+  const [chartExpanded, setChartExpanded] = useState(false)
+  const [showDirection, setShowDirection] = useState(true)
   const [candles, setCandles] = useState<OhlcvCandle[]>([])
   const [lwcData, setLwcData] = useState<CandlestickData[]>([])
   const [loading, setLoading] = useState(true)
@@ -158,6 +165,44 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     useState<TradeGlobalView | null>(null)
   const [tradesMagnet, setTradesMagnet] = useState<TradeMagnet | null>(null)
   const jewelSentRef = useRef<Set<string>>(new Set())
+
+  const chartHeight = chartExpanded ? CHART_HEIGHT_EXPANDED() : CHART_HEIGHT
+  chartHeightRef.current = chartHeight
+
+  useEffect(() => {
+    chartRef.current?.applyOptions({
+      height: chartHeight,
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: chartExpanded,
+      },
+      crosshair: { mode: chartExpanded ? 1 : 0 },
+      timeScale: { rightOffset: chartExpanded ? 12 : 6 },
+    })
+  }, [chartHeight, chartExpanded])
+
+  useEffect(() => {
+    if (!chartExpanded) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setChartExpanded(false)
+    }
+    const onResize = () => {
+      const h = CHART_HEIGHT_EXPANDED()
+      chartHeightRef.current = h
+      chartRef.current?.applyOptions({ height: h })
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [chartExpanded])
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -1111,8 +1156,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         autoScale: true,
       },
       width: containerRef.current.clientWidth,
-      height: CHART_HEIGHT,
-      // Mobile-first: pan freely, no kinetic jump-back, no vert drag fighting drawer
+      height: chartHeightRef.current,
+      // Mobile-first: pan freely; expand mode allows vert drag
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -1167,10 +1212,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       const w = Math.floor(entries[0].contentRect.width)
       if (w <= 0) return
       if (userPanningRef.current) return
-      // Only width — fixed height prevents jump when panels below grow
+      // Width from RO; height from expand / compact mode
       chart.applyOptions({
         width: w,
-        height: CHART_HEIGHT,
+        height: chartHeightRef.current,
       })
     })
     ro.observe(containerRef.current)
@@ -1573,7 +1618,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     'rgba($1, $2, $3, 0.9)'
   )
 
-  const chartHeight = CHART_HEIGHT
   const showSessions = sessionSettings.enabled && !cleanMode
   const showGhost =
     !!signal?.direction &&
@@ -1583,8 +1627,71 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     chartReady > 0 &&
     lastCandleTs > 0
 
+  const directionConsensus = useMemo(
+    () =>
+      computeDirectionConsensus({
+        signal,
+        forecast:
+          forecast && forecast.scenarios.length > 0 ? forecast : null,
+        alignment,
+        bookImbalance: liveBookImbalance,
+        newsBias,
+        timeframe,
+      }),
+    [
+      signal,
+      forecast,
+      alignment,
+      liveBookImbalance,
+      newsBias,
+      timeframe,
+    ]
+  )
+
   return (
-    <div className="space-y-2">
+    <div
+      className={
+        chartExpanded
+          ? 'fixed inset-0 z-[80] flex flex-col gap-2 overflow-y-auto bg-[#0a0a0a]/p-2 pb-4'
+          : 'space-y-2'
+      }
+    >
+      {chartExpanded && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-hull-border bg-hull px-3 py-2">
+          <div className="min-w-0 font-mono text-[11px] font-bold uppercase tracking-wider text-holo/80">
+            {flatSymbol.replace('USDT', '/USDT')} · {timeframe}
+            {showDirection && (
+              <span
+                className={`ml-2 ${
+                  directionConsensus.bias === 'UP'
+                    ? 'text-emerald-400'
+                    : directionConsensus.bias === 'DOWN'
+                      ? 'text-rose-400'
+                      : 'text-holo/40'
+                }`}
+              >
+                {directionConsensus.bias === 'UP'
+                  ? '↑'
+                  : directionConsensus.bias === 'DOWN'
+                    ? '↓'
+                    : '·'}{' '}
+                {directionConsensus.confidence}%
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setChartExpanded(false)
+              haptic.impact()
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md border border-matrix/40 bg-matrix/15 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase text-matrix"
+          >
+            <Minimize2 className="h-3.5 w-3.5" />
+            Свернуть
+          </button>
+        </div>
+      )}
       {/* Full-width CTA — always visible above TF toolbar (Telegram mobile) */}
       <button
         id="live-signal-cta"
@@ -1803,6 +1910,32 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </button>
           <button
             type="button"
+            onClick={() => {
+              setShowDirection((v) => !v)
+              haptic.impact()
+            }}
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              showDirection
+                ? directionConsensus.bias === 'UP'
+                  ? 'border border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
+                  : directionConsensus.bias === 'DOWN'
+                    ? 'border border-rose-400/50 bg-rose-500/15 text-rose-300'
+                    : 'border border-holo/40 bg-holo/10 text-holo/80'
+                : 'border border-hull-border text-holo/40 hover:text-holo/70'
+            }`}
+            title="Стрелка направления: сопоставление HTF / Score / MM / прогноз / стакан"
+          >
+            <ArrowUpDown className="h-3 w-3" />
+            {showDirection
+              ? directionConsensus.bias === 'UP'
+                ? '↑'
+                : directionConsensus.bias === 'DOWN'
+                  ? '↓'
+                  : '·'
+              : 'Выкл'}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowForecast((v) => !v)}
             className={`rounded-lg p-1.5 transition-colors ${
               showForecast
@@ -1812,6 +1945,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             title={t('forecast_toggle')}
           >
             <Eye className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setChartExpanded((v) => !v)
+              haptic.impact()
+            }}
+            className={`rounded-lg p-1.5 transition-colors ${
+              chartExpanded
+                ? 'bg-matrix/20 text-matrix'
+                : 'bg-hull-light/40 text-holo/60 hover:bg-hull-light/70 hover:text-holo'
+            }`}
+            title={chartExpanded ? 'Свернуть график' : 'Развернуть как на бирже'}
+          >
+            {chartExpanded ? (
+              <Minimize2 className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
+            )}
           </button>
           <button
             type="button"
@@ -1825,8 +1977,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       </div>
 
       <div
-        className="relative w-full overflow-hidden rounded-lg border border-hull-border bg-hull"
-        style={{ height: chartHeight, touchAction: 'pan-x pinch-zoom' }}
+        className={`relative w-full overflow-hidden rounded-lg border border-hull-border bg-hull ${
+          chartExpanded ? 'shadow-[0_0_0_1px_rgba(0,255,65,0.12)]' : ''
+        }`}
+        style={{
+          height: chartHeight,
+          touchAction: chartExpanded ? 'none' : 'pan-x pinch-zoom',
+        }}
         onTouchStart={(e) => e.stopPropagation()}
       >
         {loading && (
@@ -1895,19 +2052,38 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             series={candleRef.current}
             zones={liquidityZones}
             containerRef={containerRef}
-            opacity={Math.max(chartPreferences.opacity, zonesMode ? 26 : 18)}
-            showLabels={chartPreferences.showLabels || zonesMode}
+            opacity={Math.max(
+              chartPreferences.opacity,
+              zonesMode ? 32 : 20
+            )}
+            showLabels={chartPreferences.showLabels || zonesMode || chartExpanded}
             highlightId={highlightedZoneId}
-            forceContextLabels={zonesMode || Boolean(highlightedZoneId)}
+            forceContextLabels={
+              zonesMode || chartExpanded || Boolean(highlightedZoneId)
+            }
           />
         )}
+        {showDirection &&
+          chartReady > 0 &&
+          lastCandleTs > 0 &&
+          currentPrice > 0 && (
+            <DirectionArrowOverlay
+              chart={chartInstance}
+              series={candleRef.current}
+              containerRef={containerRef}
+              consensus={directionConsensus}
+              lastTime={lastCandleTs}
+              lastPrice={currentPrice}
+              visible={showDirection}
+            />
+          )}
         {zonesMode &&
           chartReady > 0 &&
           (zoneGuide?.below || zoneGuide?.above) && (
             <div className="pointer-events-none absolute bottom-2 left-2 right-14 z-[3] flex flex-wrap gap-1.5">
               {zoneGuide?.below && (
-                <div className="rounded-md border border-teal-400/40 bg-black/65 px-2 py-1 font-mono text-[9px] text-teal-200 shadow-lg backdrop-blur-sm">
-                  <span className="font-bold">↓ SSL удерж ↑</span>
+                <div className="rounded-md border border-teal-400/45 bg-black/70 px-2 py-1 font-mono text-[9px] text-teal-200 shadow-lg backdrop-blur-sm">
+                  <span className="font-bold">▼ ПОДДЕРЖКА · лонг ↑</span>
                   <span className="text-teal-100/80">
                     {' '}
                     @{' '}
@@ -1928,8 +2104,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 </div>
               )}
               {zoneGuide?.above && (
-                <div className="rounded-md border border-rose-400/40 bg-black/65 px-2 py-1 font-mono text-[9px] text-rose-200 shadow-lg backdrop-blur-sm">
-                  <span className="font-bold">↑ BSL удерж ↓</span>
+                <div className="rounded-md border border-rose-400/45 bg-black/70 px-2 py-1 font-mono text-[9px] text-rose-200 shadow-lg backdrop-blur-sm">
+                  <span className="font-bold">▲ СОПРОТИВЛЕНИЕ · шорт ↓</span>
                   <span className="text-rose-100/80">
                     {' '}
                     @{' '}
@@ -1989,27 +2165,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
       </div>
 
-      {chartPreferences.indicators.volume && indicators.volume.length > 0 && (
-        <VolumePanel volumeData={indicators.volume} height={40} />
-      )}
+      {!chartExpanded &&
+        chartPreferences.indicators.volume &&
+        indicators.volume.length > 0 && (
+          <VolumePanel volumeData={indicators.volume} height={40} />
+        )}
 
-      {oscillators.map((mode) => (
-        <OscillatorPanel
-          key={mode}
-          mode={mode}
-          rsiData={indicators.rsi}
-          macdData={indicators.macd}
-          stochasticData={indicators.stochastic}
-          atrData={indicators.atr}
-          height={60}
-        />
-      ))}
+      {!chartExpanded &&
+        oscillators.map((mode) => (
+          <OscillatorPanel
+            key={mode}
+            mode={mode}
+            rsiData={indicators.rsi}
+            macdData={indicators.macd}
+            stochasticData={indicators.stochastic}
+            atrData={indicators.atr}
+            height={60}
+          />
+        ))}
 
-      {!cleanMode && (
+      {!chartExpanded && !cleanMode && (
         <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />
       )}
 
-      {showForecast && forecast && (
+      {!chartExpanded && showForecast && forecast && (
         <>
           <ScenarioLegend
             scenarios={forecast.scenarios}
@@ -2029,7 +2208,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </>
       )}
 
-      {signalMode && liveSignal && (
+      {!chartExpanded && signalMode && liveSignal && (
         <SignalNowPanel
           result={liveSignal}
           selectedId={selectedSetupId}
@@ -2047,7 +2226,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {zonesMode && (
+      {!chartExpanded && zonesMode && (
         <ZoneVariantsPanel
           zones={foundZones}
           setups={pickedSetups}
@@ -2062,7 +2241,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {tradesMode && (
+      {!chartExpanded && tradesMode && (
         <ProbableTradesPanel
           trades={pickedSetups}
           globalView={tradesGlobalView}
@@ -2078,20 +2257,24 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {showSetupPicker && !zonesMode && !tradesMode && !signalMode && (
-        <SetupPickerPanel
-          setups={pickedSetups}
-          selectedId={selectedSetupId}
-          watchingIds={watchingIds}
-          busy={watchBusy}
-          onSelect={(s) => {
-            setSelectedSetupId(s.id)
-            haptic.impact()
-          }}
-          onWatch={handleWatchSetup}
-          onUnwatch={handleUnwatchSetup}
-        />
-      )}
+      {!chartExpanded &&
+        showSetupPicker &&
+        !zonesMode &&
+        !tradesMode &&
+        !signalMode && (
+          <SetupPickerPanel
+            setups={pickedSetups}
+            selectedId={selectedSetupId}
+            watchingIds={watchingIds}
+            busy={watchBusy}
+            onSelect={(s) => {
+              setSelectedSetupId(s.id)
+              haptic.impact()
+            }}
+            onWatch={handleWatchSetup}
+            onUnwatch={handleUnwatchSetup}
+          />
+        )}
 
       <ChartSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

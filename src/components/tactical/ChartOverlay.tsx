@@ -96,36 +96,45 @@ function rgba(c: Rgba, a: number): string {
 }
 
 function zoneTitle(zone: LiquidityZone): string {
-  if (zone.contextHint) {
-    const short =
-      zone.type === 'SSL'
-        ? 'SSL'
-        : zone.type === 'BSL'
-          ? 'BSL'
-          : zone.type === 'FIBONACCI'
-            ? zone.label?.includes('141')
-              ? 'F141'
-              : 'Fib'
-            : zone.type === 'OTE'
-              ? 'OTE'
-              : zone.type === 'ORDER_BLOCK'
-                ? 'OB'
+  const kind =
+    zone.type === 'SSL' || zone.type === 'LIQ'
+      ? 'ПОДДЕРЖКА'
+      : zone.type === 'BSL'
+        ? 'СОПРОТИВЛЕНИЕ'
+        : zone.type === 'FIBONACCI'
+          ? zone.label?.includes('141')
+            ? 'FIB 1.41 магнит'
+            : 'FIB'
+          : zone.type === 'OTE'
+            ? 'OTE вход'
+            : zone.type === 'ORDER_BLOCK'
+              ? zone.side === 'BULLISH'
+                ? 'OB лонг'
+                : 'OB шорт'
+              : zone.type === 'FVG'
+                ? zone.side === 'BULLISH'
+                  ? 'FVG ↑'
+                  : 'FVG ↓'
                 : zone.label?.split('·')[0]?.trim() || zone.type
-    const hold =
-      zone.side === 'BULLISH' || zone.type === 'SSL'
-        ? 'удерж ↑'
-        : zone.side === 'BEARISH' || zone.type === 'BSL'
-          ? 'удерж ↓'
-          : ''
-    const lost =
-      zone.invalidation != null
-        ? zone.side === 'BULLISH' || zone.type === 'SSL'
-          ? `слом < ${fmtPx(zone.invalidation)}`
-          : `слом > ${fmtPx(zone.invalidation)}`
+
+  const action =
+    zone.side === 'BULLISH' || zone.type === 'SSL' || zone.type === 'LIQ'
+      ? 'лонг отсюда ↑'
+      : zone.side === 'BEARISH' || zone.type === 'BSL'
+        ? 'шорт отсюда ↓'
         : ''
-    return [short, hold, lost].filter(Boolean).join(' · ')
+
+  const lost =
+    zone.invalidation != null
+      ? zone.side === 'BULLISH' || zone.type === 'SSL' || zone.type === 'LIQ'
+        ? `слом < ${fmtPx(zone.invalidation)}`
+        : `слом > ${fmtPx(zone.invalidation)}`
+      : ''
+
+  if (zone.contextHint || zone.type === 'SSL' || zone.type === 'BSL') {
+    return [kind, action, lost].filter(Boolean).join(' · ')
   }
-  return zone.label ?? zone.type
+  return [kind, action].filter(Boolean).join(' · ') || zone.label || zone.type
 }
 
 function fmtPx(p: number): string {
@@ -226,15 +235,36 @@ const ChartOverlay = ({
           border-radius: 2px;
         `
 
-        // Left strength stripe
+        // Left strength stripe + direction chevron for SSL/BSL
         const stripe = document.createElement('div')
         stripe.style.cssText = `
           position: absolute;
           left: 0; top: 0; bottom: 0;
-          width: ${vis.stripeW}px;
+          width: ${vis.stripeW + (zone.type === 'SSL' || zone.type === 'BSL' ? 2 : 0)}px;
           background: ${rgba(hue, vis.tier === 'STRONG' ? 0.95 : vis.tier === 'MEDIUM' ? 0.7 : 0.4)};
         `
         div.appendChild(stripe)
+
+        if (
+          (zone.type === 'SSL' || zone.type === 'BSL' || zone.type === 'LIQ') &&
+          height >= 12
+        ) {
+          const chev = document.createElement('div')
+          const up = zone.type === 'SSL' || zone.type === 'LIQ'
+          chev.textContent = up ? '▲ LONG' : '▼ SHORT'
+          chev.style.cssText = `
+            position: absolute;
+            left: ${vis.stripeW + 6}px;
+            bottom: 2px;
+            font-size: 8px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            color: ${rgba(hue, 0.95)};
+            font-family: ui-monospace, Menlo, monospace;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+          `
+          div.appendChild(chev)
+        }
 
         const isKeyZone =
           zone.type === 'SSL' ||

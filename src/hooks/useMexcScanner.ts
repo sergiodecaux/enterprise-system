@@ -50,7 +50,7 @@ const COIN_DELAY_MS = 220
 const TICKER_POLL_MS = 5_000
 
 /**
- * MEXC scanner — CORE_WATCHLIST + монеты из поиска (extraWatchlist).
+ * MEXC scanner — BTC+8 альтов (CORE_WATCHLIST) + монеты из поиска.
  */
 export const useMexcScanner = () => {
   const isMountedRef = useRef(true)
