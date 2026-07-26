@@ -1,9 +1,9 @@
-/** Meme / Predator bot — shown in meme Telegram /status */
+/** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'predator-liq-echo-v23',
-  label: 'PREDATOR: Liquidation Echo',
+  id: 'meme-order-flow-v24',
+  label: 'MEME: Order-Flow MM Join',
   deployedNote:
-    'Powder-keg hotlist (vol $3–15M, |chg|≥8%, spread≤0.08%, OI+2h≥5%). Ждём wave1 liq → tape fade → Post-Only на эхо. TP+1.1% SL−0.7%, fill≤8s, time-stop 12s maker. Unit 10% + circuit breaker.',
+    'Lab 26.07: thin hotlist · ABSORPTION/SPOOF/wall-release WITH day bias · skip wash & wide spread · no liq-echo wait. Limit-chase maker · TP~2% SL~0.8%. Не лонговать dump+buy-tape и pump-unload без absorption.',
 } as const
 
 /** BTC + alts vane sniper — hold strong zone or S/R flip on break+retest */

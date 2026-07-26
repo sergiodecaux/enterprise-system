@@ -1,0 +1,4545 @@
+{
+  "startedAt": "2026-07-26T20:10:12.673Z",
+  "updatedAt": "2026-07-26T21:10:06.644Z",
+  "elapsedMin": 59.8995,
+  "totalMin": 60,
+  "batches": 34,
+  "goal": "Find regularities explaining meme pumps/dumps from book+tape precursors",
+  "impulses": [
+    {
+      "at": "2026-07-26T20:12:11.127Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.47000000000000597,
+      "midBps": -87.31617647058945,
+      "fromChg": 27.58,
+      "toChg": 28.050000000000004,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:12:43.892Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 2.3000000000000007,
+      "midBps": 214.79842409196343,
+      "fromChg": -33.36,
+      "toChg": -31.06,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:12:54.832Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.7299999999999995,
+      "midBps": -36.50659926986712,
+      "fromChg": -6.260000000000001,
+      "toChg": -6.99,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:13:58.656Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.350000000000005,
+      "midBps": -9.27213722763059,
+      "fromChg": 28.050000000000004,
+      "toChg": 25.7,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:14:21.555Z",
+      "symbol": "UB_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.6800000000000015,
+      "midBps": -55.917667238420755,
+      "fromChg": 9.950000000000001,
+      "toChg": 9.27,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:15:47.454Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.120000000000001,
+      "midBps": -37.12296983758711,
+      "fromChg": 25.7,
+      "toChg": 25.82,
+      "precursors": [
+        "ASK_WALL_GONE",
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD",
+        "ASK_WALL_GONE_INTRA",
+        "BID_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:16:09.378Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.02999999999999936,
+      "midBps": 55.197157346396324,
+      "fromChg": 9.27,
+      "toChg": 9.24,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:16:20.371Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -3.8000000000000007,
+      "midBps": -337.9091869060181,
+      "fromChg": -31.34,
+      "toChg": -35.14,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:16:31.597Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.6699999999999999,
+      "midBps": 53.62686988427765,
+      "fromChg": -7.51,
+      "toChg": -8.18,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T20:17:34.369Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.469999999999999,
+      "midBps": -149.04517931998015,
+      "fromChg": 25.82,
+      "toChg": 23.35,
+      "precursors": [
+        "ASK_WALL_GONE",
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Сняли bid-поддержку + sell tape → обвал (ложный спрос убран)"
+    },
+    {
+      "at": "2026-07-26T20:17:56.225Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.4499999999999993,
+      "midBps": -3.773973307716025,
+      "fromChg": 9.24,
+      "toChg": 10.69,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:18:07.291Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 1.0300000000000011,
+      "midBps": -324.0437158469944,
+      "fromChg": -35.14,
+      "toChg": -34.11,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:18:18.227Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.6699999999999999,
+      "midBps": -218.97810218977875,
+      "fromChg": -8.18,
+      "toChg": -7.51,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:19:20.977Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.46999999999999886,
+      "midBps": -56.73758865248324,
+      "fromChg": 23.35,
+      "toChg": 23.82,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:19:53.910Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.4000000000000057,
+      "midBps": -550.0649460665288,
+      "fromChg": -34.11,
+      "toChg": -34.510000000000005,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:20:04.858Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": -2.33,
+      "midBps": 106.1997703788727,
+      "fromChg": -7.51,
+      "toChg": -9.84,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T20:21:40.615Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -4.249999999999993,
+      "midBps": 95.6194346500929,
+      "fromChg": -34.510000000000005,
+      "toChg": -38.76,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:21:51.535Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": 1.1400000000000006,
+      "midBps": -79.52286282306075,
+      "fromChg": -9.84,
+      "toChg": -8.7,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.2400000000000011,
+      "midBps": 46.27981488074065,
+      "fromChg": -5.800000000000001,
+      "toChg": -5.56,
+      "precursors": [
+        "THIN_BOOK",
+        "BIG_ASK_WALL",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:23:16.288Z",
+      "symbol": "UB_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.08000000000000007,
+      "midBps": -73.57470399014579,
+      "fromChg": 9.81,
+      "toChg": 9.89,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:23:49.339Z",
+      "symbol": "RE_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.5100000000000007,
+      "midBps": 45.15135967162606,
+      "fromChg": -5.800000000000001,
+      "toChg": -5.29,
+      "precursors": [
+        "THIN_BOOK",
+        "BID_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:23:38.146Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.9800000000000004,
+      "midBps": -137.41769252791372,
+      "fromChg": -8.7,
+      "toChg": -9.68,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.2400000000000011,
+      "midBps": 46.27981488074065,
+      "fromChg": -5.800000000000001,
+      "toChg": -5.56,
+      "precursors": [
+        "THIN_BOOK",
+        "BIG_ASK_WALL",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:24:40.765Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.4700000000000024,
+      "midBps": -52.48091603053387,
+      "fromChg": 22.18,
+      "toChg": 22.650000000000002,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Тонкий стакан + снятие bid → быстрый dump"
+    },
+    {
+      "at": "2026-07-26T20:25:24.624Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.5199999999999996,
+      "midBps": 49.3468795355598,
+      "fromChg": -9.68,
+      "toChg": -10.2,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.2400000000000011,
+      "midBps": 46.27981488074065,
+      "fromChg": -5.800000000000001,
+      "toChg": -5.56,
+      "precursors": [
+        "THIN_BOOK",
+        "BIG_ASK_WALL",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:26:27.284Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.9400000000000048,
+      "midBps": -187.0503597122309,
+      "fromChg": 22.650000000000002,
+      "toChg": 21.709999999999997,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:26:38.200Z",
+      "symbol": "AKE_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.4800000000000004,
+      "midBps": -35.16614047700908,
+      "fromChg": 11.34,
+      "toChg": 10.86,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:26:49.144Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.4499999999999993,
+      "midBps": 39.93940228618436,
+      "fromChg": 9.71,
+      "toChg": 10.16,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:27:00.068Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.5499999999999972,
+      "midBps": 311.27712557808474,
+      "fromChg": -38.5,
+      "toChg": -36.95,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:27:11.030Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.6699999999999999,
+      "midBps": 309.06990179087194,
+      "fromChg": -10.2,
+      "toChg": -9.53,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:28:13.638Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.7599999999999945,
+      "midBps": -34.213098729228065,
+      "fromChg": 21.709999999999997,
+      "toChg": 19.950000000000003,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:28:46.779Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.5500000000000043,
+      "midBps": 125.92720372606748,
+      "fromChg": -36.95,
+      "toChg": -35.4,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:28:57.722Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": 2.13,
+      "midBps": 58.840011207620925,
+      "fromChg": -9.53,
+      "toChg": -7.3999999999999995,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "OBI_ASK_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:30:00.337Z",
+      "symbol": "4_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.6999999999999957,
+      "midBps": 73.56547327121349,
+      "fromChg": 19.950000000000003,
+      "toChg": 20.65,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T20:30:11.579Z",
+      "symbol": "AKE_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.6300000000000008,
+      "midBps": 57.09994837538926,
+      "fromChg": 11.04,
+      "toChg": 11.67,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:30:33.583Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.1499999999999986,
+      "midBps": 278.2509937535476,
+      "fromChg": -35.4,
+      "toChg": -34.25,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:32:09.583Z",
+      "symbol": "UB_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.35999999999999943,
+      "midBps": -45.17299202628206,
+      "fromChg": 10.37,
+      "toChg": 10.01,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "OBI_ASK_HEAVY"
+      ],
+      "hypothesis": "Dump при buy-tape и ask-heavy → ловушка на отскок / раздача в «покупателей дна»"
+    },
+    {
+      "at": "2026-07-26T20:32:20.628Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.8200000000000003,
+      "midBps": -190.05524861878294,
+      "fromChg": -34.25,
+      "toChg": -35.07,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:32:42.635Z",
+      "symbol": "RIF_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.33999999999999897,
+      "midBps": -64.45890005913705,
+      "fromChg": -5.56,
+      "toChg": -5.220000000000001,
+      "precursors": [
+        "ASK_WALL_GONE",
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:33:34.426Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.6999999999999993,
+      "midBps": -43.85964912280692,
+      "fromChg": 20.18,
+      "toChg": 19.48,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:34:07.259Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.9299999999999997,
+      "midBps": 47.87114214913171,
+      "fromChg": -35.07,
+      "toChg": -36,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:34:29.213Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.4500000000000002,
+      "midBps": 117.64705882352891,
+      "fromChg": -7.66,
+      "toChg": -6.21,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:34:18.264Z",
+      "symbol": "RIF_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.7699999999999996,
+      "midBps": -35.11695732396759,
+      "fromChg": -5.220000000000001,
+      "toChg": -5.99,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:35:31.686Z",
+      "symbol": "AKE_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.6600000000000001,
+      "midBps": -52.08900222350018,
+      "fromChg": 11.98,
+      "toChg": 11.32,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:35:42.618Z",
+      "symbol": "UB_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.08999999999999986,
+      "midBps": -56.82600909216093,
+      "fromChg": 9.33,
+      "toChg": 9.42,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:35:53.563Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.8599999999999994,
+      "midBps": -224.20267922201728,
+      "fromChg": -36,
+      "toChg": -36.86,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:36:15.432Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0,
+      "midBps": -83.05647840531569,
+      "fromChg": -6.21,
+      "toChg": -6.21,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:37:07.215Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.0600000000000023,
+      "midBps": -53.78973105134593,
+      "fromChg": 20.3,
+      "toChg": 19.24,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:37:40.013Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.21000000000000085,
+      "midBps": -164.5547847027095,
+      "fromChg": -36.86,
+      "toChg": -36.65,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:37:50.932Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.4500000000000002,
+      "midBps": 11.166945840312996,
+      "fromChg": -6.21,
+      "toChg": -7.66,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:39:04.585Z",
+      "symbol": "4_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.7100000000000044,
+      "midBps": 127.82694198623393,
+      "fromChg": 19.24,
+      "toChg": 19.950000000000003,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:39:26.456Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.8000000000000043,
+      "midBps": 88.02611635769985,
+      "fromChg": -36.65,
+      "toChg": -37.45,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:40:51.644Z",
+      "symbol": "4_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.4099999999999966,
+      "midBps": -14.563106796117596,
+      "fromChg": 19.950000000000003,
+      "toChg": 21.36,
+      "precursors": [
+        "ASK_WALL_GONE",
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD",
+        "BID_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Сняли ask-стену + buy tape → классический запуск пампа (магнит убран)"
+    },
+    {
+      "at": "2026-07-26T20:41:13.568Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 1.3900000000000077,
+      "midBps": -190.118462872004,
+      "fromChg": -37.45,
+      "toChg": -36.059999999999995,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:41:35.537Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.21000000000000085,
+      "midBps": -78.08142777467846,
+      "fromChg": -6.94,
+      "toChg": -6.7299999999999995,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:40:40.634Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.1599999999999966,
+      "midBps": -49.086840395583685,
+      "fromChg": 43.66,
+      "toChg": 42.5,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:42:38.953Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.2300000000000004,
+      "midBps": -136.1205639280484,
+      "fromChg": 21.36,
+      "toChg": 19.13,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Тонкий стакан + снятие bid → быстрый dump"
+    },
+    {
+      "at": "2026-07-26T20:43:01.116Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.260000000000005,
+      "midBps": -68.92082940622,
+      "fromChg": -36.059999999999995,
+      "toChg": -38.32,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:43:12.309Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.2399999999999993,
+      "midBps": -16.8634064080957,
+      "fromChg": -6.7299999999999995,
+      "toChg": -7.969999999999999,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:42:28.041Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": 4.350000000000001,
+      "midBps": 18.135654697135088,
+      "fromChg": 42.5,
+      "toChg": 46.85,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:44:47.769Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.1199999999999974,
+      "midBps": 219.46734681772486,
+      "fromChg": -38.32,
+      "toChg": -37.2,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:44:14.756Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.1400000000000006,
+      "midBps": -81.8247646632864,
+      "fromChg": 46.85,
+      "toChg": 44.71,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:46:12.771Z",
+      "symbol": "4_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.8200000000000003,
+      "midBps": 64.2292490118568,
+      "fromChg": 18.54,
+      "toChg": 19.36,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T20:46:34.626Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.5399999999999991,
+      "midBps": 63.84584131406291,
+      "fromChg": -37.2,
+      "toChg": -37.74,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:46:56.454Z",
+      "symbol": "RIF_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.15999999999999837,
+      "midBps": 45.60729716754578,
+      "fromChg": -6.529999999999999,
+      "toChg": -6.370000000000001,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "BIG_ASK_WALL",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:46:01.796Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": -2.0500000000000043,
+      "midBps": 73.00868803387559,
+      "fromChg": 44.71,
+      "toChg": 42.66,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:48:21.624Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.35999999999999943,
+      "midBps": -62.864063671490854,
+      "fromChg": -37.74,
+      "toChg": -37.38,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:48:32.734Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.41000000000000014,
+      "midBps": -75.97073719752336,
+      "fromChg": -7.82,
+      "toChg": -8.23,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:47:48.487Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.490000000000002,
+      "midBps": 68.85554830760282,
+      "fromChg": 42.66,
+      "toChg": 44.15,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:50:08.575Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.9500000000000028,
+      "midBps": 295.414973882762,
+      "fromChg": -37.38,
+      "toChg": -36.43,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:49:35.602Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.0700000000000003,
+      "midBps": -56.86726173337241,
+      "fromChg": 44.15,
+      "toChg": 43.08,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:51:44.176Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": 4.970000000000001,
+      "midBps": 427.88344939888333,
+      "fromChg": 9.21,
+      "toChg": 14.180000000000001,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:51:55.111Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.5900000000000034,
+      "midBps": 76.66723039630037,
+      "fromChg": -36.43,
+      "toChg": -34.839999999999996,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:51:22.323Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -3.1699999999999946,
+      "midBps": -241.07724607254036,
+      "fromChg": 43.08,
+      "toChg": 39.910000000000004,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:53:30.415Z",
+      "symbol": "UB_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.8200000000000021,
+      "midBps": -40.20200677786047,
+      "fromChg": 14.180000000000001,
+      "toChg": 13.36,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:53:41.419Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -3.770000000000003,
+      "midBps": -826.8531468531451,
+      "fromChg": -34.839999999999996,
+      "toChg": -38.61,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:54:03.315Z",
+      "symbol": "RIF_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.09999999999999964,
+      "midBps": 39.10950661853092,
+      "fromChg": -6.7299999999999995,
+      "toChg": -6.63,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:53:08.487Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -15.450000000000003,
+      "midBps": -1010.3857566765569,
+      "fromChg": 39.910000000000004,
+      "toChg": 24.46,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:55:29.503Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.5900000000000034,
+      "midBps": 142.70903214002445,
+      "fromChg": -38.61,
+      "toChg": -39.2,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:55:07.506Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -7.359999999999999,
+      "midBps": -904.439676514276,
+      "fromChg": 24.46,
+      "toChg": 17.1,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:57:16.846Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.8800000000000026,
+      "midBps": -114.8457699476861,
+      "fromChg": -39.2,
+      "toChg": -38.32,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:56:54.691Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": 2.6099999999999994,
+      "midBps": 499.9092723643616,
+      "fromChg": 17.1,
+      "toChg": 19.71,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:58:41.642Z",
+      "symbol": "4_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.5899999999999963,
+      "midBps": -53.65853658536536,
+      "fromChg": 20.419999999999998,
+      "toChg": 19.830000000000002,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот)"
+    },
+    {
+      "at": "2026-07-26T20:59:03.708Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": -3.8900000000000006,
+      "midBps": -189.78102189781214,
+      "fromChg": -38.32,
+      "toChg": -42.21,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T20:59:14.691Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0,
+      "midBps": 36.92132916784912,
+      "fromChg": -8.6,
+      "toChg": -8.6,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T20:58:30.439Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": 4.350000000000001,
+      "midBps": 236.75797113972172,
+      "fromChg": 19.71,
+      "toChg": 24.060000000000002,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:00:40.177Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": 2.5200000000000014,
+      "midBps": -8.987716787059286,
+      "fromChg": 13.28,
+      "toChg": 15.8,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:00:51.191Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.1200000000000045,
+      "midBps": 60.143849206349124,
+      "fromChg": -42.21,
+      "toChg": -41.089999999999996,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:01:13.200Z",
+      "symbol": "ANSEM_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.41999999999999993,
+      "midBps": 70.7413695529146,
+      "fromChg": -8.6,
+      "toChg": -8.18,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:00:18.080Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": 4.449999999999999,
+      "midBps": 77.65679074871281,
+      "fromChg": 24.060000000000002,
+      "toChg": 28.51,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:00:40.177Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": 2.5200000000000014,
+      "midBps": -8.987716787059286,
+      "fromChg": 13.28,
+      "toChg": 15.8,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:02:37.814Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.1599999999999966,
+      "midBps": 144.83821263482437,
+      "fromChg": -41.089999999999996,
+      "toChg": -40.93,
+      "precursors": [
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:02:04.776Z",
+      "symbol": "AIINU_USDT",
+      "direction": "PUMP",
+      "chgDelta": -4.360000000000003,
+      "midBps": 145.74084931736226,
+      "fromChg": 28.51,
+      "toChg": 24.15,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:02:26.786Z",
+      "symbol": "ESP_USDT",
+      "direction": "PUMP",
+      "chgDelta": 1.8800000000000008,
+      "midBps": 92.62276006516136,
+      "fromChg": 13.74,
+      "toChg": 15.620000000000001,
+      "precursors": [
+        "ASK_WALL_GONE",
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Тонкий стакан + снятие ask → лёгкий вынос вверх"
+    },
+    {
+      "at": "2026-07-26T21:00:40.177Z",
+      "symbol": "UB_USDT",
+      "direction": "PUMP",
+      "chgDelta": 2.5200000000000014,
+      "midBps": -8.987716787059286,
+      "fromChg": 13.28,
+      "toChg": 15.8,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:04:24.650Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 0.6599999999999966,
+      "midBps": -60.753341433780584,
+      "fromChg": -40.93,
+      "toChg": -40.27,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T21:04:02.788Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.9899999999999984,
+      "midBps": -255.92338809543287,
+      "fromChg": 24.15,
+      "toChg": 22.16,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T21:04:13.705Z",
+      "symbol": "ESP_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.7300000000000004,
+      "midBps": -46.1169525917715,
+      "fromChg": 15.620000000000001,
+      "toChg": 14.89,
+      "precursors": [
+        "THIN_BOOK",
+        "BUY_TAPE_DOM",
+        "OBI_ASK_HEAVY",
+        "BID_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Dump при buy-tape и ask-heavy → ловушка на отскок / раздача в «покупателей дна»"
+    },
+    {
+      "at": "2026-07-26T21:05:38.789Z",
+      "symbol": "4_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.46999999999999886,
+      "midBps": 44.031311154598725,
+      "fromChg": 20.77,
+      "toChg": 20.3,
+      "precursors": [
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD",
+        "ASK_WALL_GONE_INTRA"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T21:06:00.732Z",
+      "symbol": "UB_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.3200000000000003,
+      "midBps": 24.655160924904177,
+      "fromChg": 15.8,
+      "toChg": 13.48,
+      "precursors": [
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T21:06:22.570Z",
+      "symbol": "RIF_USDT",
+      "direction": "DUMP",
+      "chgDelta": -0.6299999999999999,
+      "midBps": -48.54950851114706,
+      "fromChg": -6.460000000000001,
+      "toChg": -7.090000000000001,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK"
+      ],
+      "hypothesis": "Тонкий стакан + снятие bid → быстрый dump"
+    },
+    {
+      "at": "2026-07-26T21:04:02.788Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -1.9899999999999984,
+      "midBps": -255.92338809543287,
+      "fromChg": 24.15,
+      "toChg": 22.16,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T21:05:49.770Z",
+      "symbol": "ESP_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.010000000000001563,
+      "midBps": 88.02816901408382,
+      "fromChg": 14.89,
+      "toChg": 14.879999999999999,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T21:07:58.384Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "DUMP",
+      "chgDelta": 1.3100000000000023,
+      "midBps": -147.59921607055253,
+      "fromChg": -41.38,
+      "toChg": -40.07,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T21:07:36.468Z",
+      "symbol": "AIINU_USDT",
+      "direction": "DUMP",
+      "chgDelta": -2.5500000000000007,
+      "midBps": -276.20096585613817,
+      "fromChg": 22.16,
+      "toChg": 19.61,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_BID_HEAVY"
+      ],
+      "hypothesis": "Импульс вниз без явного book-триггера"
+    },
+    {
+      "at": "2026-07-26T21:05:49.770Z",
+      "symbol": "ESP_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.010000000000001563,
+      "midBps": 88.02816901408382,
+      "fromChg": 14.89,
+      "toChg": 14.879999999999999,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T21:09:11.834Z",
+      "symbol": "4_USDT",
+      "direction": "PUMP",
+      "chgDelta": 0.8200000000000003,
+      "midBps": 48.59086491739524,
+      "fromChg": 20.65,
+      "toChg": 21.47,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    },
+    {
+      "at": "2026-07-26T21:09:44.602Z",
+      "symbol": "JIMOTHY_USDT",
+      "direction": "PUMP",
+      "chgDelta": -1.1700000000000017,
+      "midBps": 50.351215266986515,
+      "fromChg": -40.07,
+      "toChg": -41.24,
+      "precursors": [
+        "THIN_BOOK",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных)"
+    },
+    {
+      "at": "2026-07-26T21:05:49.770Z",
+      "symbol": "ESP_USDT",
+      "direction": "PUMP",
+      "chgDelta": -0.010000000000001563,
+      "midBps": 88.02816901408382,
+      "fromChg": 14.89,
+      "toChg": 14.879999999999999,
+      "precursors": [
+        "BID_WALL_GONE",
+        "THIN_BOOK",
+        "SELL_TAPE_DOM",
+        "OBI_ASK_HEAVY",
+        "WIDE_SPREAD"
+      ],
+      "hypothesis": "Памп продолжается на sell-доминации → поздняя фаза / раздача"
+    }
+  ],
+  "patterns": [
+    {
+      "id": "rule:thin→dump",
+      "title": "Тонкий стакан → резкий дамп",
+      "pumpHits": 0,
+      "dumpHits": 57,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.47 mid -87bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.73 mid -37bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.35 mid -9bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "UB Δchg -0.68 mid -56bps ← THIN_BOOK",
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "JIMOTHY Δchg -3.80 mid -338bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 57,
+      "precision": 1
+    },
+    {
+      "id": "prec:THIN_BOOK→DUMP",
+      "title": "До дампа: THIN_BOOK",
+      "pumpHits": 0,
+      "dumpHits": 57,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.47 mid -87bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.73 mid -37bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.35 mid -9bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "UB Δchg -0.68 mid -56bps ← THIN_BOOK",
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "JIMOTHY Δchg -3.80 mid -338bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 57,
+      "precision": 0.2864321608040201
+    },
+    {
+      "id": "rule:thin→pump",
+      "title": "Тонкий стакан → резкий памп",
+      "pumpHits": 53,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "JIMOTHY Δchg +2.30 mid 215bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "UB Δchg -0.03 mid 55bps ← THIN_BOOK+OBI_BID_HEAVY",
+        "ANSEM Δchg -0.67 mid 54bps ← THIN_BOOK+SELL_TAPE_DOM",
+        "UB Δchg +1.45 mid -4bps ← THIN_BOOK",
+        "ANSEM Δchg -2.33 mid 106bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "RIF Δchg +0.24 mid 46bps ← THIN_BOOK+BIG_ASK_WALL"
+      ],
+      "hits": 53,
+      "precision": 1
+    },
+    {
+      "id": "prec:THIN_BOOK→PUMP",
+      "title": "До пампа: THIN_BOOK",
+      "pumpHits": 53,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "JIMOTHY Δchg +2.30 mid 215bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "UB Δchg -0.03 mid 55bps ← THIN_BOOK+OBI_BID_HEAVY",
+        "ANSEM Δchg -0.67 mid 54bps ← THIN_BOOK+SELL_TAPE_DOM",
+        "UB Δchg +1.45 mid -4bps ← THIN_BOOK",
+        "ANSEM Δchg -2.33 mid 106bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "RIF Δchg +0.24 mid 46bps ← THIN_BOOK+BIG_ASK_WALL"
+      ],
+      "hits": 53,
+      "precision": 0.2717948717948718
+    },
+    {
+      "id": "prec:WIDE_SPREAD→DUMP",
+      "title": "До дампа: WIDE_SPREAD",
+      "pumpHits": 0,
+      "dumpHits": 39,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.47 mid -87bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.73 mid -37bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.35 mid -9bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "JIMOTHY Δchg -3.80 mid -338bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "4 Δchg -2.47 mid -149bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 39,
+      "precision": 0.582089552238806
+    },
+    {
+      "id": "prec:WIDE_SPREAD→PUMP",
+      "title": "До пампа: WIDE_SPREAD",
+      "pumpHits": 35,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "JIMOTHY Δchg +2.30 mid 215bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg -2.33 mid 106bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.52 mid 49bps ← THIN_BOOK+SELL_TAPE_DOM+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg +1.55 mid 311bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg +0.67 mid 309bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg +1.55 mid 126bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 35,
+      "precision": 0.5555555555555556
+    },
+    {
+      "id": "prec:OBI_BID_HEAVY→PUMP",
+      "title": "До пампа: OBI_BID_HEAVY",
+      "pumpHits": 14,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "JIMOTHY Δchg +2.30 mid 215bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "UB Δchg -0.03 mid 55bps ← THIN_BOOK+OBI_BID_HEAVY",
+        "JIMOTHY Δchg +1.55 mid 311bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg -0.80 mid 88bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "AIINU Δchg +1.49 mid 69bps ← THIN_BOOK+OBI_BID_HEAVY",
+        "JIMOTHY Δchg -0.59 mid 143bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 14,
+      "precision": 0.2978723404255319
+    },
+    {
+      "id": "prec:OBI_ASK_HEAVY→PUMP",
+      "title": "До пампа: OBI_ASK_HEAVY",
+      "pumpHits": 12,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "ANSEM Δchg -0.52 mid 49bps ← THIN_BOOK+SELL_TAPE_DOM+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg +0.67 mid 309bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg +1.55 mid 126bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg +2.13 mid 59bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_ASK_HEAVY",
+        "AIINU Δchg +4.35 mid 18bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg +1.59 mid 77bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 12,
+      "precision": 0.42857142857142855
+    },
+    {
+      "id": "prec:OBI_BID_HEAVY→DUMP",
+      "title": "До дампа: OBI_BID_HEAVY",
+      "pumpHits": 0,
+      "dumpHits": 12,
+      "falseAlarms": 0,
+      "examples": [
+        "ANSEM Δchg +0.67 mid -219bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_BID_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg -4.25 mid 96bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg +1.14 mid -80bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_BID_HEAVY+WIDE_SPREAD",
+        "UB Δchg +0.08 mid -74bps ← THIN_BOOK+OBI_BID_HEAVY",
+        "JIMOTHY Δchg +1.39 mid -190bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD",
+        "JIMOTHY Δchg -2.26 mid -69bps ← THIN_BOOK+OBI_BID_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 12,
+      "precision": 0.26666666666666666
+    },
+    {
+      "id": "rule:buy_dom→dump_cover",
+      "title": "Buy-tape при дампе → покрытие/набор в падении",
+      "pumpHits": 0,
+      "dumpHits": 11,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg +0.67 mid -219bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg +1.14 mid -80bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg -0.98 mid -137bps ← THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.47 mid -52bps ← BID_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "UB Δchg -0.36 mid -45bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_ASK_HEAVY"
+      ],
+      "hits": 11,
+      "precision": 1
+    },
+    {
+      "id": "prec:BUY_TAPE_DOM→DUMP",
+      "title": "До дампа: BUY_TAPE_DOM",
+      "pumpHits": 0,
+      "dumpHits": 11,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg +0.67 mid -219bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg +1.14 mid -80bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_BID_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg -0.98 mid -137bps ← THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.47 mid -52bps ← BID_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "UB Δchg -0.36 mid -45bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_ASK_HEAVY"
+      ],
+      "hits": 11,
+      "precision": 0.5789473684210527
+    },
+    {
+      "id": "prec:OBI_ASK_HEAVY→DUMP",
+      "title": "До дампа: OBI_ASK_HEAVY",
+      "pumpHits": 0,
+      "dumpHits": 11,
+      "falseAlarms": 0,
+      "examples": [
+        "JIMOTHY Δchg -3.80 mid -338bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "UB Δchg -0.36 mid -45bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_ASK_HEAVY",
+        "JIMOTHY Δchg -0.82 mid -190bps ← THIN_BOOK+OBI_ASK_HEAVY",
+        "ANSEM Δchg +0.00 mid -83bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "ANSEM Δchg -1.45 mid 11bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "AIINU Δchg -1.16 mid -49bps ← THIN_BOOK+OBI_ASK_HEAVY+WIDE_SPREAD"
+      ],
+      "hits": 11,
+      "precision": 0.4074074074074074
+    },
+    {
+      "id": "rule:sell_dom→pump_unload",
+      "title": "Sell-tape при пампе → разгрузка MM",
+      "pumpHits": 10,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "ANSEM Δchg -0.67 mid 54bps ← THIN_BOOK+SELL_TAPE_DOM",
+        "ANSEM Δchg -2.33 mid 106bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.52 mid 49bps ← THIN_BOOK+SELL_TAPE_DOM+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "4 Δchg +0.70 mid 74bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.82 mid 64bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -0.47 mid 44bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 10,
+      "precision": 1
+    },
+    {
+      "id": "prec:SELL_TAPE_DOM→PUMP",
+      "title": "До пампа: SELL_TAPE_DOM",
+      "pumpHits": 10,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "ANSEM Δchg -0.67 mid 54bps ← THIN_BOOK+SELL_TAPE_DOM",
+        "ANSEM Δchg -2.33 mid 106bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.52 mid 49bps ← THIN_BOOK+SELL_TAPE_DOM+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "4 Δchg +0.70 mid 74bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.82 mid 64bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -0.47 mid 44bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 10,
+      "precision": 0.3333333333333333
+    },
+    {
+      "id": "prec:SELL_TAPE_DOM→DUMP",
+      "title": "До дампа: SELL_TAPE_DOM",
+      "pumpHits": 0,
+      "dumpHits": 8,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.47 mid -87bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "ANSEM Δchg -0.73 mid -37bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.35 mid -9bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.47 mid -149bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.47 mid -57bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -0.94 mid -187bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 8,
+      "precision": 0.2857142857142857
+    },
+    {
+      "id": "prec:ASK_WALL_GONE_INTRA→PUMP",
+      "title": "До пампа: ASK_WALL_GONE_INTRA",
+      "pumpHits": 6,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "RIF Δchg +0.24 mid 46bps ← THIN_BOOK+BIG_ASK_WALL",
+        "4 Δchg +0.71 mid 128bps ← THIN_BOOK+WIDE_SPREAD",
+        "RIF Δchg +0.16 mid 46bps ← BID_WALL_GONE+THIN_BOOK+BIG_ASK_WALL",
+        "4 Δchg -0.47 mid 44bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 6,
+      "precision": 1
+    },
+    {
+      "id": "prec:BID_WALL_GONE→PUMP",
+      "title": "До пампа: BID_WALL_GONE",
+      "pumpHits": 6,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "RIF Δchg +0.16 mid 46bps ← BID_WALL_GONE+THIN_BOOK+BIG_ASK_WALL",
+        "ESP Δchg +1.88 mid 93bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+WIDE_SPREAD",
+        "ESP Δchg -0.01 mid 88bps ← BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+OBI_ASK_HEAVY+WIDE_SPREAD",
+        "4 Δchg +0.82 mid 49bps ← BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 6,
+      "precision": 0.15789473684210525
+    },
+    {
+      "id": "rule:bid_gone→dump",
+      "title": "Снятие BID-стены → дамп",
+      "pumpHits": 0,
+      "dumpHits": 4,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg -2.47 mid -149bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.47 mid -52bps ← BID_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.23 mid -136bps ← BID_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "RIF Δchg -0.63 mid -49bps ← BID_WALL_GONE+THIN_BOOK"
+      ],
+      "hits": 4,
+      "precision": 1
+    },
+    {
+      "id": "prec:BIG_ASK_WALL→PUMP",
+      "title": "До пампа: BIG_ASK_WALL",
+      "pumpHits": 4,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "RIF Δchg +0.24 mid 46bps ← THIN_BOOK+BIG_ASK_WALL",
+        "RIF Δchg +0.16 mid 46bps ← BID_WALL_GONE+THIN_BOOK+BIG_ASK_WALL"
+      ],
+      "hits": 4,
+      "precision": 0.5
+    },
+    {
+      "id": "prec:BID_WALL_GONE→DUMP",
+      "title": "До дампа: BID_WALL_GONE",
+      "pumpHits": 0,
+      "dumpHits": 4,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg -2.47 mid -149bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.47 mid -52bps ← BID_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.23 mid -136bps ← BID_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "RIF Δchg -0.63 mid -49bps ← BID_WALL_GONE+THIN_BOOK"
+      ],
+      "hits": 4,
+      "precision": 0.1111111111111111
+    },
+    {
+      "id": "prec:ASK_WALL_GONE_INTRA→DUMP",
+      "title": "До дампа: ASK_WALL_GONE_INTRA",
+      "pumpHits": 0,
+      "dumpHits": 3,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg -2.35 mid -9bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg +0.47 mid -57bps ← THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 3,
+      "precision": 1
+    },
+    {
+      "id": "prec:BUY_TAPE_DOM→PUMP",
+      "title": "До пампа: BUY_TAPE_DOM",
+      "pumpHits": 3,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "ANSEM Δchg +2.13 mid 59bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_ASK_HEAVY",
+        "4 Δchg +1.41 mid -15bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "UB Δchg +4.97 mid 428bps ← THIN_BOOK+BUY_TAPE_DOM"
+      ],
+      "hits": 3,
+      "precision": 0.2727272727272727
+    },
+    {
+      "id": "prec:ASK_WALL_GONE→DUMP",
+      "title": "До дампа: ASK_WALL_GONE",
+      "pumpHits": 0,
+      "dumpHits": 3,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "4 Δchg -2.47 mid -149bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+SELL_TAPE_DOM+WIDE_SPREAD",
+        "RIF Δchg +0.34 mid -64bps ← ASK_WALL_GONE+THIN_BOOK"
+      ],
+      "hits": 3,
+      "precision": 0.23076923076923078
+    },
+    {
+      "id": "prec:BID_WALL_GONE_INTRA→DUMP",
+      "title": "До дампа: BID_WALL_GONE_INTRA",
+      "pumpHits": 0,
+      "dumpHits": 2,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +0.12 mid -37bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "ESP Δchg -0.73 mid -46bps ← THIN_BOOK+BUY_TAPE_DOM+OBI_ASK_HEAVY"
+      ],
+      "hits": 2,
+      "precision": 1
+    },
+    {
+      "id": "prec:BID_WALL_GONE_INTRA→PUMP",
+      "title": "До пампа: BID_WALL_GONE_INTRA",
+      "pumpHits": 2,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "RE Δchg +0.51 mid 45bps ← THIN_BOOK",
+        "4 Δchg +1.41 mid -15bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD"
+      ],
+      "hits": 2,
+      "precision": 1
+    },
+    {
+      "id": "rule:ask_gone→pump",
+      "title": "Снятие ASK-стены → памп",
+      "pumpHits": 2,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +1.41 mid -15bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "ESP Δchg +1.88 mid 93bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+WIDE_SPREAD"
+      ],
+      "hits": 2,
+      "precision": 1
+    },
+    {
+      "id": "prec:ASK_WALL_GONE→PUMP",
+      "title": "До пампа: ASK_WALL_GONE",
+      "pumpHits": 2,
+      "dumpHits": 0,
+      "falseAlarms": 0,
+      "examples": [
+        "4 Δchg +1.41 mid -15bps ← ASK_WALL_GONE+THIN_BOOK+BUY_TAPE_DOM+WIDE_SPREAD",
+        "ESP Δchg +1.88 mid 93bps ← ASK_WALL_GONE+BID_WALL_GONE+THIN_BOOK+WIDE_SPREAD"
+      ],
+      "hits": 2,
+      "precision": 0.16666666666666666
+    }
+  ],
+  "events": [
+    {
+      "at": "2026-07-26T20:13:05.835Z",
+      "symbol": "RE_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 2)"
+    },
+    {
+      "at": "2026-07-26T20:12:11.127Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:12:43.892Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:12:54.832Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:13:58.656Z",
+      "symbol": "4_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 3)"
+    },
+    {
+      "at": "2026-07-26T20:13:58.656Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:14:21.555Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:15:47.454Z",
+      "symbol": "4_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 4)"
+    },
+    {
+      "at": "2026-07-26T20:15:47.454Z",
+      "symbol": "4_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 4)"
+    },
+    {
+      "at": "2026-07-26T20:15:47.454Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: ASK_WALL_GONE, THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD, ASK_WALL_GONE_INTRA, BID_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:16:09.378Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:16:20.371Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:16:31.597Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: THIN_BOOK, SELL_TAPE_DOM"
+    },
+    {
+      "at": "2026-07-26T20:18:29.135Z",
+      "symbol": "RIF_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 5)"
+    },
+    {
+      "at": "2026-07-26T20:17:34.369Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Сняли bid-поддержку + sell tape → обвал (ложный спрос убран) | prec: ASK_WALL_GONE, BID_WALL_GONE, THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:17:56.225Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:18:07.291Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:18:18.227Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: THIN_BOOK, BUY_TAPE_DOM, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:19:20.977Z",
+      "symbol": "4_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 6)"
+    },
+    {
+      "at": "2026-07-26T20:19:20.977Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:19:53.910Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:20:04.858Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 7)"
+    },
+    {
+      "at": "2026-07-26T20:21:40.615Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:21:51.535Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: THIN_BOOK, BUY_TAPE_DOM, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, BIG_ASK_WALL, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:22:54.263Z",
+      "symbol": "4_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 8)"
+    },
+    {
+      "at": "2026-07-26T20:23:49.339Z",
+      "symbol": "RE_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 8)"
+    },
+    {
+      "at": "2026-07-26T20:23:16.288Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:23:49.339Z",
+      "symbol": "RE_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, BID_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:23:38.146Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, BIG_ASK_WALL, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:25:35.555Z",
+      "symbol": "RE_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 9)"
+    },
+    {
+      "at": "2026-07-26T20:24:40.765Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Тонкий стакан + снятие bid → быстрый dump | prec: BID_WALL_GONE, THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:25:24.624Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: THIN_BOOK, SELL_TAPE_DOM, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:22:02.526Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, BIG_ASK_WALL, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:26:27.284Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:26:38.200Z",
+      "symbol": "AKE_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:26:49.144Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:27:00.068Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:27:11.030Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:29:08.644Z",
+      "symbol": "RIF_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 11)"
+    },
+    {
+      "at": "2026-07-26T20:28:13.638Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:28:46.779Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:28:57.722Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, BUY_TAPE_DOM, OBI_ASK_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:30:55.877Z",
+      "symbol": "RIF_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 12)"
+    },
+    {
+      "at": "2026-07-26T20:30:00.337Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:30:11.579Z",
+      "symbol": "AKE_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:30:33.583Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:32:09.583Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump при buy-tape и ask-heavy → ловушка на отскок / раздача в «покупателей дна» | prec: THIN_BOOK, BUY_TAPE_DOM, OBI_ASK_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:32:20.628Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:32:42.635Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: ASK_WALL_GONE, THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:33:34.426Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:34:07.259Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:34:29.213Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:34:18.264Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:35:31.686Z",
+      "symbol": "AKE_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:35:42.618Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:35:53.563Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:36:15.432Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:37:07.215Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:37:40.013Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:37:50.932Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:39:04.585Z",
+      "symbol": "4_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 17)"
+    },
+    {
+      "at": "2026-07-26T20:39:37.415Z",
+      "symbol": "RIF_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 17)"
+    },
+    {
+      "at": "2026-07-26T20:39:04.585Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:39:26.456Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:40:51.644Z",
+      "symbol": "4_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 18)"
+    },
+    {
+      "at": "2026-07-26T20:40:51.644Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Сняли ask-стену + buy tape → классический запуск пампа (магнит убран) | prec: ASK_WALL_GONE, THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD, BID_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:41:13.568Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:41:35.537Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:40:40.634Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:42:38.953Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Тонкий стакан + снятие bid → быстрый dump | prec: BID_WALL_GONE, THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:43:01.116Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:43:12.309Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:42:28.041Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:45:09.814Z",
+      "symbol": "RIF_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 20)"
+    },
+    {
+      "at": "2026-07-26T20:44:47.769Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:44:14.756Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:46:56.454Z",
+      "symbol": "RIF_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 21)"
+    },
+    {
+      "at": "2026-07-26T20:46:12.771Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:46:34.626Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:46:56.454Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: BID_WALL_GONE, THIN_BOOK, BIG_ASK_WALL, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T20:46:01.796Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:47:59.538Z",
+      "symbol": "4_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 22)"
+    },
+    {
+      "at": "2026-07-26T20:48:21.624Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:48:32.734Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:47:48.487Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:50:08.575Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:49:35.602Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:51:44.176Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, BUY_TAPE_DOM"
+    },
+    {
+      "at": "2026-07-26T20:51:55.111Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:51:22.323Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:53:19.481Z",
+      "symbol": "4_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 25)"
+    },
+    {
+      "at": "2026-07-26T20:53:30.415Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: THIN_BOOK, BUY_TAPE_DOM, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T20:53:41.419Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:54:03.315Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T20:53:08.487Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:55:51.414Z",
+      "symbol": "RIF_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 26)"
+    },
+    {
+      "at": "2026-07-26T20:55:29.503Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:55:07.506Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:57:16.846Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:56:54.691Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:58:52.608Z",
+      "symbol": "ESP_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 28)"
+    },
+    {
+      "at": "2026-07-26T20:58:52.608Z",
+      "symbol": "ESP_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 28)"
+    },
+    {
+      "at": "2026-07-26T20:58:41.642Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump + buy-доминация → покрытие шортов / набор лонга в падении (ещё не разворот) | prec: THIN_BOOK, BUY_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:59:03.708Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:59:14.691Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T20:58:30.439Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:00:40.177Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:00:51.191Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:01:13.200Z",
+      "symbol": "ANSEM_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:00:18.080Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:02:59.967Z",
+      "symbol": "RIF_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 30)"
+    },
+    {
+      "at": "2026-07-26T21:00:40.177Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:02:37.814Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:02:04.776Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:02:26.786Z",
+      "symbol": "ESP_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Тонкий стакан + снятие ask → лёгкий вынос вверх | prec: ASK_WALL_GONE, BID_WALL_GONE, THIN_BOOK, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:04:13.705Z",
+      "symbol": "ESP_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 31)"
+    },
+    {
+      "at": "2026-07-26T21:04:46.579Z",
+      "symbol": "RIF_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 31)"
+    },
+    {
+      "at": "2026-07-26T21:00:40.177Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:04:24.650Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T21:04:02.788Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:04:13.705Z",
+      "symbol": "ESP_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Dump при buy-tape и ask-heavy → ловушка на отскок / раздача в «покупателей дна» | prec: THIN_BOOK, BUY_TAPE_DOM, OBI_ASK_HEAVY, BID_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T21:05:38.789Z",
+      "symbol": "4_USDT",
+      "kind": "ASK_WALL_GONE",
+      "detail": "ask wall removed (batch 32)"
+    },
+    {
+      "at": "2026-07-26T21:05:38.789Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD, ASK_WALL_GONE_INTRA"
+    },
+    {
+      "at": "2026-07-26T21:06:00.732Z",
+      "symbol": "UB_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T21:06:22.570Z",
+      "symbol": "RIF_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Тонкий стакан + снятие bid → быстрый dump | prec: BID_WALL_GONE, THIN_BOOK"
+    },
+    {
+      "at": "2026-07-26T21:04:02.788Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:05:49.770Z",
+      "symbol": "ESP_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: BID_WALL_GONE, THIN_BOOK, SELL_TAPE_DOM, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:07:25.534Z",
+      "symbol": "4_USDT",
+      "kind": "BID_WALL_GONE",
+      "detail": "bid wall removed (batch 33)"
+    },
+    {
+      "at": "2026-07-26T21:07:58.384Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:07:36.468Z",
+      "symbol": "AIINU_USDT",
+      "kind": "IMPULSE_DUMP",
+      "detail": "Импульс вниз без явного book-триггера | prec: THIN_BOOK, OBI_BID_HEAVY"
+    },
+    {
+      "at": "2026-07-26T21:05:49.770Z",
+      "symbol": "ESP_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: BID_WALL_GONE, THIN_BOOK, SELL_TAPE_DOM, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:09:11.834Z",
+      "symbol": "4_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: BID_WALL_GONE, THIN_BOOK, SELL_TAPE_DOM, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:09:44.602Z",
+      "symbol": "JIMOTHY_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Импульс вверх без явного book-триггера (внешняя новость / OTC / задержка данных) | prec: THIN_BOOK, OBI_ASK_HEAVY, WIDE_SPREAD"
+    },
+    {
+      "at": "2026-07-26T21:05:49.770Z",
+      "symbol": "ESP_USDT",
+      "kind": "IMPULSE_PUMP",
+      "detail": "Памп продолжается на sell-доминации → поздняя фаза / раздача | prec: BID_WALL_GONE, THIN_BOOK, SELL_TAPE_DOM, OBI_ASK_HEAVY, WIDE_SPREAD"
+    }
+  ],
+  "history": {
+    "4_USDT": [
+      {
+        "at": 1785099403650,
+        "batch": 27,
+        "chg24hPct": 20.419999999999998,
+        "mid": 0.010249999999999999,
+        "spreadBps": 39.024390243902545,
+        "obi": -11.460692459280116,
+        "bidDepth": 2070.85787,
+        "askDepth": 2606.96925,
+        "buyQ": 840.93029,
+        "sellQ": 25.830750000000002,
+        "cvd": 815.09954,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099521642,
+        "batch": 28,
+        "chg24hPct": 19.830000000000002,
+        "mid": 0.010195,
+        "spreadBps": 29.426189308485057,
+        "obi": -12.331231384929863,
+        "bidDepth": 1656.8316399999999,
+        "askDepth": 2122.9217799999997,
+        "buyQ": 1440.3442799999998,
+        "sellQ": 2015.35371,
+        "cvd": -575.0094300000003,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099629165,
+        "batch": 29,
+        "chg24hPct": 19.830000000000002,
+        "mid": 0.01022,
+        "spreadBps": 39.13894324853239,
+        "obi": -12.887497232930068,
+        "bidDepth": 1650.9479900000001,
+        "askDepth": 2139.43327,
+        "buyQ": 2206.75615,
+        "sellQ": 23.308639999999997,
+        "cvd": 2183.44751,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099735791,
+        "batch": 30,
+        "chg24hPct": 19.71,
+        "mid": 0.010225,
+        "spreadBps": 9.779951100244102,
+        "obi": -6.1517963952293835,
+        "bidDepth": 1812.8607,
+        "askDepth": 2050.52854,
+        "buyQ": 712.4614199999999,
+        "sellQ": 1553.4737299999997,
+        "cvd": -841.0123099999998,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099831867,
+        "batch": 31,
+        "chg24hPct": 20.77,
+        "mid": 0.01022,
+        "spreadBps": 58.70841487279944,
+        "obi": -5.7964432955536696,
+        "bidDepth": 2547.06319,
+        "askDepth": 2860.51011,
+        "buyQ": 2771.2105599999995,
+        "sellQ": 5196.316629999999,
+        "cvd": -2425.10607,
+        "askWall": {
+          "price": 0.01029,
+          "notional": 710.46276,
+          "multiple": 2.6895718904600523
+        },
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099938789,
+        "batch": 32,
+        "chg24hPct": 20.3,
+        "mid": 0.010265,
+        "spreadBps": 9.741841207987914,
+        "obi": -17.353672314247284,
+        "bidDepth": 1463.99959,
+        "askDepth": 2078.80656,
+        "buyQ": 554.2054699999999,
+        "sellQ": 843.4947,
+        "cvd": -289.2892300000001,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": true,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100045534,
+        "batch": 33,
+        "chg24hPct": 20.65,
+        "mid": 0.01029,
+        "spreadBps": 58.30903790087394,
+        "obi": 9.068965541464118,
+        "bidDepth": 2266.90201,
+        "askDepth": 1889.92115,
+        "buyQ": 686.5425899999999,
+        "sellQ": 1471.5788599999998,
+        "cvd": -785.03627,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100151834,
+        "batch": 34,
+        "chg24hPct": 21.47,
+        "mid": 0.01034,
+        "spreadBps": 19.342359767890894,
+        "obi": -6.138295944135526,
+        "bidDepth": 1885.1182999999999,
+        "askDepth": 2131.68135,
+        "buyQ": 2379.14988,
+        "sellQ": 0,
+        "cvd": 2379.14988,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      }
+    ],
+    "AKE_USDT": [
+      {
+        "at": 1785098238140,
+        "batch": 16,
+        "chg24hPct": 11.459999999999999,
+        "mid": 0.0031996999999999998,
+        "spreadBps": 5.000468793948199,
+        "obi": -38.69470973213789,
+        "bidDepth": 2.2124156,
+        "askDepth": 5.005283199999999,
+        "buyQ": 0.06404599999999999,
+        "sellQ": 2.201998,
+        "cvd": -2.1379520000000003,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098355530,
+        "batch": 17,
+        "chg24hPct": 11.68,
+        "mid": 0.00320045,
+        "spreadBps": 4.0619287912639965,
+        "obi": -9.5813534743237,
+        "bidDepth": 2.5294667,
+        "askDepth": 3.0655445,
+        "buyQ": 3.4713344,
+        "sellQ": 0.9581457,
+        "cvd": 2.5131886999999997,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098462581,
+        "batch": 18,
+        "chg24hPct": 11.3,
+        "mid": 0.00320165,
+        "spreadBps": 2.811050552058655,
+        "obi": -21.951729727794852,
+        "bidDepth": 2.3482937999999995,
+        "askDepth": 3.6692484,
+        "buyQ": 5.7684861000000005,
+        "sellQ": 22.7691335,
+        "cvd": -17.0006474,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098570182,
+        "batch": 19,
+        "chg24hPct": 11.690000000000001,
+        "mid": 0.00320705,
+        "spreadBps": 4.053569479740215,
+        "obi": 16.331338891757,
+        "bidDepth": 3.8972772000000004,
+        "askDepth": 2.8030277000000003,
+        "buyQ": 6.569604300000001,
+        "sellQ": 24.690375300000007,
+        "cvd": -18.120771000000005,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098676761,
+        "batch": 20,
+        "chg24hPct": 11.73,
+        "mid": 0.00320795,
+        "spreadBps": 4.052432238656002,
+        "obi": -17.49095186184338,
+        "bidDepth": 2.5393509,
+        "askDepth": 3.6159762000000004,
+        "buyQ": 4.3843389,
+        "sellQ": 23.989117199999995,
+        "cvd": -19.604778299999996,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098783709,
+        "batch": 21,
+        "chg24hPct": 11.68,
+        "mid": 0.00320455,
+        "spreadBps": 4.056731834423197,
+        "obi": -38.389260890364945,
+        "bidDepth": 2.1579498999999998,
+        "askDepth": 4.8471597,
+        "buyQ": 32.271266,
+        "sellQ": 16.506418999999998,
+        "cvd": 15.764847,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098890567,
+        "batch": 22,
+        "chg24hPct": 11.23,
+        "mid": 0.0031942999999999997,
+        "spreadBps": 8.139498481669657,
+        "obi": 64.49020409689766,
+        "bidDepth": 5.774870600000001,
+        "askDepth": 1.2466667999999999,
+        "buyQ": 15.162057399999998,
+        "sellQ": 46.81309050000001,
+        "cvd": -31.65103310000001,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785098997500,
+        "batch": 23,
+        "chg24hPct": 10.92,
+        "mid": 0.00318405,
+        "spreadBps": 0.3140654198264468,
+        "obi": -35.36210526328678,
+        "bidDepth": 2.1113150000000003,
+        "askDepth": 4.421431799999999,
+        "buyQ": 31.950825099999996,
+        "sellQ": 12.332294700000002,
+        "cvd": 19.618530399999994,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "UB_USDT": [
+      {
+        "at": 1785098249076,
+        "batch": 16,
+        "chg24hPct": 9.21,
+        "mid": 0.14431500000000003,
+        "spreadBps": 2.0787859889825895,
+        "obi": 20.68562644509647,
+        "bidDepth": 57.1235,
+        "askDepth": 37.54146,
+        "buyQ": 502.96412,
+        "sellQ": 343.5555599999999,
+        "cvd": 159.40856000000008,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099104176,
+        "batch": 24,
+        "chg24hPct": 14.180000000000001,
+        "mid": 0.15049,
+        "spreadBps": 5.31596783839436,
+        "obi": 60.13746688537036,
+        "bidDepth": 133.09173,
+        "askDepth": 33.13012,
+        "buyQ": 659.3481499999999,
+        "sellQ": 172.29047,
+        "cvd": 487.0576799999999,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099210415,
+        "batch": 25,
+        "chg24hPct": 13.36,
+        "mid": 0.149885,
+        "spreadBps": 4.670247189511075,
+        "obi": -17.474940385220297,
+        "bidDepth": 49.729440000000004,
+        "askDepth": 70.79017,
+        "buyQ": 175.28449999999998,
+        "sellQ": 126.75245,
+        "cvd": 48.532049999999984,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099318505,
+        "batch": 26,
+        "chg24hPct": 13.28,
+        "mid": 0.150205,
+        "spreadBps": 0.665756799041976,
+        "obi": 47.41269090236406,
+        "bidDepth": 32.4329,
+        "askDepth": 11.569960000000002,
+        "buyQ": 172.71544,
+        "sellQ": 189.41485000000003,
+        "cvd": -16.69941000000003,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099640177,
+        "batch": 29,
+        "chg24hPct": 15.8,
+        "mid": 0.15006999999999998,
+        "spreadBps": 2.665422802692894,
+        "obi": -12.317282774595563,
+        "bidDepth": 35.397000000000006,
+        "askDepth": 45.34183,
+        "buyQ": 298.3091099999999,
+        "sellQ": 50.28380000000001,
+        "cvd": 248.0253099999999,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099960732,
+        "batch": 32,
+        "chg24hPct": 13.48,
+        "mid": 0.15044000000000002,
+        "spreadBps": 2.65886732252142,
+        "obi": -67.55508133810486,
+        "bidDepth": 22.705589999999997,
+        "askDepth": 117.25833,
+        "buyQ": 161.12364,
+        "sellQ": 271.78504000000004,
+        "cvd": -110.66140000000004,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100067429,
+        "batch": 33,
+        "chg24hPct": 13.63,
+        "mid": 0.15009,
+        "spreadBps": 3.9976014391368175,
+        "obi": 60.70555656546362,
+        "bidDepth": 135.74579,
+        "askDepth": 33.19148,
+        "buyQ": 51.610640000000004,
+        "sellQ": 260.10132000000004,
+        "cvd": -208.49068000000005,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100173673,
+        "batch": 34,
+        "chg24hPct": 13.34,
+        "mid": 0.150145,
+        "spreadBps": 0.6660228445842353,
+        "obi": 20.78331357822181,
+        "bidDepth": 52.67745,
+        "askDepth": 34.54892,
+        "buyQ": 300.7136,
+        "sellQ": 141.34691999999995,
+        "cvd": 159.36668000000003,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "JIMOTHY_USDT": [
+      {
+        "at": 1785099436846,
+        "batch": 27,
+        "chg24hPct": -38.32,
+        "mid": 0.008220000000000002,
+        "spreadBps": 48.66180048661812,
+        "obi": -4.826442489928017,
+        "bidDepth": 2.664004,
+        "askDepth": 2.934198,
+        "buyQ": 12.83324,
+        "sellQ": 71.71275699999997,
+        "cvd": -58.879516999999964,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099543708,
+        "batch": 28,
+        "chg24hPct": -42.21,
+        "mid": 0.008064,
+        "spreadBps": 59.523809523808815,
+        "obi": -35.67999239967276,
+        "bidDepth": 2.58623,
+        "askDepth": 5.455529,
+        "buyQ": 77.64044399999997,
+        "sellQ": 29.917298,
+        "cvd": 47.72314599999997,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099651191,
+        "batch": 29,
+        "chg24hPct": -41.089999999999996,
+        "mid": 0.0081125,
+        "spreadBps": 75.19260400616155,
+        "obi": 3.416505505873788,
+        "bidDepth": 5.339192,
+        "askDepth": 4.986417,
+        "buyQ": 49.09492099999999,
+        "sellQ": 50.308629999999994,
+        "cvd": -1.2137090000000015,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099757814,
+        "batch": 30,
+        "chg24hPct": -40.93,
+        "mid": 0.008230000000000001,
+        "spreadBps": 24.301336573512657,
+        "obi": -24.759960182579967,
+        "bidDepth": 4.3574779999999995,
+        "askDepth": 7.225391999999999,
+        "buyQ": 55.952020000000005,
+        "sellQ": 33.589997000000004,
+        "cvd": 22.362023,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099864650,
+        "batch": 31,
+        "chg24hPct": -40.27,
+        "mid": 0.00818,
+        "spreadBps": 48.89975550122262,
+        "obi": -31.323274458694623,
+        "bidDepth": 2.694691,
+        "askDepth": 5.152774,
+        "buyQ": 22.850207000000008,
+        "sellQ": 64.28521400000002,
+        "cvd": -41.43500700000001,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099971664,
+        "batch": 32,
+        "chg24hPct": -41.38,
+        "mid": 0.008164,
+        "spreadBps": 68.5938265556106,
+        "obi": -25.312476110258896,
+        "bidDepth": 2.7404349999999997,
+        "askDepth": 4.5979659999999996,
+        "buyQ": 40.49316799999999,
+        "sellQ": 16.696609,
+        "cvd": 23.79655899999999,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100078384,
+        "batch": 33,
+        "chg24hPct": -40.07,
+        "mid": 0.0080435,
+        "spreadBps": 73.35115310499164,
+        "obi": -63.04306374152129,
+        "bidDepth": 2.284141,
+        "askDepth": 10.076954,
+        "buyQ": 28.818663,
+        "sellQ": 80.80515100000001,
+        "cvd": -51.98648800000001,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100184602,
+        "batch": 34,
+        "chg24hPct": -41.24,
+        "mid": 0.008084000000000001,
+        "spreadBps": 79.1687283523006,
+        "obi": 60.07989446315909,
+        "bidDepth": 10.746333,
+        "askDepth": 2.679879,
+        "buyQ": 56.56711400000001,
+        "sellQ": 43.897880999999984,
+        "cvd": 12.669233000000027,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "RE_USDT": [
+      {
+        "at": 1785096668442,
+        "batch": 1,
+        "chg24hPct": -6.01,
+        "mid": 0.48614999999999997,
+        "spreadBps": 6.170934896637303,
+        "obi": -28.69858369642338,
+        "bidDepth": 6034.726099999999,
+        "askDepth": 10892.640599999999,
+        "buyQ": 1048.0976,
+        "sellQ": 7.2885,
+        "cvd": 1040.8091,
+        "askWall": {
+          "price": 0.487,
+          "notional": 4734.1269999999995,
+          "multiple": 5.246087425796007
+        },
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785096785835,
+        "batch": 2,
+        "chg24hPct": -5.970000000000001,
+        "mid": 0.48685,
+        "spreadBps": 2.0540207456093045,
+        "obi": 2.192311127869935,
+        "bidDepth": 5586.422500000001,
+        "askDepth": 5346.733699999999,
+        "buyQ": 647.0165,
+        "sellQ": 2204.3273,
+        "cvd": -1557.3108,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": true,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785096895955,
+        "batch": 3,
+        "chg24hPct": -5.800000000000001,
+        "mid": 0.48725,
+        "spreadBps": 2.05233453052825,
+        "obi": 2.834106937298905,
+        "bidDepth": 6611.437499999999,
+        "askDepth": 6247.015200000001,
+        "buyQ": 4.874,
+        "sellQ": 24.359599999999997,
+        "cvd": -19.485599999999998,
+        "askWall": null,
+        "bidWall": {
+          "price": 0.4855,
+          "notional": 1625.454,
+          "multiple": 2.5933384972889235
+        },
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785097429339,
+        "batch": 8,
+        "chg24hPct": -5.29,
+        "mid": 0.48945,
+        "spreadBps": 2.0431096128305035,
+        "obi": -8.376298447147784,
+        "bidDepth": 5986.615099999999,
+        "askDepth": 7081.2156,
+        "buyQ": 51.47,
+        "sellQ": 16.6555,
+        "cvd": 34.814499999999995,
+        "askWall": null,
+        "bidWall": {
+          "price": 0.4887,
+          "notional": 1307.7612000000001,
+          "multiple": 2.758762886597938
+        },
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785097535555,
+        "batch": 9,
+        "chg24hPct": -5.390000000000001,
+        "mid": 0.48935,
+        "spreadBps": 2.0435271278223968,
+        "obi": 4.1776242855520955,
+        "bidDepth": 7679.203599999999,
+        "askDepth": 7063.3165,
+        "buyQ": 806.2000999999999,
+        "sellQ": 354.1176,
+        "cvd": 452.0824999999999,
+        "askWall": {
+          "price": 0.4905,
+          "notional": 1609.821,
+          "multiple": 2.268140981340705
+        },
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      }
+    ],
+    "ANSEM_USDT": [
+      {
+        "at": 1785099447783,
+        "batch": 27,
+        "chg24hPct": -8.6,
+        "mid": 0.17605,
+        "spreadBps": 28.40102243680775,
+        "obi": 50.203496382613174,
+        "bidDepth": 191.59590000000003,
+        "askDepth": 63.5192,
+        "buyQ": 9.524700000000001,
+        "sellQ": 15.842,
+        "cvd": -6.3172999999999995,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099554691,
+        "batch": 28,
+        "chg24hPct": -8.6,
+        "mid": 0.1767,
+        "spreadBps": 33.95585738539838,
+        "obi": 39.26668435335445,
+        "bidDepth": 130.71,
+        "askDepth": 57.001799999999996,
+        "buyQ": 94.1817,
+        "sellQ": 17.258200000000002,
+        "cvd": 76.9235,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099673200,
+        "batch": 29,
+        "chg24hPct": -8.18,
+        "mid": 0.17795,
+        "spreadBps": 28.09778027535827,
+        "obi": 18.913680299818918,
+        "bidDepth": 83.9879,
+        "askDepth": 57.27069999999999,
+        "buyQ": 50.713800000000006,
+        "sellQ": 75.49000000000001,
+        "cvd": -24.776200000000003,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099768874,
+        "batch": 30,
+        "chg24hPct": -7.720000000000001,
+        "mid": 0.17795,
+        "spreadBps": 28.09778027535827,
+        "obi": -5.532697093555711,
+        "bidDepth": 72.97670000000001,
+        "askDepth": 81.52479999999998,
+        "buyQ": 42.579499999999996,
+        "sellQ": 8.8955,
+        "cvd": 33.684,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099875630,
+        "batch": 31,
+        "chg24hPct": -7.920000000000001,
+        "mid": 0.17825000000000002,
+        "spreadBps": 39.27068723702699,
+        "obi": -6.415859869716344,
+        "bidDepth": 58.67880000000001,
+        "askDepth": 66.7245,
+        "buyQ": 519.0400000000001,
+        "sellQ": 346.93320000000017,
+        "cvd": 172.1067999999999,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099994049,
+        "batch": 32,
+        "chg24hPct": -7.720000000000001,
+        "mid": 0.17809999999999998,
+        "spreadBps": 11.229646266142941,
+        "obi": 36.7022727579641,
+        "bidDepth": 101.22939999999998,
+        "askDepth": 46.872600000000006,
+        "buyQ": 157.4998,
+        "sellQ": 182.1289,
+        "cvd": -24.629099999999994,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100100349,
+        "batch": 33,
+        "chg24hPct": -7.35,
+        "mid": 0.1787,
+        "spreadBps": 33.5758254057073,
+        "obi": 20.250115007381307,
+        "bidDepth": 75.0208,
+        "askDepth": 49.7538,
+        "buyQ": 34.68209999999999,
+        "sellQ": 10.703999999999999,
+        "cvd": 23.97809999999999,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100206643,
+        "batch": 34,
+        "chg24hPct": -7.1499999999999995,
+        "mid": 0.17885,
+        "spreadBps": 27.956388034665945,
+        "obi": -4.907984532233142,
+        "bidDepth": 51.4444,
+        "askDepth": 56.7548,
+        "buyQ": 9.846900000000002,
+        "sellQ": 88.73779999999998,
+        "cvd": -78.89089999999997,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "RIF_USDT": [
+      {
+        "at": 1785099351414,
+        "batch": 26,
+        "chg24hPct": -6.569999999999999,
+        "mid": 0.08318,
+        "spreadBps": 4.808848280836544,
+        "obi": 22.21220115575172,
+        "bidDepth": 1123.9128,
+        "askDepth": 715.3680400000001,
+        "buyQ": 8.74275,
+        "sellQ": 5.8338,
+        "cvd": 2.908949999999999,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099458966,
+        "batch": 27,
+        "chg24hPct": -6.92,
+        "mid": 0.083135,
+        "spreadBps": 1.2028628134973238,
+        "obi": 7.249812148342643,
+        "bidDepth": 805.97223,
+        "askDepth": 697.00892,
+        "buyQ": 564.34865,
+        "sellQ": 489.92436,
+        "cvd": 74.42429000000004,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099565669,
+        "batch": 28,
+        "chg24hPct": -6.7,
+        "mid": 0.083365,
+        "spreadBps": 5.997720866071898,
+        "obi": 0.9744266695180661,
+        "bidDepth": 798.85383,
+        "askDepth": 783.43558,
+        "buyQ": 258.32574999999997,
+        "sellQ": 31.313929999999996,
+        "cvd": 227.01181999999997,
+        "askWall": null,
+        "bidWall": {
+          "price": 0.08315,
+          "notional": 4970.3744,
+          "multiple": 65.54385964912281
+        },
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099779967,
+        "batch": 30,
+        "chg24hPct": -6.550000000000001,
+        "mid": 0.083635,
+        "spreadBps": 3.587015005679709,
+        "obi": -4.073829327498633,
+        "bidDepth": 802.8762300000001,
+        "askDepth": 871.0699400000002,
+        "buyQ": 2659.50067,
+        "sellQ": 0,
+        "cvd": 2659.50067,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099886579,
+        "batch": 31,
+        "chg24hPct": -6.460000000000001,
+        "mid": 0.08342,
+        "spreadBps": 2.3975065931438655,
+        "obi": 19.896666771116614,
+        "bidDepth": 1087.62244,
+        "askDepth": 726.6439099999999,
+        "buyQ": 6.6808,
+        "sellQ": 10.18232,
+        "cvd": -3.501520000000001,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099982570,
+        "batch": 32,
+        "chg24hPct": -7.090000000000001,
+        "mid": 0.083015,
+        "spreadBps": 1.2046015780276003,
+        "obi": 16.440887770423288,
+        "bidDepth": 759.2366700000001,
+        "askDepth": 544.83561,
+        "buyQ": 508.9623,
+        "sellQ": 507.63987000000003,
+        "cvd": 1.322429999999997,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100089323,
+        "batch": 33,
+        "chg24hPct": -7.01,
+        "mid": 0.08295,
+        "spreadBps": 2.411091018686694,
+        "obi": 13.415798791579494,
+        "bidDepth": 785.1564400000001,
+        "askDepth": 599.40629,
+        "buyQ": 2.90379,
+        "sellQ": 10.366800000000001,
+        "cvd": -7.4630100000000015,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100195547,
+        "batch": 34,
+        "chg24hPct": -6.950000000000001,
+        "mid": 0.08294,
+        "spreadBps": 2.4113817217256144,
+        "obi": -3.928866358116434,
+        "bidDepth": 526.84803,
+        "askDepth": 569.93934,
+        "buyQ": 2.9890800000000004,
+        "sellQ": 14.519549999999999,
+        "cvd": -11.530469999999998,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "AIINU_USDT": [
+      {
+        "at": 1785099307506,
+        "batch": 26,
+        "chg24hPct": 17.1,
+        "mid": 0.005511,
+        "spreadBps": 61.69479223371471,
+        "obi": 89.9387346900766,
+        "bidDepth": 3.151265,
+        "askDepth": 0.166926,
+        "buyQ": 13.082924000000002,
+        "sellQ": 25.61748299999997,
+        "cvd": -12.53455899999997,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099414691,
+        "batch": 27,
+        "chg24hPct": 19.71,
+        "mid": 0.0057865,
+        "spreadBps": 22.46608485267431,
+        "obi": -52.15647073303254,
+        "bidDepth": 0.796889,
+        "askDepth": 2.534341,
+        "buyQ": 12.551329,
+        "sellQ": 3.894789999999999,
+        "cvd": 8.656539000000002,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099510439,
+        "batch": 28,
+        "chg24hPct": 24.060000000000002,
+        "mid": 0.0059235,
+        "spreadBps": 69.21583523254726,
+        "obi": 72.70725052349829,
+        "bidDepth": 2.245449,
+        "askDepth": 0.354846,
+        "buyQ": 10.281205999999992,
+        "sellQ": 7.25784,
+        "cvd": 3.0233659999999922,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099618080,
+        "batch": 29,
+        "chg24hPct": 28.51,
+        "mid": 0.0059695,
+        "spreadBps": 61.98174051428189,
+        "obi": 25.191793713940868,
+        "bidDepth": 2.309972,
+        "askDepth": 1.3803210000000001,
+        "buyQ": 11.083658000000007,
+        "sellQ": 5.224765999999999,
+        "cvd": 5.858892000000008,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099724776,
+        "batch": 30,
+        "chg24hPct": 24.15,
+        "mid": 0.006056499999999999,
+        "spreadBps": 1.6511186328739913,
+        "obi": 56.45498294361122,
+        "bidDepth": 5.0539879999999995,
+        "askDepth": 1.406641,
+        "buyQ": 10.045625999999999,
+        "sellQ": 9.454495000000001,
+        "cvd": 0.5911309999999972,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099842788,
+        "batch": 31,
+        "chg24hPct": 22.16,
+        "mid": 0.0059015000000000005,
+        "spreadBps": 8.472422265526838,
+        "obi": 84.97507354443339,
+        "bidDepth": 3.227877,
+        "askDepth": 0.26219,
+        "buyQ": 2.7720599999999997,
+        "sellQ": 16.555928,
+        "cvd": -13.783868000000002,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100056468,
+        "batch": 33,
+        "chg24hPct": 19.61,
+        "mid": 0.0057385000000000005,
+        "spreadBps": 5.227846998345209,
+        "obi": -90.98271821408828,
+        "bidDepth": 0.17135499999999998,
+        "askDepth": 3.6292359999999997,
+        "buyQ": 0.49121500000000007,
+        "sellQ": 2.6281860000000004,
+        "cvd": -2.1369710000000004,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785100162745,
+        "batch": 34,
+        "chg24hPct": 18.88,
+        "mid": 0.005749000000000001,
+        "spreadBps": 38.26752478692001,
+        "obi": -30.26072293812331,
+        "bidDepth": 0.555859,
+        "askDepth": 1.038247,
+        "buyQ": 0.958748,
+        "sellQ": 8.677135,
+        "cvd": -7.718387,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "ESP_USDT": [
+      {
+        "at": 1785099425902,
+        "batch": 27,
+        "chg24hPct": 14.34,
+        "mid": 0.10742499999999999,
+        "spreadBps": 10.239702117757771,
+        "obi": 45.41267550258294,
+        "bidDepth": 1079.79699,
+        "askDepth": 405.35138000000006,
+        "buyQ": 2366.611619999999,
+        "sellQ": 7218.51315,
+        "cvd": -4851.901530000001,
+        "askWall": {
+          "price": 0.108,
+          "notional": 631.26,
+          "multiple": 12.59698275862069
+        },
+        "bidWall": {
+          "price": 0.10737,
+          "notional": 718.1979299999999,
+          "multiple": 10.02848575712144
+        },
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099532608,
+        "batch": 28,
+        "chg24hPct": 13.74,
+        "mid": 0.10742499999999999,
+        "spreadBps": 32.580870374680295,
+        "obi": -18.444558476181715,
+        "bidDepth": 291.07824999999997,
+        "askDepth": 422.73861999999997,
+        "buyQ": 2355.2214399999993,
+        "sellQ": 2359.08998,
+        "cvd": -3.8685400000008485,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": true,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099746786,
+        "batch": 30,
+        "chg24hPct": 15.620000000000001,
+        "mid": 0.10841999999999999,
+        "spreadBps": 11.068068622025008,
+        "obi": -43.94110075889637,
+        "bidDepth": 359.50074,
+        "askDepth": 923.0814900000001,
+        "buyQ": 6678.130609999998,
+        "sellQ": 3184.51714,
+        "cvd": 3493.6134699999984,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099853705,
+        "batch": 31,
+        "chg24hPct": 14.89,
+        "mid": 0.10792,
+        "spreadBps": 85.24833209785065,
+        "obi": -51.06295577988915,
+        "bidDepth": 503.31656999999996,
+        "askDepth": 1553.67963,
+        "buyQ": 3904.1159000000002,
+        "sellQ": 7808.4648700000025,
+        "cvd": -3904.3489700000023,
+        "askWall": null,
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": true,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      },
+      {
+        "at": 1785099949770,
+        "batch": 32,
+        "chg24hPct": 14.879999999999999,
+        "mid": 0.10887,
+        "spreadBps": 33.06696059520522,
+        "obi": 68.66710821809704,
+        "bidDepth": 1967.5155300000001,
+        "askDepth": 365.5007299999999,
+        "buyQ": 771.3468100000001,
+        "sellQ": 1269.0758999999998,
+        "cvd": -497.7290899999997,
+        "askWall": null,
+        "bidWall": {
+          "price": 0.10831,
+          "notional": 846.1177200000001,
+          "multiple": 4.953709575142676
+        },
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": true,
+        "buyDominates": false,
+        "btcChg1hApprox": null
+      }
+    ],
+    "ESPORTS_USDT": [
+      {
+        "at": 1785099662205,
+        "batch": 29,
+        "chg24hPct": -12.07,
+        "mid": 0.028915000000000003,
+        "spreadBps": 3.458412588621681,
+        "obi": -1.8000118514693453,
+        "bidDepth": 2342.8358,
+        "askDepth": 2428.72445,
+        "buyQ": 620.68085,
+        "sellQ": 101.53885000000002,
+        "cvd": 519.1419999999999,
+        "askWall": {
+          "price": 0.02895,
+          "notional": 662.376,
+          "multiple": 2.9637305699481864
+        },
+        "bidWall": null,
+        "askWallGone": false,
+        "bidWallGone": false,
+        "wash": false,
+        "mmPattern": null,
+        "mmSide": null,
+        "thinBook": true,
+        "sellDominates": false,
+        "buyDominates": true,
+        "btcChg1hApprox": null
+      }
+    ]
+  }
+}

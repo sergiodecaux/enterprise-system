@@ -50,8 +50,8 @@ import {
   resolveBotJournal,
   formatCorridorWrReport,
 } from './botJournal'
-import { runLiquidationEchoScan } from './liquidationEcho'
-import { loadPredatorHotlist } from './predatorHotlist'
+import { runMemeOrderFlowScan } from './memeOrderFlow'
+import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 const LAST_SCAN_KEY = 'telegram:last_scan_status'
@@ -339,7 +339,7 @@ async function handleTelegram(
         env.SUBSCRIBERS?.get(LAST_SCAN_KEY) ?? Promise.resolve(null),
         runtimeGet(LAST_TG_KEY),
         env.SUBSCRIBERS?.get(LAST_TG_KEY) ?? Promise.resolve(null),
-        loadPredatorHotlist(kv),
+        loadHotMemeWatchlist(kv),
       ])
     let lastScan: unknown = null
     let lastDelivery: unknown = null
@@ -381,18 +381,17 @@ async function handleTelegram(
         paper: '1-59/2 * * * *',
         vane: '* * * * *',
       },
-      mode: 'auto-search 24/7: vane every 1m · predator every 2m',
-      predatorHotlist: hotList
+      mode: 'auto-search 24/7: vane every 1m · meme order-flow every 2m',
+      memeHotlist: hotList
         ? {
             updatedAt: hotList.updatedAt,
             dayKey: hotList.dayKey,
             reason: hotList.reason,
             symbols: hotList.entries.map((e) => ({
               symbol: e.symbol,
-              bias: e.bias,
+              dayBias: e.dayBias,
               chg24hPct: e.chg24hPct,
-              spreadPct: e.spreadPct,
-              oiGrowth2hPct: e.oiGrowth2hPct,
+              quoteVolUsd: e.quoteVolUsd,
               score: e.score,
             })),
           }
@@ -1118,6 +1117,7 @@ async function runCronScan(
   let heartbeat = 0
   let predatorSkip = ''
   let predatorHotlist: string[] = []
+  let memeScanned = 0
   const seenDedup = new Set<string>()
   const allAlerts: ScanAlert[] = []
 
@@ -1134,28 +1134,41 @@ async function runCronScan(
     allAlerts.push(a)
 
     if (a.type === 'MEME') {
-      if (!a.tradePlan) return
-      const paper = await createPaperTradeFromPlan(env, {
-        ...a.tradePlan,
-        alertType: 'MEME',
-      })
-      if (!paper.created || !paper.comment) {
-        skipped++
-        return
+      // Never silent-drop a predator/meme signal if paper caps block companion trade.
+      let title = a.title
+      let text = a.text
+      let dedupeKey = a.dedupeKey
+      if (a.tradePlan) {
+        const paper = await createPaperTradeFromPlan(env, {
+          ...a.tradePlan,
+          alertType: 'MEME',
+        })
+        if (paper.created && paper.comment) {
+          title = paper.comment.title
+          // Keep echo details (wave/fade/wall) under the companion header
+          text = [paper.comment.text, '', a.text].filter(Boolean).join('\n')
+          dedupeKey = paper.comment.dedupeKey
+          const logged = await recordBotAlert(env, {
+            alertType: 'MEME',
+            score: a.score,
+            dedupeKey: a.dedupeKey,
+            plan: a.tradePlan,
+          })
+          if (logged) journalLogged++
+        } else {
+          skipped++
+          console.log(
+            '[cron] meme paper skipped — still broadcasting alert',
+            a.dedupeKey
+          )
+        }
       }
-      const logged = await recordBotAlert(env, {
-        alertType: 'MEME',
-        score: a.score,
-        dedupeKey: a.dedupeKey,
-        plan: a.tradePlan,
-      })
-      if (logged) journalLogged++
       const cr = await broadcastAlert(env, {
         type: 'SYSTEM',
         channel: 'meme',
-        title: paper.comment.title,
-        text: paper.comment.text,
-        dedupeKey: paper.comment.dedupeKey,
+        title,
+        text,
+        dedupeKey,
       })
       paperComments += cr.sent
       sent += cr.sent
@@ -1302,18 +1315,26 @@ async function runCronScan(
             (t.status === 'OPEN' || t.status === 'WAITING')
         )
         .map((t) => t.symbol)
-      const predator = await runLiquidationEchoScan({ kv, pinSymbols })
-      predatorHotlist = predator.hotlist.entries.map((e) => e.symbol)
-      for (const a of predator.alerts) {
+      // Causality lab: order-flow MM join replaces liquidation-echo wait
+      const flow = await runMemeOrderFlowScan({ kv, pinSymbols })
+      predatorHotlist = flow.watchlist.entries.map((e) => e.symbol)
+      memeScanned = flow.scanned
+      for (const a of flow.alerts) {
         await deliver(a)
       }
-      if (!predator.alerts.length) {
-        predatorSkip = predator.skipped || predator.hotlist.reason || 'no_echo'
-        console.log('[cron] predator skip:', predatorSkip, predatorHotlist)
+      if (!flow.alerts.length) {
+        predatorSkip = flow.skipped || flow.watchlist.reason || 'no_flow'
+        console.log(
+          '[cron] meme-flow skip:',
+          predatorSkip,
+          'hot',
+          predatorHotlist,
+          'rejects',
+          flow.rejects.slice(0, 4)
+        )
       }
-      // No sleep(13s) — paper cron honors echo time-stop on next ticks.
     } catch (err) {
-      console.error('[cron] predator scan failed', err)
+      console.error('[cron] meme order-flow scan failed', err)
     }
   }
 
@@ -1417,6 +1438,7 @@ async function runCronScan(
     resultAlerts,
     predatorSkip: predatorSkip || undefined,
     predatorHotlist: predatorHotlist.length ? predatorHotlist : undefined,
+    memeScanned: memeScanned || undefined,
   }
   const scanDone = JSON.stringify({
     status: 'COMPLETED',
@@ -1537,10 +1559,10 @@ async function sendDemoSignal(
           'DEMO — проверка доставки. Не торговать.',
         ].join('\n')
       : [
-          '🚀 <b>PREDATOR · TEST</b>',
+          '🦈 <b>MEME ORDER-FLOW · TEST</b>',
           '',
           `Сигнал @ ${now}`,
-          'Liquidation Echo demo — проверка доставки.',
+          'Order-Flow MM Join demo — проверка доставки.',
           'Не торговать.',
         ].join('\n')
   await tgSend(env, chatId, text, channel)
@@ -1841,7 +1863,7 @@ async function dispatchCommand(
       return
     }
 
-    const hot = await loadPredatorHotlist(
+    const hot = await loadHotMemeWatchlist(
       env.SUBSCRIBERS
         ? {
             get: (key) => env.SUBSCRIBERS!.get(key),
@@ -1852,22 +1874,22 @@ async function dispatchCommand(
     const hotParts =
       hot?.entries.map((e) => {
         const name = e.displayName.replace('/USDT', '')
-        const tag = e.bias === 'LONG_ECHO' ? 'L-echo' : 'S-echo'
-        return `${name} ${tag} ${e.chg24hPct >= 0 ? '+' : ''}${e.chg24hPct.toFixed(0)}%`
+        const tag = e.dayBias === 'PUMP' ? '↑' : '↓'
+        return `${name}${tag}${e.chg24hPct >= 0 ? '+' : ''}${e.chg24hPct.toFixed(0)}%`
       }) ?? []
     const hotLine = hotParts.length
-      ? `Predator hotlist: ${hotParts.join(', ')}`
-      : 'Predator hotlist: пуст (жду powder-keg 3–15M vol)'
+      ? `Hot memes: ${hotParts.join(', ')}`
+      : 'Hot memes: пуст (жду 24h movers ≥6%)'
     await tgSend(
       env,
       chatId,
       [
-        `📊 Статус PREDATOR`,
+        `📊 Статус MEME`,
         `⚙ Движок: <code>${BOT_ENGINE.id}</code>`,
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: PREDATOR Liquidation Echo (cron */2)`,
+        `Режим: Order-Flow MM Join (cron */2)`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
         hotLine,
