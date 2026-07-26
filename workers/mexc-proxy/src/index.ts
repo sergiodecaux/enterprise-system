@@ -105,12 +105,62 @@ async function runtimePut(key: string, value: string): Promise<void> {
       new Response(value, {
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=3600',
+          // 2h so short-lived dedup/heartbeat stamps survive isolate churn
+          'Cache-Control': 'public, max-age=7200',
         },
       })
     )
   } catch {
     // In-memory fallback is enough for local development.
+  }
+}
+
+/** Prefer the newer of Cache vs KV (they can diverge across colos). */
+function pickNewerDurable(
+  a: string | null | undefined,
+  b: string | null | undefined
+): string | null {
+  const av = a != null && a !== '' ? a : null
+  const bv = b != null && b !== '' ? b : null
+  if (!av) return bv
+  if (!bv) return av
+  const score = (raw: string): number => {
+    const asNum = Number(raw)
+    if (Number.isFinite(asNum) && asNum > 1_000_000_000_000) return asNum
+    try {
+      const at = Number((JSON.parse(raw) as { at?: number }).at)
+      if (Number.isFinite(at) && at > 0) return at
+    } catch {
+      /* not json */
+    }
+    return 0
+  }
+  return score(av) >= score(bv) ? av : bv
+}
+
+/** Cache + KV (durable) — never trust Cache alone for watermarks. */
+async function durableGet(env: Env, key: string): Promise<string | null> {
+  let kv: string | null = null
+  try {
+    kv = (await env.SUBSCRIBERS?.get(key)) ?? null
+  } catch {
+    kv = null
+  }
+  const cached = await runtimeGet(key)
+  return pickNewerDurable(cached, kv)
+}
+
+async function durablePut(
+  env: Env,
+  key: string,
+  value: string,
+  expirationTtl = 60 * 60 * 24 * 7
+): Promise<void> {
+  await runtimePut(key, value)
+  try {
+    await env.SUBSCRIBERS?.put(key, value, { expirationTtl })
+  } catch {
+    /* quota */
   }
 }
 
@@ -245,10 +295,11 @@ export default {
   async scheduled(
     event: ScheduledEvent,
     env: Env,
-    ctx: ExecutionContext
+    _ctx: ExecutionContext
   ): Promise<void> {
     const role = cronRoleFromExpression(event.cron)
-    ctx.waitUntil(runCronScan(env, role))
+    // Await (not fire-and-forget waitUntil) so CF keeps the isolate until TG I/O finishes
+    await runCronScan(env, role)
   },
 }
 
@@ -282,11 +333,12 @@ async function handleTelegram(
           put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
         }
       : undefined
-    const [lastScanCache, lastScanKv, lastDeliveryRaw, hotList] =
+    const [lastScanCache, lastScanKv, lastDeliveryCache, lastDeliveryKv, hotList] =
       await Promise.all([
         runtimeGet(LAST_SCAN_KEY),
         env.SUBSCRIBERS?.get(LAST_SCAN_KEY) ?? Promise.resolve(null),
         runtimeGet(LAST_TG_KEY),
+        env.SUBSCRIBERS?.get(LAST_TG_KEY) ?? Promise.resolve(null),
         loadPredatorHotlist(kv),
       ])
     let lastScan: unknown = null
@@ -294,7 +346,8 @@ async function handleTelegram(
     try {
       const raw = lastScanCache ?? lastScanKv
       lastScan = raw ? JSON.parse(raw) : null
-      lastDelivery = lastDeliveryRaw ? JSON.parse(lastDeliveryRaw) : null
+      const delRaw = lastDeliveryCache ?? lastDeliveryKv
+      lastDelivery = delRaw ? JSON.parse(delRaw) : null
     } catch {
       lastScan = null
       lastDelivery = null
@@ -307,14 +360,16 @@ async function handleTelegram(
           engine: BOT_ENGINE.id,
           engineLabel: BOT_ENGINE.label,
           subscribers: memeSubs.length,
+          chatIds: memeSubs.map((s) => s.chatId),
           hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
           note: BOT_ENGINE.deployedNote,
         },
         sniper: {
-          name: 'sniper-alts-bot',
+          name: 'Enterpriseelite_bot',
           engine: SNIPER_ENGINE.id,
           engineLabel: SNIPER_ENGINE.label,
           subscribers: sniperSubs.length,
+          chatIds: sniperSubs.map((s) => s.chatId),
           hasToken: Boolean(env.TELEGRAM_SNIPER_BOT_TOKEN),
           note: SNIPER_ENGINE.deployedNote,
         },
@@ -344,6 +399,66 @@ async function handleTelegram(
         : null,
       lastScan,
       lastDelivery,
+    })
+  }
+
+  // Worker → Telegram self-test (rate-limited). Proves CF isolate can reach api.telegram.org
+  if (
+    (path === '/telegram/delivery-test' || path === '/telegram/delivery-test/') &&
+    (request.method === 'GET' || request.method === 'POST')
+  ) {
+    const url = new URL(request.url)
+    const channel: TgChannel =
+      url.searchParams.get('channel') === 'meme' ? 'meme' : 'sniper'
+    const force =
+      url.searchParams.get('force') === '1' ||
+      url.searchParams.get('force') === 'true'
+    const gate = await assertDeliveryTestGate(env, force)
+    if (!gate.ok) return json({ error: gate.error }, gate.status)
+
+    const subs = await listSubscribers(env, channel)
+    if (!subs.length) {
+      return json({
+        ok: false,
+        channel,
+        error: 'no subscribers',
+        hint: 'Open the bot and press /start',
+      }, 404)
+    }
+    const token = tokenForChannel(env, channel)
+    if (!token) {
+      return json({ ok: false, channel, error: 'token missing' }, 503)
+    }
+
+    const results: Array<{ chatId: number; ok: boolean; status: number; error?: string }> =
+      []
+    for (const sub of subs) {
+      const r = await tgSendDetailed(
+        env,
+        sub.chatId,
+        [
+          `🏓 <b>Delivery test</b> · ${channel}`,
+          `Worker → Telegram OK`,
+          `chatId <code>${sub.chatId}</code>`,
+          `engine <code>${channel === 'sniper' ? SNIPER_ENGINE.id : BOT_ENGINE.id}</code>`,
+          new Date().toISOString(),
+        ].join('\n'),
+        channel
+      )
+      results.push({
+        chatId: sub.chatId,
+        ok: r.ok,
+        status: r.status,
+        error: r.error,
+      })
+    }
+    const sent = results.filter((x) => x.ok).length
+    return json({
+      ok: sent > 0,
+      channel,
+      sent,
+      failed: results.length - sent,
+      results,
     })
   }
 
@@ -611,19 +726,40 @@ async function assertAlertAuth(
 }
 
 /** Dedup + send to subscribers of the matching Telegram bot */
+function dedupeTtlMs(type: AlertPayload['type']): number {
+  return type === 'MEME' ? 900_000 : 3600_000
+}
+
+/** True if dedup stamp is still within TTL (Cache used to treat any hit as forever). */
+function isDedupFresh(raw: string | null | undefined, ttlMs: number): boolean {
+  if (raw == null || raw === '') return false
+  const ts = Number(raw)
+  if (Number.isFinite(ts) && ts > 1_000_000_000_000) {
+    return Date.now() - ts < ttlMs
+  }
+  // Legacy "1" stamps: treat as fresh for remaining Cache lifetime only via presence;
+  // force expiry by not honoring bare "1" longer than ttl from... we can't know.
+  // Fail open after deploy: ignore legacy "1" so heartbeats/alerts can send again.
+  return false
+}
+
 async function broadcastAlert(
   env: Env,
   payload: AlertPayload
 ): Promise<{ ok: boolean; sent: number; failed: number; skipped?: string }> {
   const channel = channelForAlertType(payload.type, payload.channel)
+  const ttlMs = dedupeTtlMs(payload.type)
   if (payload.dedupeKey) {
     const dedupKey = `${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`
+    const memKey = `${channel}:${payload.dedupeKey}`
     const [cached, prev] = await Promise.all([
       runtimeGet(dedupKey),
-      Promise.resolve(memoryDedup.get(`${channel}:${payload.dedupeKey}`)),
+      Promise.resolve(memoryDedup.get(memKey)),
     ])
-    const ttlMs = payload.type === 'MEME' ? 900_000 : 3600_000
-    if (cached || (prev && Date.now() - prev < ttlMs)) {
+    if (
+      isDedupFresh(cached, ttlMs) ||
+      (prev != null && Date.now() - prev < ttlMs)
+    ) {
       return { ok: true, sent: 0, failed: 0, skipped: 'dedup' }
     }
   }
@@ -635,13 +771,30 @@ async function broadcastAlert(
   if (payload.chatId) {
     const ok = await tgSend(env, payload.chatId, message, channel)
     if (ok && payload.dedupeKey) {
-      memoryDedup.set(`${channel}:${payload.dedupeKey}`, Date.now())
-      await runtimePut(`${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`, '1')
+      const at = Date.now()
+      memoryDedup.set(`${channel}:${payload.dedupeKey}`, at)
+      await runtimePut(
+        `${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`,
+        String(at)
+      )
     }
     return { ok, sent: ok ? 1 : 0, failed: ok ? 0 : 1 }
   }
 
   const subs = await listSubscribers(env, channel)
+  if (!subs.length) {
+    await recordDelivery(env, {
+      ok: false,
+      channel,
+      chatId: null,
+      status: 0,
+      length: message.length,
+      error: 'no subscribers for channel',
+      type: payload.type,
+      title: payload.title,
+    })
+    return { ok: false, sent: 0, failed: 0, skipped: 'no_subscribers' }
+  }
   for (const sub of subs) {
     if (channel === 'sniper' && sub.sniper === false) continue
     if (channel === 'meme' && sub.meme === false) continue
@@ -652,36 +805,137 @@ async function broadcastAlert(
     else failed++
   }
 
-  if (sent > 0 && payload.dedupeKey) {
-    memoryDedup.set(`${channel}:${payload.dedupeKey}`, Date.now())
-    await runtimePut(`${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`, '1')
+  if (sent === 0 && failed === 0) {
+    await recordDelivery(env, {
+      ok: false,
+      channel,
+      chatId: null,
+      status: 0,
+      length: message.length,
+      error: 'subscribers filtered out (sniper/meme flags)',
+      type: payload.type,
+    })
   }
 
-  return { ok: true, sent, failed }
+  if (sent > 0 && payload.dedupeKey) {
+    const at = Date.now()
+    memoryDedup.set(`${channel}:${payload.dedupeKey}`, at)
+    await runtimePut(
+      `${DEDUP_PREFIX}${channel}:${payload.dedupeKey}`,
+      String(at)
+    )
+  }
+
+  return { ok: sent > 0, sent, failed }
 }
 
 async function maybeHeartbeat(env: Env): Promise<number> {
-  let last = Number((await runtimeGet(HEARTBEAT_KEY)) || 0)
-  if (Date.now() - last < HEARTBEAT_MS) return 0
+  const last = Number((await durableGet(env, HEARTBEAT_KEY)) || 0)
+  if (last && Date.now() - last < HEARTBEAT_MS) return 0
 
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
-  const bucket = Math.floor(Date.now() / HEARTBEAT_MS)
+  // Unique per tick — never share a bucket key that can get stuck in Cache
+  const tick = Date.now()
   let sent = 0
+  let attempted = 0
   for (const channel of ['meme', 'sniper'] as TgChannel[]) {
     const subs = await listSubscribers(env, channel)
-    if (!subs.length || !tokenForChannel(env, channel)) continue
+    if (!subs.length) {
+      await recordDelivery(env, {
+        ok: false,
+        channel,
+        chatId: null,
+        status: 0,
+        length: 0,
+        error: 'heartbeat: no subscribers',
+      })
+      continue
+    }
+    if (!tokenForChannel(env, channel)) {
+      await recordDelivery(env, {
+        ok: false,
+        channel,
+        chatId: null,
+        status: 0,
+        length: 0,
+        error: 'heartbeat: token missing',
+      })
+      continue
+    }
     const engine = channel === 'sniper' ? SNIPER_ENGINE : BOT_ENGINE
+    attempted++
     const r = await broadcastAlert(env, {
       type: 'SYSTEM',
       channel,
       title: 'Scanner online',
       text: `🟢 24/7 heartbeat · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
-      dedupeKey: `heartbeat:${channel}:${bucket}`,
+      dedupeKey: `heartbeat:${channel}:${tick}`,
     })
     sent += r.sent
+    if (r.skipped) {
+      await recordDelivery(env, {
+        ok: false,
+        channel,
+        chatId: null,
+        status: 0,
+        length: 0,
+        error: `heartbeat skipped: ${r.skipped}`,
+      })
+    }
   }
 
-  await runtimePut(HEARTBEAT_KEY, String(Date.now()))
+  // Only advance watermark after we actually tried (or recorded why not)
+  if (attempted > 0 || sent > 0) {
+    await durablePut(env, HEARTBEAT_KEY, String(Date.now()), 60 * 60 * 24)
+  }
+  return sent
+}
+
+/** If Telegram has been silent too long, poke both bots (proves Worker→TG). */
+async function maybeDeliveryProbe(env: Env): Promise<number> {
+  // Gate on KV only — Cache can look "fresh" while KV (and ops) see a 2-day-old stamp.
+  let lastAt = 0
+  try {
+    const raw = await env.SUBSCRIBERS?.get(LAST_TG_KEY)
+    if (raw) lastAt = Number((JSON.parse(raw) as { at?: number }).at || 0)
+  } catch {
+    lastAt = 0
+  }
+  if (lastAt && Date.now() - lastAt < DELIVERY_PROBE_MS) return 0
+
+  let sent = 0
+  const ts = new Date().toISOString()
+  for (const channel of ['sniper', 'meme'] as TgChannel[]) {
+    const subs = await listSubscribers(env, channel)
+    const token = tokenForChannel(env, channel)
+    if (!subs.length || !token) {
+      await recordDelivery(env, {
+        ok: false,
+        channel,
+        chatId: null,
+        status: 0,
+        length: 0,
+        error: !token
+          ? 'probe: token missing'
+          : 'probe: no subscribers',
+      })
+      continue
+    }
+    for (const sub of subs) {
+      const r = await tgSendDetailed(
+        env,
+        sub.chatId,
+        [
+          `🏓 <b>Delivery probe</b> · ${channel}`,
+          `Worker → Telegram self-check`,
+          `chatId <code>${sub.chatId}</code>`,
+          ts,
+        ].join('\n'),
+        channel
+      )
+      if (r.ok) sent++
+    }
+  }
   return sent
 }
 
@@ -1092,6 +1346,12 @@ async function runCronScan(
     } catch (err) {
       console.error('[cron] heartbeat persist failed', err)
     }
+    try {
+      const probed = await maybeDeliveryProbe(env)
+      if (probed > 0) heartbeat += probed
+    } catch (err) {
+      console.error('[cron] delivery probe failed', err)
+    }
     await runJournal()
     await runPaper()
   }
@@ -1125,6 +1385,15 @@ async function runCronScan(
 
   if (role === 'vane' || role === 'all') {
     await runVane()
+    // Paper ticks can lose the LAST_SCAN race to vane; still probe from here.
+    if (role === 'vane') {
+      try {
+        const probed = await maybeDeliveryProbe(env)
+        if (probed > 0) heartbeat += probed
+      } catch (err) {
+        console.error('[cron] vane delivery probe failed', err)
+      }
+    }
   }
 
   const result = {
@@ -1151,6 +1420,10 @@ async function runCronScan(
   await runtimePut(LAST_SCAN_KEY, scanDone)
   try {
     await env.SUBSCRIBERS?.put(LAST_SCAN_KEY, scanDone)
+    // Per-role so vane/predator don't erase paper evidence
+    await env.SUBSCRIBERS?.put(`${LAST_SCAN_KEY}:${role}`, scanDone, {
+      expirationTtl: 60 * 60 * 24 * 3,
+    })
   } catch {
     /* quota */
   }
@@ -1215,6 +1488,8 @@ async function removeSubscriber(
 
 const HEARTBEAT_KEY = 'telegram:last_heartbeat'
 const HEARTBEAT_MS = 30 * 60_000 // every 30 min
+/** If no successful/failed delivery recorded for this long → force Worker→TG poke */
+const DELIVERY_PROBE_MS = 45 * 60_000
 
 interface TelegramUpdate {
   message?: {
@@ -1689,55 +1964,129 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
 }
 
+async function recordDelivery(
+  env: Env,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const body = JSON.stringify({ ...payload, at: Date.now() })
+  await runtimePut(LAST_TG_KEY, body)
+  if (env.SUBSCRIBERS) {
+    try {
+      await env.SUBSCRIBERS.put(LAST_TG_KEY, body, {
+        expirationTtl: 60 * 60 * 24 * 7,
+      })
+    } catch {
+      /* quota */
+    }
+  }
+}
+
+async function tgSendDetailed(
+  env: Env,
+  chatId: number,
+  text: string,
+  channel: TgChannel = 'meme'
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const token = tokenForChannel(env, channel)
+  if (!token) {
+    await recordDelivery(env, {
+      ok: false,
+      channel,
+      chatId,
+      status: 0,
+      length: text.length,
+      error: 'token missing for channel',
+    })
+    return { ok: false, status: 0, error: 'token missing for channel' }
+  }
+
+  const sendOnce = async (parseMode: 'HTML' | null) => {
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      text: parseMode === 'HTML' ? text : text.replace(/<[^>]+>/g, ''),
+      disable_web_page_preview: true,
+    }
+    if (parseMode) body.parse_mode = parseMode
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const errorText = res.ok ? undefined : (await res.text()).slice(0, 500)
+    return { ok: res.ok, status: res.status, error: errorText }
+  }
+
+  try {
+    let result = await sendOnce('HTML')
+    // Bad HTML / entities → retry plain text so signals are not silently dropped
+    if (!result.ok && result.status === 400) {
+      result = await sendOnce(null)
+    }
+    await recordDelivery(env, {
+      ok: result.ok,
+      channel,
+      chatId,
+      status: result.status,
+      length: text.length,
+      error: result.error ?? null,
+    })
+    return result
+  } catch (error) {
+    const err = String(error).slice(0, 500)
+    await recordDelivery(env, {
+      ok: false,
+      channel,
+      chatId,
+      status: 0,
+      length: text.length,
+      error: err,
+    })
+    return { ok: false, status: 0, error: err }
+  }
+}
+
 async function tgSend(
   env: Env,
   chatId: number,
   text: string,
   channel: TgChannel = 'meme'
 ): Promise<boolean> {
-  const token = tokenForChannel(env, channel)
-  if (!token) return false
+  const r = await tgSendDetailed(env, chatId, text, channel)
+  return r.ok
+}
 
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-    })
-    const errorText = res.ok ? null : (await res.text()).slice(0, 500)
-    await runtimePut(
-      LAST_TG_KEY,
-      JSON.stringify({
-        ok: res.ok,
-        channel,
-        chatId,
-        status: res.status,
-        at: Date.now(),
-        length: text.length,
-        error: errorText,
-      })
-    )
-    return res.ok
-  } catch (error) {
-    await runtimePut(
-      LAST_TG_KEY,
-      JSON.stringify({
-        ok: false,
-        channel,
-        chatId,
-        status: 0,
-        at: Date.now(),
-        length: text.length,
-        error: String(error).slice(0, 500),
-      })
-    )
-    return false
+const DELIVERY_TEST_KEY = 'telegram:delivery_test_at'
+const DELIVERY_TEST_COOLDOWN_MS = 3 * 60_000
+
+async function assertDeliveryTestGate(
+  env: Env,
+  force: boolean
+): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+  if (env.ALERT_SECRET) {
+    // force=1 still rate-limited unless secret presented via header elsewhere;
+    // keep public probe but cooldown so it can't be abused to spam.
   }
+  if (force) return { ok: true }
+  const last = Number((await runtimeGet(DELIVERY_TEST_KEY)) || 0)
+  const kvLast = Number((await env.SUBSCRIBERS?.get(DELIVERY_TEST_KEY)) || 0)
+  const prev = Math.max(last, kvLast)
+  if (prev && Date.now() - prev < DELIVERY_TEST_COOLDOWN_MS) {
+    return {
+      ok: false,
+      error: `cooldown ${Math.ceil((DELIVERY_TEST_COOLDOWN_MS - (Date.now() - prev)) / 1000)}s`,
+      status: 429,
+    }
+  }
+  const now = String(Date.now())
+  await runtimePut(DELIVERY_TEST_KEY, now)
+  try {
+    await env.SUBSCRIBERS?.put(DELIVERY_TEST_KEY, now, {
+      expirationTtl: 60 * 60,
+    })
+  } catch {
+    /* quota */
+  }
+  return { ok: true }
 }
 
 function json(data: unknown, status = 200): Response {

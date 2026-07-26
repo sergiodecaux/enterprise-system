@@ -60,8 +60,14 @@ const BotTradeCard = ({ trade }: Props) => {
               <DirectionIcon className="h-3 w-3" />
               {trade.side}
             </span>
-            <span className="rounded border border-hull-border px-1.5 py-0.5 font-mono text-[8px] text-holo/45">
-              {trade.alertType}
+            <span
+              className={`rounded border px-1.5 py-0.5 font-mono text-[8px] ${
+                trade.alertType === 'SNIPER'
+                  ? 'border-sky-400/35 text-sky-300'
+                  : 'border-alert/35 text-alert'
+              }`}
+            >
+              {trade.alertType === 'SNIPER' ? 'Альты' : 'Мемы'}
             </span>
           </div>
           <p className="mt-1 font-mono text-[9px] text-holo/40">

@@ -700,6 +700,27 @@ export function computeBotAnalytics(
     })
   }
 
+  const sniper = byAlertType.find((x) => x.alertType === 'SNIPER')
+  if (sniper && sniper.wins + sniper.losses >= 6 && sniper.winRate < 45) {
+    insights.push({
+      id: 'alts_overall',
+      severity: 'HIGH',
+      title: 'Альты (Vane): низкий WR',
+      detail: `WR альтов ${sniper.winRate.toFixed(0)}% · ${sniper.wins}W/${sniper.losses}L. Поднимаем min sniper score / ужесточаем зоны.`,
+    })
+  } else if (
+    sniper &&
+    sniper.wins + sniper.losses >= 8 &&
+    sniper.winRate >= 60
+  ) {
+    insights.push({
+      id: 'alts_hot',
+      severity: 'POSITIVE',
+      title: 'Альты (Vane): сильный коридор',
+      detail: `WR ${sniper.winRate.toFixed(0)}% · Avg R ${sniper.avgR.toFixed(2)}. Можно чуть снизить порог входа.`,
+    })
+  }
+
   return {
     total: entries.length,
     resolved: entries.length - open.length,

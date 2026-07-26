@@ -49,10 +49,11 @@ function phaseOfGeom(
   low: number,
   high: number
 ): 'FAR' | 'APPROACH' | 'TOUCH' {
-  if (price >= low * 0.998 && price <= high * 1.002) return 'TOUCH'
+  if (price >= low * 0.997 && price <= high * 1.003) return 'TOUCH'
   const mid = (low + high) / 2
   const dist = Math.abs(price - mid) / price
-  if (dist <= 0.008) return 'APPROACH'
+  // Wider approach so we don't miss zones between cron ticks
+  if (dist <= 0.012) return 'APPROACH'
   return 'FAR'
 }
 
@@ -265,11 +266,31 @@ async function analyzeSymbol(opts: {
 
   // Determine actionable path
   let path: VanePath | null = emitPath
-  if (!path && book.grade === 'STRONG' && phaseGeom === 'TOUCH') {
+  // HOLD: TOUCH with STRONG, or APPROACH with STRONG+tape (don't require perfect touch)
+  if (
+    !path &&
+    book.grade === 'STRONG' &&
+    (phaseGeom === 'TOUCH' ||
+      (phaseGeom === 'APPROACH' && (book.absorption || book.cvdConfirm)))
+  ) {
+    path = 'HOLD'
+  }
+  // Soft HOLD: TOUCH + NEUTRAL book but clear absorption/CVD (weekend/thin books)
+  if (
+    !path &&
+    phaseGeom === 'TOUCH' &&
+    book.grade === 'NEUTRAL' &&
+    (book.absorption || book.cvdConfirm) &&
+    !book.greenDeltaWeak
+  ) {
     path = 'HOLD'
   }
   if (!path) {
-    await saveVaneState(opts.kv, { ...state, score: 0 })
+    await saveVaneState(opts.kv, {
+      ...state,
+      score: 0,
+      reason: `no path · phase=${phaseGeom} book=${book.grade}`,
+    })
     return null
   }
 

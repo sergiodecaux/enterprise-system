@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   BarChart3,
   Flame,
@@ -8,6 +8,8 @@ import {
   Clock,
   Bot,
   RefreshCw,
+  Crosshair,
+  Rocket,
 } from 'lucide-react'
 import {
   clearJournal,
@@ -15,12 +17,24 @@ import {
   type ImprovementInsight,
   type SignalJournalEntry,
 } from '../../engine/journal'
+import type {
+  BotJournalEntryDto,
+  BotSetupStatsDto,
+} from '../../api/telegram/botJournal'
 import {
   useJournalAnalytics,
   useJournalEntries,
 } from '../../hooks/useSignalJournalResolver'
 import { useBotJournalSync } from '../../hooks/useBotJournalSync'
 import { useAppStore } from '../../store/useAppStore'
+
+type BotChannelFilter = 'ALL' | 'MEME' | 'SNIPER'
+
+const CHANNEL_LABEL: Record<BotChannelFilter, string> = {
+  ALL: 'Все',
+  MEME: 'Мемы',
+  SNIPER: 'Альты',
+}
 
 const severityStyle: Record<
   ImprovementInsight['severity'],
@@ -57,6 +71,73 @@ const outcomeColor = (e: SignalJournalEntry): string => {
   return 'text-holo/70'
 }
 
+function emptyTypeStats(alertType: 'MEME' | 'SNIPER'): BotSetupStatsDto {
+  return {
+    setup: alertType,
+    alertType,
+    total: 0,
+    wins: 0,
+    losses: 0,
+    timeouts: 0,
+    open: 0,
+    winRate: 0,
+    avgR: 0,
+    avgPnl: 0,
+    avgMfe: 0,
+    avgMae: 0,
+    expectancyR: 0,
+  }
+}
+
+function setupsFromEntries(entries: BotJournalEntryDto[]): BotSetupStatsDto[] {
+  const keys = [
+    ...new Set(entries.map((e) => `${e.alertType}::${e.setup}`)),
+  ]
+  return keys
+    .map((key) => {
+      const [alertType, setup] = key.split('::') as [
+        'MEME' | 'SNIPER',
+        string,
+      ]
+      const subset = entries.filter(
+        (e) => e.alertType === alertType && e.setup === setup
+      )
+      const wins = subset.filter((e) => e.status === 'WIN')
+      const losses = subset.filter((e) => e.status === 'LOSS')
+      const decided = wins.length + losses.length
+      const rVals = subset
+        .filter(
+          (e) =>
+            e.rMultiple != null &&
+            (e.status === 'WIN' || e.status === 'LOSS')
+        )
+        .map((e) => e.rMultiple!)
+      const pnlVals = subset
+        .filter((e) => e.pnlPercent != null)
+        .map((e) => e.pnlPercent!)
+      const avg = (xs: number[]) =>
+        xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0
+      const avgR = avg(rVals)
+      return {
+        setup,
+        alertType,
+        total: subset.length,
+        wins: wins.length,
+        losses: losses.length,
+        timeouts: subset.filter((e) => e.status === 'TIMEOUT').length,
+        open: subset.filter((e) => e.status === 'OPEN').length,
+        winRate: decided > 0 ? (wins.length / decided) * 100 : 0,
+        avgR,
+        avgPnl: avg(pnlVals),
+        avgMfe: avg(subset.map((e) => e.mfePercent)),
+        avgMae: avg(subset.map((e) => e.maePercent)),
+        expectancyR: avgR,
+      } satisfies BotSetupStatsDto
+    })
+    .filter((s) => s.total > 0)
+    .sort((a, b) => b.total - a.total)
+}
+
 const JournalStatsPanel = () => {
   const analytics = useJournalAnalytics()
   const entries = useJournalEntries()
@@ -64,6 +145,7 @@ const JournalStatsPanel = () => {
   const { payload: bot, loading: botLoading, refresh: refreshBot } =
     useBotJournalSync()
   const [tab, setTab] = useState<'bot' | 'overview' | 'setups' | 'log'>('bot')
+  const [botChannel, setBotChannel] = useState<BotChannelFilter>('ALL')
 
   const handleClear = () => {
     if (!window.confirm('Очистить журнал сигналов? Статистика обнулится.')) return
@@ -73,6 +155,31 @@ const JournalStatsPanel = () => {
 
   const botA = bot?.analytics
   const gates = bot?.gates
+
+  const memeStats =
+    botA?.byAlertType.find((x) => x.alertType === 'MEME') ??
+    emptyTypeStats('MEME')
+  const altsStats =
+    botA?.byAlertType.find((x) => x.alertType === 'SNIPER') ??
+    emptyTypeStats('SNIPER')
+
+  const filteredBotEntries = useMemo(() => {
+    const list = bot?.entries ?? []
+    if (botChannel === 'ALL') return list
+    return list.filter((e) => e.alertType === botChannel)
+  }, [bot?.entries, botChannel])
+
+  const filteredBotSetups = useMemo(
+    () => setupsFromEntries(filteredBotEntries),
+    [filteredBotEntries]
+  )
+
+  const channelStats =
+    botChannel === 'MEME'
+      ? memeStats
+      : botChannel === 'SNIPER'
+        ? altsStats
+        : null
 
   return (
     <div className="space-y-4">
@@ -85,7 +192,7 @@ const JournalStatsPanel = () => {
             </h2>
           </div>
           <p className="font-mono text-[10px] text-holo/40">
-            Бот 24/7 + Mini App · TP/SL · адаптивные фильтры сканера
+            Predator (мемы) + Vane (альты) · отдельно · адаптивные gates
           </p>
         </div>
         <div className="flex gap-1">
@@ -111,55 +218,126 @@ const JournalStatsPanel = () => {
       </div>
 
       {botA && (
-        <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
-          <div className="mb-2 flex items-center gap-2">
-            <Bot className="h-4 w-4 text-sky-300" />
-            <span className="font-mono text-xs font-bold uppercase text-sky-300">
-              Статистика бота (cron)
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <StatTile
-              label="Bot WR"
-              value={`${botA.winRate.toFixed(0)}%`}
-              sub={`${botA.wins}W / ${botA.losses}L`}
-              accent="text-sky-300"
-            />
-            <StatTile
-              label="Avg R"
-              value={`${botA.avgR >= 0 ? '+' : ''}${botA.avgR.toFixed(2)}R`}
-              sub={`PnL ${botA.avgPnl.toFixed(1)}%`}
-              accent={botA.avgR >= 0 ? 'text-matrix' : 'text-alert'}
-            />
-            <StatTile
-              label="Sample"
-              value={`${botA.resolved}`}
-              sub={`${botA.open} open · ${botA.timeouts} TO`}
-              accent="text-holo/70"
-            />
-            <StatTile
-              label="Gates"
-              value={gates ? String(gates.minMemeScore) : '—'}
-              sub={
-                gates
-                  ? `meme≥${gates.minMemeScore} · block ${gates.blockedSetups.length}`
-                  : 'waiting'
+        <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <ChannelStatsCard
+              title="Мемы · Predator"
+              icon={<Rocket className="h-3.5 w-3.5 text-alert" />}
+              stats={memeStats}
+              gate={gates ? `gate ≥${gates.minMemeScore}` : undefined}
+              border="border-alert/30 bg-alert/5"
+              titleColor="text-alert"
+              active={botChannel === 'MEME'}
+              onClick={() =>
+                setBotChannel((c) => (c === 'MEME' ? 'ALL' : 'MEME'))
               }
-              accent="text-yellow-300"
+            />
+            <ChannelStatsCard
+              title="Альты · Vane"
+              icon={<Crosshair className="h-3.5 w-3.5 text-sky-300" />}
+              stats={altsStats}
+              gate={gates ? `gate ≥${gates.minSniperScore}` : undefined}
+              border="border-sky-500/30 bg-sky-500/5"
+              titleColor="text-sky-300"
+              active={botChannel === 'SNIPER'}
+              onClick={() =>
+                setBotChannel((c) => (c === 'SNIPER' ? 'ALL' : 'SNIPER'))
+              }
             />
           </div>
-          {gates && (gates.blockedSetups.length > 0 || gates.boostedSetups.length > 0) && (
-            <div className="mt-2 font-mono text-[10px] text-holo/45">
-              {gates.blockedSetups.length > 0 && (
-                <div>Блок: {gates.blockedSetups.join(', ')}</div>
-              )}
-              {gates.boostedSetups.length > 0 && (
-                <div className="text-matrix/70">
-                  Boost: {gates.boostedSetups.join(', ')}
+
+          <div className="rounded-xl border border-hull-border bg-hull/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 text-holo/50" />
+                <span className="font-mono text-xs font-bold uppercase text-holo/70">
+                  {botChannel === 'ALL'
+                    ? 'Сводка бота'
+                    : CHANNEL_LABEL[botChannel]}
+                </span>
+              </div>
+              <div className="flex gap-1">
+                {(['ALL', 'MEME', 'SNIPER'] as const).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setBotChannel(id)}
+                    className={`rounded px-2 py-1 font-mono text-[9px] font-bold uppercase ${
+                      botChannel === id
+                        ? id === 'MEME'
+                          ? 'border border-alert/40 bg-alert/15 text-alert'
+                          : id === 'SNIPER'
+                            ? 'border border-sky-400/40 bg-sky-500/15 text-sky-200'
+                            : 'border border-matrix/40 bg-matrix/15 text-matrix'
+                        : 'border border-hull-border text-holo/35'
+                    }`}
+                  >
+                    {CHANNEL_LABEL[id]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatTile
+                label="WR"
+                value={`${(channelStats ?? botA).winRate.toFixed(0)}%`}
+                sub={`${(channelStats ?? botA).wins}W / ${(channelStats ?? botA).losses}L`}
+                accent="text-sky-300"
+              />
+              <StatTile
+                label="Avg R"
+                value={`${(channelStats ?? botA).avgR >= 0 ? '+' : ''}${(channelStats ?? botA).avgR.toFixed(2)}R`}
+                sub={`PnL ${(channelStats ?? botA).avgPnl.toFixed(1)}%`}
+                accent={
+                  (channelStats ?? botA).avgR >= 0
+                    ? 'text-matrix'
+                    : 'text-alert'
+                }
+              />
+              <StatTile
+                label="Sample"
+                value={`${
+                  channelStats
+                    ? channelStats.total - channelStats.open
+                    : botA.resolved
+                }`}
+                sub={`${(channelStats ?? botA).open} open · ${(channelStats ?? botA).timeouts} TO`}
+                accent="text-holo/70"
+              />
+              <StatTile
+                label="Gates"
+                value={
+                  gates
+                    ? botChannel === 'SNIPER'
+                      ? String(gates.minSniperScore)
+                      : botChannel === 'MEME'
+                        ? String(gates.minMemeScore)
+                        : `${gates.minMemeScore}/${gates.minSniperScore}`
+                    : '—'
+                }
+                sub={
+                  gates
+                    ? `meme≥${gates.minMemeScore} · alts≥${gates.minSniperScore}`
+                    : 'waiting'
+                }
+                accent="text-yellow-300"
+              />
+            </div>
+            {gates &&
+              (gates.blockedSetups.length > 0 ||
+                gates.boostedSetups.length > 0) && (
+                <div className="mt-2 font-mono text-[10px] text-holo/45">
+                  {gates.blockedSetups.length > 0 && (
+                    <div>Блок: {gates.blockedSetups.join(', ')}</div>
+                  )}
+                  {gates.boostedSetups.length > 0 && (
+                    <div className="text-matrix/70">
+                      Boost: {gates.boostedSetups.join(', ')}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -221,10 +399,30 @@ const JournalStatsPanel = () => {
           {!botA && (
             <p className="rounded-lg border border-hull-border bg-hull/50 p-4 text-center font-mono text-xs text-holo/40">
               Журнал бота ещё пуст или worker недоступен. После алертов в Telegram
-              сюда подтянутся WIN/LOSS и адаптивные пороги.
+              сюда подтянутся WIN/LOSS и адаптивные пороги (мемы и альты отдельно).
             </p>
           )}
-          {botA?.insights.map((ins) => (
+          {botA && botChannel !== 'ALL' && filteredBotEntries.length === 0 && (
+            <p className="rounded-lg border border-hull-border bg-hull/50 p-4 text-center font-mono text-xs text-holo/40">
+              По каналу «{CHANNEL_LABEL[botChannel]}» пока нет сделок в журнале
+              бота.
+            </p>
+          )}
+          {botA?.insights
+            .filter((ins) => {
+              if (botChannel === 'ALL') return true
+              if (botChannel === 'SNIPER') {
+                return (
+                  ins.id.startsWith('alts_') ||
+                  /альт|vane|sniper/i.test(`${ins.title} ${ins.detail}`)
+                )
+              }
+              return (
+                ins.id.startsWith('meme_') ||
+                /мем|predator|meme/i.test(`${ins.title} ${ins.detail}`)
+              )
+            })
+            .map((ins) => (
             <div
               key={ins.id}
               className={`rounded-lg border p-3 ${severityStyle[ins.severity]}`}
@@ -242,20 +440,39 @@ const JournalStatsPanel = () => {
               </p>
             </div>
           ))}
-          {botA && botA.bySetup.length > 0 && (
+          {filteredBotSetups.length > 0 && (
             <div className="space-y-2">
               <div className="font-mono text-[10px] uppercase text-holo/40">
-                Сетапы бота
+                Сетапы · {CHANNEL_LABEL[botChannel]}
               </div>
-              {botA.bySetup.map((s) => (
+              {filteredBotSetups.map((s) => (
                 <div
-                  key={s.setup}
+                  key={`${s.alertType}-${s.setup}`}
                   className="rounded-lg border border-hull-border bg-hull/40 px-3 py-2"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-bold text-holo">
-                      {s.setup}
-                    </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-mono text-xs font-bold text-holo">
+                        {s.setup}
+                      </span>
+                      {botChannel === 'ALL' && (
+                        <span
+                          className={`ml-2 rounded border px-1 py-0.5 font-mono text-[8px] ${
+                            s.alertType === 'SNIPER'
+                              ? 'border-sky-400/30 text-sky-300'
+                              : s.alertType === 'MEME'
+                                ? 'border-alert/30 text-alert'
+                                : 'border-hull-border text-holo/40'
+                          }`}
+                        >
+                          {s.alertType === 'SNIPER'
+                            ? 'Альты'
+                            : s.alertType === 'MEME'
+                              ? 'Мемы'
+                              : 'ALL'}
+                        </span>
+                      )}
+                    </div>
                     <span
                       className={`font-mono text-xs font-bold ${
                         s.winRate >= 55 ? 'text-matrix' : 'text-alert'
@@ -272,14 +489,23 @@ const JournalStatsPanel = () => {
               ))}
             </div>
           )}
-          {bot?.entries && bot.entries.length > 0 && (
+          {filteredBotEntries.length > 0 && (
             <div className="max-h-56 space-y-1 overflow-y-auto">
-              {bot.entries.slice(0, 40).map((e) => (
+              {filteredBotEntries.slice(0, 40).map((e) => (
                 <div
                   key={e.id}
                   className="flex items-center justify-between rounded border border-hull-border/40 bg-black/20 px-2 py-1.5 font-mono text-[10px]"
                 >
                   <span className="text-holo/70">
+                    <span
+                      className={
+                        e.alertType === 'SNIPER'
+                          ? 'text-sky-300/80'
+                          : 'text-alert/80'
+                      }
+                    >
+                      {e.alertType === 'SNIPER' ? 'ALT' : 'MEME'}
+                    </span>{' '}
                     {e.displayName} {e.side} · {e.setup}
                   </span>
                   <span
@@ -514,6 +740,67 @@ function StatTile({
       <div className={`font-mono text-xl font-bold ${accent}`}>{value}</div>
       <div className="font-mono text-[9px] text-holo/35">{sub}</div>
     </div>
+  )
+}
+
+function ChannelStatsCard({
+  title,
+  icon,
+  stats,
+  gate,
+  border,
+  titleColor,
+  active,
+  onClick,
+}: {
+  title: string
+  icon: ReactNode
+  stats: BotSetupStatsDto
+  gate?: string
+  border: string
+  titleColor: string
+  active: boolean
+  onClick: () => void
+}) {
+  const sample = stats.wins + stats.losses
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-xl border p-3 text-left transition ${border} ${
+        active ? 'ring-1 ring-holo/30' : 'opacity-90 hover:opacity-100'
+      }`}
+    >
+      <div className={`mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase ${titleColor}`}>
+        {icon}
+        {title}
+      </div>
+      <div className="flex items-end justify-between gap-2">
+        <div>
+          <div
+            className={`font-mono text-2xl font-bold ${
+              sample === 0
+                ? 'text-holo/35'
+                : stats.winRate >= 55
+                  ? 'text-matrix'
+                  : 'text-alert'
+            }`}
+          >
+            {sample === 0 ? '—' : `${stats.winRate.toFixed(0)}%`}
+          </div>
+          <div className="font-mono text-[9px] text-holo/40">
+            {stats.wins}W / {stats.losses}L · {stats.open} open
+          </div>
+        </div>
+        <div className="text-right font-mono text-[9px] text-holo/45">
+          <div>
+            {stats.avgR >= 0 ? '+' : ''}
+            {stats.avgR.toFixed(2)}R
+          </div>
+          <div>{gate ?? `${stats.total} trades`}</div>
+        </div>
+      </div>
+    </button>
   )
 }
 

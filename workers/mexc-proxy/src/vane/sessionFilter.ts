@@ -64,9 +64,8 @@ export function evaluateVaneSession(nowMs = Date.now()): SessionGate {
   const { minutes, dow } = utcParts(nowMs)
   const session = sessionOf(minutes)
 
-  if (dow === 0 || (dow === 6 && minutes > 12 * 60)) {
-    return { ok: false, reason: 'weekend thin book', session }
-  }
+  // Crypto weekends are tradable — no hard block (was killing Sunday scans).
+  // Keep only short toxic windows: US cash open + HTF roll + macro prints.
   if (nearUsCashOpen(minutes)) {
     return {
       ok: false,

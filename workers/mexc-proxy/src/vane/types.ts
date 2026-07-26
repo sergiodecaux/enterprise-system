@@ -85,12 +85,13 @@ export const VANE_STATE_PREFIX = 'vane:sym:'
 export const VANE_WALL_PREFIX = 'vane:wall:'
 export const VANE_RISK_KEY = 'vane:portfolio_risk_v1'
 
-export const MIN_VANE_SCORE = 70
-export const TIER1_SCORE = 85
-export const MIN_RR = 1.8
+export const MIN_VANE_SCORE = 62
+export const TIER1_SCORE = 80
+export const MIN_RR = 1.6
 export const TP_MIN_PCT = 1.5
 export const TP_MAX_PCT = 2.0
-export const WALL_PERSIST_MS = 12_000
+/** Wall must live across ~1–2 cron ticks (was 12s — almost never true) */
+export const WALL_PERSIST_MS = 5_000
 export const RETEST_TTL_BARS_5M = 14
 export const BTC_SHIELD_PCT = 0.5
 export const BTC_SHIELD_MS = 3 * 60_000

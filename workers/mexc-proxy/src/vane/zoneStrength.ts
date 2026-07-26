@@ -214,26 +214,28 @@ export async function assessZoneStrength(opts: {
   }
 
   const persistOk = wallPersistMs >= WALL_PERSIST_MS
-  const densityOk = bidAskRatio >= 2.5
+  const densityOk = bidAskRatio >= 1.8
+  const obiOk =
+    (opts.side === 'LONG' && (obiPct ?? 0) >= 8) ||
+    (opts.side === 'SHORT' && (obiPct ?? 0) <= -8)
 
   let grade: ZoneGrade = 'NEUTRAL'
+  // STRONG: density + (persist OR tape confirm) + OBI — not all-and-persist-12s
   if (
     !spoofed &&
     densityOk &&
-    persistOk &&
-    (absorption || cvdConfirm) &&
-    ((opts.side === 'LONG' && (obiPct ?? 0) >= 12) ||
-      (opts.side === 'SHORT' && (obiPct ?? 0) <= -12))
+    obiOk &&
+    (persistOk || absorption || cvdConfirm)
   ) {
     grade = 'STRONG'
     notes.push(
-      `STRONG: density×${bidAskRatio.toFixed(1)} · wall ${Math.round(wallPersistMs / 1000)}с · absorption=${absorption}`
+      `STRONG: density×${bidAskRatio.toFixed(1)} · wall ${Math.round(wallPersistMs / 1000)}с · abs=${absorption} cvd=${cvdConfirm}`
     )
   } else if (
     spoofed ||
-    bidAskRatio < 1.15 ||
-    (opts.side === 'LONG' && greenDeltaWeak && (obiPct ?? 0) < 0) ||
-    (opts.side === 'SHORT' && buyVol > sellVol * 2.2)
+    bidAskRatio < 1.05 ||
+    (opts.side === 'LONG' && greenDeltaWeak && (obiPct ?? 0) < -8) ||
+    (opts.side === 'SHORT' && buyVol > sellVol * 2.5 && (obiPct ?? 0) > 8)
   ) {
     grade = 'WEAK'
     notes.push(
@@ -241,7 +243,7 @@ export async function assessZoneStrength(opts: {
     )
   } else {
     notes.push(
-      `NEUTRAL: density×${bidAskRatio.toFixed(1)} · wall ${Math.round(wallPersistMs / 1000)}с`
+      `NEUTRAL: density×${bidAskRatio.toFixed(1)} · wall ${Math.round(wallPersistMs / 1000)}с · OBI ${obiPct?.toFixed(0) ?? 'n/a'}`
     )
   }
 
