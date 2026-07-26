@@ -978,6 +978,37 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const selectedSetup = pickedSetups.find((s) => s.id === selectedSetupId) ?? null
 
+  const highlightedZoneId = useMemo(() => {
+    if (!selectedSetupId) return null
+    const cut = selectedSetupId.search(/_(bounce|break)_/i)
+    if (cut > 0) return selectedSetupId.slice(0, cut)
+    const bySetup = selectedSetup
+    if (!bySetup) return null
+    const match = foundZones.find(
+      (z) =>
+        Math.abs(z.mid - (bySetup.limitEntry ?? 0)) / Math.max(z.mid, 1e-9) <
+          0.004 ||
+        (bySetup.entryZone &&
+          Math.abs(
+            z.mid - (bySetup.entryZone.top + bySetup.entryZone.bottom) / 2
+          ) /
+            Math.max(z.mid, 1e-9) <
+            0.006)
+    )
+    return match?.id ?? null
+  }, [selectedSetupId, selectedSetup, foundZones])
+
+  const zoneGuide = useMemo(() => {
+    if (!foundZones.length || !(currentPrice > 0)) return null
+    const below = foundZones
+      .filter((z) => z.side === 'LONG' && z.mid <= currentPrice * 1.002)
+      .sort((a, b) => b.mid - a.mid)[0]
+    const above = foundZones
+      .filter((z) => z.side === 'SHORT' && z.mid >= currentPrice * 0.998)
+      .sort((a, b) => a.mid - b.mid)[0]
+    return { below, above }
+  }, [foundZones, currentPrice])
+
   useEffect(() => {
     if (!selectedSetup?.chartPath || !forecast) return
     if (
@@ -1365,6 +1396,34 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         { lineStyle: 1, lineWidth: 1, axisLabel: true }
       )
     }
+
+    // Selected zone setup: где слом / куда цель
+    if (selectedSetup) {
+      if (selectedSetup.limitEntry > 0) {
+        addLine(
+          selectedSetup.limitEntry,
+          'rgba(56, 189, 248, 0.95)',
+          `вход ${fmt(selectedSetup.limitEntry)}`,
+          { lineStyle: 0, lineWidth: 2, axisLabel: true }
+        )
+      }
+      if (selectedSetup.invalidation > 0) {
+        addLine(
+          selectedSetup.invalidation,
+          'rgba(251, 113, 133, 0.95)',
+          `слом ${fmt(selectedSetup.invalidation)}`,
+          { lineStyle: 1, lineWidth: 2, axisLabel: true }
+        )
+      }
+      if (selectedSetup.target > 0) {
+        addLine(
+          selectedSetup.target,
+          'rgba(45, 212, 191, 0.95)',
+          `цель ${fmt(selectedSetup.target)}`,
+          { lineStyle: 2, lineWidth: 2, axisLabel: true }
+        )
+      }
+    }
   }, [
     priceLevels,
     chartPreferences.showLabels,
@@ -1372,6 +1431,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     lwcData,
     signal,
     cleanMode,
+    selectedSetup,
   ])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
@@ -1392,11 +1452,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     const drawLiqLevel = (level: EqualLevel) => {
       const isBSL = level.type === 'HIGH'
-
+      // Align with zone bands: BSL rose / SSL teal; alpha by strength
       const colorMap = {
-        STRONG: isBSL ? 'rgba(251, 191, 36, 0.9)' : 'rgba(168, 85, 247, 0.9)',
-        MEDIUM: isBSL ? 'rgba(251, 191, 36, 0.6)' : 'rgba(168, 85, 247, 0.6)',
-        WEAK: isBSL ? 'rgba(251, 191, 36, 0.35)' : 'rgba(168, 85, 247, 0.35)',
+        STRONG: isBSL ? 'rgba(251, 113, 133, 0.95)' : 'rgba(45, 212, 191, 0.95)',
+        MEDIUM: isBSL ? 'rgba(251, 113, 133, 0.65)' : 'rgba(45, 212, 191, 0.65)',
+        WEAK: isBSL ? 'rgba(251, 113, 133, 0.35)' : 'rgba(45, 212, 191, 0.35)',
       }
 
       const color = level.isActive
@@ -1411,11 +1471,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       const lineStyle = styleMap[level.strength]
 
       const typeLabel = isBSL ? 'BSL' : 'SSL'
+      const hold = isBSL ? 'удерж↓' : 'удерж↑'
       const touchLabel = `×${level.touches}`
       const distLabel = `${level.distancePct.toFixed(1)}%`
-      const title = chartPreferences.showLabels
-        ? `${typeLabel} ${touchLabel} ${distLabel}`
-        : ''
+      const title =
+        chartPreferences.showLabels || zonesMode
+          ? `${typeLabel} ${hold} ${touchLabel} ${distLabel}`
+          : ''
 
       try {
         const line = series.createPriceLine({
@@ -1423,7 +1485,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           color,
           lineWidth: level.strength === 'STRONG' ? 2 : 1,
           lineStyle,
-          axisLabelVisible: chartPreferences.showLabels,
+          axisLabelVisible: chartPreferences.showLabels || zonesMode,
           title,
         })
         liqLineRefs.current.push(line)
@@ -1444,7 +1506,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     for (const level of highs) drawLiqLevel(level)
     for (const level of lows) drawLiqLevel(level)
-  }, [eqLiquidityMap, chartPreferences.showLabels, chartReady, lwcData, cleanMode])
+  }, [
+    eqLiquidityMap,
+    chartPreferences.showLabels,
+    chartReady,
+    lwcData,
+    cleanMode,
+    zonesMode,
+  ])
 
   const oscillators: Array<'rsi' | 'macd' | 'stochastic' | 'atr'> = []
   if (!cleanMode) {
@@ -1826,10 +1895,65 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             series={candleRef.current}
             zones={liquidityZones}
             containerRef={containerRef}
-            opacity={chartPreferences.opacity}
-            showLabels={chartPreferences.showLabels}
+            opacity={Math.max(chartPreferences.opacity, zonesMode ? 26 : 18)}
+            showLabels={chartPreferences.showLabels || zonesMode}
+            highlightId={highlightedZoneId}
+            forceContextLabels={zonesMode || Boolean(highlightedZoneId)}
           />
         )}
+        {zonesMode &&
+          chartReady > 0 &&
+          (zoneGuide?.below || zoneGuide?.above) && (
+            <div className="pointer-events-none absolute bottom-2 left-2 right-14 z-[3] flex flex-wrap gap-1.5">
+              {zoneGuide?.below && (
+                <div className="rounded-md border border-teal-400/40 bg-black/65 px-2 py-1 font-mono text-[9px] text-teal-200 shadow-lg backdrop-blur-sm">
+                  <span className="font-bold">↓ SSL удерж ↑</span>
+                  <span className="text-teal-100/80">
+                    {' '}
+                    @{' '}
+                    {zoneGuide.below.mid >= 1
+                      ? zoneGuide.below.mid.toFixed(4)
+                      : zoneGuide.below.mid.toPrecision(5)}
+                  </span>
+                  <span className="block text-[8px] text-teal-100/55">
+                    слом &lt;{' '}
+                    {zoneGuide.below.invalidation >= 1
+                      ? zoneGuide.below.invalidation.toFixed(4)
+                      : zoneGuide.below.invalidation.toPrecision(5)}{' '}
+                    · цель{' '}
+                    {zoneGuide.below.target >= 1
+                      ? zoneGuide.below.target.toFixed(4)
+                      : zoneGuide.below.target.toPrecision(5)}
+                  </span>
+                </div>
+              )}
+              {zoneGuide?.above && (
+                <div className="rounded-md border border-rose-400/40 bg-black/65 px-2 py-1 font-mono text-[9px] text-rose-200 shadow-lg backdrop-blur-sm">
+                  <span className="font-bold">↑ BSL удерж ↓</span>
+                  <span className="text-rose-100/80">
+                    {' '}
+                    @{' '}
+                    {zoneGuide.above.mid >= 1
+                      ? zoneGuide.above.mid.toFixed(4)
+                      : zoneGuide.above.mid.toPrecision(5)}
+                  </span>
+                  <span className="block text-[8px] text-rose-100/55">
+                    слом &gt;{' '}
+                    {zoneGuide.above.invalidation >= 1
+                      ? zoneGuide.above.invalidation.toFixed(4)
+                      : zoneGuide.above.invalidation.toPrecision(5)}{' '}
+                    · цель{' '}
+                    {zoneGuide.above.target >= 1
+                      ? zoneGuide.above.target.toFixed(4)
+                      : zoneGuide.above.target.toPrecision(5)}
+                  </span>
+                </div>
+              )}
+              <div className="rounded-md border border-white/10 bg-black/50 px-2 py-1 font-mono text-[8px] text-white/45">
+                ●●● сильная · ●● средняя · тусклая = слабая
+              </div>
+            </div>
+          )}
         {showForecast && forecast && chartReady > 0 && (
           <PredictionOverlay
             chart={chartRef.current}

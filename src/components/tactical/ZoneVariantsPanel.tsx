@@ -22,6 +22,18 @@ function fmt(p: number): string {
   return p.toFixed(6)
 }
 
+function strengthDots(strength: number): string {
+  if (strength >= 9) return '●●●'
+  if (strength >= 7) return '●●'
+  return '●'
+}
+
+function strengthLabel(strength: number): string {
+  if (strength >= 9) return 'сильная'
+  if (strength >= 7) return 'средняя'
+  return 'слабая'
+}
+
 const ZoneVariantsPanel = ({
   zones,
   setups,
@@ -57,22 +69,39 @@ const ZoneVariantsPanel = ({
               key={z.id}
               className={`rounded border px-1.5 py-0.5 font-mono text-[9px] ${
                 z.side === 'LONG'
-                  ? 'border-matrix/40 text-matrix'
-                  : 'border-alert/40 text-alert'
+                  ? 'border-teal-400/45 bg-teal-500/10 text-teal-200'
+                  : 'border-rose-400/45 bg-rose-500/10 text-rose-200'
               }`}
+              title={
+                z.side === 'LONG'
+                  ? `Удерж зоны → вверх · слом < ${fmt(z.invalidation)}`
+                  : `Удерж зоны → вниз · слом > ${fmt(z.invalidation)}`
+              }
             >
-              {z.side} {z.source} @ {fmt(z.mid)} · {z.distancePct >= 0 ? '+' : ''}
-              {z.distancePct.toFixed(2)}%
+              <span className="mr-1 opacity-70">{strengthDots(z.strength)}</span>
+              {z.side === 'LONG' ? 'SSL↑' : 'BSL↓'} {z.source} @ {fmt(z.mid)}
+              <span className="ml-1 opacity-50">
+                {z.distancePct >= 0 ? '+' : ''}
+                {z.distancePct.toFixed(2)}%
+              </span>
             </span>
           ))}
         </div>
       )}
+
+      <div className="rounded-lg border border-white/5 bg-black/20 px-2 py-1.5 font-mono text-[9px] text-holo/45">
+        <span className="text-teal-300/80">бирюза SSL</span> — закрепиться, чтобы
+        идти вверх ·{' '}
+        <span className="text-rose-300/80">роза BSL</span> — удерж шорта / слом
+        выше = потеряли уровень
+      </div>
 
       <div className="max-h-64 space-y-2 overflow-y-auto overscroll-contain pr-0.5">
         {setups.map((s) => {
           const selected = selectedId === s.id
           const watching = watchingIds.has(s.id)
           const isBreak = s.kind === 'STOP_THEN_REVERSE'
+          const zone = zones.find((z) => s.id.startsWith(z.id))
           return (
             <button
               key={s.id}
@@ -88,7 +117,7 @@ const ZoneVariantsPanel = ({
                 <div>
                   <span
                     className={`font-mono text-[11px] font-bold ${
-                      s.side === 'LONG' ? 'text-matrix' : 'text-alert'
+                      s.side === 'LONG' ? 'text-teal-300' : 'text-rose-300'
                     }`}
                   >
                     {s.side}
@@ -100,9 +129,25 @@ const ZoneVariantsPanel = ({
                         ? '#SWING'
                         : '#INTRA'}{' '}
                     · {isBreak ? 'слом' : 'отскок'}
+                    {zone && (
+                      <>
+                        {' '}
+                        · {strengthDots(zone.strength)}{' '}
+                        {strengthLabel(zone.strength)}
+                      </>
+                    )}
                   </span>
                   <div className="mt-0.5 font-mono text-[11px] text-holo">
                     {s.title}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[9px] text-holo/40">
+                    {isBreak
+                      ? s.side === 'LONG'
+                        ? `Слом зоны вверх → лонг · SL ${fmt(s.invalidation)}`
+                        : `Слом зоны вниз → шорт · SL ${fmt(s.invalidation)}`
+                      : s.side === 'LONG'
+                        ? `Удерж SSL → вверх · слом < ${fmt(s.invalidation)}`
+                        : `Удерж BSL → вниз · слом > ${fmt(s.invalidation)}`}
                   </div>
                 </div>
                 <div className="text-right font-mono text-sm font-bold text-holo">
@@ -113,15 +158,15 @@ const ZoneVariantsPanel = ({
               <div className="grid grid-cols-3 gap-1 font-mono text-[9px] text-holo/45">
                 <div>
                   Вход
-                  <div className="text-holo/80">{fmt(s.limitEntry)}</div>
+                  <div className="text-sky-300/90">{fmt(s.limitEntry)}</div>
                 </div>
                 <div>
-                  SL
-                  <div className="text-alert/80">{fmt(s.invalidation)}</div>
+                  Слом
+                  <div className="text-rose-300/90">{fmt(s.invalidation)}</div>
                 </div>
                 <div>
-                  TP
-                  <div className="text-matrix/80">{fmt(s.target)}</div>
+                  Цель
+                  <div className="text-teal-300/90">{fmt(s.target)}</div>
                 </div>
               </div>
 

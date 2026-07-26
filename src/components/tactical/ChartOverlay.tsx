@@ -9,49 +9,129 @@ interface Props {
   containerRef: React.RefObject<HTMLDivElement>
   opacity: number
   showLabels: boolean
+  /** Highlight this zone id (selected setup / found zone) */
+  highlightId?: string | null
+  /** Always show SSL/BSL/Fib context pills */
+  forceContextLabels?: boolean
 }
 
-function getZoneColors(zone: LiquidityZone, opacity: number) {
-  const op = opacity / 100
+type Rgba = { r: number; g: number; b: number }
 
+function baseHue(zone: LiquidityZone): Rgba {
   switch (zone.type) {
     case 'ORDER_BLOCK':
       return zone.side === 'BULLISH'
-        ? { bg: `rgba(34, 197, 94, ${op})`, border: 'rgba(34, 197, 94, 0.8)' }
-        : { bg: `rgba(239, 68, 68, ${op})`, border: 'rgba(239, 68, 68, 0.8)' }
+        ? { r: 34, g: 197, b: 94 }
+        : { r: 239, g: 68, b: 68 }
     case 'FVG':
       return zone.side === 'BULLISH'
-        ? { bg: `rgba(59, 130, 246, ${op})`, border: 'rgba(59, 130, 246, 0.8)' }
-        : { bg: `rgba(168, 85, 247, ${op})`, border: 'rgba(168, 85, 247, 0.8)' }
+        ? { r: 59, g: 130, b: 246 }
+        : { r: 168, g: 85, b: 247 }
     case 'POC':
-      return { bg: `rgba(249, 115, 22, ${op})`, border: 'rgba(249, 115, 22, 0.9)' }
+      return { r: 249, g: 115, b: 22 }
     case 'VALUE_AREA':
-      return {
-        bg: `rgba(148, 163, 184, ${op * 0.5})`,
-        border: 'rgba(148, 163, 184, 0.3)',
-      }
+      return { r: 148, g: 163, b: 184 }
     case 'OTE':
       return zone.side === 'BEARISH'
-        ? { bg: `rgba(239, 68, 68, ${op * 0.7})`, border: 'rgba(239, 68, 68, 0.85)' }
-        : { bg: `rgba(34, 197, 94, ${op * 0.75})`, border: 'rgba(34, 197, 94, 0.9)' }
+        ? { r: 239, g: 68, b: 68 }
+        : { r: 16, g: 185, b: 129 }
     case 'FIBONACCI':
       return zone.side === 'BULLISH'
-        ? { bg: `rgba(251, 191, 36, ${op * 0.55})`, border: 'rgba(251, 191, 36, 0.9)' }
-        : { bg: `rgba(168, 85, 247, ${op * 0.5})`, border: 'rgba(168, 85, 247, 0.85)' }
+        ? { r: 251, g: 191, b: 36 }
+        : { r: 192, g: 132, b: 252 }
     case 'SSL':
     case 'LIQ':
-      return {
-        bg: `rgba(16, 185, 129, ${op * 0.65})`,
-        border: 'rgba(16, 185, 129, 0.95)',
-      }
+      // Teal — support / hold to go up
+      return { r: 45, g: 212, b: 191 }
     case 'BSL':
-      return {
-        bg: `rgba(244, 63, 94, ${op * 0.65})`,
-        border: 'rgba(244, 63, 94, 0.95)',
-      }
+      // Rose — resistance / hold to go down (short)
+      return { r: 251, g: 113, b: 133 }
     default:
-      return { bg: `rgba(100, 200, 255, ${op})`, border: 'rgba(100, 200, 255, 0.6)' }
+      return { r: 100, g: 200, b: 255 }
   }
+}
+
+function tierOf(zone: LiquidityZone): 'WEAK' | 'MEDIUM' | 'STRONG' {
+  if (zone.strengthTier) return zone.strengthTier
+  const s = zone.strength ?? 5
+  if (s >= 9) return 'STRONG'
+  if (s >= 7) return 'MEDIUM'
+  return 'WEAK'
+}
+
+/** Strength → fill alpha multiplier + border weight */
+function strengthVisual(
+  zone: LiquidityZone,
+  baseOpacityPct: number,
+  highlighted: boolean
+) {
+  const tier = tierOf(zone)
+  const isFib141 =
+    zone.type === 'FIBONACCI' &&
+    ((zone.id ?? '').includes('141') || (zone.label ?? '').includes('141'))
+
+  const tierMul = tier === 'STRONG' ? 1.15 : tier === 'MEDIUM' ? 0.85 : 0.55
+  let op = (baseOpacityPct / 100) * tierMul
+  if (isFib141) op = Math.max(op, 0.32)
+  if (highlighted) op = Math.min(0.55, op * 1.45)
+  else op *= 0.92
+
+  const borderA =
+    tier === 'STRONG' ? 0.95 : tier === 'MEDIUM' ? 0.72 : 0.45
+  const borderW = highlighted ? 2 : tier === 'STRONG' ? 1.5 : 1
+  const stripeW = tier === 'STRONG' ? 4 : tier === 'MEDIUM' ? 3 : 2
+
+  return {
+    fillA: Math.min(0.5, Math.max(0.08, op)),
+    borderA: highlighted ? 1 : borderA,
+    borderW,
+    stripeW,
+    tier,
+    isFib141,
+  }
+}
+
+function rgba(c: Rgba, a: number): string {
+  return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`
+}
+
+function zoneTitle(zone: LiquidityZone): string {
+  if (zone.contextHint) {
+    const short =
+      zone.type === 'SSL'
+        ? 'SSL'
+        : zone.type === 'BSL'
+          ? 'BSL'
+          : zone.type === 'FIBONACCI'
+            ? zone.label?.includes('141')
+              ? 'F141'
+              : 'Fib'
+            : zone.type === 'OTE'
+              ? 'OTE'
+              : zone.type === 'ORDER_BLOCK'
+                ? 'OB'
+                : zone.label?.split('·')[0]?.trim() || zone.type
+    const hold =
+      zone.side === 'BULLISH' || zone.type === 'SSL'
+        ? 'удерж ↑'
+        : zone.side === 'BEARISH' || zone.type === 'BSL'
+          ? 'удерж ↓'
+          : ''
+    const lost =
+      zone.invalidation != null
+        ? zone.side === 'BULLISH' || zone.type === 'SSL'
+          ? `слом < ${fmtPx(zone.invalidation)}`
+          : `слом > ${fmtPx(zone.invalidation)}`
+        : ''
+    return [short, hold, lost].filter(Boolean).join(' · ')
+  }
+  return zone.label ?? zone.type
+}
+
+function fmtPx(p: number): string {
+  if (p >= 1000) return p.toFixed(2)
+  if (p >= 1) return p.toFixed(4)
+  return p.toPrecision(5)
 }
 
 const ChartOverlay = ({
@@ -61,6 +141,8 @@ const ChartOverlay = ({
   containerRef,
   opacity,
   showLabels,
+  highlightId = null,
+  forceContextLabels = false,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -75,10 +157,14 @@ const ChartOverlay = ({
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
 
-      // До 8 зон — найденные SSL/BSL/Fib + OB/OTE
       const visibleZones = [...zones]
-        .sort((a, b) => (b.strength ?? 5) - (a.strength ?? 5))
-        .slice(0, 8)
+        .sort((a, b) => {
+          const ah = a.id === highlightId ? 1 : 0
+          const bh = b.id === highlightId ? 1 : 0
+          if (ah !== bh) return bh - ah
+          return (b.strength ?? 5) - (a.strength ?? 5)
+        })
+        .slice(0, forceContextLabels ? 6 : 8)
 
       for (const zone of visibleZones) {
         const topY = series.priceToCoordinate(zone.top)
@@ -88,7 +174,6 @@ const ChartOverlay = ({
           (zone.endTime ?? zone.startTime) as Time
         )
 
-        // HTF fib start often predates visible chart range — clamp to left edge
         const startXNum = rawStartX == null ? 0 : Number(rawStartX)
         const endXNum = endX == null ? containerWidth : Number(endX)
 
@@ -96,56 +181,128 @@ const ChartOverlay = ({
 
         const height = Math.abs(Number(bottomY) - Number(topY))
         const yPos = Math.min(Number(topY), Number(bottomY))
-        const width =
-          endXNum > startXNum ? endXNum - startXNum : containerWidth - startXNum
+        const left = Math.max(0, startXNum)
+        const width = Math.min(
+          Math.max(endXNum > startXNum ? endXNum - startXNum : containerWidth - startXNum, 8),
+          containerWidth - left
+        )
 
-        // Allow slightly off-screen Y so extension bands (141 above price) still peek
         if (height < 1 || yPos < -80 || yPos > containerHeight + 80) continue
         if (startXNum > containerWidth) continue
 
-        const isFib141 =
-          zone.type === 'FIBONACCI' &&
-          ((zone.id ?? '').includes('141') || (zone.label ?? '').includes('141'))
-        const fibOpacityBoost = zone.type === 'FIBONACCI' ? Math.max(opacity, 28) : opacity
-        const colors = getZoneColors(zone, isFib141 ? Math.max(fibOpacityBoost, 40) : fibOpacityBoost)
+        const highlighted = Boolean(highlightId && zone.id === highlightId)
+        const hue = baseHue(zone)
+        const vis = strengthVisual(zone, opacity, highlighted)
+        const dimmed =
+          Boolean(highlightId) && !highlighted ? 0.45 : 1
 
         const div = document.createElement('div')
+        const minH = vis.isFib141 || highlighted ? 5 : 3
         div.style.cssText = `
           position: absolute;
-          left: ${Math.max(0, startXNum)}px;
+          left: ${left}px;
           top: ${yPos}px;
-          width: ${Math.min(Math.max(width, 4), containerWidth - Math.max(0, startXNum))}px;
-          height: ${Math.max(height, isFib141 ? 4 : 2)}px;
-          background: ${colors.bg};
-          border-top: 1px solid ${colors.border};
-          border-bottom: 1px solid ${colors.border};
+          width: ${width}px;
+          height: ${Math.max(height, minH)}px;
+          background: linear-gradient(
+            90deg,
+            ${rgba(hue, vis.fillA * 1.15 * dimmed)} 0%,
+            ${rgba(hue, vis.fillA * 0.55 * dimmed)} 55%,
+            ${rgba(hue, vis.fillA * 0.25 * dimmed)} 100%
+          );
+          border-top: ${vis.borderW}px solid ${rgba(hue, vis.borderA * dimmed)};
+          border-bottom: ${vis.borderW}px solid ${rgba(hue, vis.borderA * dimmed)};
+          box-shadow: ${
+            highlighted
+              ? `0 0 12px ${rgba(hue, 0.35)}, inset 0 0 0 1px ${rgba(hue, 0.4)}`
+              : vis.tier === 'STRONG'
+                ? `inset 0 0 0 1px ${rgba(hue, 0.2)}`
+                : 'none'
+          };
+          opacity: ${dimmed};
           pointer-events: none;
           box-sizing: border-box;
           overflow: hidden;
+          border-radius: 2px;
         `
 
-        const forceLabel = isFib141 || (showLabels && zone.label)
-        if (forceLabel && zone.label) {
-          const label = document.createElement('span')
-          label.textContent = isFib141
-            ? zone.label.includes('◎')
-              ? zone.label
-              : `141 · ${zone.label}`
-            : zone.label
-          label.style.cssText = `
+        // Left strength stripe
+        const stripe = document.createElement('div')
+        stripe.style.cssText = `
+          position: absolute;
+          left: 0; top: 0; bottom: 0;
+          width: ${vis.stripeW}px;
+          background: ${rgba(hue, vis.tier === 'STRONG' ? 0.95 : vis.tier === 'MEDIUM' ? 0.7 : 0.4)};
+        `
+        div.appendChild(stripe)
+
+        const isKeyZone =
+          zone.type === 'SSL' ||
+          zone.type === 'BSL' ||
+          zone.type === 'FIBONACCI' ||
+          zone.type === 'OTE' ||
+          highlighted
+        const showPill =
+          forceContextLabels ||
+          showLabels ||
+          vis.isFib141 ||
+          highlighted ||
+          (isKeyZone && vis.tier !== 'WEAK')
+
+        if (showPill) {
+          const pill = document.createElement('div')
+          pill.textContent = zoneTitle(zone)
+          pill.style.cssText = `
             position: absolute;
             right: 4px;
             top: 50%;
             transform: translateY(-50%);
-            font-size: ${isFib141 ? '10px' : '9px'};
-            font-family: monospace;
-            font-weight: ${isFib141 ? '700' : '400'};
-            color: ${isFib141 ? 'rgba(251, 191, 36, 0.95)' : colors.border};
+            max-width: ${Math.max(80, width - 10)}px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: ${highlighted || vis.isFib141 ? '10px' : '9px'};
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-weight: ${vis.tier === 'STRONG' || highlighted ? '700' : '600'};
+            letter-spacing: 0.01em;
+            color: rgba(255,255,255,0.95);
+            background: rgba(0,0,0,0.55);
+            border: 1px solid ${rgba(hue, 0.55)};
             white-space: nowrap;
-            opacity: 0.95;
-            text-shadow: 0 0 4px rgba(0,0,0,0.8);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+            backdrop-filter: blur(2px);
           `
-          div.appendChild(label)
+          div.appendChild(pill)
+        }
+
+        // Strength dots on left of pill area for STRONG
+        if (vis.tier === 'STRONG' && height >= 10) {
+          const badge = document.createElement('span')
+          badge.textContent = '●●●'
+          badge.style.cssText = `
+            position: absolute;
+            left: ${vis.stripeW + 4}px;
+            top: 2px;
+            font-size: 7px;
+            letter-spacing: 1px;
+            color: ${rgba(hue, 0.9)};
+            font-family: monospace;
+          `
+          div.appendChild(badge)
+        } else if (vis.tier === 'MEDIUM' && height >= 10) {
+          const badge = document.createElement('span')
+          badge.textContent = '●●'
+          badge.style.cssText = `
+            position: absolute;
+            left: ${vis.stripeW + 4}px;
+            top: 2px;
+            font-size: 7px;
+            letter-spacing: 1px;
+            color: ${rgba(hue, 0.7)};
+            font-family: monospace;
+          `
+          div.appendChild(badge)
         }
 
         overlay.appendChild(div)
@@ -167,7 +324,16 @@ const ChartOverlay = ({
       ro.disconnect()
       overlay.innerHTML = ''
     }
-  }, [chart, series, zones, opacity, showLabels, containerRef])
+  }, [
+    chart,
+    series,
+    zones,
+    opacity,
+    showLabels,
+    containerRef,
+    highlightId,
+    forceContextLabels,
+  ])
 
   return (
     <div

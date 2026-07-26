@@ -1081,6 +1081,8 @@ async function runCronScan(
   journalLogged?: number
   journalResolved?: number
   resultAlerts?: number
+  predatorSkip?: string
+  predatorHotlist?: string[]
 }> {
   if (!env.TELEGRAM_BOT_TOKEN && !env.TELEGRAM_SNIPER_BOT_TOKEN) {
     return {
@@ -1114,6 +1116,8 @@ async function runCronScan(
   let journalResolved = 0
   let resultAlerts = 0
   let heartbeat = 0
+  let predatorSkip = ''
+  let predatorHotlist: string[] = []
   const seenDedup = new Set<string>()
   const allAlerts: ScanAlert[] = []
 
@@ -1299,11 +1303,13 @@ async function runCronScan(
         )
         .map((t) => t.symbol)
       const predator = await runLiquidationEchoScan({ kv, pinSymbols })
+      predatorHotlist = predator.hotlist.entries.map((e) => e.symbol)
       for (const a of predator.alerts) {
         await deliver(a)
       }
-      if (!predator.alerts.length && predator.skipped) {
-        console.log('[cron] predator skip:', predator.skipped)
+      if (!predator.alerts.length) {
+        predatorSkip = predator.skipped || predator.hotlist.reason || 'no_echo'
+        console.log('[cron] predator skip:', predatorSkip, predatorHotlist)
       }
       // No sleep(13s) — paper cron honors echo time-stop on next ticks.
     } catch (err) {
@@ -1409,6 +1415,8 @@ async function runCronScan(
     journalLogged,
     journalResolved,
     resultAlerts,
+    predatorSkip: predatorSkip || undefined,
+    predatorHotlist: predatorHotlist.length ? predatorHotlist : undefined,
   }
   const scanDone = JSON.stringify({
     status: 'COMPLETED',

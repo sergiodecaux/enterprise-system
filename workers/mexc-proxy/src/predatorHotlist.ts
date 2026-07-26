@@ -1,17 +1,23 @@
 /**
  * PREDATOR Hotlist 2.0 — powder-keg coins for Liquidation Echo.
- * Vol $3M–$15M · |chg|≥8% · spread≤0.08% · OI +5% / 2h
+ * Primary: Vol $2–25M · |chg|≥5% · spread≤0.12% · OI +3% / 2h when known.
+ * Soft fallback (if primary empty): wider vol/chg so weekends aren't silent.
  */
 
 const HOTLIST_KEY = 'predator:hotlist_v1'
 const OI_HIST_KEY = 'predator:oi_history_v1'
-const REFRESH_MS = 20 * 60_000
+const REFRESH_MS = 15 * 60_000
 const MAX_COINS = 5
-const MIN_VOL = 3_000_000
-const MAX_VOL = 15_000_000
-const MIN_ABS_CHG = 8
-const MAX_SPREAD_PCT = 0.08
-const MIN_OI_GROWTH_2H = 5
+const MIN_VOL = 2_000_000
+const MAX_VOL = 25_000_000
+const MIN_ABS_CHG = 5
+const MAX_SPREAD_PCT = 0.12
+const MIN_OI_GROWTH_2H = 3
+/** Soft tier when primary powder-keg bucket is empty (quiet sessions). */
+const SOFT_MIN_VOL = 800_000
+const SOFT_MAX_VOL = 40_000_000
+const SOFT_MIN_ABS_CHG = 4
+const SOFT_MAX_SPREAD_PCT = 0.18
 
 export type PredatorBias = 'LONG_ECHO' | 'SHORT_ECHO'
 
@@ -182,44 +188,73 @@ export async function resolvePredatorHotlist(
   }
 
   const oiGrowth = await sampleOiAndGrowth(kv, tickers, now)
-  const candidates: PredatorCoin[] = []
 
-  for (const t of tickers) {
-    if (!opts.tradable.has(t.symbol)) continue
-    if (!t.symbol.endsWith('_USDT') || t.symbol.includes('USDC')) continue
-    if (opts.blueChips.has(t.symbol)) continue
-    const price = Number(t.lastPrice ?? 0)
-    const vol = quoteVol(t)
-    const chg = Number(t.riseFallRate ?? 0) * 100
-    const spr = spreadPct(t)
-    const oiG = oiGrowth.get(t.symbol) ?? null
-    if (!(price > 0) || price > 250) continue
-    if (vol < MIN_VOL || vol > MAX_VOL) continue
-    if (Math.abs(chg) < MIN_ABS_CHG) continue
-    if (spr > MAX_SPREAD_PCT) continue
-    // OI powder keg: +5% / 2h required when we have history; else soft-admit top movers
-    if (oiG != null && oiG < MIN_OI_GROWTH_2H) continue
-    const bias: PredatorBias = chg >= 0 ? 'LONG_ECHO' : 'SHORT_ECHO'
-    // After a pump, long liquidations create LONG_ECHO (buy dip).
-    // After a dump, short liquidations create SHORT_ECHO (sell rip).
-    const score =
-      Math.abs(chg) * Math.log10(vol) +
-      (oiG != null ? oiG * 2 : 0) -
-      spr * 50
-    candidates.push({
-      symbol: t.symbol,
-      displayName: t.symbol.replace('_USDT', '/USDT'),
-      bias,
-      chg24hPct: Number(chg.toFixed(2)),
-      quoteVolUsd: Math.round(vol),
-      spreadPct: Number(spr.toFixed(4)),
-      oiGrowth2hPct: oiG != null ? Number(oiG.toFixed(2)) : null,
-      score: Number(score.toFixed(2)),
-      addedAt: now,
-    })
+  const build = (
+    minVol: number,
+    maxVol: number,
+    minAbsChg: number,
+    maxSpread: number,
+    minOi: number,
+    requireOi: boolean
+  ): PredatorCoin[] => {
+    const candidates: PredatorCoin[] = []
+    for (const t of tickers) {
+      if (!opts.tradable.has(t.symbol)) continue
+      if (!t.symbol.endsWith('_USDT') || t.symbol.includes('USDC')) continue
+      if (opts.blueChips.has(t.symbol)) continue
+      const price = Number(t.lastPrice ?? 0)
+      const vol = quoteVol(t)
+      const chg = Number(t.riseFallRate ?? 0) * 100
+      const spr = spreadPct(t)
+      const oiG = oiGrowth.get(t.symbol) ?? null
+      if (!(price > 0) || price > 250) continue
+      if (vol < minVol || vol > maxVol) continue
+      if (Math.abs(chg) < minAbsChg) continue
+      if (spr > maxSpread) continue
+      // OI powder keg when history exists; soft tier may skip OI gate
+      if (requireOi && oiG != null && oiG < minOi) continue
+      const bias: PredatorBias = chg >= 0 ? 'LONG_ECHO' : 'SHORT_ECHO'
+      const score =
+        Math.abs(chg) * Math.log10(Math.max(vol, 1)) +
+        (oiG != null ? oiG * 2 : 0) -
+        spr * 40
+      candidates.push({
+        symbol: t.symbol,
+        displayName: t.symbol.replace('_USDT', '/USDT'),
+        bias,
+        chg24hPct: Number(chg.toFixed(2)),
+        quoteVolUsd: Math.round(vol),
+        spreadPct: Number(spr.toFixed(4)),
+        oiGrowth2hPct: oiG != null ? Number(oiG.toFixed(2)) : null,
+        score: Number(score.toFixed(2)),
+        addedAt: now,
+      })
+    }
+    candidates.sort((a, b) => b.score - a.score)
+    return candidates
   }
 
-  candidates.sort((a, b) => b.score - a.score)
+  let tier: 'primary' | 'soft' = 'primary'
+  let candidates = build(
+    MIN_VOL,
+    MAX_VOL,
+    MIN_ABS_CHG,
+    MAX_SPREAD_PCT,
+    MIN_OI_GROWTH_2H,
+    true
+  )
+  if (!candidates.length) {
+    tier = 'soft'
+    candidates = build(
+      SOFT_MIN_VOL,
+      SOFT_MAX_VOL,
+      SOFT_MIN_ABS_CHG,
+      SOFT_MAX_SPREAD_PCT,
+      MIN_OI_GROWTH_2H,
+      false
+    )
+  }
+
   const entries = candidates.slice(0, MAX_COINS)
 
   // Pin open trades
@@ -246,8 +281,8 @@ export async function resolvePredatorHotlist(
     dayKey: dayKeyUtc(now),
     entries: entries.slice(0, MAX_COINS),
     reason: entries.length
-      ? `predator powder-keg top ${entries.length} (vol 3–15M, |chg|≥8%, spread≤0.08%, OI+2h)`
-      : 'no predator candidates',
+      ? `predator ${tier} top ${entries.length} (vol ${tier === 'primary' ? '2–25M' : '0.8–40M'}, |chg|≥${tier === 'primary' ? 5 : 4}%, spr≤${tier === 'primary' ? 0.12 : 0.18})`
+      : 'no predator candidates (primary+soft empty)',
   }
   await savePredatorHotlist(kv, list)
   return list

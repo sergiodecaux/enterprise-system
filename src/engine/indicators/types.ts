@@ -51,8 +51,20 @@ export interface LiquidityZone {
   bottom: number
   startTime: Time
   endTime?: Time
+  /** Numeric strength ~5–12+; drives chart opacity / border weight */
   strength?: number
+  /** Categorical tier for color intensity (optional) */
+  strengthTier?: 'WEAK' | 'MEDIUM' | 'STRONG'
   label?: string
+  /** Price where the idea is lost (beyond zone) */
+  invalidation?: number
+  /** Opposite liquidity / magnet target */
+  target?: number
+  /**
+   * Short Russian cue for chart pill, e.g.
+   * "удерж ↑ · слом < 1.23" / "удерж ↓ · слом > 4.56"
+   */
+  contextHint?: string
 }
 
 // ============================================================================

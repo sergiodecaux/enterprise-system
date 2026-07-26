@@ -60,6 +60,31 @@ function band(price: number, pct = 0.0035): { top: number; bottom: number } {
   }
 }
 
+function strengthTierOf(
+  strength: number
+): NonNullable<LiquidityZone['strengthTier']> {
+  if (strength >= 9) return 'STRONG'
+  if (strength >= 7) return 'MEDIUM'
+  return 'WEAK'
+}
+
+function contextHintFor(opts: {
+  side: 'LONG' | 'SHORT'
+  source: string
+  invalidation: number
+  target: number
+}): string {
+  const fmt = (p: number) => {
+    if (p >= 1000) return p.toFixed(2)
+    if (p >= 1) return p.toFixed(4)
+    return p.toPrecision(5)
+  }
+  if (opts.side === 'LONG') {
+    return `удерж ↑ · слом < ${fmt(opts.invalidation)} · цель ${fmt(opts.target)}`
+  }
+  return `удерж ↓ · слом > ${fmt(opts.invalidation)} · цель ${fmt(opts.target)}`
+}
+
 function toChartZone(
   id: string,
   type: LiquidityZone['type'],
@@ -69,7 +94,8 @@ function toChartZone(
   startTime: Time,
   endTime: Time,
   label: string,
-  strength: number
+  strength: number,
+  extra?: Pick<LiquidityZone, 'invalidation' | 'target' | 'contextHint'>
 ): LiquidityZone {
   return {
     id,
@@ -81,6 +107,8 @@ function toChartZone(
     endTime,
     label,
     strength,
+    strengthTier: strengthTierOf(strength),
+    ...extra,
   }
 }
 
@@ -183,6 +211,12 @@ export function findTradeZones(input: {
       ssl.strength === 'STRONG' ? 9 : ssl.strength === 'MEDIUM' ? 7 : 5
     const target = map.nearestBSL?.price ?? price * 1.012
     const inv = ssl.price * 0.992
+    const hint = contextHintFor({
+      side: 'LONG',
+      source: 'SSL',
+      invalidation: inv,
+      target,
+    })
     const cz = toChartZone(
       id,
       'SSL',
@@ -191,8 +225,9 @@ export function findTradeZones(input: {
       bottom,
       startTime,
       endTime,
-      `LONG · SSL ×${ssl.touches}`,
-      strength
+      `SSL ×${ssl.touches} · удерж ↑`,
+      strength,
+      { invalidation: inv, target, contextHint: hint }
     )
     found.push({
       id,
@@ -227,6 +262,12 @@ export function findTradeZones(input: {
       bsl.strength === 'STRONG' ? 9 : bsl.strength === 'MEDIUM' ? 7 : 5
     const target = map.nearestSSL?.price ?? price * 0.988
     const inv = bsl.price * 1.008
+    const hint = contextHintFor({
+      side: 'SHORT',
+      source: 'BSL',
+      invalidation: inv,
+      target,
+    })
     const cz = toChartZone(
       id,
       'BSL',
@@ -235,8 +276,9 @@ export function findTradeZones(input: {
       bottom,
       startTime,
       endTime,
-      `SHORT · BSL ×${bsl.touches}`,
-      strength
+      `BSL ×${bsl.touches} · удерж ↓`,
+      strength,
+      { invalidation: inv, target, contextHint: hint }
     )
     found.push({
       id,
@@ -272,15 +314,25 @@ export function findTradeZones(input: {
           : map.nearestSSL?.price ?? mid * 0.985
       const inv =
         side === 'LONG' ? fz.bottom * 0.994 : fz.top * 1.006
+      const hint = contextHintFor({
+        side,
+        source: 'FIB',
+        invalidation: inv,
+        target,
+      })
       const chartZone: LiquidityZone = {
         ...fz,
         id,
         type: fz.type === 'OTE' ? 'OTE' : 'FIBONACCI',
         label:
           side === 'LONG'
-            ? `LONG · Fib ${fz.label ?? ''}`.trim()
-            : `SHORT · Fib ${fz.label ?? ''}`.trim(),
+            ? `Fib ${fz.label ?? ''} · удерж ↑`.trim()
+            : `Fib ${fz.label ?? ''} · удерж ↓`.trim(),
         strength,
+        strengthTier: strengthTierOf(strength),
+        invalidation: inv,
+        target,
+        contextHint: hint,
       }
       found.push({
         id,
