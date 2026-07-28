@@ -21,6 +21,13 @@ import {
   saveVaneRisk,
   vaneTradingPaused,
 } from './portfolioRisk'
+import {
+  computeHtfTrendLite,
+  computeVaneDirection,
+  directionAligns,
+  directionConflicts,
+  rankZoneCandidate,
+} from './richContext'
 import { buildVaneRisk, riskPctForTier } from './riskMath'
 import { buildVaneScoreCard, vaneRegimePolicy } from './scoreCard'
 import { evaluateVaneSession } from './sessionFilter'
@@ -30,7 +37,7 @@ import {
   loadVaneState,
   saveVaneState,
 } from './srFlip'
-import { loadVaneUniverse, isBlueChip } from './universe'
+import { loadVaneUniverse } from './universe'
 import { volSpikePause } from './volSpike'
 import { assessZoneStrength } from './zoneStrength'
 import {
@@ -142,6 +149,7 @@ async function analyzeSymbol(opts: {
   const bias4h = tfBias(c4h)
   const bias1d = tfBias(c1d)
   const atr15 = atr(c15m, 14) || price * 0.008
+  const htf = computeHtfTrendLite(c1h, c4h)
   const map = buildHtfLiquidityMap({
     candles4h: c4h,
     candles1d: c1d,
@@ -160,9 +168,17 @@ async function analyzeSymbol(opts: {
 
   for (const side of ['LONG', 'SHORT'] as Side[]) {
     const smart = findSmartZone(side, price, map, atr15, {
-      relaxed: isBlueChip(symbol),
+      // TOP-5 majors: same relaxed distance/touches as blue chips
+      relaxed: true,
     })
-    if (smart && (smart.phase === 'TOUCH' || smart.phase === 'APPROACH')) {
+    if (!smart) continue
+    const ph = smart.phase
+    // Include FAR within ~3.5% so we arm early like mini-app zone list
+    const inRadar =
+      ph === 'TOUCH' ||
+      ph === 'APPROACH' ||
+      (ph === 'FAR' && smart.distancePct <= 3.5 && smart.strength >= 5)
+    if (inRadar) {
       candidates.push({
         side,
         zone: smartToGeom(smart),
@@ -218,11 +234,54 @@ async function analyzeSymbol(opts: {
   })
   if (!nearOrFlip) return null
 
-  // Pick nearest zone
-  candidates.sort(
-    (a, b) =>
-      Math.abs(a.zone.mid - price) - Math.abs(b.zone.mid - price)
-  )
+  // Pre-rank by structure (before book) — prefer strong aligned zones, not only nearest
+  const nearestLongDist =
+    candidates
+      .filter((c) => c.side === 'LONG')
+      .map((c) => (Math.abs(c.zone.mid - price) / price) * 100)
+      .sort((a, b) => a - b)[0] ?? null
+  const nearestShortDist =
+    candidates
+      .filter((c) => c.side === 'SHORT')
+      .map((c) => (Math.abs(c.zone.mid - price) / price) * 100)
+      .sort((a, b) => a - b)[0] ?? null
+
+  // Tentative direction without book (updated after assess)
+  let direction = computeVaneDirection({
+    htf,
+    bias4h,
+    bias1d,
+    regime,
+    bookGrade: 'NEUTRAL',
+    bookSide: candidates[0]!.side,
+    nearestLongDist,
+    nearestShortDist,
+  })
+
+  candidates.sort((a, b) => {
+    const ra = rankZoneCandidate({
+      side: a.side,
+      zone: a.zone,
+      price,
+      isInternal: a.isInternal,
+      oppositeLiq: a.oppositeLiq,
+      direction,
+      bookGrade: 'NEUTRAL',
+      phase: phaseOfGeom(price, a.zone.zoneLow, a.zone.zoneHigh),
+    }).score
+    const rb = rankZoneCandidate({
+      side: b.side,
+      zone: b.zone,
+      price,
+      isInternal: b.isInternal,
+      oppositeLiq: b.oppositeLiq,
+      direction,
+      bookGrade: 'NEUTRAL',
+      phase: phaseOfGeom(price, b.zone.zoneLow, b.zone.zoneHigh),
+    }).score
+    if (rb !== ra) return rb - ra
+    return Math.abs(a.zone.mid - price) - Math.abs(b.zone.mid - price)
+  })
   const pick = candidates[0]!
   const originSide = pick.side
   const zone = pick.zone
@@ -234,6 +293,28 @@ async function analyzeSymbol(opts: {
     mid: zone.mid,
     candles1m: c1m,
     kv: opts.kv,
+  })
+
+  direction = computeVaneDirection({
+    htf,
+    bias4h,
+    bias1d,
+    regime,
+    bookGrade: book.grade,
+    bookSide: originSide,
+    nearestLongDist,
+    nearestShortDist,
+  })
+
+  const zoneRank = rankZoneCandidate({
+    side: originSide,
+    zone,
+    price,
+    isInternal: pick.isInternal,
+    oppositeLiq: pick.oppositeLiq,
+    direction,
+    bookGrade: book.grade,
+    phase: phaseGeom,
   })
 
   const conf = analyzeConfluence({
@@ -264,6 +345,9 @@ async function analyzeSymbol(opts: {
     tier: null,
   })
 
+  const aligns = directionAligns(direction.bias, originSide)
+  const conflicts = directionConflicts(direction.bias, originSide)
+
   // Determine actionable path
   let path: VanePath | null = emitPath
   // HOLD: TOUCH with STRONG, or APPROACH with STRONG+tape (don't require perfect touch)
@@ -285,7 +369,7 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
-  // Bounce HOLD: price in zone with multi-touch HTF level (Elite was silent on clean bounces)
+  // Bounce HOLD: price in zone with multi-touch HTF level
   if (
     !path &&
     phaseGeom === 'TOUCH' &&
@@ -295,17 +379,55 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
+  // Rich HOLD (mini-app parity): TOUCH + direction with zone + structural strength
+  if (
+    !path &&
+    phaseGeom === 'TOUCH' &&
+    book.grade !== 'WEAK' &&
+    aligns &&
+    zone.strength >= 5 &&
+    !book.greenDeltaWeak
+  ) {
+    path = 'HOLD'
+  }
+  // Rich APPROACH: strong structure + direction + some tape
+  if (
+    !path &&
+    phaseGeom === 'APPROACH' &&
+    aligns &&
+    zone.strength >= 6 &&
+    !conflicts &&
+    (book.grade === 'STRONG' ||
+      book.absorption ||
+      book.cvdConfirm ||
+      (zone.touches >= 3 && book.grade !== 'WEAK'))
+  ) {
+    path = 'HOLD'
+  }
+  // Rank prefers FLIP and book WEAK — let FSM handle; if still no path but prefer FLIP
+  if (
+    !path &&
+    zoneRank.preferPath === 'FLIP' &&
+    book.grade === 'WEAK' &&
+    phaseGeom === 'TOUCH'
+  ) {
+    // Stay silent until break confirm — FSM will emit FLIP later
+  }
   if (!path) {
     await saveVaneState(opts.kv, {
       ...state,
       score: 0,
-      reason: `no path · phase=${phaseGeom} book=${book.grade}`,
+      reason: `no path · phase=${phaseGeom} book=${book.grade} dir=${direction.bias} rank=${zoneRank.score}`,
     })
     return null
   }
 
   // Flat forbids flip
-  const regimePol = vaneRegimePolicy({ regime, path })
+  const regimePol = vaneRegimePolicy({
+    regime,
+    path,
+    directionAlign: aligns && direction.confidence >= 50,
+  })
   if (!regimePol.ok) {
     await saveVaneState(opts.kv, {
       ...state,
@@ -361,6 +483,8 @@ async function analyzeSymbol(opts: {
     (tradeSide === 'LONG' && bias1d !== 'BEAR') ||
     (tradeSide === 'SHORT' && bias1d !== 'BULL')
 
+  const tradeAligns = directionAligns(direction.bias, tradeSide)
+
   const card = buildVaneScoreCard({
     side: tradeSide,
     path,
@@ -379,13 +503,18 @@ async function analyzeSymbol(opts: {
     dailyAlign,
     regime,
     toxicBook: book.grade === 'WEAK' && path === 'HOLD',
+    directionAlign: tradeAligns && direction.bias !== 'FLAT',
+    directionConfidence: direction.confidence,
+    htfStrength: htf.strength,
+    zoneRankScore: zoneRank.score,
+    holdHintClear: zoneRank.holdHint.includes('крепление') || zoneRank.holdHint.includes('цель'),
   })
 
   if (!card.ready || !card.tier || card.score < MIN_VANE_SCORE) {
     await saveVaneState(opts.kv, {
       ...state,
       score: card.score,
-      reason: `score ${card.score} < ${MIN_VANE_SCORE}`,
+      reason: `score ${card.score} < ${MIN_VANE_SCORE} · ${direction.summary}`,
     })
     return null
   }
@@ -408,7 +537,10 @@ async function analyzeSymbol(opts: {
     tradeSide === 'LONG' ? risk.sl * 0.999 : risk.sl * 1.001
   const sizeMult = regimePol.sizeMult
   const riskPct = riskPctForTier(card.tier) * sizeMult
-  const winPct = Math.min(88, Math.max(60, Math.round(52 + card.score * 0.35)))
+  const winPct = Math.min(
+    90,
+    Math.max(58, Math.round(50 + card.score * 0.38 + (tradeAligns ? 3 : 0)))
+  )
 
   const setup =
     path === 'FLIP'
@@ -420,12 +552,13 @@ async function analyzeSymbol(opts: {
   const title = `${card.tier === 'TIER1' ? '🎯' : '📌'} ${tradeSide} ${symbol.replace('_USDT', '')} · ${path}`
   const text = [
     `Vane ${path} · ${card.tier} · score ${card.score}/100`,
-    `Зона ${zone.tf} ${zone.source} ${zone.zoneLow.toFixed(6)}–${zone.zoneHigh.toFixed(6)}`,
+    `Карта: ${direction.summary}`,
+    `Зона ${zone.tf} ${zone.source} ${zone.zoneLow.toFixed(6)}–${zone.zoneHigh.toFixed(6)} · ${zoneRank.holdHint}`,
     `Лимит ${entry.toFixed(6)} · SL ${risk.sl.toFixed(6)} (−${risk.slPct.toFixed(2)}%) · TP ${risk.tp.toFixed(6)} (+${risk.tpPct.toFixed(2)}%)`,
     `R:R 1:${risk.rr.toFixed(2)} · риск ~${riskPct.toFixed(2)}% · size×${sizeMult}`,
     `Стакан: ${book.grade} density×${book.bidAskRatio.toFixed(1)} wall ${Math.round(book.wallPersistMs / 1000)}с`,
     ...book.notes.slice(0, 2),
-    ...card.factors.slice(0, 4),
+    ...card.factors.slice(0, 5),
     state.reason ? `FSM: ${state.reason}` : '',
     'Post-Only paper · не догонять.',
   ]
@@ -456,7 +589,12 @@ async function analyzeSymbol(opts: {
     winPct,
     riskPct,
     sizeMult,
-    reasons: [...card.factors, ...book.notes],
+    reasons: [
+      direction.summary,
+      zoneRank.holdHint,
+      ...card.factors,
+      ...book.notes,
+    ],
     title,
     text,
     dedupeKey: `vane:${path}:${symbol}:${tradeSide}:${Math.floor(Date.now() / 900_000)}`,

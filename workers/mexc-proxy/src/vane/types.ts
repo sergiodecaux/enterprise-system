@@ -85,11 +85,12 @@ export const VANE_STATE_PREFIX = 'vane:sym:'
 export const VANE_WALL_PREFIX = 'vane:wall:'
 export const VANE_RISK_KEY = 'vane:portfolio_risk_v1'
 
-export const MIN_VANE_SCORE = 62
-export const TIER1_SCORE = 80
-export const MIN_RR = 1.6
-export const TP_MIN_PCT = 1.5
-export const TP_MAX_PCT = 2.0
+/** Lowered so rich-context confluence can emit Tier-2 more boldly */
+export const MIN_VANE_SCORE = 55
+export const TIER1_SCORE = 75
+export const MIN_RR = 1.45
+export const TP_MIN_PCT = 1.4
+export const TP_MAX_PCT = 2.2
 /** Wall must live across ~1–2 cron ticks (was 12s — almost never true) */
 export const WALL_PERSIST_MS = 5_000
 export const RETEST_TTL_BARS_5M = 14

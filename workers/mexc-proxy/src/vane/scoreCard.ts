@@ -23,6 +23,12 @@ export interface VaneScoreInput {
   dailyAlign: boolean
   regime: MarketRegime
   toxicBook: boolean
+  /** Mini-app-style extras */
+  directionAlign?: boolean
+  directionConfidence?: number
+  htfStrength?: number
+  zoneRankScore?: number
+  holdHintClear?: boolean
 }
 
 export interface VaneScoreResult {
@@ -34,17 +40,18 @@ export interface VaneScoreResult {
 
 /**
  * 100-point vane ScoreCard.
- * <70 ignore · 70–84 Tier-2 · ≥85 Tier-1
+ * <55 ignore · 55–74 Tier-2 · ≥75 Tier-1 (rich-context boosts)
  */
 export function buildVaneScoreCard(input: VaneScoreInput): VaneScoreResult {
   const factors: string[] = []
   let score = 0
 
-  if (input.toxicBook) {
+  // HOLD into toxic book = skip; FLIP into weak book is the point
+  if (input.toxicBook && input.path === 'HOLD') {
     return {
       score: 0,
       tier: null,
-      factors: ['toxic book — SKIP'],
+      factors: ['toxic book HOLD — SKIP'],
       ready: false,
     }
   }
@@ -79,6 +86,12 @@ export function buildVaneScoreCard(input: VaneScoreInput): VaneScoreResult {
   } else if (input.wallPersistOk) {
     score += 5
     factors.push('wall persist soft +5')
+  } else if (input.zoneGrade === 'STRONG') {
+    score += 4
+    factors.push('book STRONG soft +4')
+  } else if (input.zoneGrade === 'NEUTRAL' && input.path === 'HOLD') {
+    score += 2
+    factors.push('book NEUTRAL soft +2')
   }
 
   score += Math.min(10, Math.max(0, input.btcAlignScore))
@@ -108,6 +121,31 @@ export function buildVaneScoreCard(input: VaneScoreInput): VaneScoreResult {
     factors.push('regime flat blocks flip weight')
   }
 
+  // Rich context (mini-app parity)
+  if (input.directionAlign && (input.directionConfidence ?? 0) >= 45) {
+    const pts = Math.min(12, 6 + Math.round((input.directionConfidence ?? 0) / 20))
+    score += pts
+    factors.push(`направление +${pts}`)
+  }
+  if ((input.htfStrength ?? 0) >= 60) {
+    score += 6
+    factors.push(`HTF strength ${input.htfStrength} +6`)
+  } else if ((input.htfStrength ?? 0) >= 48) {
+    score += 3
+    factors.push(`HTF strength ${input.htfStrength} +3`)
+  }
+  if ((input.zoneRankScore ?? 0) >= 70) {
+    score += 6
+    factors.push(`zone rank ${input.zoneRankScore} +6`)
+  } else if ((input.zoneRankScore ?? 0) >= 55) {
+    score += 3
+    factors.push(`zone rank ${input.zoneRankScore} +3`)
+  }
+  if (input.holdHintClear) {
+    score += 4
+    factors.push('сценарий удерж/цель +4')
+  }
+
   score = Math.min(100, Math.round(score))
   let tier: VaneTier | null = null
   if (score >= TIER1_SCORE) tier = 'TIER1'
@@ -121,10 +159,12 @@ export function buildVaneScoreCard(input: VaneScoreInput): VaneScoreResult {
   }
 }
 
-/** FLAT → flip forbidden; TREND counter-fade → 0.5× size */
+/** FLAT → flip forbidden; TREND counter-fade → 0.75× size (was 0.5) */
 export function vaneRegimePolicy(opts: {
   regime: MarketRegime
   path: VanePath
+  /** When direction strongly aligns with HOLD, allow full size even in trend */
+  directionAlign?: boolean
 }): { ok: boolean; sizeMult: number; reason?: string } {
   const ranging =
     opts.regime === 'RANGING' || opts.regime === 'VOLATILE_CHOP'
@@ -139,7 +179,10 @@ export function vaneRegimePolicy(opts: {
     }
   }
   if (trending && opts.path === 'HOLD') {
-    return { ok: true, sizeMult: 0.5, reason: 'тренд: fade 0.5×' }
+    if (opts.directionAlign) {
+      return { ok: true, sizeMult: 1, reason: 'тренд+направление: full' }
+    }
+    return { ok: true, sizeMult: 0.75, reason: 'тренд: fade 0.75×' }
   }
   return { ok: true, sizeMult: 1 }
 }
