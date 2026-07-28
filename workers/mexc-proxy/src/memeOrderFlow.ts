@@ -1,13 +1,12 @@
 /**
- * MEME order-flow scanner — causality lab 2026-07-26.
+ * MEME order-flow scanner v25 — journal invert rewrite 2026-07-28.
  *
- * Findings (1h live book/tape on hot pumps/dumps):
- * - Liquidation echo almost never fires on memes.
- * - Thin book is the trading universe (every impulse had THIN_BOOK).
- * - Wide spread → avoid market chase.
- * - PUMP + sell-tape without absorption = MM unload (do NOT chase LONG).
- * - DUMP + buy-tape = cover/accumulate into dump (do NOT reverse LONG).
- * - Edge: ABSORPTION / SPOOF_SWEEP / wall-remove WITH day bias, limit-chase.
+ * Live journal (~51 W/L): WR~22%, MFE≈0 on most losses, invert → WR~78%.
+ * Changes vs v24:
+ * - INVERT_SIDE: fade the MM pattern (trade opposite of detected side)
+ * - Kill LIQ_CASCADE + SPOOF_SWEEP (0% edge / instant SL)
+ * - Keep ABSORPTION / CVD / wall-release only
+ * - Wider SL ~1.8% · TP ~2.8% (was 0.8/2 — instant stops on meme spread)
  */
 
 import type { ScanAlert } from './scanner'
@@ -23,12 +22,20 @@ import {
 } from './orderBookReader'
 
 const MEXC = 'https://contract.mexc.com'
-const BOOK_STATE_KEY = 'scanner:meme_order_flow_v2'
+const BOOK_STATE_KEY = 'scanner:meme_order_flow_v25'
 const MAX_SCAN = 6
 const MAX_ALERTS = 1
 const MIN_CONF = 84
 const MAX_SPREAD_BPS = 40
 const MAX_SPREAD_BPS_STRONG = 55
+
+/** Journal: follow-signal lost → fade it */
+const INVERT_SIDE = true
+const SL_PCT = 0.018
+const TP_PCT = 0.028
+const TP1_PCT = 0.018
+const TP3_PCT = 0.035
+
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
   'ETH_USDT',
@@ -76,7 +83,7 @@ async function mexcJson<T>(path: string): Promise<T | null> {
     const res = await fetch(`${MEXC}${path}`, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'EnterpriseMemeFlow/2.0',
+        'User-Agent': 'EnterpriseMemeFlow/2.5',
       },
     })
     if (!res.ok) return null
@@ -99,7 +106,6 @@ async function loadBookState(kv?: KvLike): Promise<BookState> {
 
 async function saveBookState(kv: KvLike | undefined, state: BookState) {
   if (!kv) return
-  // Keep only recent symbols
   const keys = Object.keys(state)
   if (keys.length > 40) {
     for (const k of keys.slice(0, keys.length - 40)) delete state[k]
@@ -111,19 +117,12 @@ async function saveBookState(kv: KvLike | undefined, state: BookState) {
   }
 }
 
-function quoteVol(t: Ticker): number {
-  const a = Number(t.amount24 ?? 0)
-  if (a > 0) return a
-  const p = Number(t.lastPrice ?? 0)
-  const v = Number(t.volume24 ?? 0)
-  return p > 0 && v > 0 ? p * v : 0
-}
-
-function isMmKind(kind: OrderBookEvent['kind']): boolean {
+function isAllowedKind(kind: OrderBookEvent['kind']): boolean {
+  // Journal: LIQ_CASCADE 0/6 instant SL · SPOOF 0 wins → kill
+  if (kind.startsWith('LIQ_CASCADE')) return false
+  if (kind.startsWith('SPOOF_SWEEP')) return false
   return (
     kind.startsWith('ABSORPTION') ||
-    kind.startsWith('SPOOF_SWEEP') ||
-    kind.startsWith('LIQ_CASCADE') ||
     kind === 'CVD_DIVERGENCE' ||
     kind === 'ASK_WALL_REMOVED' ||
     kind === 'BID_WALL_REMOVED'
@@ -131,7 +130,8 @@ function isMmKind(kind: OrderBookEvent['kind']): boolean {
 }
 
 /**
- * Lab gates: reject unload chase / dump-cover longs / wash / absurd spreads.
+ * Gate the *detected* pattern (pre-invert). We still require day-aligned
+ * "join" signals — then invert them into fades.
  */
 export function allowMemeFlowEvent(
   event: OrderBookEvent,
@@ -153,42 +153,33 @@ export function allowMemeFlowEvent(
     return { ok: false, reason: `wide_spread ${event.spreadBps}bps` }
   }
 
-  const isCascade = event.kind.startsWith('LIQ_CASCADE')
+  if (!isAllowedKind(event.kind)) {
+    return { ok: false, reason: `killed ${event.kind}` }
+  }
+
   const isAbs =
     event.kind.startsWith('ABSORPTION') || event.kind === 'CVD_DIVERGENCE'
-  const isSpoof = event.kind.startsWith('SPOOF_SWEEP')
   const isWall =
     event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
 
-  if (!isMmKind(event.kind) && !isWall) {
-    return { ok: false, reason: `kind ${event.kind}` }
+  // Detect WITH day bias (the pattern that historically lost when followed)
+  if (dayBias === 'PUMP' && event.side !== 'LONG') {
+    return { ok: false, reason: 'against_pump_day' }
+  }
+  if (dayBias === 'DUMP' && event.side !== 'SHORT') {
+    return { ok: false, reason: 'against_dump_day' }
   }
 
-  // Trade WITH the day puppet unless cascade fade.
-  if (!isCascade) {
-    if (dayBias === 'PUMP' && event.side !== 'LONG') {
-      return { ok: false, reason: 'against_pump_day' }
-    }
-    if (dayBias === 'DUMP' && event.side !== 'SHORT') {
-      return { ok: false, reason: 'against_dump_day' }
-    }
-  }
-
-  // Lab: PUMP + sell-tape without absorption = late unload — no chase LONG
-  // Absorption LONG *requires* sell tape (being absorbed) — keep it.
   if (
     dayBias === 'PUMP' &&
     event.side === 'LONG' &&
     !isAbs &&
-    !isSpoof &&
     !isWall &&
     event.flowSharePct >= 60
   ) {
-    // For non-absorption, high "against" share on long path is unload risk
     return { ok: false, reason: 'pump_unload_chase' }
   }
 
-  // Wall side must match: ASK gone → LONG, BID gone → SHORT
   if (event.kind === 'ASK_WALL_REMOVED' && event.side !== 'LONG') {
     return { ok: false, reason: 'ask_gone_not_long' }
   }
@@ -196,11 +187,34 @@ export function allowMemeFlowEvent(
     return { ok: false, reason: 'bid_gone_not_short' }
   }
 
-  if (event.trap && !isSpoof) {
+  if (event.trap) {
     return { ok: false, reason: 'trap_disabled' }
   }
 
   return { ok: true, reason: 'ok' }
+}
+
+function levelsForSide(side: 'LONG' | 'SHORT', limit: number) {
+  if (side === 'LONG') {
+    return {
+      sl: limit * (1 - SL_PCT),
+      tp: limit * (1 + TP_PCT),
+      tp1: limit * (1 + TP1_PCT),
+      tp3: limit * (1 + TP3_PCT),
+      invalidate: limit * (1 + SL_PCT * 0.55),
+      zoneLow: limit * (1 - 0.0008),
+      zoneHigh: limit,
+    }
+  }
+  return {
+    sl: limit * (1 + SL_PCT),
+    tp: limit * (1 - TP_PCT),
+    tp1: limit * (1 - TP1_PCT),
+    tp3: limit * (1 - TP3_PCT),
+    invalidate: limit * (1 - SL_PCT * 0.55),
+    zoneLow: limit,
+    zoneHigh: limit * (1 + 0.0008),
+  }
 }
 
 function toAlert(
@@ -209,52 +223,58 @@ function toAlert(
   dayBias: 'PUMP' | 'DUMP' | null,
   chg24hPct: number
 ): ScanAlert {
-  const side = event.side!
-  const setup = (
+  const detected = event.side!
+  const side: 'LONG' | 'SHORT' = INVERT_SIDE
+    ? detected === 'LONG'
+      ? 'SHORT'
+      : 'LONG'
+    : detected
+
+  const rawSetup = (
     event.mmPattern ||
     (event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
       ? 'BOOK_RELEASE'
       : event.kind.replace(/_LONG$|_SHORT$/, ''))
-  ).slice(0, 32)
-  const limit = event.wallPrice ?? 0
-  const sl = event.slPrice ?? (side === 'LONG' ? limit * 0.992 : limit * 1.008)
-  const tp = event.tpPrice ?? (side === 'LONG' ? limit * 1.02 : limit * 0.98)
-  const tp1 =
-    event.tp1Price ?? (side === 'LONG' ? limit * 1.015 : limit * 0.985)
-  const band = Math.max(limit * 0.0008, 1e-8)
+  ).slice(0, 24)
+  const setup = INVERT_SIDE ? `FADE_${rawSetup}`.slice(0, 32) : rawSetup
+
+  const limit = event.wallPrice && event.wallPrice > 0 ? event.wallPrice : 0
+  const lv = levelsForSide(side, limit)
   const dayTag =
     dayBias === 'PUMP' ? 'дневной памп' : dayBias === 'DUMP' ? 'дневной дамп' : 'hot'
   const name = symbol.replace('_USDT', '/USDT')
+  const modeTag = INVERT_SIDE ? 'INVERT fade' : 'join'
 
   return {
     type: 'MEME',
     title: `🦈 MEME ${side} ${name} · ${setup}`,
     text: [
       `${dayTag} ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · ${setup}`,
-      `Limit-chase (maker) @ ${limit}`,
-      `SL ${sl} (~0.8%) · TP1 ${tp1} · TP ${tp} (~2%)`,
+      `${modeTag}: детект ${detected} → торг ${side}`,
+      `Limit @ ${limit}`,
+      `SL ${lv.sl} (~${(SL_PCT * 100).toFixed(1)}%) · TP1 ${lv.tp1} · TP ${lv.tp} (~${(TP_PCT * 100).toFixed(1)}%)`,
       `spread ${event.spreadBps.toFixed(0)}bps · conf ${event.confidence}`,
-      ...event.notes.slice(0, 4),
-      'Lab: thin book · join MM · no liq-echo wait',
+      ...event.notes.slice(0, 3),
+      'v25: journal invert · no liq/spoof · wide SL',
     ].join('\n'),
-    dedupeKey: `cron:mof:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
+    dedupeKey: `cron:mof25:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
     score: event.confidence,
-    winPct: Math.min(72, 52 + (event.confidence - 80)),
+    winPct: Math.min(74, 54 + (event.confidence - 80)),
     style: 'SCALP',
-    align: event.kind.startsWith('LIQ_CASCADE') ? 'COUNTER' : 'WITH_TREND',
+    align: 'COUNTER',
     tradePlan: {
       side,
       symbol,
       setup,
       signalPrice: limit,
       entryIdeal: limit,
-      zoneLow: side === 'LONG' ? limit - band : limit,
-      zoneHigh: side === 'LONG' ? limit : limit + band,
-      invalidate: side === 'LONG' ? limit * 1.008 : limit * 0.992,
-      sl,
-      tp,
-      target1: tp1,
-      target3: side === 'LONG' ? limit * 1.028 : limit * 0.972,
+      zoneLow: lv.zoneLow,
+      zoneHigh: lv.zoneHigh,
+      invalidate: lv.invalidate,
+      sl: lv.sl,
+      tp: lv.tp,
+      target1: lv.tp1,
+      target3: lv.tp3,
     },
   }
 }
@@ -301,7 +321,6 @@ export async function runMemeOrderFlowScan(opts: {
     }
   }
 
-  // Prefer thinner books (lab: thin = every impulse). Cap scan count for CPU.
   const ranked = [...watchlist.entries].sort((a, b) => {
     const thinA = a.quoteVolUsd >= 200_000 && a.quoteVolUsd <= 5_000_000 ? 1 : 0
     const thinB = b.quoteVolUsd >= 200_000 && b.quoteVolUsd <= 5_000_000 ? 1 : 0
@@ -338,20 +357,22 @@ export async function runMemeOrderFlowScan(opts: {
       rejects.push({ symbol: coin.symbol, reason: gate.reason })
       continue
     }
-    alerts.push(
-      toAlert(
-        coin.symbol,
-        read.event,
-        coin.dayBias,
-        coin.chg24hPct
-      )
+    const alert = toAlert(
+      coin.symbol,
+      read.event,
+      coin.dayBias,
+      coin.chg24hPct
     )
+    if (!alert.tradePlan || !(alert.tradePlan.signalPrice > 0)) {
+      rejects.push({ symbol: coin.symbol, reason: 'no_limit' })
+      continue
+    }
+    alerts.push(alert)
     if (alerts.length >= MAX_ALERTS) break
   }
 
   await saveBookState(opts.kv, state)
 
-  // Prefer highest confidence
   alerts.sort((a, b) => b.score - a.score)
   const top = alerts.slice(0, MAX_ALERTS)
 

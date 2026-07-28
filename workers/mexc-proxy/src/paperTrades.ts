@@ -728,8 +728,39 @@ export async function createPaperTradeFromPlan(
       t.side === plan.side
   )
   if (dup) return { created: false, comment: null }
-  // Memes enter at market immediately — waiting for TA zones kills the move.
-  const fill = isMeme ? plan.signalPrice || plan.entryIdeal : null
+  // Memes: market-mark fill, but never open if already past SL / SL too tight.
+  let fill = isMeme ? plan.signalPrice || plan.entryIdeal : null
+  let sl = plan.sl
+  let tp = plan.tp
+  let entryIdeal = plan.entryIdeal
+  let zoneLow = plan.zoneLow
+  let zoneHigh = plan.zoneHigh
+  if (isMeme) {
+    const snap = await fetchTickerSnap(plan.symbol)
+    const mark = snap?.last && snap.last > 0 ? snap.last : fill
+    if (!(mark && mark > 0)) return { created: false, comment: null }
+    fill = mark
+    entryIdeal = mark
+    const minSlPct = 0.018
+    if (plan.side === 'LONG') {
+      sl = Math.min(plan.sl, mark * (1 - minSlPct))
+      // Already stopped at open → skip (was causing <5s LOSS spam)
+      if (snap && (snap.last <= sl || snap.low <= sl)) {
+        return { created: false, comment: null }
+      }
+      zoneLow = Math.min(zoneLow, mark * 0.999)
+      zoneHigh = Math.max(zoneHigh, mark)
+      if (!(tp > mark)) tp = mark * 1.028
+    } else {
+      sl = Math.max(plan.sl, mark * (1 + minSlPct))
+      if (snap && (snap.last >= sl || snap.high >= sl)) {
+        return { created: false, comment: null }
+      }
+      zoneLow = Math.min(zoneLow, mark)
+      zoneHigh = Math.max(zoneHigh, mark * 1.001)
+      if (!(tp < mark)) tp = mark * 0.972
+    }
+  }
   const trade: PaperTrade = {
     id: `${plan.symbol}:${plan.side}:${now}`,
     symbol: plan.symbol,
@@ -737,12 +768,12 @@ export async function createPaperTradeFromPlan(
     setup: plan.setup,
     alertType: plan.alertType,
     signalPrice: plan.signalPrice,
-    zoneLow: plan.zoneLow,
-    zoneHigh: plan.zoneHigh,
-    entryIdeal: plan.entryIdeal,
+    zoneLow,
+    zoneHigh,
+    entryIdeal,
     invalidate: plan.invalidate,
-    sl: plan.sl,
-    tp: plan.tp,
+    sl,
+    tp,
     status: isMeme ? 'OPEN' : 'WAITING',
     fillPrice: fill,
     zoneTouchedAt: isMeme ? now : null,
@@ -750,8 +781,8 @@ export async function createPaperTradeFromPlan(
     peak: fill,
     trailingStop: fill
       ? plan.side === 'LONG'
-        ? fill * 0.988
-        : fill * 1.012
+        ? fill * 0.982
+        : fill * 1.018
       : null,
     createdAt: now,
     openedAt: isMeme ? now : null,
@@ -802,7 +833,7 @@ export async function createPaperTradeFromPlan(
           : [
               `Limit-chase (post-only).`,
               `Сетап: ${plan.setup}`,
-              `Лимит: ${fmt(fill!)} · SL ${fmt(plan.sl)} · TP ${fmt(plan.tp)}`,
+              `Лимит/mark: ${fmt(fill!)} · SL ${fmt(sl)} · TP ${fmt(tp)}`,
               `Сопровождение ${cadence}.`,
             ].join('\n'),
         dedupeKey: `paper:fill:${trade.id}`,

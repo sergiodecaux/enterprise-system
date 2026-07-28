@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-order-flow-v24',
-  label: 'MEME: Order-Flow MM Join',
+  id: 'meme-fade-invert-v25',
+  label: 'MEME: Fade Invert (journal)',
   deployedNote:
-    'Lab 26.07: thin hotlist · ABSORPTION/SPOOF/wall-release WITH day bias · skip wash & wide spread · no liq-echo wait. Limit-chase maker · TP~2% SL~0.8%. Не лонговать dump+buy-tape и pump-unload без absorption.',
+    'v25: INVERT стороны (детект→fade) · только ABSORPTION/CVD/wall · kill LIQ+SPOOF · SL~1.8% TP~2.8% · skip fill если уже за SL. Журнал: follow WR~22% → invert ~78%.',
 } as const
 
 /** BTC + alts vane sniper — hold strong zone or S/R flip on break+retest */
