@@ -20,7 +20,8 @@ const MAX_ACTIVE = 5
 /** Cap concurrent meme impulses — journal showed too many open at once */
 const MAX_ACTIVE_MEME = 2
 const MEME_SYMBOL_COOLDOWN_MS = 45 * 60_000
-const WAITING_TTL_MS = 45 * 60_000
+const WAITING_TTL_MS = 90 * 60_000
+const WAITING_TTL_VANE_MS = 120 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
 /** Memes are short impulse trades — don't hold for hours */
 const OPEN_TTL_MEME_MS = 75 * 60_000
@@ -792,8 +793,10 @@ export async function createPaperTradeFromPlan(
         ? OPEN_TTL_ECHO_MS
         : isMeme
           ? OPEN_TTL_MEME_MS
-          : plan.vanePath === 'FLIP'
-            ? 75 * 60_000
+          : plan.setup.startsWith('VANE_')
+            ? plan.vanePath === 'FLIP'
+              ? 75 * 60_000
+              : WAITING_TTL_VANE_MS
             : WAITING_TTL_MS),
     closedAt: null,
     lastPulseAt: now,
@@ -900,7 +903,7 @@ function confirmsEntry(
   return reclaimed && pressureAligned && tapeAligned && bookAligned
 }
 
-/** Vane: stricter book + tape; FLIP needs reject from zone edge */
+/** Vane: fill on zone reclaim + (book OR tape+pressure) — was too strict → 0 fills */
 function confirmsVaneEntry(
   t: PaperTrade,
   snap: TickerSnap,
@@ -909,26 +912,26 @@ function confirmsVaneEntry(
   if (!t.zoneTouchedAt) return false
   const bookAligned =
     brief.bookImb != null &&
-    (t.side === 'LONG' ? brief.bookImb >= 12 : brief.bookImb <= -12)
+    (t.side === 'LONG' ? brief.bookImb >= 6 : brief.bookImb <= -6)
   const pressureAligned =
     t.side === 'LONG'
-      ? brief.pressure === 'BUYERS'
-      : brief.pressure === 'SELLERS'
+      ? brief.pressure !== 'SELLERS'
+      : brief.pressure !== 'BUYERS'
   const tapeAligned =
     t.side === 'LONG'
-      ? brief.move1mPct > 0.05 && brief.candleBias !== 'DOWN'
-      : brief.move1mPct < -0.05 && brief.candleBias !== 'UP'
+      ? brief.move1mPct >= -0.02 && brief.candleBias !== 'DOWN'
+      : brief.move1mPct <= 0.02 && brief.candleBias !== 'UP'
   const inBand =
-    snap.last >= t.zoneLow * 0.997 && snap.last <= t.zoneHigh * 1.003
+    snap.last >= t.zoneLow * 0.996 && snap.last <= t.zoneHigh * 1.004
   if (t.vanePath === 'FLIP') {
-    // Retest fill: price back at broken zone, book against origin break
-    return inBand && bookAligned && pressureAligned && tapeAligned
+    return inBand && (bookAligned || (pressureAligned && tapeAligned))
   }
   const reclaimed =
     t.side === 'LONG'
-      ? snap.last >= t.entryIdeal && snap.last <= t.zoneHigh * 1.003
-      : snap.last <= t.entryIdeal && snap.last >= t.zoneLow * 0.997
-  return reclaimed && bookAligned && pressureAligned && tapeAligned
+      ? snap.last >= t.entryIdeal * 0.998 && snap.last <= t.zoneHigh * 1.004
+      : snap.last <= t.entryIdeal * 1.002 && snap.last >= t.zoneLow * 0.996
+  // Need reclaim + at least one flow confirm (not all three)
+  return reclaimed && (bookAligned || (pressureAligned && tapeAligned))
 }
 
 async function updatePredatorRiskOnClose(

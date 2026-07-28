@@ -53,7 +53,7 @@ function phaseOfGeom(
   const mid = (low + high) / 2
   const dist = Math.abs(price - mid) / price
   // Wider approach so we don't miss zones between cron ticks
-  if (dist <= 0.012) return 'APPROACH'
+  if (dist <= 0.02) return 'APPROACH'
   return 'FAR'
 }
 
@@ -285,6 +285,16 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
+  // Bounce HOLD: price in zone with multi-touch HTF level (Elite was silent on clean bounces)
+  if (
+    !path &&
+    phaseGeom === 'TOUCH' &&
+    book.grade !== 'WEAK' &&
+    zone.touches >= 2 &&
+    !book.greenDeltaWeak
+  ) {
+    path = 'HOLD'
+  }
   if (!path) {
     await saveVaneState(opts.kv, {
       ...state,
@@ -470,12 +480,14 @@ export async function runVaneScan(opts?: {
 
   const btc = await loadBtcShield()
   const universe = await loadVaneUniverse({ pinSymbols: opts?.pinSymbols })
+  // Scan the whole TOP-5 every minute (was 5-of-50 round-robin → missed bounces)
+  const scanN = Math.max(universe.length, opts?.batchSize ?? 5)
   const { batch: queue, cursor, nextCursor } = await pickVaneBatch({
     kv,
     universe,
     pinSymbols: opts?.pinSymbols,
-    batchSize: opts?.batchSize ?? 5,
-    hotSlots: 3,
+    batchSize: scanN,
+    hotSlots: Math.min(3, Math.max(1, scanN - 1)),
   })
   console.log(
     `[vane] auto-search cursor ${cursor}→${nextCursor} n=${queue.length}:`,

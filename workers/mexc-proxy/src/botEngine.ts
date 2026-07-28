@@ -8,8 +8,8 @@ export const BOT_ENGINE = {
 
 /** BTC + alts vane sniper — hold strong zone or S/R flip on break+retest */
 export const SNIPER_ENGINE = {
-  id: 'vane-zone-flip-v1',
+  id: 'vane-zone-flip-v2-top5',
   label: 'VANE: Zone Hold / S/R Flip',
   deployedNote:
-    'Флюгер: сильная зона (absorption+CVD+wall≥12с) → LONG; пробой+5m close+ретест → SHORT. TOP-50 · Tier1≥85 / Tier2≥70 · TP 1.5–2% · ATR SL · R:R≥1.8 · BTC shield · session/vol pause · circuit −3%/2 loss.',
+    'Флюгер v2: TOP-5 альтов каждый cron (ETH/SOL/BNB/XRP/AVAX) · HOLD на bounce/multi-touch · fill мягче (OBI≥6 или tape) · WAITING 120м · TP 1.5–2% · ATR SL · BTC shield · circuit −3%/2 loss.',
 } as const
