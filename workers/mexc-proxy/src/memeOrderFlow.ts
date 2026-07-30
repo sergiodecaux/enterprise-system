@@ -1,12 +1,10 @@
 /**
- * MEME order-flow scanner v25 — journal invert rewrite 2026-07-28.
+ * MEME order-flow scanner v26 — Day Continue (journal autopsy 2026-07-30).
  *
- * Live journal (~51 W/L): WR~22%, MFE≈0 on most losses, invert → WR~78%.
- * Changes vs v24:
- * - INVERT_SIDE: fade the MM pattern (trade opposite of detected side)
- * - Kill LIQ_CASCADE + SPOOF_SWEEP (0% edge / instant SL)
- * - Keep ABSORPTION / CVD / wall-release only
- * - Wider SL ~1.8% · TP ~2.8% (was 0.8/2 — instant stops on meme spread)
+ * Journal 103 MEME: WR~12% · ΣPnL −24.9% · 93% LOSS с MFE&lt;0.25%.
+ * Kill: TRAP/COUNTER/LIQ/SPOOF + blind fade v25 (COUNTER tag = 0% WR).
+ * Keep: WITH-day continuation after wall-release / absorption.
+ * Wins clustered on DUMP→SHORT and clean PUMP→LONG with real MFE 2–9%.
  */
 
 import type { ScanAlert } from './scanner'
@@ -22,19 +20,23 @@ import {
 } from './orderBookReader'
 
 const MEXC = 'https://contract.mexc.com'
-const BOOK_STATE_KEY = 'scanner:meme_order_flow_v25'
-const MAX_SCAN = 6
-const MAX_ALERTS = 1
+const BOOK_STATE_KEY = 'scanner:meme_order_flow_v26'
+const MAX_SCAN = 8
+const MAX_ALERTS = 2
 const MIN_CONF = 84
-const MAX_SPREAD_BPS = 40
+const MAX_SPREAD_BPS = 45
 const MAX_SPREAD_BPS_STRONG = 55
 
-/** Journal: follow-signal lost → fade it */
-const INVERT_SIDE = true
-const SL_PCT = 0.018
-const TP_PCT = 0.028
+/** Autopsy: fade/counter lost — trade WITH day bias only */
+const INVERT_SIDE = false
+const SL_PCT = 0.015
+const TP_PCT = 0.03
 const TP1_PCT = 0.018
-const TP3_PCT = 0.035
+const TP3_PCT = 0.04
+/** Wall-release: tape in trade direction */
+const MIN_FLOW_SHARE_WALL = 52
+/** FOMO chase into pump without wall/abs */
+const MAX_FOMO_FLOW_NO_WALL = 72
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -83,7 +85,7 @@ async function mexcJson<T>(path: string): Promise<T | null> {
     const res = await fetch(`${MEXC}${path}`, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'EnterpriseMemeFlow/2.5',
+        'User-Agent': 'EnterpriseMemeFlow/2.6',
       },
     })
     if (!res.ok) return null
@@ -118,20 +120,24 @@ async function saveBookState(kv: KvLike | undefined, state: BookState) {
 }
 
 function isAllowedKind(kind: OrderBookEvent['kind']): boolean {
-  // Journal: LIQ_CASCADE 0/6 instant SL · SPOOF 0 wins → kill
+  // Journal: LIQ 0/6 · SPOOF 0 wins · traps toxic
   if (kind.startsWith('LIQ_CASCADE')) return false
   if (kind.startsWith('SPOOF_SWEEP')) return false
+  if (kind.startsWith('TRAP_FLIP')) return false
   return (
     kind.startsWith('ABSORPTION') ||
     kind === 'CVD_DIVERGENCE' ||
     kind === 'ASK_WALL_REMOVED' ||
-    kind === 'BID_WALL_REMOVED'
+    kind === 'BID_WALL_REMOVED' ||
+    // Pre-impulse OBI build WITH day — was blocked entirely → rare alerts
+    kind === 'BUY_FLOW_IMBALANCE' ||
+    kind === 'SELL_FLOW_IMBALANCE'
   )
 }
 
 /**
- * Gate the *detected* pattern (pre-invert). We still require day-aligned
- * "join" signals — then invert them into fades.
+ * Gate for Day Continue: detected side must match day bias (WITH),
+ * tape must confirm continuation, no trap/unload/cover.
  */
 export function allowMemeFlowEvent(
   event: OrderBookEvent,
@@ -149,7 +155,7 @@ export function allowMemeFlowEvent(
   if (event.spreadBps > MAX_SPREAD_BPS_STRONG) {
     return { ok: false, reason: `spread ${event.spreadBps}bps` }
   }
-  if (event.spreadBps > MAX_SPREAD_BPS && event.confidence < 90) {
+  if (event.spreadBps > MAX_SPREAD_BPS && event.confidence < 92) {
     return { ok: false, reason: `wide_spread ${event.spreadBps}bps` }
   }
 
@@ -157,12 +163,15 @@ export function allowMemeFlowEvent(
     return { ok: false, reason: `killed ${event.kind}` }
   }
 
-  const isAbs =
-    event.kind.startsWith('ABSORPTION') || event.kind === 'CVD_DIVERGENCE'
-  const isWall =
-    event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
+  if (event.trap) {
+    return { ok: false, reason: 'trap_disabled' }
+  }
 
-  // Detect WITH day bias (the pattern that historically lost when followed)
+  if (!dayBias) {
+    return { ok: false, reason: 'no_day_bias' }
+  }
+
+  // WITH day only — COUNTER was 0% WR in journal
   if (dayBias === 'PUMP' && event.side !== 'LONG') {
     return { ok: false, reason: 'against_pump_day' }
   }
@@ -170,15 +179,12 @@ export function allowMemeFlowEvent(
     return { ok: false, reason: 'against_dump_day' }
   }
 
-  if (
-    dayBias === 'PUMP' &&
-    event.side === 'LONG' &&
-    !isAbs &&
-    !isWall &&
-    event.flowSharePct >= 60
-  ) {
-    return { ok: false, reason: 'pump_unload_chase' }
-  }
+  const isAbs =
+    event.kind.startsWith('ABSORPTION') || event.kind === 'CVD_DIVERGENCE'
+  const isWall =
+    event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
+  const isFlowImb =
+    event.kind === 'BUY_FLOW_IMBALANCE' || event.kind === 'SELL_FLOW_IMBALANCE'
 
   if (event.kind === 'ASK_WALL_REMOVED' && event.side !== 'LONG') {
     return { ok: false, reason: 'ask_gone_not_long' }
@@ -186,9 +192,49 @@ export function allowMemeFlowEvent(
   if (event.kind === 'BID_WALL_REMOVED' && event.side !== 'SHORT') {
     return { ok: false, reason: 'bid_gone_not_short' }
   }
+  if (event.kind === 'BUY_FLOW_IMBALANCE' && event.side !== 'LONG') {
+    return { ok: false, reason: 'buy_imb_not_long' }
+  }
+  if (event.kind === 'SELL_FLOW_IMBALANCE' && event.side !== 'SHORT') {
+    return { ok: false, reason: 'sell_imb_not_short' }
+  }
 
-  if (event.trap) {
-    return { ok: false, reason: 'trap_disabled' }
+  // Absorption reports OPPOSING tape in flowSharePct — don't treat as unload.
+  // Wall/flow-imbalance need supportive tape in trade direction.
+  if (!isAbs && event.flowSharePct < MIN_FLOW_SHARE_WALL) {
+    return {
+      ok: false,
+      reason:
+        dayBias === 'PUMP'
+          ? `weak_buy_flow=${event.flowSharePct.toFixed(0)}`
+          : `weak_sell_flow=${event.flowSharePct.toFixed(0)}`,
+    }
+  }
+  if (isAbs && event.flowSharePct < 45) {
+    return {
+      ok: false,
+      reason: `weak_absorption_tape=${event.flowSharePct.toFixed(0)}`,
+    }
+  }
+
+  // FOMO: extreme buy into pump without structure → late chase
+  if (
+    dayBias === 'PUMP' &&
+    event.side === 'LONG' &&
+    !isAbs &&
+    !isWall &&
+    event.flowSharePct >= MAX_FOMO_FLOW_NO_WALL
+  ) {
+    return { ok: false, reason: 'pump_fomo_chase' }
+  }
+
+  if (!isWall && !isAbs && !isFlowImb) {
+    return { ok: false, reason: 'need_wall_abs_or_flow' }
+  }
+
+  // Flow imbalance alone: need higher conf (no discrete wall event)
+  if (isFlowImb && event.confidence < 88) {
+    return { ok: false, reason: 'flow_imb_conf<88' }
   }
 
   return { ok: true, reason: 'ok' }
@@ -201,7 +247,7 @@ function levelsForSide(side: 'LONG' | 'SHORT', limit: number) {
       tp: limit * (1 + TP_PCT),
       tp1: limit * (1 + TP1_PCT),
       tp3: limit * (1 + TP3_PCT),
-      invalidate: limit * (1 + SL_PCT * 0.55),
+      invalidate: limit * (1 - SL_PCT * 0.7),
       zoneLow: limit * (1 - 0.0008),
       zoneHigh: limit,
     }
@@ -211,7 +257,7 @@ function levelsForSide(side: 'LONG' | 'SHORT', limit: number) {
     tp: limit * (1 - TP_PCT),
     tp1: limit * (1 - TP1_PCT),
     tp3: limit * (1 - TP3_PCT),
-    invalidate: limit * (1 - SL_PCT * 0.55),
+    invalidate: limit * (1 + SL_PCT * 0.7),
     zoneLow: limit,
     zoneHigh: limit * (1 + 0.0008),
   }
@@ -235,33 +281,32 @@ function toAlert(
     (event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
       ? 'BOOK_RELEASE'
       : event.kind.replace(/_LONG$|_SHORT$/, ''))
-  ).slice(0, 24)
-  const setup = INVERT_SIDE ? `FADE_${rawSetup}`.slice(0, 32) : rawSetup
+  ).slice(0, 20)
+  const setup = `CONT_${rawSetup}`.slice(0, 32)
 
   const limit = event.wallPrice && event.wallPrice > 0 ? event.wallPrice : 0
   const lv = levelsForSide(side, limit)
   const dayTag =
     dayBias === 'PUMP' ? 'дневной памп' : dayBias === 'DUMP' ? 'дневной дамп' : 'hot'
   const name = symbol.replace('_USDT', '/USDT')
-  const modeTag = INVERT_SIDE ? 'INVERT fade' : 'join'
 
   return {
     type: 'MEME',
     title: `🦈 MEME ${side} ${name} · ${setup}`,
     text: [
       `${dayTag} ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · ${setup}`,
-      `${modeTag}: детект ${detected} → торг ${side}`,
+      `Day Continue: WITH ${dayBias} · детект ${detected}`,
       `Limit @ ${limit}`,
       `SL ${lv.sl} (~${(SL_PCT * 100).toFixed(1)}%) · TP1 ${lv.tp1} · TP ${lv.tp} (~${(TP_PCT * 100).toFixed(1)}%)`,
-      `spread ${event.spreadBps.toFixed(0)}bps · conf ${event.confidence}`,
+      `spread ${event.spreadBps.toFixed(0)}bps · conf ${event.confidence} · flow ${event.flowSharePct.toFixed(0)}%`,
       ...event.notes.slice(0, 3),
-      'v25: journal invert · no liq/spoof · wide SL',
+      'v26: journal autopsy · WITH day · no trap/liq/spoof/fade',
     ].join('\n'),
-    dedupeKey: `cron:mof25:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
+    dedupeKey: `cron:mof26:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
     score: event.confidence,
-    winPct: Math.min(74, 54 + (event.confidence - 80)),
+    winPct: Math.min(72, 50 + (event.confidence - 80) + (event.flowSharePct - 50) * 0.15),
     style: 'SCALP',
-    align: 'COUNTER',
+    align: 'WITH',
     tradePlan: {
       side,
       symbol,
@@ -324,7 +369,12 @@ export async function runMemeOrderFlowScan(opts: {
   const ranked = [...watchlist.entries].sort((a, b) => {
     const thinA = a.quoteVolUsd >= 200_000 && a.quoteVolUsd <= 5_000_000 ? 1 : 0
     const thinB = b.quoteVolUsd >= 200_000 && b.quoteVolUsd <= 5_000_000 ? 1 : 0
-    return thinB - thinA || b.score - a.score
+    // Prefer DUMP days slightly — SHORT continuation had better ΣPnL
+    const dumpA = a.dayBias === 'DUMP' ? 1 : 0
+    const dumpB = b.dayBias === 'DUMP' ? 1 : 0
+    return (
+      dumpB - dumpA || thinB - thinA || b.score - a.score
+    )
   })
   const batch = ranked.slice(0, MAX_SCAN)
   const state = await loadBookState(opts.kv)

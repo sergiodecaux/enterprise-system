@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-fade-invert-v25',
-  label: 'MEME: Fade Invert (journal)',
+  id: 'meme-day-continue-v26',
+  label: 'MEME: Day Continue',
   deployedNote:
-    'v25: INVERT стороны (детект→fade) · только ABSORPTION/CVD/wall · kill LIQ+SPOOF · SL~1.8% TP~2.8% · skip fill если уже за SL. Журнал: follow WR~22% → invert ~78%.',
+    'v26.1: WITH дня · wall/abs/flow-imb · spoof больше не блокирует тик · abs порог ↓ · scan8/max2 · SL~1.5% TP~3%.',
 } as const
 
 /** BTC + alts vane sniper — hold strong zone or S/R flip on break+retest */

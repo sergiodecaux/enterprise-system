@@ -227,17 +227,18 @@ function detectAbsorption(
   const absMove = Math.abs(priceMoveBps)
 
   // LONG absorption: heavy sells, price flat/up
+  // Threshold eased: lab monitor saw 0 ABS hits @ $12k/30s on thin memes.
   const sellAbs =
-    flow.sellQ >= 12_000 &&
-    absMove <= 10 &&
-    priceMoveBps >= -6 &&
-    flow.sellQ > flow.buyQ * 1.25
+    flow.sellQ >= 7_000 &&
+    absMove <= 12 &&
+    priceMoveBps >= -8 &&
+    flow.sellQ > flow.buyQ * 1.15
   // SHORT absorption: heavy buys, price flat/down
   const buyAbs =
-    flow.buyQ >= 12_000 &&
-    absMove <= 10 &&
-    priceMoveBps <= 6 &&
-    flow.buyQ > flow.sellQ * 1.25
+    flow.buyQ >= 7_000 &&
+    absMove <= 12 &&
+    priceMoveBps <= 8 &&
+    flow.buyQ > flow.sellQ * 1.15
 
   const absorptionIndex =
     absMove < 0.5
@@ -252,7 +253,7 @@ function detectAbsorption(
       Math.round(78 + Math.min(14, absorptionIndex / 8000) + (priceMoveBps >= 0 ? 4 : 0))
     )
     return {
-      ready: conf >= 84 && absorptionIndex >= 2500,
+      ready: conf >= 82 && absorptionIndex >= 1600,
       side: 'LONG',
       pattern: absMove <= 5 ? 'ABSORPTION' : 'CVD_DIVERGENCE',
       confidence: conf,
@@ -285,7 +286,7 @@ function detectAbsorption(
       Math.round(78 + Math.min(14, absorptionIndex / 8000) + (priceMoveBps <= 0 ? 4 : 0))
     )
     return {
-      ready: conf >= 84 && absorptionIndex >= 2500,
+      ready: conf >= 82 && absorptionIndex >= 1600,
       side: 'SHORT',
       pattern: absMove <= 5 ? 'ABSORPTION' : 'CVD_DIVERGENCE',
       confidence: conf,

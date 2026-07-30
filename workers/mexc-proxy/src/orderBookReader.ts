@@ -655,9 +655,9 @@ function analyzeEvent(
       : obiChange <= -6 || current.obi <= -12
   const priceMoveBps =
     ((current.mid - previous.mid) / previous.mid) * 10_000
-  // Need real follow-through — post-v19 BOOK_RELEASE losses all had MFE=0.
-  const alignedPrice = side === 'LONG' ? priceMoveBps >= 8 : priceMoveBps <= -8
-  const alignedFlow = flowShare >= 64
+  // Follow-through — slightly eased vs v19 (8bps/64%/3conf was too rare on 2m cron).
+  const alignedPrice = side === 'LONG' ? priceMoveBps >= 5 : priceMoveBps <= -5
+  const alignedFlow = flowShare >= 58
   const bestAsk = asks[0]?.price ?? current.mid
   const bestBid = bids[0]?.price ?? current.mid
   const spreadBps = ((bestAsk - bestBid) / current.mid) * 10_000
@@ -681,12 +681,12 @@ function analyzeEvent(
   const releaseReady =
     wall.persisted &&
     !wall.relocated &&
-    wall.multiple >= 4 &&
-    wall.dropPct >= 70 &&
+    wall.multiple >= 3.5 &&
+    wall.dropPct >= 60 &&
     wall.crossed &&
     spreadBps <= 55 &&
     alignedFlow &&
-    confirmations >= 3
+    confirmations >= 2
 
   const ready = trapReady || releaseReady
   const confidence = Math.min(
@@ -839,13 +839,21 @@ export async function readOrderBookEvent(opts: {
       },
     }
   }
-  if (mm.signal) {
+  // Spoof/liq are journal-dead (0% WR) but were ranked FIRST and blocked
+  // classic wall-release on the same tick → silent cron for hours.
+  const mmUsable =
+    mm.signal &&
+    mm.signal.pattern !== 'SPOOF_SWEEP' &&
+    mm.signal.pattern !== 'LIQ_CASCADE'
+      ? mm.signal
+      : null
+  if (mmUsable) {
     return {
       snapshot: current,
-      event: mmToEvent(mm.signal, current.mid, asks, bids),
+      event: mmToEvent(mmUsable, current.mid, asks, bids),
     }
   }
-  if (mm.oiBlock) {
+  if (mm.oiBlock && !mm.signal) {
     return {
       snapshot: current,
       event: emptyEvent(mm.oiBlock),
@@ -857,11 +865,14 @@ export async function readOrderBookEvent(opts: {
   if (!classic.ready || !classic.side) {
     return { snapshot: current, event: classic }
   }
-  // Never fade a giant spoof wall — classic TRAP path stays disabled.
+  // Trap flip toxic in journal — skip trap, but if this is a real release
+  // (persisted wall gone) keep it; trap-only ticks fall through empty.
   if (classic.trap) {
     return {
       snapshot: current,
-      event: emptyEvent('Классический trap отключён — ждём spoof-sweep / absorption'),
+      event: emptyEvent(
+        'Trap flip отключён — жду wall-release / absorption (не spoof)'
+      ),
     }
   }
   const limit =

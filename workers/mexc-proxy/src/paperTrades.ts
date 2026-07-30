@@ -1210,6 +1210,34 @@ export async function monitorPaperTrades(
     const favorR =
       r > 0 ? (Math.abs(snap.last - fill) / r) * (unreal >= 0 ? 1 : -1) : 0
 
+    // Journal: 93% LOSS never went green — cut dead meme entries early
+    if (
+      isMemeTrade(t) &&
+      t.openedAt != null &&
+      now - t.openedAt >= 4 * 60_000 &&
+      now - t.openedAt < 20 * 60_000 &&
+      unreal < 0.35 &&
+      (t.peak == null ||
+        Math.abs(pnlPct(t.side, fill, t.peak)) < 0.35) &&
+      !hitTp(t, snap) &&
+      !hitSl(t, snap)
+    ) {
+      t.status = 'CLOSED'
+      t.closedAt = now
+      t.closeReason = 'dead_entry'
+      dirty = true
+      comments.push({
+        alertType: 'SYSTEM',
+        title: `✂ MEME мёртвый вход ${nameOf(t.symbol)}`,
+        text: [
+          `4+ мин без MFE ≥0.35% — режу (журнал: такие LOSS почти всегда).`,
+          `Вход ${fmt(fill)} → ${fmt(snap.last)} · ${unreal.toFixed(2)}%`,
+        ].join('\n'),
+        dedupeKey: `paper:dead:${t.id}`,
+      })
+      continue
+    }
+
     if (trail.moved && !t.trailMovedSent) {
       t.trailMovedSent = true
       dirty = true

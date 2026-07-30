@@ -8,8 +8,8 @@ const REFRESH_MS = 45 * 60_000
 const MAX_PUMPS = 5
 const MAX_DUMPS = 5
 const MAX_TOTAL = 8
-const MIN_ABS_CHG_PCT = 6
-const MIN_QUOTE_VOL = 200_000
+const MIN_ABS_CHG_PCT = 5
+const MIN_QUOTE_VOL = 150_000
 
 export type DayBias = 'PUMP' | 'DUMP'
 

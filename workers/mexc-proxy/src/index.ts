@@ -1568,7 +1568,7 @@ async function sendDemoSignal(
           '🦈 <b>MEME ORDER-FLOW · TEST</b>',
           '',
           `Сигнал @ ${now}`,
-          'Order-Flow MM Join demo — проверка доставки.',
+          'MEME Day Continue demo — проверка доставки.',
           'Не торговать.',
         ].join('\n')
   await tgSend(env, chatId, text, channel)
@@ -1895,7 +1895,7 @@ async function dispatchCommand(
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: Order-Flow MM Join (cron */2)`,
+        `Режим: MEME Day Continue v26 (cron */2)`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
         hotLine,
