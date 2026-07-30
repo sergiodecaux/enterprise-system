@@ -4,6 +4,7 @@ import type {
   PriceForecast,
   MultiTFAlignment,
   LiquidityLevel,
+  PriceScenario,
 } from '../engine/prediction/types'
 import { buildScenarios } from '../engine/prediction/scenarioBuilder'
 import {
@@ -24,11 +25,10 @@ function getCandleSeconds(tf: string): number {
   return map[tf] ?? 3600
 }
 
-/** Timestamp последней закрытой свечи (unix seconds) */
+/** Timestamp последней (формирующейся) свечи на графике — unix seconds */
 export function getLastCandleTimestamp(candles: OhlcvCandle[]): number {
   if (candles.length === 0) return Math.floor(Date.now() / 1000)
-  const lastClosed = candles.length > 1 ? candles[candles.length - 2] : candles[0]
-  return Math.floor(lastClosed[0] / 1000)
+  return Math.floor(candles[candles.length - 1][0] / 1000)
 }
 
 function normalizeHorizon(
@@ -44,6 +44,26 @@ function calcMomentumPct(candles: OhlcvCandle[], lookback = 8): number {
   const start = candles[candles.length - 1 - lookback][4]
   if (start <= 0) return 0
   return ((end - start) / start) * 100
+}
+
+/** Bucket OBI (−1…+1) so tiny book ticks don't rebuild paths */
+export function quantizeBookImbalance(
+  book: number | null | undefined,
+  step = 0.05
+): number | null {
+  if (book == null || !Number.isFinite(book)) return null
+  return Math.round(book / step) * step
+}
+
+function pickDominantScenario(
+  scenarios: PriceScenario[]
+): 'A' | 'B' | 'C' {
+  let best: PriceScenario | null = null
+  for (const s of scenarios) {
+    if (!best || (s.probability ?? 0) > (best.probability ?? 0)) best = s
+  }
+  const id = best?.id
+  return id === 'B' || id === 'C' ? id : 'A'
 }
 
 export function usePriceForecast(
@@ -73,8 +93,20 @@ export function usePriceForecast(
     preferredSide: 'LONG' | 'SHORT' | null
   } | null = null
 ): PriceForecast | null {
+  // Stabilize deps: tiny OBI ticks must not recreate the memo key
+  const bookQ = quantizeBookImbalance(bookImbalance)
+  const priceQ =
+    currentPrice > 0 ? Number(currentPrice.toPrecision(6)) : 0
+  const rsQ =
+    btcRelativeStrengthPct != null && Number.isFinite(btcRelativeStrengthPct)
+      ? Math.round(btcRelativeStrengthPct * 2) / 2
+      : null
+  const mmKey = mmHunt
+    ? `${mmHunt.preferredSide ?? ''}:${mmHunt.microTarget ?? ''}:${mmHunt.macroTarget ?? ''}:${mmHunt.microIsStopHunt ? 1 : 0}`
+    : ''
+
   return useMemo(() => {
-    if (!alignment || currentPrice === 0) return null
+    if (!alignment || priceQ === 0) return null
 
     const mode = normalizeHorizon(horizon)
     const momentumPct = calcMomentumPct(candles, mode === 'SCALP' ? 5 : 8)
@@ -83,12 +115,13 @@ export function usePriceForecast(
       const daily = candles1d.length >= 20 ? candles1d : candles
       if (daily.length < 20) return null
 
-      const lastCandleTs = Math.floor(Date.now() / 1000)
+      // Anchor to last daily bar — not wall-clock (avoids path crawl thrash)
+      const lastCandleTs = getLastCandleTimestamp(daily)
       const scenarios = buildMacroScenarios(
         daily,
         alignment,
         liquidityMap,
-        currentPrice,
+        priceQ,
         newsBias,
         fearGreed
       )
@@ -96,18 +129,18 @@ export function usePriceForecast(
         daily,
         alignment,
         liquidityMap,
-        currentPrice,
+        priceQ,
         newsBias,
         newsScore
       )
 
       return {
         symbol,
-        currentPrice,
+        currentPrice: priceQ,
         scenarios,
         mtfAlignment: alignment,
         liquidityMap,
-        dominantScenario: 'A' as const,
+        dominantScenario: pickDominantScenario(scenarios),
         generatedAt: Date.now(),
         candleTimeframeSeconds: 86_400,
         lastCandleTimestamp: lastCandleTs,
@@ -117,15 +150,15 @@ export function usePriceForecast(
     }
 
     if (candles.length < 20) return null
-    // Anchor paths to "now" so scenarios crawl forward instead of freezing
-    // on the last closed HTF bar for hours.
-    const lastCandleTs = Math.floor(Date.now() / 1000)
+    // Anchor to last chart candle so paths stay stable between bars.
+    // Future offsets (path timeOffsetSeconds) still project ahead of that bar.
+    const lastCandleTs = getLastCandleTimestamp(candles)
     const pathTimeScale = mode === 'SCALP' ? 0.32 : 1.15
     const scenarios = buildScenarios(
       candles,
       alignment,
       liquidityMap,
-      currentPrice,
+      priceQ,
       activeTimeframe,
       lastCandleTs,
       {
@@ -135,8 +168,8 @@ export function usePriceForecast(
         fearGreed,
         horizon: mode,
         pathTimeScale,
-        bookImbalance,
-        btcRelativeStrengthPct,
+        bookImbalance: bookQ,
+        btcRelativeStrengthPct: rsQ,
         momentumPct,
         mmHunt,
       }
@@ -144,11 +177,11 @@ export function usePriceForecast(
 
     return {
       symbol,
-      currentPrice,
+      currentPrice: priceQ,
       scenarios,
       mtfAlignment: alignment,
       liquidityMap,
-      dominantScenario: 'A' as const,
+      dominantScenario: pickDominantScenario(scenarios),
       generatedAt: Date.now(),
       candleTimeframeSeconds: getCandleSeconds(activeTimeframe),
       lastCandleTimestamp: lastCandleTs,
@@ -159,7 +192,7 @@ export function usePriceForecast(
     candles1d,
     alignment,
     liquidityMap,
-    currentPrice,
+    priceQ,
     symbol,
     activeTimeframe,
     stopLoss,
@@ -168,9 +201,10 @@ export function usePriceForecast(
     newsBias,
     newsScore,
     fearGreed,
-    bookImbalance,
-    btcRelativeStrengthPct,
+    bookQ,
+    rsQ,
     refreshKey,
+    mmKey,
     mmHunt,
   ])
 }

@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Target, Radar as RadarIcon, Activity, Flame } from 'lucide-react'
+import { Target, Radar as RadarIcon, Activity, Flame, Zap } from 'lucide-react'
 import Header from './components/layout/Header'
 import RadarView from './components/radar/RadarView'
 import SniperView from './components/sniper/SniperView'
 import TradesView from './components/trades/TradesView'
 import MemePulseView from './components/meme/MemePulseView'
+import SignalsView from './components/signals/SignalsView'
 import TacticalDrawer from './components/tactical/TacticalDrawer'
 import ErrorBoundary from './components/ErrorBoundary'
 import NewsStrip from './components/news/NewsStrip'
@@ -15,7 +16,7 @@ import { useTelegramAlerts } from './hooks/useTelegramAlerts'
 import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
 import { useAppStore } from './store/useAppStore'
 
-type ActiveTab = 'sniper' | 'meme' | 'trades' | 'radar'
+type ActiveTab = 'sniper' | 'meme' | 'trades' | 'radar' | 'signals'
 
 function App() {
   useTelegramWebApp()
@@ -41,53 +42,66 @@ function App() {
             <button
               type="button"
               onClick={() => setActiveTab('sniper')}
-              className={`flex flex-1 items-center justify-center gap-2 border-b-2 py-3 font-mono text-sm font-bold uppercase transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'sniper'
                   ? 'border-matrix text-matrix'
                   : 'border-transparent text-holo/40 hover:text-holo/70'
               }`}
             >
-              <Target className="h-4 w-4" />
+              <Target className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               Снайпер
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('meme')}
-              className={`flex flex-1 items-center justify-center gap-2 border-b-2 py-3 font-mono text-sm font-bold uppercase transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'meme'
                   ? 'border-alert text-alert'
                   : 'border-transparent text-holo/40 hover:text-holo/70'
               }`}
             >
-              <Flame className="h-4 w-4" />
+              <Flame className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               Мемы
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('trades')}
-              className={`flex flex-1 items-center justify-center gap-2 border-b-2 py-3 font-mono text-sm font-bold uppercase transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'trades'
                   ? 'border-matrix text-matrix'
                   : 'border-transparent text-holo/40 hover:text-holo/70'
               }`}
             >
-              <Activity className="h-4 w-4" />
+              <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               Сделки
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('radar')}
-              className={`flex flex-1 items-center justify-center gap-2 border-b-2 py-3 font-mono text-sm font-bold uppercase transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'radar'
                   ? 'border-matrix text-matrix'
                   : 'border-transparent text-holo/40 hover:text-holo/70'
               }`}
             >
-              <RadarIcon className="h-4 w-4" />
+              <RadarIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               Радар
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('signals')}
+              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
+                activeTab === 'signals'
+                  ? 'border-amber-400 text-amber-300'
+                  : 'border-transparent text-holo/40 hover:text-holo/70'
+              }`}
+            >
+              <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              Сигналы
             </button>
           </div>
         </div>
@@ -98,6 +112,7 @@ function App() {
           {activeTab === 'meme' && <MemePulseView />}
           {activeTab === 'trades' && <TradesView />}
           {activeTab === 'radar' && <RadarView />}
+          {activeTab === 'signals' && <SignalsView />}
         </main>
 
         <TacticalDrawer />

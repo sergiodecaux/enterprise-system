@@ -24,7 +24,10 @@ import { logger } from '../../utils/logger'
 import { useChartIndicators } from '../../hooks/useChartIndicators'
 import { useChartZones } from '../../hooks/useChartZones'
 import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
-import { usePriceForecast } from '../../hooks/usePriceForecast'
+import {
+  usePriceForecast,
+  quantizeBookImbalance,
+} from '../../hooks/usePriceForecast'
 import ChartSettings from './ChartSettings'
 import ChartOverlay from './ChartOverlay'
 import DirectionArrowOverlay from './DirectionArrowOverlay'
@@ -213,28 +216,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const currentPrice = ticker?.price ?? signal?.price ?? 0
   const liveBookImbalance =
     orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
+  /** 5% OBI buckets — forecast ignores sub-bucket noise */
+  const bookForForecast = quantizeBookImbalance(liveBookImbalance, 0.05)
   const btcRs = signal?.btcDivergence?.relativeStrength ?? null
   const mmFromStore = useAppStore((s) => s.mmIntent[symbol] ?? null)
   const mmSnap = signal?.mmIntent ?? mmFromStore
-  const mmHunt = mmSnap
-    ? {
-        microTarget: mmSnap.hunt.microTarget,
-        macroTarget: mmSnap.hunt.macroTarget,
-        microIsStopHunt: mmSnap.hunt.microIsStopHunt,
-        preferredSide: mmSnap.preferredSide,
-      }
-    : null
-  // Re-anchor scenario paths every ~60s even if HTF candles are quiet
-  const [scenarioClock, setScenarioClock] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => setScenarioClock((n) => n + 1), 60_000)
-    return () => window.clearInterval(id)
-  }, [])
+  const mmHunt = useMemo(() => {
+    if (!mmSnap) return null
+    return {
+      microTarget: mmSnap.hunt.microTarget,
+      macroTarget: mmSnap.hunt.macroTarget,
+      microIsStopHunt: mmSnap.hunt.microIsStopHunt,
+      preferredSide: mmSnap.preferredSide,
+    }
+  }, [
+    mmSnap?.hunt.microTarget,
+    mmSnap?.hunt.macroTarget,
+    mmSnap?.hunt.microIsStopHunt,
+    mmSnap?.preferredSide,
+  ])
+  // Soft refresh: new candle window / OBI bucket / MM update — not every book tick
   const forecastRefreshKey =
-    Math.round((ticker?.timestamp ?? 0) / 15_000) +
-    Math.round((orderBookMetrics?.imbalance ?? 0) * 10) +
-    (mmSnap?.updatedAt ? Math.round(mmSnap.updatedAt / 15_000) : 0) +
-    scenarioClock
+    Math.round((ticker?.timestamp ?? 0) / 30_000) +
+    Math.round((orderBookMetrics?.imbalance ?? 0) / 5) +
+    (mmSnap?.updatedAt ? Math.round(mmSnap.updatedAt / 30_000) : 0)
 
   const baseSym = flatSymbol.replace(/USDT$/i, '').replace(/_USDT$/i, '')
   const coinSentiment = useAppStore(
@@ -390,7 +395,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     newsBias,
     newsScore,
     fearGreedValue,
-    liveBookImbalance,
+    bookForForecast,
     btcRs,
     forecastRefreshKey,
     mmHunt
@@ -1619,11 +1624,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   )
 
   const showSessions = sessionSettings.enabled && !cleanMode
+  /** Zones / Сделки / Сигнал draw their own chartPath — hide A/B/C to avoid double story */
+  const pathModeActive = zonesMode || tradesMode || signalMode
+  const showPredictionPaths = showForecast && !pathModeActive
   const showGhost =
     !!signal?.direction &&
     signal.sl != null &&
     signal.tp1 != null &&
     !showForecast &&
+    !pathModeActive &&
     chartReady > 0 &&
     lastCandleTs > 0
 
@@ -1634,7 +1643,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         forecast:
           forecast && forecast.scenarios.length > 0 ? forecast : null,
         alignment,
-        bookImbalance: liveBookImbalance,
+        bookImbalance: bookForForecast,
         newsBias,
         timeframe,
       }),
@@ -1642,7 +1651,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       signal,
       forecast,
       alignment,
-      liveBookImbalance,
+      bookForForecast,
       newsBias,
       timeframe,
     ]
@@ -2130,7 +2139,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
               </div>
             </div>
           )}
-        {showForecast && forecast && chartReady > 0 && (
+        {showPredictionPaths && forecast && chartReady > 0 && (
           <PredictionOverlay
             chart={chartRef.current}
             series={candleRef.current}
@@ -2149,7 +2158,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             lastCandleTs={lastCandleTs}
           />
         )}
-        {(zonesMode || tradesMode || signalMode) &&
+        {pathModeActive &&
           pickedSetups.some((s) => s.chartPath?.length) &&
           chartReady > 0 && (
           <ZonePathOverlay
@@ -2188,7 +2197,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />
       )}
 
-      {!chartExpanded && showForecast && forecast && (
+      {!chartExpanded && showPredictionPaths && forecast && (
         <>
           <ScenarioLegend
             scenarios={forecast.scenarios}

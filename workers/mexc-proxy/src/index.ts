@@ -248,6 +248,12 @@ export default {
       return handleTelegram(request, env, path, ctx)
     }
 
+    if (path === '/market-context' || path === '/market-context/') {
+      const { getMarketContext } = await import('./marketContext')
+      const ctx = await getMarketContext()
+      return json(ctx)
+    }
+
     if (request.method !== 'GET') {
       return new Response('Method not allowed', {
         status: 405,
