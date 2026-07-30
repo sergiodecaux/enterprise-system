@@ -38,6 +38,9 @@ import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
 import { buildMarketBrief } from '../../engine/brief'
 import MarketBriefPanel from './MarketBriefPanel'
 import CollapsibleSection from '../ui/CollapsibleSection'
+import CoinAnalysisUpgradePanel from './CoinAnalysisUpgradePanel'
+import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
+import { pushSignalSnapshot } from '../../engine/analysis'
 
 /** Панель дивергенции силы альта vs BTC */
 const BtcDivergencePanel = ({
@@ -555,11 +558,18 @@ const TacticalDrawer = () => {
     })
   }, [signal, mtfAlignment, mtfLiq, brief1d, brief4h, brief1h])
 
+  const workerCtx = useWorkerMarketContext()
+  const journalVersion = useAppStore((s) => s.journalVersion)
+
   useEffect(() => {
     if (isDrawerOpen && signal) {
       haptic.impact()
     }
   }, [isDrawerOpen, signal, haptic])
+
+  useEffect(() => {
+    if (signal) pushSignalSnapshot(signal)
+  }, [signal])
 
   const compositeAnalysis = useMemo(() => {
     if (!signal) return null
@@ -722,6 +732,19 @@ const TacticalDrawer = () => {
               <CompositeAnalysisPanel analysis={compositeAnalysis} />
             </CollapsibleSection>
           )}
+
+          <CollapsibleSection
+            title="Анализ+"
+            subtitle="WR · gate · playbook · статус"
+            defaultOpen
+          >
+            <CoinAnalysisUpgradePanel
+              signal={signal}
+              composite={compositeAnalysis}
+              workerCtx={workerCtx}
+              refreshKey={journalVersion}
+            />
+          </CollapsibleSection>
 
           <div className="flex justify-center">
             <ProbabilityGauge value={probability} direction={direction} />

@@ -41,6 +41,12 @@ import type { ConditionalSetup } from '../../engine/setups'
 import { useAppStore } from '../../store/useAppStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { logger } from '../../utils/logger'
+import {
+  buildMarketContextBoost,
+  evaluateReadyGate,
+  pushSignalSnapshot,
+} from '../../engine/analysis'
+import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 
 const BTC = 'BTC/USDT:USDT'
 
@@ -201,6 +207,18 @@ const SignalsView = () => {
         }
       }
 
+      const baseSym = symbol.split('/')[0]
+      const localNews =
+        useAppStore.getState().newsSettings.scoreInfluence
+          ? useAppStore.getState().newsIntel.coinSentiments[baseSym]?.scoreBoost
+          : undefined
+      const ctxBoost = buildMarketContextBoost({
+        internalSymbol: symbol,
+        side,
+        workerCtx: workerCtx ?? getCachedWorkerMarketContext(),
+        localNewsBoost: localNews,
+      })
+
       const { signal } = analyzeSymbol({
         internalSymbol: symbol,
         ohlcv4h: c4h,
@@ -211,8 +229,12 @@ const SignalsView = () => {
         dailyBias,
         btcTrend,
         mmIntent: mmIntentMap[symbol] ?? existing?.mmIntent ?? null,
+        newsSentimentBoost: ctxBoost.newsSentimentBoost || undefined,
+        marketCtxBoost: ctxBoost.marketCtxBoost || undefined,
+        marketCtxNotes: ctxBoost.notes.length ? ctxBoost.notes : undefined,
       })
       upsertSignal(signal)
+      pushSignalSnapshot(signal)
 
       const price = selected.lastPrice > 0 ? selected.lastPrice : signal.price
       const base = coinBaseFromInternal(symbol)
@@ -260,6 +282,17 @@ const SignalsView = () => {
     if (!result?.bestSetup || !selected) {
       showAlert('Нет готового сетапа для слежения — зона слишком слабая')
       return
+    }
+    const signalForGate = signals.find(
+      (s) => s.internalSymbol === selected.symbol
+    )
+    if (signalForGate) {
+      const gate = evaluateReadyGate(signalForGate)
+      if (!gate.ready) {
+        showAlert(
+          `Gate не готов (${gate.passCount}/${gate.needCount}): ${gate.summary}. Можно следить, но вход рано.`
+        )
+      }
     }
     const chatId = resolveChatId()
     if (!chatId) {

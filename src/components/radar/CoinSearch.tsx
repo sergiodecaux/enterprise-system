@@ -15,6 +15,11 @@ import { useAppStore } from '../../store/useAppStore'
 import { analyzeSymbol } from '../../engine/ProbabilityEngine'
 import { resolveDailyBias, detectMarketStructure } from '../../engine/smc'
 import { logger } from '../../utils/logger'
+import { buildMarketContextBoost, pushSignalSnapshot } from '../../engine/analysis'
+import {
+  getCachedWorkerMarketContext,
+  loadWorkerMarketContext,
+} from '../../hooks/useWorkerMarketContext'
 
 const BTC = 'BTC/USDT:USDT'
 
@@ -71,6 +76,7 @@ const CoinSearch = () => {
     if (known.has(ticker.symbol) || adding) return
     setAdding(ticker.symbol)
     try {
+      void loadWorkerMarketContext()
       addToWatchlist(ticker.symbol)
 
       updateTicker({
@@ -117,6 +123,24 @@ const CoinSearch = () => {
         }
       }
 
+      const baseSym = ticker.symbol.split('/')[0]
+      const localNews =
+        useAppStore.getState().newsSettings.scoreInfluence
+          ? useAppStore.getState().newsIntel.coinSentiments[baseSym]?.scoreBoost
+          : undefined
+      const sideHint =
+        dailyBias.bias === 'BULLISH'
+          ? 'LONG'
+          : dailyBias.bias === 'BEARISH'
+            ? 'SHORT'
+            : null
+      const ctxBoost = buildMarketContextBoost({
+        internalSymbol: ticker.symbol,
+        side: sideHint,
+        workerCtx: getCachedWorkerMarketContext(),
+        localNewsBoost: localNews,
+      })
+
       const { signal } = analyzeSymbol({
         internalSymbol: ticker.symbol,
         ohlcv4h: c4h,
@@ -126,9 +150,13 @@ const CoinSearch = () => {
         priceChange24h: ticker.priceChangePercent,
         dailyBias,
         btcTrend,
+        newsSentimentBoost: ctxBoost.newsSentimentBoost || undefined,
+        marketCtxBoost: ctxBoost.marketCtxBoost || undefined,
+        marketCtxNotes: ctxBoost.notes.length ? ctxBoost.notes : undefined,
       })
 
       upsertSignal(signal)
+      pushSignalSnapshot(signal)
       setQuery('')
       setOpen(false)
       selectCoin(signal.symbol)

@@ -35,8 +35,8 @@ export const volatilityLevelLabel: Record<VolatilityLevel, string> = {
 }
 
 export const confluenceCategoryLabel: Record<string, string> = {
-  technical: 'Техника',
-  orderFlow: 'Поток ордеров',
+  technical: 'Структура (HTF)',
+  orderFlow: 'Микро-давление',
   sentiment: 'Настроение',
   timing: 'Тайминг',
 }

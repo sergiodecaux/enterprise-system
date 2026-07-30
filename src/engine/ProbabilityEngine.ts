@@ -94,6 +94,13 @@ export interface AnalyzeSymbolInput {
   wallTracker?: WallTrackerState
   /** News sentiment boost from News Intelligence (−1.5…+1.5) */
   newsSentimentBoost?: number
+  /**
+   * Extra score nudge from BTC.D / Fear&Greed (worker market context).
+   * Applied after news boost; clamped −0.8…+0.8.
+   */
+  marketCtxBoost?: number
+  /** Human notes from market context (appended to zones when |boost| meaningful) */
+  marketCtxNotes?: string[]
   /** Опциональная карта ликвидности для score-буста */
   liquidityMap?: LiquidityMap
   /**
@@ -619,6 +626,8 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     btcTrend,
     wallTracker,
     newsSentimentBoost,
+    marketCtxBoost,
+    marketCtxNotes,
     liquidityMap,
     btcOhlcv1h,
     ohlcv5m,
@@ -747,6 +756,24 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       score: finalScore,
       zones: [...zones, `NEWS_BOOST: ${clampedBoost.toFixed(2)}`],
     }
+  }
+
+  const applyMarketCtxBoost = (
+    score: number,
+    zones: string[]
+  ): { score: number; zones: string[] } => {
+    const delta = marketCtxBoost ?? 0
+    if (!delta && !(marketCtxNotes?.length)) return { score, zones }
+    const clamped = Math.max(-0.8, Math.min(0.8, delta))
+    const finalScore = Math.min(Math.max(score + clamped, 0), 10)
+    const nextZones = [...zones]
+    if (Math.abs(clamped) > 0.05) {
+      nextZones.push(`CTX_BOOST: ${clamped.toFixed(2)}`)
+    }
+    for (const n of (marketCtxNotes ?? []).slice(0, 3)) {
+      nextZones.push(`CTX: ${n}`)
+    }
+    return { score: finalScore, zones: nextZones }
   }
 
   const applyLiquidityBoost = (
@@ -1146,10 +1173,11 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     const bookBoosted = applyBookBoost(wallBoosted.score, side, wallBoosted.zones)
     const mmBoosted = applyMmBoost(bookBoosted.score, side, bookBoosted.zones)
     const newsBoosted = applyNewsBoost(mmBoosted.score, mmBoosted.zones)
+    const ctxBoosted = applyMarketCtxBoost(newsBoosted.score, newsBoosted.zones)
     const liqBoosted = applyLiquidityBoost(
-      newsBoosted.score,
+      ctxBoosted.score,
       side,
-      newsBoosted.zones
+      ctxBoosted.zones
     )
     const divBoosted = applyDivergenceBoost(
       liqBoosted.score,
@@ -1396,10 +1424,11 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const softBook = applyBookBoost(softWall.score, softDirection, softWall.zones)
   const softMm = applyMmBoost(softBook.score, softDirection, softBook.zones)
   const softNews = applyNewsBoost(softMm.score, softMm.zones)
+  const softCtx = applyMarketCtxBoost(softNews.score, softNews.zones)
   const softLiq = applyLiquidityBoost(
-    softNews.score,
+    softCtx.score,
     softDirection,
-    softNews.zones
+    softCtx.zones
   )
   const softDiv = applyDivergenceBoost(softLiq.score, softDirection, softLiq.zones)
   const softLTF = applyLTFBoost(softDiv.score, softDirection, softDiv.zones)

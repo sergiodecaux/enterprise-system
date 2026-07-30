@@ -43,6 +43,8 @@ import type {
   OrderBookSnapshot,
 } from '../engine/types'
 import { logger } from '../utils/logger'
+import { getCachedWorkerMarketContext, loadWorkerMarketContext } from './useWorkerMarketContext'
+import { buildMarketContextBoost, pushSignalSnapshot } from '../engine/analysis'
 
 const BTC = 'BTC/USDT:USDT'
 const SCAN_PAUSE_MS = 75_000
@@ -161,6 +163,7 @@ export const useMexcScanner = () => {
 
       setMarketContext({ ...ctxBase, scanProgress: 'Сканирование...' })
       setConnectionStatus('POLLING')
+      void loadWorkerMarketContext()
 
       // Price map for 24h change
       const tickerMap = new Map<string, number>()
@@ -214,7 +217,7 @@ export const useMexcScanner = () => {
           const ohlcv1m = await fetchOhlcv(symbol, '1m', 100)
 
           const baseSym = symbol.split('/')[0]
-          const newsBoost =
+          const localNewsBoost =
             useAppStore.getState().newsSettings.scoreInfluence
               ? useAppStore.getState().newsIntel.coinSentiments[baseSym]
                   ?.scoreBoost
@@ -370,6 +373,20 @@ export const useMexcScanner = () => {
           const sessionDna =
             useAppStore.getState().sessionDNA[symbol] ?? null
 
+          const sideHint =
+            mmIntent?.preferredSide ??
+            (dailyBias.bias === 'BULLISH'
+              ? 'LONG'
+              : dailyBias.bias === 'BEARISH'
+                ? 'SHORT'
+                : null)
+          const ctxBoost = buildMarketContextBoost({
+            internalSymbol: symbol,
+            side: sideHint,
+            workerCtx: getCachedWorkerMarketContext(),
+            localNewsBoost,
+          })
+
           const { signal, triggered } = analyzeSymbol({
             internalSymbol: symbol,
             ohlcv4h,
@@ -379,7 +396,9 @@ export const useMexcScanner = () => {
             priceChange24h: tickerMap.get(symbol) ?? 0,
             dailyBias,
             btcTrend,
-            newsSentimentBoost: newsBoost,
+            newsSentimentBoost: ctxBoost.newsSentimentBoost || undefined,
+            marketCtxBoost: ctxBoost.marketCtxBoost || undefined,
+            marketCtxNotes: ctxBoost.notes.length ? ctxBoost.notes : undefined,
             liquidityMap,
             btcOhlcv1h:
               btc1hRef.current.length > 25 ? btc1hRef.current : undefined,
@@ -420,6 +439,7 @@ export const useMexcScanner = () => {
           }
 
           results.push(signal)
+          pushSignalSnapshot(signal)
 
           updateTicker({
             symbol: signal.symbol,

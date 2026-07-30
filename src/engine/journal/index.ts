@@ -22,6 +22,11 @@ export type {
 export { SETUP_LABELS } from './classify'
 export { computeJournalAnalytics, calcPnlAndR } from './stats'
 export {
+  querySimilarSetups,
+  type SimilarSetupsStats,
+  type SimilarSetupsQuery,
+} from './similarSetups'
+export {
   loadJournal,
   saveJournal,
   clearJournal,
