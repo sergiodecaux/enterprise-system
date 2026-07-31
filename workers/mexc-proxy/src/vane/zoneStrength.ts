@@ -116,17 +116,20 @@ export async function assessZoneStrength(opts: {
   mid: number
   candles1m: Candle[]
   kv?: VaneKv
+  /** Skip deals endpoint (saves 1 subrequest) — CVD falls back to candles */
+  skipDeals?: boolean
 }): Promise<ZoneStrengthResult> {
   const notes: string[] = []
   const path = `/api/v1/contract/depth/${opts.symbol}?limit=20`
-  const [depth, dealsJson] = await Promise.all([
-    mexcJson<{
-      data?: { asks?: [number, number, number][]; bids?: [number, number, number][] }
-    }>(path),
-    mexcJson<{
-      data?: Array<{ p: number; v: number; T?: number }>
-    }>(`/api/v1/contract/deals/${opts.symbol}?limit=50`),
-  ])
+  const depthP = mexcJson<{
+    data?: { asks?: [number, number, number][]; bids?: [number, number, number][] }
+  }>(path)
+  const dealsP = opts.skipDeals
+    ? Promise.resolve(null)
+    : mexcJson<{
+        data?: Array<{ p: number; v: number; T?: number }>
+      }>(`/api/v1/contract/deals/${opts.symbol}?limit=50`)
+  const [depth, dealsJson] = await Promise.all([depthP, dealsP])
 
   const asks = parseLevels(depth?.data?.asks)
   const bids = parseLevels(depth?.data?.bids)

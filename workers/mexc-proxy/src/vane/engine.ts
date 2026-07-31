@@ -145,25 +145,19 @@ async function analyzeSymbol(opts: {
 
   if (!opts.sessionOk) return null
 
-  // LTF live; HTF from KV cache to cut subrequests
-  const [c1m, c5m, c15m, c1h, c4h, c1d] = await Promise.all([
-    fetchKlinesCached(opts.kv, symbol, 'Min1', 120),
-    fetchKlinesCached(opts.kv, symbol, 'Min5', 48),
+  // Phase 1: HTF only (mostly KV cache) — avoid 6× MEXC per symbol every minute
+  const [c15m, c1h, c4h, c1d] = await Promise.all([
     fetchKlinesCached(opts.kv, symbol, 'Min15', 64),
     fetchKlinesCached(opts.kv, symbol, 'Min60', 48),
     fetchKlinesCached(opts.kv, symbol, 'Hour4', 90),
     fetchKlinesCached(opts.kv, symbol, 'Day1', 60),
   ])
-  if (c4h.length < 30 || c1m.length < 30) return null
-
-  const spike = volSpikePause(c1m)
-  if (spike.pause) return null
+  if (c4h.length < 30) return null
 
   const regime = detectMarketRegime(c1h)
   const bias4h = tfBias(c4h)
   const bias1d = tfBias(c1d)
   const atr15 = atr(c15m, 14) || price * 0.008
-  const atr1m = atr(c1m, 8) || price * 0.002
   const htf = computeHtfTrendLite(c1h, c4h)
   const map = buildHtfLiquidityMap({
     candles4h: c4h,
@@ -242,6 +236,17 @@ async function analyzeSymbol(opts: {
     }
   }
 
+  // Phase 2: LTF + book only when zone is in radar (cuts empty-symbol HTTP)
+  const [c1m, c5m] = await Promise.all([
+    fetchKlinesCached(opts.kv, symbol, 'Min1', 120),
+    fetchKlinesCached(opts.kv, symbol, 'Min5', 48),
+  ])
+  if (c1m.length < 30) return null
+
+  const spike = volSpikePause(c1m)
+  if (spike.pause) return null
+  const atr1m = atr(c1m, 8) || price * 0.002
+
   // Skip expensive depth/deals unless near zone, FAR-in-radar, or flip armed
   const nearOrFlip = candidates.some((c) => {
     const ph = phaseOfGeom(price, c.zone.zoneLow, c.zone.zoneHigh)
@@ -313,6 +318,8 @@ async function analyzeSymbol(opts: {
     mid: zone.mid,
     candles1m: c1m,
     kv: opts.kv,
+    /** FAR wait: depth only — skip deals to save a subrequest */
+    skipDeals: phaseGeom === 'FAR',
   })
 
   direction = computeVaneDirection({
@@ -757,17 +764,14 @@ export async function runVaneScan(opts?: {
 
   const btc = await loadBtcShield()
   const universe = await loadVaneUniverse({ pinSymbols: opts?.pinSymbols })
-  // v4: scan hot movers first within TOP-18 (was full TOP-5 only)
-  const scanN = Math.min(
-    universe.length,
-    Math.max(10, opts?.batchSize ?? 12)
-  )
+  // v4.2: honor cron batchSize (was forcing ≥10 → Too many subrequests)
+  const scanN = Math.min(universe.length, Math.max(3, opts?.batchSize ?? 5))
   const { batch: queue, cursor, nextCursor } = await pickVaneBatch({
     kv,
     universe,
     pinSymbols: opts?.pinSymbols,
     batchSize: scanN,
-    hotSlots: Math.min(8, Math.max(4, scanN - 2)),
+    hotSlots: Math.min(3, Math.max(2, scanN - 1)),
   })
   console.log(
     `[vane] scalp-start cursor ${cursor}→${nextCursor} n=${queue.length}/${universe.length}:`,
@@ -775,22 +779,21 @@ export async function runVaneScan(opts?: {
   )
 
   const decisions: VaneDecision[] = []
-  // Sequential pairs max 2 — respects 6 concurrent connection limit
-  for (let i = 0; i < queue.length; i += 2) {
-    const slice = queue.slice(i, i + 2)
-    const parts = await Promise.all(
-      slice.map((t) =>
-        analyzeSymbol({
-          ticker: t,
-          kv,
-          btc,
-          sessionOk: true,
-          sessionReason: session.reason,
-        })
-      )
-    )
-    for (const d of parts) {
+  // Sequential (not pairs) — lower peak concurrent subrequests under CF cap
+  for (const t of queue) {
+    try {
+      const d = await analyzeSymbol({
+        ticker: t,
+        kv,
+        btc,
+        sessionOk: true,
+        sessionReason: session.reason,
+      })
       if (d) decisions.push(d)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[vane] symbol failed', t.symbol, msg)
+      if (/subrequest/i.test(msg)) break
     }
   }
 

@@ -8,8 +8,10 @@ compatibility_date = "2024-01-01"
 crons = [
   "*/2 * * * *",      # predator (memes)
   "1-59/2 * * * *",   # paper monitor + journal
-  "* * * * *"         # vane auto-search (hot + round-robin TOP-50)
+  "* * * * *"         # vane auto-search (hot + round-robin)
 ]
+
+# Free plan: no [limits] cpu_ms (paid-only). Stay under ~50 subrequests/invocation.
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"

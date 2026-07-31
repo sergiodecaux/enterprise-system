@@ -8,8 +8,8 @@ export const BOT_ENGINE = {
 
 /** BTC + alts vane sniper — early scalp + wait zone */
 export const SNIPER_ENGINE = {
-  id: 'vane-scalp-start-v4.1',
+  id: 'vane-scalp-start-v4.2',
   label: 'VANE: Scalp Start',
   deployedNote:
-    'v4.1: SCALP/WAIT шаблоны · impulse fill · TP≈2.4×ATR1m · max 2 cluster LONGs · CB 3 LOSS→пауза 3ч (не до полуночи) · sync open slots.',
+    'v4.2: batch 5 · HTF-first (LTF/book только у зоны) · кэш Min1/5 · без probe на vane-cron · фикс Too many subrequests.',
 } as const

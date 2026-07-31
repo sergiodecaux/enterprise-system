@@ -1387,7 +1387,12 @@ async function runCronScan(
         batchSize: 5,
       })
       for (const a of sniperAlerts) {
-        await deliver(a)
+        try {
+          await deliver(a)
+        } catch (err) {
+          console.error('[cron] vane deliver failed', a.dedupeKey, err)
+          failed++
+        }
       }
     } catch (err) {
       console.error('[cron] vane sniper scan failed', err)
@@ -1445,15 +1450,8 @@ async function runCronScan(
 
   if (role === 'vane' || role === 'all') {
     await runVane()
-    // Paper ticks can lose the LAST_SCAN race to vane; still probe from here.
-    if (role === 'vane') {
-      try {
-        const probed = await maybeDeliveryProbe(env)
-        if (probed > 0) heartbeat += probed
-      } catch (err) {
-        console.error('[cron] vane delivery probe failed', err)
-      }
-    }
+    // Do NOT run delivery probe on vane ticks — scan already near CF subrequest cap.
+    // Probe stays on paper cron only.
   }
 
   const result = {

@@ -3,14 +3,15 @@ import type { Candle, VaneKv } from './types'
 
 const CACHE_PREFIX = 'vane:klines:'
 
-/** HTF / mid TF TTL — LTF always live */
+/** HTF / mid TF TTL — LTF lightly cached to stay under CF subrequest caps */
 const TTL_MS: Record<string, number> = {
-  Day1: 15 * 60_000,
-  Hour4: 12 * 60_000,
-  Min60: 10 * 60_000,
-  Min15: 5 * 60_000,
-  Min5: 0,
-  Min1: 0,
+  Day1: 20 * 60_000,
+  Hour4: 15 * 60_000,
+  Min60: 12 * 60_000,
+  Min15: 6 * 60_000,
+  /** Was live every tick — 12 symbols × Min5 blew the subrequest budget */
+  Min5: 90_000,
+  Min1: 25_000,
 }
 
 interface CacheRow {
