@@ -30,8 +30,8 @@ const BLUE_CHIPS = new Set([
   'TON_USDT',
 ])
 
-/** Preferred majors if volume ranking is noisy */
-const PREFERRED_ALTS = [
+/** Preferred majors if volume ranking is noisy — also Elite TOP-8 brief */
+export const PREFERRED_ALTS = [
   'ETH_USDT',
   'SOL_USDT',
   'BNB_USDT',
@@ -41,6 +41,9 @@ const PREFERRED_ALTS = [
   'DOGE_USDT',
   'SUI_USDT',
 ] as const
+
+/** BTC + TOP-8 for Elite Assistant briefings */
+export const ELITE_TOP_ALTS = PREFERRED_ALTS
 
 export function isBlueChip(symbol: string): boolean {
   return BLUE_CHIPS.has(symbol)

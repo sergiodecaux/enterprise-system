@@ -2,13 +2,14 @@ name = "mexc-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-# Split roles = separate CPU budgets. Vane runs every minute and finds setups itself.
+# Split roles = separate CPU budgets.
 # Cron strings must match controller.cron in scheduled() exactly.
 [triggers]
 crons = [
   "*/2 * * * *",      # predator (memes)
   "1-59/2 * * * *",   # paper monitor + journal
-  "* * * * *"         # vane auto-search (hot + round-robin)
+  "5 * * * *",        # Elite Assistant hourly (BTC + TOP-8)
+  "5 0 * * *"         # Elite Assistant daily close UTC
 ]
 
 # Free plan: no [limits] cpu_ms (paid-only). Stay under ~50 subrequests/invocation.

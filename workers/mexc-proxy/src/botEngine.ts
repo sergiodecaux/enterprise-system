@@ -6,10 +6,16 @@ export const BOT_ENGINE = {
     'v26.2: BE@0.5R · TP1 lock+trail 0.45–0.6% · abs conf≥92 · symbol cooldown 75м · CONT_BOOK_RELEASE приоритет.',
 } as const
 
-/** BTC + alts — MACRO everywhere (zone / range / momentum) + memory */
+/**
+ * Enterpriseelite_bot — market assistant (not auto-sniper).
+ * Hourly TOP-8+BTC brief · daily close · zones · F&G · news · liq map.
+ */
 export const SNIPER_ENGINE = {
-  id: 'vane-macro-v6.1',
-  label: 'VANE: MACRO + memory',
+  id: 'elite-assistant-v1',
+  label: 'ELITE: Market Assistant',
   deployedNote:
-    'v6.1: MACRO ZONE/RANGE/MOMENTUM · боковик break · не mid-range · KV-память W/L · cooldown после 2 LOSS · TP 1.5–3.8%.',
+    'v1: почасовой доклад BTC+TOP-8 · суточный close · F&G/новости/зоны/скальп·интра · ликвидации (SSL/BSL) · без авто-спама сделок.',
 } as const
+
+/** Alias for clarity in Elite-facing code */
+export const ELITE_ENGINE = SNIPER_ENGINE

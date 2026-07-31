@@ -3,7 +3,7 @@
  *
  * Secrets:
  *   npx wrangler secret put TELEGRAM_BOT_TOKEN          # meme / Predator
- *   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN   # BTC/alts zones
+ *   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN   # Elite Assistant (Enterpriseelite_bot)
  *   npx wrangler secret put ALERT_SECRET
  *
  * KV:
@@ -13,13 +13,18 @@
  *   curl "https://api.telegram.org/bot<MEME_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook"
  *   curl "https://api.telegram.org/bot<SNIPER_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook/sniper"
  *
- * Crons (split budget): predator every 2m, paper on odd minutes, vane every 3m.
+ * Crons: predator every 2m, paper on odd minutes, Elite hourly at :05, daily 00:05 UTC
  */
 
 import type { ScanAlert, TradePlanPayload } from './scanner'
 import { runVaneScan, loadVaneRisk, vaneTradingPaused } from './vane'
 import { evaluateVaneSession } from './vane/sessionFilter'
 import { BOT_ENGINE, SNIPER_ENGINE } from './botEngine'
+import {
+  buildEliteBriefing,
+  buildEliteCoinBrief,
+  isEliteAssistantOnly,
+} from './elite'
 import {
   channelForAlertType,
   subKey,
@@ -216,6 +221,8 @@ interface Env {
   TELEGRAM_BOT_TOKEN?: string
   TELEGRAM_SNIPER_BOT_TOKEN?: string
   ALERT_SECRET?: string
+  /** Set to 0/false to restore VANE auto-alerts on Elite bot */
+  ELITE_ASSISTANT_ONLY?: string
   SUBSCRIBERS?: KVNamespace
 }
 
@@ -311,12 +318,20 @@ export default {
   },
 }
 
-export type CronRole = 'predator' | 'paper' | 'vane' | 'all'
+export type CronRole =
+  | 'predator'
+  | 'paper'
+  | 'vane'
+  | 'elite_hourly'
+  | 'elite_daily'
+  | 'all'
 
 function cronRoleFromExpression(cron: string): CronRole {
   if (cron === '1-59/2 * * * *') return 'paper'
   if (cron === '* * * * *') return 'vane'
   if (cron === '*/2 * * * *') return 'predator'
+  if (cron === '5 * * * *') return 'elite_hourly'
+  if (cron === '5 0 * * *') return 'elite_daily'
   // legacy every-3m vane expression
   if (cron === '0-57/3 * * * *') return 'vane'
   return 'all'
@@ -387,9 +402,14 @@ async function handleTelegram(
       cron: {
         predator: '*/2 * * * *',
         paper: '1-59/2 * * * *',
-        vane: '* * * * *',
+        eliteHourly: '5 * * * *',
+        eliteDaily: '5 0 * * *',
       },
-      mode: 'auto-search 24/7: vane every 1m · meme order-flow every 2m',
+      mode: isEliteAssistantOnly(env)
+        ? 'Elite Assistant: hourly :05 · daily 00:05 UTC · Predator */2'
+        : 'auto-search: vane · meme order-flow every 2m',
+      eliteAssistant: isEliteAssistantOnly(env),
+      eliteCrons: { hourly: '5 * * * *', daily: '5 0 * * *' },
       memeHotlist: hotList
         ? {
             updatedAt: hotList.updatedAt,
@@ -469,6 +489,38 @@ async function handleTelegram(
     })
   }
 
+  // Manual Elite brief (JSON for Mini App / debug)
+  if (
+    (path === '/elite/brief' || path === '/elite/brief/') &&
+    (request.method === 'GET' || request.method === 'POST')
+  ) {
+    const kindParam = new URL(request.url).searchParams.get('kind')
+    const kind = kindParam === 'daily' ? 'daily' : 'hourly'
+    const kv = env.SUBSCRIBERS
+      ? {
+          get: (key: string) => env.SUBSCRIBERS!.get(key),
+          put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+        }
+      : undefined
+    try {
+      const briefing = await buildEliteBriefing({ kind, kv })
+      return json({
+        ok: true,
+        kind: briefing.kind,
+        generatedAt: briefing.generatedAt,
+        sessionLine: briefing.sessionLine,
+        fearGreedLine: briefing.fearGreedLine,
+        newsLines: briefing.newsLines,
+        rankedIdeas: briefing.rankedIdeas,
+        coins: briefing.coins,
+        htmlParts: briefing.htmlParts,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return json({ ok: false, error: msg }, 500)
+    }
+  }
+
   // Manual scan trigger (cron test)
   if (
     (path === '/telegram/scan' || path === '/telegram/scan/') &&
@@ -490,6 +542,8 @@ async function handleTelegram(
       roleParam === 'predator' ||
       roleParam === 'paper' ||
       roleParam === 'vane' ||
+      roleParam === 'elite_hourly' ||
+      roleParam === 'elite_daily' ||
       roleParam === 'all'
         ? roleParam
         : 'all'
@@ -871,11 +925,14 @@ async function maybeHeartbeat(env: Env): Promise<number> {
     }
     const engine = channel === 'sniper' ? SNIPER_ENGINE : BOT_ENGINE
     attempted++
+    const elite = channel === 'sniper' && isEliteAssistantOnly(env)
     const r = await broadcastAlert(env, {
       type: 'SYSTEM',
       channel,
-      title: 'Scanner online',
-      text: `🟢 24/7 heartbeat · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
+      title: elite ? 'Elite online' : 'Scanner online',
+      text: elite
+        ? `🏛 Elite Assistant · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий доклад ~:05 UTC · /brief`
+        : `🟢 24/7 heartbeat · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
       dedupeKey: `heartbeat:${channel}:${tick}`,
     })
     sent += r.sent
@@ -1372,6 +1429,11 @@ async function runCronScan(
   }
 
   const runVane = async () => {
+    // Elite Assistant mode: no auto trade spam on Enterpriseelite_bot
+    if (isEliteAssistantOnly(env)) {
+      console.log('[cron] vane skipped — Elite Assistant mode')
+      return
+    }
     if (!env.TELEGRAM_SNIPER_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN) return
     try {
       const pinSymbols = (await listPaperTrades(env))
@@ -1396,6 +1458,49 @@ async function runCronScan(
       }
     } catch (err) {
       console.error('[cron] vane sniper scan failed', err)
+    }
+  }
+
+  const runEliteBrief = async (kind: 'hourly' | 'daily') => {
+    if (!env.TELEGRAM_SNIPER_BOT_TOKEN) return
+    try {
+      const stamp =
+        kind === 'daily'
+          ? new Date().toISOString().slice(0, 10)
+          : String(Math.floor(Date.now() / 3_600_000))
+      const dedupKey = `telegram:dedup:sniper:elite:${kind}:${stamp}`
+      const prev = await runtimeGet(dedupKey)
+      if (prev && kind === 'hourly') {
+        // allow re-run within hour only via /brief (manual); cron once per hour
+        const age = Date.now() - Number(prev)
+        if (Number.isFinite(age) && age < 50 * 60_000) {
+          console.log('[elite] skip cron — already sent this hour')
+          skipped++
+          return
+        }
+      }
+      const briefing = await buildEliteBriefing({ kind, kv })
+      const subs = await listSubscribers(env, 'sniper')
+      for (let i = 0; i < briefing.htmlParts.length; i++) {
+        const part = briefing.htmlParts[i]!
+        for (const sub of subs) {
+          if (sub.sniper === false) continue
+          const ok = await tgSend(env, sub.chatId, part, 'sniper')
+          if (ok) sent++
+          else failed++
+        }
+      }
+      await runtimePut(dedupKey, String(Date.now()))
+      try {
+        await env.SUBSCRIBERS?.put(dedupKey, String(Date.now()))
+      } catch {
+        /* quota */
+      }
+      console.log(
+        `[elite] ${kind} parts=${briefing.htmlParts.length} coins=${briefing.coins.length} ideas=${briefing.rankedIdeas.length} subs=${subs.length}`
+      )
+    } catch (err) {
+      console.error(`[cron] elite ${kind} failed`, err)
     }
   }
 
@@ -1452,6 +1557,14 @@ async function runCronScan(
     await runVane()
     // Do NOT run delivery probe on vane ticks — scan already near CF subrequest cap.
     // Probe stays on paper cron only.
+  }
+
+  if (role === 'elite_hourly' || role === 'all') {
+    await runEliteBrief('hourly')
+  }
+
+  if (role === 'elite_daily') {
+    await runEliteBrief('daily')
   }
 
   const result = {
@@ -1648,10 +1761,19 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🎯 <b>ENTERPRISE VANE</b>\n\nЛовит MACRO-ходы везде: зона · боковик · импульс.\nПамять по истории символа · без mid-range пилы\nTP 1.5–3.8% · 🚀 ZONE / RANGE / MOM\n\nКоманды:\n/zone BTC 94000-96000\n/status · /trades · /journal\n/scan — ручной догон · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> — помощник\n\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны · скальп/интра · ликвидации\nРаз в сутки: как закрылся день\n\nКоманды:\n/brief — доклад сейчас\n/brief ETH — по монете\n/market — рынок + страх/жадность\n/zone BTC 94000-96000\n/status · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · Liquidation Echo · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
-    await sendDemoSignal(env, chatId, channel)
+    if (channel === 'sniper') {
+      await tgSend(
+        env,
+        chatId,
+        'Следующий автодоклад около :05 UTC каждого часа. Напиши /brief чтобы получить сейчас.',
+        channel
+      )
+    } else {
+      await sendDemoSignal(env, chatId, channel)
+    }
     return
   }
 
@@ -1703,11 +1825,91 @@ async function dispatchCommand(
     return
   }
 
+  if (cmd === 'brief' || cmd === 'market') {
+    const list = await listSubscribers(env, channel)
+    const me = list.find((s) => s.chatId === chatId)
+    if (!me) {
+      await tgSend(env, chatId, 'Сначала /start', channel)
+      return
+    }
+    if (channel !== 'sniper') {
+      await tgSend(
+        env,
+        chatId,
+        'Доклады Elite — в @Enterpriseelite_bot. Здесь Predator (мемы).',
+        channel
+      )
+      return
+    }
+    const kvLocal = env.SUBSCRIBERS
+      ? {
+          get: (key: string) => env.SUBSCRIBERS!.get(key),
+          put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+        }
+      : undefined
+    const arg = parseCommand(text).arg
+    if (cmd === 'brief' && arg && !/^(hourly|daily|час|день)$/i.test(arg)) {
+      await tgSend(env, chatId, `⏳ Бриф ${arg.toUpperCase()}…`, channel)
+      try {
+        const body = await buildEliteCoinBrief(arg, kvLocal)
+        await tgSend(env, chatId, body, channel)
+      } catch (err) {
+        console.error('[brief coin]', err)
+        await tgSend(env, chatId, 'Не собрал бриф по монете.', channel)
+      }
+      return
+    }
+    const kind =
+      cmd === 'market'
+        ? 'hourly'
+        : arg && /daily|день/i.test(arg)
+          ? 'daily'
+          : 'hourly'
+    await tgSend(
+      env,
+      chatId,
+      kind === 'daily' ? '⏳ Суточный Elite…' : '⏳ Hourly Elite…',
+      channel
+    )
+    try {
+      const briefing = await buildEliteBriefing({ kind, kv: kvLocal })
+      for (const part of briefing.htmlParts) {
+        await tgSend(env, chatId, part, channel)
+      }
+    } catch (err) {
+      console.error('[brief]', err)
+      await tgSend(env, chatId, 'Не удалось собрать доклад.', channel)
+    }
+    return
+  }
+
   if (cmd === 'scan') {
     const list = await listSubscribers(env, channel)
     const me = list.find((s) => s.chatId === chatId)
     if (!me) {
       await tgSend(env, chatId, 'Сначала /start', channel)
+      return
+    }
+    if (channel === 'sniper' && isEliteAssistantOnly(env)) {
+      await tgSend(env, chatId, '⏳ Собираю Elite доклад…', channel)
+      try {
+        const briefing = await buildEliteBriefing({
+          kind: 'hourly',
+          kv: env.SUBSCRIBERS
+            ? {
+                get: (key: string) => env.SUBSCRIBERS!.get(key),
+                put: (key: string, value: string) =>
+                  env.SUBSCRIBERS!.put(key, value),
+              }
+            : undefined,
+        })
+        for (const part of briefing.htmlParts) {
+          await tgSend(env, chatId, part, channel)
+        }
+      } catch (err) {
+        console.error('[brief] failed', err)
+        await tgSend(env, chatId, 'Не удалось собрать доклад. Попробуй позже.', channel)
+      }
       return
     }
     await tgSend(env, chatId, '⏳ Сканирую рынок…', channel)
@@ -1869,42 +2071,27 @@ async function dispatchCommand(
     )
 
     if (channel === 'sniper') {
-      const vaneRisk = await loadVaneRisk(
-        env.SUBSCRIBERS
-          ? {
-              get: (key) => env.SUBSCRIBERS!.get(key),
-              put: (key, value) => env.SUBSCRIBERS!.put(key, value),
-            }
-          : undefined
-      )
-      const pause = vaneTradingPaused(vaneRisk)
       const session = evaluateVaneSession()
       await tgSend(
         env,
         chatId,
         [
-          `📊 Статус VANE · BTC/Alts`,
-          `⚙ Движок: <code>${SNIPER_ENGINE.id}</code>`,
+          `🏛 <b>Статус ELITE Assistant</b>`,
+          `⚙ <code>${SNIPER_ENGINE.id}</code>`,
           SNIPER_ENGINE.label,
           SNIPER_ENGINE.deployedNote,
           ``,
-          `Автопоиск: MACRO ZONE/RANGE/MOM · память истории · без WAIT`,
-          `TP ≈2.4×ATR1m (0.75–1.8%) · R:R≥1.2 · cluster LONGs ≤2`,
-          `Сделок в работе: ${live}`,
-          `Open slots: ${vaneRisk.openSymbols.map((s) => s.replace('_USDT', '')).join(', ') || '—'}`,
-          pause.paused
-            ? `⏸ ПАУЗА: ${pause.reason}`
-            : `▶ Торговля: ON · день PnL ${vaneRisk.dayPnlPct.toFixed(2)}% · streak LOSS ${vaneRisk.consecutiveLosses}`,
+          `Доклад: каждый час :05 UTC · суточный 00:05 UTC`,
+          `Вселенная: BTC + ETH SOL BNB XRP AVAX LINK DOGE SUI`,
+          `Режим: помощник (без авто-спама сделок)`,
           session.ok
             ? `Сессия: ${session.session} OK`
-            : `Сессия BLOCK: ${session.reason}`,
-          `Sniper alerts: ${me.sniper ? 'ON' : 'OFF'}`,
+            : `Сессия: ${session.reason}`,
+          `Paper (legacy): ${live}`,
           `Подписчиков: ${list.length}`,
           `chatId: <code>${chatId}</code>`,
           ``,
-          wrBlock,
-          ``,
-          `/zone · /scan · /trades · /journal`,
+          `/brief · /brief ETH · /market · /zone · /scan`,
         ].join('\n'),
         channel
       )
