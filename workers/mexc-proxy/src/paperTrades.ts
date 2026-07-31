@@ -15,6 +15,13 @@ import {
   saveVaneRisk,
   unregisterVaneSymbol,
 } from './vane/portfolioRisk'
+import {
+  isMicroSetup,
+  MICRO_BE_MFE_PCT,
+  MICRO_BE_R,
+  MICRO_TRAIL_AFTER_TP1,
+  MICRO_TRAIL_PCT,
+} from './vane/microStrategy'
 
 const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 5
@@ -34,6 +41,10 @@ const WAITING_TTL_VANE_MS = 240 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
 /** Memes are short impulse trades — don't hold for hours */
 const OPEN_TTL_MEME_MS = 75 * 60_000
+/** MICRO scalp — small TP, don't overnight */
+const OPEN_TTL_MICRO_MS = 55 * 60_000
+/** Arm MICRO trail after this MFE % */
+const MICRO_ARM_PCT = MICRO_BE_MFE_PCT / 100
 /** Predator echo: impulse dies in seconds */
 const OPEN_TTL_ECHO_MS = 90_000
 const ECHO_TIME_STOP_MS = 12_000
@@ -825,9 +836,11 @@ export async function createPaperTradeFromPlan(
         : isMeme
           ? OPEN_TTL_MEME_MS
           : plan.setup.startsWith('VANE_')
-            ? plan.vanePath === 'FLIP'
-              ? 75 * 60_000
-              : WAITING_TTL_VANE_MS
+            ? isMicroSetup(plan.setup)
+              ? 45 * 60_000
+              : plan.vanePath === 'FLIP'
+                ? 75 * 60_000
+                : WAITING_TTL_VANE_MS
             : WAITING_TTL_MS),
     closedAt: null,
     lastPulseAt: now,
@@ -962,12 +975,13 @@ function confirmsVaneEntry(
     return inBand && (bookAligned || (pressureAligned && tapeAligned))
   }
 
-  // EARLY SCALP: already in zone + impulse started → enter without perfect reclaim
-  const isScalp = t.setup.startsWith('VANE_SCALP_')
+  // MICRO / EARLY SCALP: already in zone + impulse → enter without perfect reclaim
+  const isScalp =
+    t.setup.startsWith('VANE_SCALP_') || isMicroSetup(t.setup)
   const impulse =
     t.side === 'LONG'
-      ? brief.move1mPct >= 0.35 || brief.move5mPct >= 0.55
-      : brief.move1mPct <= -0.35 || brief.move5mPct <= -0.55
+      ? brief.move1mPct >= 0.28 || brief.move5mPct >= 0.45
+      : brief.move1mPct <= -0.28 || brief.move5mPct <= -0.45
   if (isScalp && inBand && impulse && (bookAligned || pressureAligned)) {
     return true
   }
@@ -1059,6 +1073,12 @@ function memeTrailPct(t: PaperTrade, peakFavorPct: number): number {
   return MEME_TRAIL_EARLY
 }
 
+function microTrailPct(t: PaperTrade, peakFavorPct: number): number {
+  if (t.tp1Sent || peakFavorPct >= 0.55) return MICRO_TRAIL_AFTER_TP1
+  if (peakFavorPct >= MICRO_BE_MFE_PCT) return MICRO_TRAIL_PCT
+  return 0.006
+}
+
 function updateTrail(t: PaperTrade, price: number): {
   peak: number
   trailingStop: number
@@ -1070,7 +1090,11 @@ function updateTrail(t: PaperTrade, price: number): {
 
   const peakFavor =
     t.fillPrice != null ? Math.max(0, pnlPct(t.side, t.fillPrice, peak)) : 0
-  const trailPct = isMemeTrade(t) ? memeTrailPct(t, peakFavor) : 0.02
+  const trailPct = isMemeTrade(t)
+    ? memeTrailPct(t, peakFavor)
+    : isMicroSetup(t.setup)
+      ? microTrailPct(t, peakFavor)
+      : 0.02
 
   const trailingStop =
     t.side === 'LONG' ? peak * (1 - trailPct) : peak * (1 + trailPct)
@@ -1080,7 +1104,7 @@ function updateTrail(t: PaperTrade, price: number): {
     prev != null &&
     t.fillPrice != null &&
     Math.abs(trailingStop - prev) / t.fillPrice >
-      (isMemeTrade(t) ? 0.002 : 0.005) &&
+      (isMemeTrade(t) || isMicroSetup(t.setup) ? 0.0015 : 0.005) &&
     ((t.side === 'LONG' && trailingStop > prev) ||
       (t.side === 'SHORT' && trailingStop < prev))
 
@@ -1089,7 +1113,11 @@ function updateTrail(t: PaperTrade, price: number): {
 
 function trailHit(t: PaperTrade, snap: TickerSnap): boolean {
   if (t.trailingStop == null || t.fillPrice == null || t.peak == null) return false
-  const arm = isMemeTrade(t) ? MEME_ARM_PCT : 0.03
+  const arm = isMemeTrade(t)
+    ? MEME_ARM_PCT
+    : isMicroSetup(t.setup)
+      ? MICRO_ARM_PCT
+      : 0.03
   if (t.side === 'LONG') {
     return snap.low <= t.trailingStop && t.peak > t.fillPrice * (1 + arm)
   }
@@ -1228,9 +1256,16 @@ export async function monitorPaperTrades(
         t.status = 'OPEN'
         t.fillPrice = fill
         t.openedAt = now
-        t.expiresAt = now + OPEN_TTL_MS
+        t.expiresAt =
+          now + (isMicroSetup(t.setup) ? OPEN_TTL_MICRO_MS : OPEN_TTL_MS)
         t.peak = fill
-        t.trailingStop = t.side === 'LONG' ? fill * 0.98 : fill * 1.02
+        t.trailingStop = isMicroSetup(t.setup)
+          ? t.side === 'LONG'
+            ? fill * (1 - 0.006)
+            : fill * (1 + 0.006)
+          : t.side === 'LONG'
+            ? fill * 0.98
+            : fill * 1.02
         t.lastWinPct = winPct
         t.lastPulseAt = now
         dirty = true
@@ -1238,8 +1273,10 @@ export async function monitorPaperTrades(
           alertType: 'SYSTEM',
           title: `✅ Пример: вошёл ${t.side} ${nameOf(t.symbol)}`,
           text: [
-            `ВХОД ПОДТВЕРЖДЁН: ретест удержан, свеча + поток сделок + OBI совпали.`,
-            `Вход: ${fmt(fill)} · SL ${fmt(t.sl)} · TP ${fmt(t.tp)}`,
+            isMicroSetup(t.setup)
+              ? `MICRO вход: зона + импульс · Post-Only paper.`
+              : `ВХОД ПОДТВЕРЖДЁН: ретест удержан, свеча + поток сделок + OBI совпали.`,
+            `Вход: ${fmt(fill)} · SL ${fmt(t.sl)} · TP1 ${t.target1 != null ? fmt(t.target1) : '—'} · TP ${fmt(t.tp)}`,
             `Стартовая вероятность успеха: ${winPct}%`,
             brief.pressureLabel,
             `Дальше веду комментарии по рынку ${isMemeTrade(t) ? '≈каждые 2 мин' : '≈каждые 5 мин'}.`,
@@ -1330,13 +1367,16 @@ export async function monitorPaperTrades(
       })
     }
 
-    // v26.2: memes BE at +0.5R (was 1.0R — отдавали весь прогресс в SL).
-    // Also BE if price favor ≥ MEME_ARM_PCT even before full 0.5R on wide SL.
-    const beR = isMemeTrade(t) ? 0.5 : 0.6
+    // v26.2 memes BE @0.5R; MICRO BE @0.28% / 0.35R — protect small-edge WR.
+    const beR = isMemeTrade(t) ? 0.5 : isMicroSetup(t.setup) ? MICRO_BE_R : 0.6
     const favorPct = memeFavorPct(t, snap.last)
     const memeEarlyBe =
       isMemeTrade(t) && favorPct >= MEME_ARM_PCT && favorR >= 0.35
-    if (!t.beSent && (favorR >= beR || memeEarlyBe)) {
+    const microEarlyBe =
+      isMicroSetup(t.setup) &&
+      favorPct >= MICRO_BE_MFE_PCT &&
+      favorR >= MICRO_BE_R * 0.85
+    if (!t.beSent && (favorR >= beR || memeEarlyBe || microEarlyBe)) {
       t.beSent = true
       t.sl = fill
       dirty = true
@@ -1344,9 +1384,11 @@ export async function monitorPaperTrades(
         alertType: 'SYSTEM',
         title: `🛡 Пример: BE ${nameOf(t.symbol)}`,
         text: [
-          isMemeTrade(t)
-            ? `Прогресс +${favorPct.toFixed(2)}% / ${favorR.toFixed(2)}R — стоп в безубыток (${fmt(fill)}).`
-            : `Есть +${beR}R — стоп в безубыток (${fmt(fill)}).`,
+          isMicroSetup(t.setup)
+            ? `MICRO +${favorPct.toFixed(2)}% — стоп в BE (${fmt(fill)}).`
+            : isMemeTrade(t)
+              ? `Прогресс +${favorPct.toFixed(2)}% / ${favorR.toFixed(2)}R — стоп в безубыток (${fmt(fill)}).`
+              : `Есть +${beR}R — стоп в безубыток (${fmt(fill)}).`,
           `Вероятность ${winPct}% · ${brief.pressureLabel}`,
           `Цель всё ещё ${fmt(t.tp)}${t.target1 ? ` · TP1 ${fmt(t.target1)}` : ''}.`,
         ].join('\n'),
@@ -1354,9 +1396,9 @@ export async function monitorPaperTrades(
       })
     }
 
-    // v26.2: TP1 = lock BE + tighten trail (logical 35% take), keep runner to TP2.
+    // TP1: lock BE + tighten trail (meme + MICRO)
     if (
-      isMemeTrade(t) &&
+      (isMemeTrade(t) || isMicroSetup(t.setup)) &&
       !t.tp1Sent &&
       hitTp1(t, snap) &&
       !hitTp(t, snap)
@@ -1365,14 +1407,15 @@ export async function monitorPaperTrades(
       t.beSent = true
       t.sl = fill
       const peak = t.peak ?? snap.last
+      const tight = isMicroSetup(t.setup)
+        ? MICRO_TRAIL_AFTER_TP1
+        : MEME_TRAIL_RUNNER
       t.trailingStop =
-        t.side === 'LONG'
-          ? peak * (1 - MEME_TRAIL_RUNNER)
-          : peak * (1 + MEME_TRAIL_RUNNER)
+        t.side === 'LONG' ? peak * (1 - tight) : peak * (1 + tight)
       dirty = true
       comments.push({
         alertType: 'SYSTEM',
-        title: `🎯 MEME TP1 ${nameOf(t.symbol)}`,
+        title: `🎯 ${isMicroSetup(t.setup) ? 'MICRO' : 'MEME'} TP1 ${nameOf(t.symbol)}`,
         text: [
           `TP1 ${fmt(t.target1)} взят — логически 35% закрыты.`,
           `Стоп в BE (${fmt(fill)}), трейл ужесточён ≈ ${fmt(t.trailingStop)}.`,

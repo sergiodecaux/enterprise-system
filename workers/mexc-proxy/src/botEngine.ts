@@ -6,10 +6,10 @@ export const BOT_ENGINE = {
     'v26.2: BE@0.5R · TP1 lock+trail 0.45–0.6% · abs conf≥92 · symbol cooldown 75м · CONT_BOOK_RELEASE приоритет.',
 } as const
 
-/** BTC + alts vane sniper — early scalp + wait zone */
+/** BTC + alts — MICRO high-WR + WAIT/HOLD */
 export const SNIPER_ENGINE = {
-  id: 'vane-scalp-start-v4.2',
-  label: 'VANE: Scalp Start',
+  id: 'vane-micro-v5',
+  label: 'VANE: MICRO high-WR',
   deployedNote:
-    'v4.2: batch 5 · HTF-first (LTF/book только у зоны) · кэш Min1/5 · без probe на vane-cron · фикс Too many subrequests.',
+    'v5: MICRO TP 0.45–0.7% · risk 0.35% · WITH HTF · impulse 0.35–0.85%/3м · BE@0.28% · max 1 MICRO/tick · WAIT/HOLD вторичны.',
 } as const

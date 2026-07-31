@@ -31,6 +31,13 @@ import {
   rankZoneCandidate,
 } from './richContext'
 import { buildVaneRisk, riskPctForTier } from './riskMath'
+import {
+  candle1mWithSide,
+  MICRO_MIN_SCORE,
+  MICRO_RISK_PCT,
+  MICRO_TP1_PCT,
+  qualifyMicro,
+} from './microStrategy'
 import { buildVaneScoreCard, vaneRegimePolicy } from './scoreCard'
 import { evaluateVaneSession } from './sessionFilter'
 import {
@@ -45,7 +52,6 @@ import { assessZoneStrength } from './zoneStrength'
 import { listPaperTrades } from '../paperTrades'
 import {
   MIN_VANE_SCORE,
-  TIER1_SCORE,
   WALL_PERSIST_MS,
   type Candle,
   type Side,
@@ -105,6 +111,7 @@ function decisionToAlert(d: VaneDecision): ScanAlert {
     invalidate: d.invalidate,
     sl: d.sl,
     tp: d.tp,
+    target1: d.target1,
     zoneSource:
       d.zone.source === 'SSL' || d.zone.source === 'BSL'
         ? d.zone.source
@@ -112,7 +119,9 @@ function decisionToAlert(d: VaneDecision): ScanAlert {
     zoneStrength: d.zone.strength,
     zoneTouches: d.zone.touches,
     zonePhase: phaseOfGeom(d.entry, d.zone.zoneLow, d.zone.zoneHigh),
-    targetLabel: `Vane TP ${((Math.abs(d.tp - d.entry) / d.entry) * 100).toFixed(2)}%`,
+    targetLabel: d.micro
+      ? `MICRO TP ${((Math.abs(d.tp - d.entry) / d.entry) * 100).toFixed(2)}%`
+      : `Vane TP ${((Math.abs(d.tp - d.entry) / d.entry) * 100).toFixed(2)}%`,
     vanePath: d.path,
     vaneTier: d.tier,
     vaneScore: d.score,
@@ -124,7 +133,7 @@ function decisionToAlert(d: VaneDecision): ScanAlert {
     dedupeKey: d.dedupeKey,
     score: d.score,
     winPct: d.winPct,
-    style: d.path === 'FLIP' ? 'INTRADAY' : 'SCALP',
+    style: 'SCALP',
     align: 'WITH_TREND',
     tradePlan: plan,
     needsPullbackWatch: Boolean(d.needsPullbackWatch),
@@ -376,10 +385,32 @@ async function analyzeSymbol(opts: {
   const conflicts = directionConflicts(direction.bias, originSide)
   const earlyFavor = earlyMoveFavorPct(c1m, originSide)
   const tickerChg = Math.abs(Number(opts.ticker.riseFallRate ?? 0) * 100)
+  const candleWith = candle1mWithSide(c1m, originSide)
+
+  // MICRO first — high-WR micro-scalp (maker, small %, size via risk%)
+  const microQ = qualifyMicro({
+    phase: phaseGeom,
+    earlyFavorPct: earlyFavor,
+    bookGrade: book.grade,
+    absorption: book.absorption || absorption.detected,
+    cvdConfirm: book.cvdConfirm,
+    greenDeltaWeak: book.greenDeltaWeak,
+    aligns,
+    conflicts,
+    zoneStrength: zone.strength,
+    zoneTouches: zone.touches,
+    candle1mWithUs: candleWith,
+    directionConfidence: direction.confidence,
+  })
+  let microMode = false
 
   // Determine actionable path
   let path: VanePath | null = emitPath
-  // HOLD: TOUCH with STRONG, or APPROACH with STRONG+tape (don't require perfect touch)
+  if (microQ.ok && path !== 'FLIP') {
+    path = 'HOLD'
+    microMode = true
+  }
+  // HOLD: TOUCH with STRONG, or APPROACH with STRONG+tape
   if (
     !path &&
     book.grade === 'STRONG' &&
@@ -388,7 +419,7 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
-  // Soft HOLD: TOUCH + NEUTRAL book but clear absorption/CVD (weekend/thin books)
+  // Soft HOLD: TOUCH + NEUTRAL book but clear absorption/CVD
   if (
     !path &&
     phaseGeom === 'TOUCH' &&
@@ -398,7 +429,7 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
-  // Bounce HOLD: price in zone with multi-touch HTF level
+  // Bounce HOLD: multi-touch HTF
   if (
     !path &&
     phaseGeom === 'TOUCH' &&
@@ -408,7 +439,7 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
-  // Rich HOLD (mini-app parity): TOUCH + direction with zone + structural strength
+  // Rich HOLD
   if (
     !path &&
     phaseGeom === 'TOUCH' &&
@@ -419,62 +450,44 @@ async function analyzeSymbol(opts: {
   ) {
     path = 'HOLD'
   }
-  // Rich APPROACH: strong structure + direction + some tape
+  // Rich APPROACH — stricter book for non-MICRO (WR filter)
   if (
     !path &&
     phaseGeom === 'APPROACH' &&
     aligns &&
-    zone.strength >= 4 &&
+    zone.strength >= 5 &&
     !conflicts &&
-    (book.grade === 'STRONG' ||
-      book.absorption ||
-      book.cvdConfirm ||
-      (zone.touches >= 2 && book.grade !== 'WEAK'))
+    book.grade === 'STRONG' &&
+    (book.absorption || book.cvdConfirm)
   ) {
     path = 'HOLD'
   }
-  // v4 EARLY SCALP: coin starts moving into/near zone (0.25–1.1% /3m)
+  // Legacy early scalp only with STRONG book (diluted WR otherwise → MICRO owns this niche)
   if (
     !path &&
-    (phaseGeom === 'TOUCH' || phaseGeom === 'APPROACH') &&
-    earlyFavor >= 0.25 &&
-    earlyFavor <= 1.15 &&
-    book.grade !== 'WEAK' &&
+    phaseGeom === 'TOUCH' &&
+    earlyFavor >= 0.4 &&
+    earlyFavor <= 1.0 &&
+    book.grade === 'STRONG' &&
     aligns &&
     !conflicts &&
-    !book.greenDeltaWeak &&
-    (book.absorption ||
-      book.cvdConfirm ||
-      book.grade === 'STRONG' ||
-      earlyFavor >= 0.45)
+    candleWith
   ) {
     path = 'HOLD'
   }
-  // Hot ticker + zone approach: 24h mover starting to push with tape
-  if (
-    !path &&
-    phaseGeom === 'APPROACH' &&
-    tickerChg >= 2.5 &&
-    earlyFavor >= 0.2 &&
-    book.grade !== 'WEAK' &&
-    aligns &&
-    zone.strength >= 4
-  ) {
-    path = 'HOLD'
-  }
-  // Rank prefers FLIP and book WEAK — let FSM handle; if still no path but prefer FLIP
   if (
     !path &&
     zoneRank.preferPath === 'FLIP' &&
     book.grade === 'WEAK' &&
     phaseGeom === 'TOUCH'
   ) {
-    // Stay silent until break confirm — FSM will emit FLIP later
+    // FSM handles FLIP later
   }
 
-  // v4 WAIT ZONE: FAR/early APPROACH — arm watch + paper WAITING, no chase
+  // WAIT ZONE only when not MICRO
   let waitOnly = false
   if (
+    !microMode &&
     !path &&
     (phaseGeom === 'FAR' || phaseGeom === 'APPROACH') &&
     aligns &&
@@ -491,7 +504,7 @@ async function analyzeSymbol(opts: {
     await saveVaneState(opts.kv, {
       ...state,
       score: 0,
-      reason: `no path · phase=${phaseGeom} book=${book.grade} dir=${direction.bias} early=${earlyFavor.toFixed(2)} rank=${zoneRank.score}`,
+      reason: `no path · phase=${phaseGeom} book=${book.grade} dir=${direction.bias} early=${earlyFavor.toFixed(2)} micro=${microQ.reason} rank=${zoneRank.score}`,
     })
     return null
   }
@@ -545,6 +558,7 @@ async function analyzeSymbol(opts: {
     atr15m: atr15,
     atr1m,
     oppositeLiq: pick.oppositeLiq,
+    micro: microMode,
   })
   if (!risk.ok) {
     await saveVaneState(opts.kv, {
@@ -582,102 +596,113 @@ async function analyzeSymbol(opts: {
     directionConfidence: direction.confidence,
     htfStrength: htf.strength,
     zoneRankScore: zoneRank.score,
-    holdHintClear: zoneRank.holdHint.includes('крепление') || zoneRank.holdHint.includes('цель'),
+    holdHintClear:
+      zoneRank.holdHint.includes('крепление') ||
+      zoneRank.holdHint.includes('цель'),
   })
 
-  if (!card.ready || !card.tier || card.score < MIN_VANE_SCORE) {
-    // Wait-zone arms can emit slightly under full score — paper still waits reclaim
-    if (!(waitOnly && card.score >= 40)) {
+  const minScore = microMode ? MICRO_MIN_SCORE : MIN_VANE_SCORE
+  if (!card.ready || !card.tier || card.score < minScore) {
+    if (!(waitOnly && !microMode && card.score >= 40)) {
       await saveVaneState(opts.kv, {
         ...state,
         score: card.score,
-        reason: `score ${card.score} < ${MIN_VANE_SCORE} · ${direction.summary}`,
+        reason: `score ${card.score} < ${minScore} · ${direction.summary}`,
       })
       return null
     }
   }
 
-  const emitTier = card.tier ?? 'TIER2'
-
-  // Tier-1 LONG hold prefers sweep reclaim
-  if (
-    emitTier === 'TIER1' &&
-    path === 'HOLD' &&
-    tradeSide === 'LONG' &&
-    !sweepReclaim &&
-    !book.absorption
-  ) {
-    // Downgrade to tier2 or skip if score was only barely tier1 without sweep
-    if (card.score < TIER1_SCORE + 5 && !book.cvdConfirm) {
-      /* allow tier2 below */
-    }
+  if (microMode && waitOnly) {
+    await saveVaneState(opts.kv, {
+      ...state,
+      score: card.score,
+      reason: 'micro_rejected_wait',
+    })
+    return null
   }
 
+  const emitTier = card.tier ?? 'TIER2'
   const invalidate =
     tradeSide === 'LONG' ? risk.sl * 0.999 : risk.sl * 1.001
   const sizeMult = regimePol.sizeMult
-  const riskPct = riskPctForTier(emitTier) * sizeMult
-  const winPct = Math.min(
-    90,
-    Math.max(55, Math.round(48 + card.score * 0.4 + (tradeAligns ? 3 : 0)))
-  )
+  const riskPct = microMode
+    ? MICRO_RISK_PCT * sizeMult
+    : riskPctForTier(emitTier) * sizeMult
+  const winPct = microMode
+    ? Math.min(88, Math.max(68, Math.round(62 + card.score * 0.28)))
+    : Math.min(
+        90,
+        Math.max(55, Math.round(48 + card.score * 0.4 + (tradeAligns ? 3 : 0)))
+      )
 
-  const mode: 'WAIT' | 'SCALP' | 'HOLD' | 'FLIP' = waitOnly
-    ? 'WAIT'
-    : path === 'FLIP'
-      ? 'FLIP'
-      : earlyFavor >= 0.25
-        ? 'SCALP'
-        : 'HOLD'
+  const target1 =
+    tradeSide === 'LONG'
+      ? entry * (1 + MICRO_TP1_PCT / 100)
+      : entry * (1 - MICRO_TP1_PCT / 100)
+
+  const mode: 'WAIT' | 'MICRO' | 'SCALP' | 'HOLD' | 'FLIP' = microMode
+    ? 'MICRO'
+    : waitOnly
+      ? 'WAIT'
+      : path === 'FLIP'
+        ? 'FLIP'
+        : earlyFavor >= 0.35
+          ? 'SCALP'
+          : 'HOLD'
 
   const setup =
     path === 'FLIP'
       ? `VANE_SR_FLIP_${tradeSide}`
-      : waitOnly
-        ? `VANE_WAIT_${tradeSide}`
-        : pick.isInternal
-          ? `VANE_INTERNAL_${tradeSide}`
-          : mode === 'SCALP'
-            ? `VANE_SCALP_${tradeSide}`
-            : `VANE_HOLD_${tradeSide}`
+      : microMode
+        ? `VANE_MICRO_${tradeSide}`
+        : waitOnly
+          ? `VANE_WAIT_${tradeSide}`
+          : pick.isInternal
+            ? `VANE_INTERNAL_${tradeSide}`
+            : mode === 'SCALP'
+              ? `VANE_SCALP_${tradeSide}`
+              : `VANE_HOLD_${tradeSide}`
 
   const coin = symbol.replace('_USDT', '')
   const title =
-    mode === 'WAIT'
-      ? `👁 WAIT ЗОНА · ${tradeSide} ${coin}`
-      : mode === 'SCALP'
-        ? `⚡ SCALP СТАРТ · ${tradeSide} ${coin}`
-        : mode === 'FLIP'
-          ? `🔁 FLIP · ${tradeSide} ${coin}`
-          : `${emitTier === 'TIER1' ? '🎯' : '📌'} HOLD ЗОНА · ${tradeSide} ${coin}`
+    mode === 'MICRO'
+      ? `💎 MICRO · ${tradeSide} ${coin}`
+      : mode === 'WAIT'
+        ? `👁 WAIT ЗОНА · ${tradeSide} ${coin}`
+        : mode === 'SCALP'
+          ? `⚡ SCALP · ${tradeSide} ${coin}`
+          : mode === 'FLIP'
+            ? `🔁 FLIP · ${tradeSide} ${coin}`
+            : `${emitTier === 'TIER1' ? '🎯' : '📌'} HOLD · ${tradeSide} ${coin}`
 
   const text = [
-    mode === 'WAIT'
-      ? `Режим: WAIT · ${emitTier} · score ${card.score}/100`
-      : mode === 'SCALP'
-        ? `Режим: SCALP СТАРТ · ${emitTier} · score ${card.score}/100`
-        : mode === 'FLIP'
-          ? `Режим: S/R FLIP · ${emitTier} · score ${card.score}/100`
-          : `Режим: HOLD ЗОНА · ${emitTier} · score ${card.score}/100`,
-    mode === 'WAIT'
-      ? 'Не догоняю — жду касание/reclaim зоны, потом вход.'
-      : mode === 'SCALP'
-        ? 'Монета начинает ход у зоны — быстрый скальп-вход после confirm.'
-        : 'Зона + структура — вход после подтверждения стакана.',
+    mode === 'MICRO'
+      ? `Режим: MICRO high-WR · ${emitTier} · score ${card.score}/100 · risk ${riskPct.toFixed(2)}%`
+      : mode === 'WAIT'
+        ? `Режим: WAIT · ${emitTier} · score ${card.score}/100`
+        : `Режим: ${mode} · ${emitTier} · score ${card.score}/100`,
+    mode === 'MICRO'
+      ? `Стратегия: TP ${risk.tpPct.toFixed(2)}% · SL ${risk.slPct.toFixed(2)}% · maker · импульс уже пошёл · цель WR≥65%`
+      : mode === 'WAIT'
+        ? 'Не догоняю — жду касание/reclaim зоны.'
+        : 'Зона + confirm · Post-Only.',
     `Карта: ${direction.summary}`,
     earlyFavor >= 0.15
       ? `Импульс ~${earlyFavor.toFixed(2)}% /3м · 24h ${(Number(opts.ticker.riseFallRate ?? 0) * 100).toFixed(1)}%`
       : null,
+    microMode ? `Теги: ${microQ.tags.join(' · ')}` : null,
     `Зона ${zone.tf} ${zone.source} ${zone.zoneLow.toFixed(6)}–${zone.zoneHigh.toFixed(6)} · ${zoneRank.holdHint}`,
-    `Лимит ${entry.toFixed(6)} · SL ${risk.sl.toFixed(6)} (−${risk.slPct.toFixed(2)}%) · TP ${risk.tp.toFixed(6)} (+${risk.tpPct.toFixed(2)}% · ATR1m)`,
-    `R:R 1:${risk.rr.toFixed(2)} · риск ~${riskPct.toFixed(2)}% · size×${sizeMult}`,
-    `Стакан: ${book.grade} density×${book.bidAskRatio.toFixed(1)} wall ${Math.round(book.wallPersistMs / 1000)}с`,
+    `Лимит ${entry.toFixed(6)} · SL ${risk.sl.toFixed(6)} (−${risk.slPct.toFixed(2)}%) · TP1 ${target1.toFixed(6)} · TP ${risk.tp.toFixed(6)} (+${risk.tpPct.toFixed(2)}%)`,
+    `R:R 1:${risk.rr.toFixed(2)} · size×${sizeMult}`,
+    `Стакан: ${book.grade} density×${book.bidAskRatio.toFixed(1)}`,
     ...book.notes.slice(0, 2),
-    ...card.factors.slice(0, 4),
-    state.reason ? `FSM: ${state.reason}` : '',
-    mode === 'WAIT'
-      ? 'TTL wait до 4ч · Post-Only · без market chase.'
-      : 'Post-Only paper · не догонять market.',
+    ...card.factors.slice(0, 3),
+    mode === 'MICRO'
+      ? 'BE @ +0.28% · TP1 0.4% · trail тугой · не усреднять · риск 0.35% equity.'
+      : mode === 'WAIT'
+        ? 'TTL wait до 4ч · без market chase.'
+        : 'Post-Only · не догонять.',
   ]
     .filter(Boolean)
     .join('\n')
@@ -688,7 +713,7 @@ async function analyzeSymbol(opts: {
     path,
     tier: emitTier,
     score: card.score,
-    reason: waitOnly ? 'wait_zone' : mode === 'SCALP' ? 'early_scalp' : 'emit',
+    reason: microMode ? 'micro_emit' : waitOnly ? 'wait_zone' : 'emit',
   })
 
   return {
@@ -702,6 +727,7 @@ async function analyzeSymbol(opts: {
     entry,
     sl: risk.sl,
     tp: risk.tp,
+    target1: microMode || mode === 'SCALP' ? target1 : undefined,
     invalidate,
     winPct,
     riskPct,
@@ -709,14 +735,18 @@ async function analyzeSymbol(opts: {
     reasons: [
       direction.summary,
       zoneRank.holdHint,
+      ...(microMode ? microQ.tags : []),
       ...card.factors,
       ...book.notes,
     ],
     title,
     text,
     dedupeKey: `vane:${mode.toLowerCase()}:${symbol}:${tradeSide}:${Math.floor(Date.now() / 600_000)}`,
-    needsPullbackWatch: waitOnly || phaseGeom === 'APPROACH' || phaseGeom === 'FAR',
+    needsPullbackWatch:
+      !microMode &&
+      (waitOnly || phaseGeom === 'APPROACH' || phaseGeom === 'FAR'),
     watchOnly: false,
+    micro: microMode,
   }
 }
 
@@ -797,7 +827,11 @@ export async function runVaneScan(opts?: {
     }
   }
 
+  // MICRO first (high-WR), then TIER1, then score
   decisions.sort((a, b) => {
+    const ma = a.micro ? 0 : 1
+    const mb = b.micro ? 0 : 1
+    if (ma !== mb) return ma - mb
     const ta = a.tier === 'TIER1' ? 0 : 1
     const tb = b.tier === 'TIER1' ? 0 : 1
     if (ta !== tb) return ta - tb
@@ -807,9 +841,13 @@ export async function runVaneScan(opts?: {
   const alerts: ScanAlert[] = []
   let openRisk = risk
   let tier2Slots = 3
+  let microSlots = 1
 
   for (const d of decisions) {
-    if (d.tier === 'TIER2') {
+    if (d.micro) {
+      if (microSlots <= 0) continue
+      microSlots--
+    } else if (d.tier === 'TIER2') {
       if (tier2Slots <= 0) continue
       tier2Slots--
     }

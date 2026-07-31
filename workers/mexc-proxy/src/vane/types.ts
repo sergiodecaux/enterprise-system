@@ -78,6 +78,9 @@ export interface VaneDecision {
   needsPullbackWatch?: boolean
   /** Structure arm only — TG watch, no market chase */
   watchOnly?: boolean
+  target1?: number
+  /** High-WR micro scalp */
+  micro?: boolean
 }
 
 export interface VaneKv {
