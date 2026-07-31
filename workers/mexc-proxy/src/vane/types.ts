@@ -81,7 +81,12 @@ export interface VaneDecision {
   target1?: number
   /** High-WR micro scalp */
   micro?: boolean
+  /** Real directional MACRO move */
+  macro?: boolean
 }
+
+/** Prefer actionable emits — quiet skips over WAIT spam */
+export const MIN_VANE_SCORE_ACTION = 58
 
 export interface VaneKv {
   get(key: string): Promise<string | null>

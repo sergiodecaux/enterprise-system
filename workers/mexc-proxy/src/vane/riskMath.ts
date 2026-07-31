@@ -12,6 +12,13 @@ import {
   MICRO_TP_MAX_PCT,
   MICRO_TP_MIN_PCT,
 } from './microStrategy'
+import {
+  MACRO_MIN_RR,
+  MACRO_SL_MAX_PCT,
+  MACRO_SL_MIN_PCT,
+  MACRO_TP_MAX_PCT,
+  MACRO_TP_MIN_PCT,
+} from './macroStrategy'
 
 /**
  * Standard Vane scalp TP from ATR1m, clamped to TP_MIN–TP_MAX.
@@ -25,9 +32,97 @@ export function buildVaneRisk(opts: {
   oppositeLiq?: number | null
   /** High-WR micro band — tight SL/TP for large notional */
   micro?: boolean
+  /** Real directional move — wide TP 1.5–3.8% */
+  macro?: boolean
 }): VaneRiskLevels {
+  if (opts.macro) return buildMacroRisk(opts)
   if (opts.micro) return buildMicroRisk(opts)
   return buildStandardRisk(opts)
+}
+
+/**
+ * MACRO: SL 0.65–1.15%, TP 1.5–3.8% (ATR-scaled). Catch the body of the move.
+ */
+export function buildMacroRisk(opts: {
+  side: Side
+  entry: number
+  structureExtreme: number
+  atr15m: number
+  atr1m?: number | null
+  oppositeLiq?: number | null
+}): VaneRiskLevels {
+  const { side, entry, atr15m } = opts
+  if (!(entry > 0)) {
+    return {
+      entry: 0,
+      sl: 0,
+      tp: 0,
+      slPct: 0,
+      tpPct: 0,
+      rr: 0,
+      ok: false,
+      rejectReason: 'bad_entry',
+    }
+  }
+
+  const atrPad = Math.max(atr15m * 0.35, entry * 0.0015)
+  let sl: number
+  if (side === 'LONG') {
+    sl = Math.min(opts.structureExtreme, entry) - atrPad
+  } else {
+    sl = Math.max(opts.structureExtreme, entry) + atrPad
+  }
+
+  const slDist = Math.abs(entry - sl)
+  const minDist = entry * (MACRO_SL_MIN_PCT / 100)
+  const maxDist = entry * (MACRO_SL_MAX_PCT / 100)
+  const useDist = Math.min(maxDist, Math.max(minDist, slDist))
+  sl = side === 'LONG' ? entry - useDist : entry + useDist
+  const slPct = (useDist / entry) * 100
+
+  const atr1 = opts.atr1m != null && opts.atr1m > 0 ? opts.atr1m : atr15m * 0.35
+  const atr1Pct = (atr1 / entry) * 100
+  // ~3.2× ATR1m inside macro band — ride the move, not a chip scalp
+  let tpPct = Math.min(
+    MACRO_TP_MAX_PCT,
+    Math.max(MACRO_TP_MIN_PCT, atr1Pct * 3.2)
+  )
+  tpPct = Math.max(tpPct, slPct * MACRO_MIN_RR)
+  tpPct = Math.min(MACRO_TP_MAX_PCT, tpPct)
+
+  let tp =
+    side === 'LONG' ? entry * (1 + tpPct / 100) : entry * (1 - tpPct / 100)
+
+  // Clip to opposite liquidity if it still leaves MACRO_TP_MIN
+  if (opts.oppositeLiq != null && opts.oppositeLiq > 0) {
+    const liqPct =
+      (Math.abs(opts.oppositeLiq - entry) / entry) * 100
+    if (liqPct >= MACRO_TP_MIN_PCT && liqPct <= MACRO_TP_MAX_PCT * 1.15) {
+      const toward =
+        side === 'LONG'
+          ? opts.oppositeLiq > entry
+          : opts.oppositeLiq < entry
+      if (toward) {
+        tp = opts.oppositeLiq
+        tpPct = liqPct
+      }
+    }
+  }
+
+  const rr = slPct > 0 ? tpPct / slPct : 0
+  if (rr < MACRO_MIN_RR) {
+    return {
+      entry,
+      sl,
+      tp,
+      slPct,
+      tpPct,
+      rr,
+      ok: false,
+      rejectReason: `macro_rr_${rr.toFixed(2)}_lt_${MACRO_MIN_RR}`,
+    }
+  }
+  return { entry, sl, tp, slPct, tpPct, rr, ok: true }
 }
 
 function buildStandardRisk(opts: {
