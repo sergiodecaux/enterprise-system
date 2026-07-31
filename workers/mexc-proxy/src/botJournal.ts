@@ -3,6 +3,10 @@
  * Persisted in Cloudflare KV, exposed to Mini App via HTTP.
  */
 import { listPaperTrades, type PaperTrade } from './paperTrades'
+import {
+  analyzeTradeOutcome,
+  type TradeOutcomeAnalysis,
+} from './tradeOutcomeAnalysis'
 
 const JOURNAL_KEY = 'telegram:bot_journal'
 const GATES_KEY = 'telegram:bot_gates'
@@ -49,6 +53,14 @@ export interface BotJournalEntry {
   maePercent: number
   dedupeKey: string
   resolveSource: 'AUTO' | 'TIMEOUT' | null
+  /** Paper / resolve close code: tp | sl | trail | dead_entry | … */
+  closeReason?: string | null
+  /** Immediate autopsy after resolve */
+  outcomePrimaryTag?: string | null
+  outcomeTags?: string[]
+  outcomeHeadline?: string | null
+  outcomeDetail?: string | null
+  outcomeLesson?: string | null
 }
 
 export interface BotSetupStats {
@@ -341,12 +353,41 @@ function matchingPaper(
   )
 }
 
+function paperMfeMae(
+  entry: BotJournalEntry,
+  paper: PaperTrade,
+  fill: number
+): { mfePercent: number; maePercent: number } {
+  let mfe = entry.mfePercent
+  let mae = entry.maePercent
+  if (paper.peak != null && fill > 0) {
+    const peakPnl = pnlPct(entry.side, fill, paper.peak)
+    if (peakPnl > 0) mfe = Math.max(mfe, peakPnl)
+    else mae = Math.max(mae, -peakPnl)
+  }
+  if (paper.sl > 0 && fill > 0) {
+    const adverse = pnlPct(entry.side, fill, paper.sl)
+    if (adverse < 0) mae = Math.max(mae, -adverse)
+  }
+  return {
+    mfePercent: Number(mfe.toFixed(3)),
+    maePercent: Number(mae.toFixed(3)),
+  }
+}
+
 function paperOutcome(
   entry: BotJournalEntry,
   paper: PaperTrade
 ): Pick<
   BotJournalEntry,
-  'status' | 'exitPrice' | 'pnlPercent' | 'rMultiple' | 'resolveSource'
+  | 'status'
+  | 'exitPrice'
+  | 'pnlPercent'
+  | 'rMultiple'
+  | 'resolveSource'
+  | 'closeReason'
+  | 'mfePercent'
+  | 'maePercent'
 > | null {
   if (paper.status !== 'CLOSED' || !paper.closeReason) return null
 
@@ -373,6 +414,7 @@ function paperOutcome(
   }
 
   const pnl = status === 'INVALIDATED' ? 0 : pnlPct(entry.side, fill, exit)
+  const { mfePercent, maePercent } = paperMfeMae(entry, paper, fill)
   return {
     status,
     exitPrice: exit,
@@ -382,6 +424,61 @@ function paperOutcome(
         ? 0
         : Number(rMult(entry.side, fill, entry.sl, exit).toFixed(3)),
     resolveSource: status === 'TIMEOUT' ? 'TIMEOUT' : 'AUTO',
+    closeReason: paper.closeReason,
+    mfePercent,
+    maePercent,
+  }
+}
+
+function setupHistFor(
+  entries: BotJournalEntry[],
+  setup: string
+): { wr: number | null; n: number } {
+  const decided = entries.filter(
+    (e) =>
+      e.setup === setup && (e.status === 'WIN' || e.status === 'LOSS')
+  )
+  if (decided.length < 5) return { wr: null, n: decided.length }
+  const wins = decided.filter((e) => e.status === 'WIN').length
+  return { wr: (wins / decided.length) * 100, n: decided.length }
+}
+
+function attachOutcomeAnalysis(
+  entry: BotJournalEntry,
+  journalForHist: BotJournalEntry[]
+): BotJournalEntry {
+  if (entry.status === 'OPEN') return entry
+  const hist = setupHistFor(journalForHist, entry.setup)
+  const analysis = analyzeTradeOutcome({
+    status: entry.status,
+    side: entry.side,
+    setup: entry.setup,
+    alertType: entry.alertType,
+    pnlPercent: entry.pnlPercent,
+    rMultiple: entry.rMultiple,
+    mfePercent: entry.mfePercent,
+    maePercent: entry.maePercent,
+    closeReason: entry.closeReason ?? null,
+    resolveSource: entry.resolveSource,
+    setupWinRate: hist.wr,
+    setupSampleN: hist.n,
+  })
+  if (!analysis) return entry
+  return applyAnalysisFields(entry, analysis)
+}
+
+function applyAnalysisFields(
+  entry: BotJournalEntry,
+  analysis: TradeOutcomeAnalysis
+): BotJournalEntry {
+  return {
+    ...entry,
+    closeReason: analysis.closeReason ?? entry.closeReason ?? null,
+    outcomePrimaryTag: analysis.primaryTag,
+    outcomeTags: analysis.tags,
+    outcomeHeadline: analysis.headline,
+    outcomeDetail: analysis.detail,
+    outcomeLesson: analysis.lesson,
   }
 }
 
@@ -403,6 +500,18 @@ export async function resolveBotJournal(
   let changed = 0
   const outcomes: BotJournalEntry[] = []
 
+  const pushOutcome = (prev: BotJournalEntry, next: BotJournalEntry) => {
+    const analyzed = attachOutcomeAnalysis(next, list)
+    if (
+      prev.createdAt >= RESULT_NOTIFICATIONS_SINCE &&
+      prev.status === 'OPEN' &&
+      analyzed.status !== 'OPEN'
+    ) {
+      outcomes.push(analyzed)
+    }
+    return analyzed
+  }
+
   for (let i = 0; i < list.length; i++) {
     const e = list[i]
     const paper = matchingPaper(e, papers)
@@ -412,20 +521,15 @@ export async function resolveBotJournal(
         if (
           e.status !== outcome.status ||
           e.exitPrice !== outcome.exitPrice ||
-          e.pnlPercent !== outcome.pnlPercent
+          e.pnlPercent !== outcome.pnlPercent ||
+          !e.outcomeHeadline
         ) {
-          list[i] = {
+          const resolved: BotJournalEntry = {
             ...e,
             ...outcome,
             resolvedAt: paper.closedAt ?? now,
           }
-          if (
-            e.createdAt >= RESULT_NOTIFICATIONS_SINCE &&
-            e.status === 'OPEN' &&
-            outcome.status !== 'OPEN'
-          ) {
-            outcomes.push(list[i]!)
-          }
+          list[i] = pushOutcome(e, resolved)
           changed++
         }
         continue
@@ -438,7 +542,7 @@ export async function resolveBotJournal(
     const price = prices.get(e.symbol) ?? null
     if (price == null) {
       if (now >= e.expiresAt) {
-        list[i] = {
+        list[i] = pushOutcome(e, {
           ...e,
           status: 'TIMEOUT',
           resolvedAt: now,
@@ -446,7 +550,8 @@ export async function resolveBotJournal(
           pnlPercent: 0,
           rMultiple: 0,
           resolveSource: 'TIMEOUT',
-        }
+          closeReason: 'timeout_open',
+        })
         changed++
       }
       continue
@@ -466,7 +571,7 @@ export async function resolveBotJournal(
           ? price <= zoneHigh && price > working.sl
           : price >= zoneLow && price < working.sl
       if (noEntry && !touched) {
-        list[i] = {
+        list[i] = pushOutcome(working, {
           ...working,
           status: 'INVALIDATED',
           resolvedAt: now,
@@ -474,16 +579,14 @@ export async function resolveBotJournal(
           pnlPercent: 0,
           rMultiple: 0,
           resolveSource: 'AUTO',
-        }
-        if (working.createdAt >= RESULT_NOTIFICATIONS_SINCE) {
-          outcomes.push(list[i]!)
-        }
+          closeReason: 'invalidate',
+        })
         changed++
         continue
       }
       if (!touched) {
         if (now >= working.expiresAt) {
-          list[i] = {
+          list[i] = pushOutcome(working, {
             ...working,
             status: 'INVALIDATED',
             resolvedAt: now,
@@ -491,10 +594,8 @@ export async function resolveBotJournal(
             pnlPercent: 0,
             rMultiple: 0,
             resolveSource: 'TIMEOUT',
-          }
-          if (working.createdAt >= RESULT_NOTIFICATIONS_SINCE) {
-            outcomes.push(list[i]!)
-          }
+            closeReason: 'timeout_waiting',
+          })
           changed++
         }
         continue
@@ -509,22 +610,34 @@ export async function resolveBotJournal(
     const maePercent = Math.max(working.maePercent, -fav)
 
     let status: BotJournalStatus | null = null
+    let closeReason: string | null = null
     if (working.side === 'LONG') {
-      if (price >= working.tp) status = 'WIN'
-      else if (price <= working.sl) status = 'LOSS'
+      if (price >= working.tp) {
+        status = 'WIN'
+        closeReason = 'tp'
+      } else if (price <= working.sl) {
+        status = 'LOSS'
+        closeReason = 'sl'
+      }
     } else {
-      if (price <= working.tp) status = 'WIN'
-      else if (price >= working.sl) status = 'LOSS'
+      if (price <= working.tp) {
+        status = 'WIN'
+        closeReason = 'tp'
+      } else if (price >= working.sl) {
+        status = 'LOSS'
+        closeReason = 'sl'
+      }
     }
 
     if (!status && now >= working.expiresAt) {
       status = 'TIMEOUT'
+      closeReason = 'timeout_open'
     }
 
     if (status) {
       const exit = price
       const pnl = pnlPct(working.side, working.entryPrice, exit)
-      list[i] = {
+      list[i] = pushOutcome(working, {
         ...working,
         status,
         resolvedAt: now,
@@ -536,10 +649,8 @@ export async function resolveBotJournal(
         mfePercent: Number(mfePercent.toFixed(3)),
         maePercent: Number(maePercent.toFixed(3)),
         resolveSource: status === 'TIMEOUT' ? 'TIMEOUT' : 'AUTO',
-      }
-      if (working.createdAt >= RESULT_NOTIFICATIONS_SINCE) {
-        outcomes.push(list[i]!)
-      }
+        closeReason,
+      })
       changed++
     } else {
       list[i] = {
@@ -748,7 +859,7 @@ export function deriveAdaptiveGates(
   const blocked: string[] = []
   const boosted: string[] = []
   let minMemeScore = 62
-  let minSniperScore = 76
+  let minSniperScore = 48
 
   for (const s of analytics.bySetup) {
     const n = s.wins + s.losses
@@ -777,9 +888,9 @@ export function deriveAdaptiveGates(
 
   const sniper = analytics.byAlertType.find((x) => x.alertType === 'SNIPER')
   if (sniper && sniper.wins + sniper.losses >= 6) {
-    // Never raise sniper floor so high that BTC/alts go silent
-    if (sniper.winRate < 45) minSniperScore = 80
-    else if (sniper.winRate >= 60) minSniperScore = 72
+    // Floor stays scalp-friendly — never silence early moves
+    if (sniper.winRate < 45) minSniperScore = 52
+    else if (sniper.winRate >= 60) minSniperScore = 46
   }
 
   return {
@@ -950,9 +1061,15 @@ export async function getBotJournalPayload(env: Env): Promise<{
   const entries = await listJournal(env)
   const analytics = computeBotAnalytics(entries)
   const gates = await getAdaptiveGates(env)
+  // Backfill autopsy for older rows that closed before the analyzer existed.
+  const enriched = entries.slice(0, 160).map((e) =>
+    e.status !== 'OPEN' && !e.outcomeHeadline
+      ? attachOutcomeAnalysis(e, entries)
+      : e
+  )
   return {
     analytics,
-    entries: entries.slice(0, 160),
+    entries: enriched,
     gates,
   }
 }

@@ -74,6 +74,10 @@ export interface VaneDecision {
   title: string
   text: string
   dedupeKey: string
+  /** Alert + paper WAITING, also arm pullback watches */
+  needsPullbackWatch?: boolean
+  /** Structure arm only — TG watch, no market chase */
+  watchOnly?: boolean
 }
 
 export interface VaneKv {
@@ -85,14 +89,15 @@ export const VANE_STATE_PREFIX = 'vane:sym:'
 export const VANE_WALL_PREFIX = 'vane:wall:'
 export const VANE_RISK_KEY = 'vane:portfolio_risk_v1'
 
-/** Lowered so rich-context confluence can emit Tier-2 more boldly */
-export const MIN_VANE_SCORE = 55
-export const TIER1_SCORE = 75
-export const MIN_RR = 1.45
-export const TP_MIN_PCT = 1.4
-export const TP_MAX_PCT = 2.2
+/** Scalp-friendly floors — find early moves, still wait zone fill */
+export const MIN_VANE_SCORE = 48
+export const TIER1_SCORE = 72
+export const MIN_RR = 1.2
+export const TP_MIN_PCT = 0.75
+export const TP_MAX_PCT = 1.8
 /** Wall must live across ~1–2 cron ticks (was 12s — almost never true) */
 export const WALL_PERSIST_MS = 5_000
 export const RETEST_TTL_BARS_5M = 14
-export const BTC_SHIELD_PCT = 0.5
+/** Was 0.5% — blocked too many alt scalps on normal BTC noise */
+export const BTC_SHIELD_PCT = 0.85
 export const BTC_SHIELD_MS = 3 * 60_000

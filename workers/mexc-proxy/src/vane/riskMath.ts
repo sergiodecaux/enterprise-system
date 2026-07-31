@@ -7,8 +7,8 @@ import {
 } from './types'
 
 /**
- * TP 1.5–2.0% (30–40% margin @ 20x). SL = structure ± 0.5×ATR15m.
- * Reject if R:R < 1.8.
+ * Scalp TP from ATR1m (fallback ATR15m), clamped to TP_MIN–TP_MAX.
+ * SL = structure ± 0.5×ATR15m. Reject if R:R < MIN_RR.
  */
 export function buildVaneRisk(opts: {
   side: Side
@@ -16,6 +16,8 @@ export function buildVaneRisk(opts: {
   /** Sweep extreme / structural invalidation anchor */
   structureExtreme: number
   atr15m: number
+  /** Optional 1m ATR for dynamic scalp TP */
+  atr1m?: number | null
   /** Optional opposite HTF liquidity target */
   oppositeLiq?: number | null
 }): VaneRiskLevels {
@@ -49,10 +51,15 @@ export function buildVaneRisk(opts: {
   if (side === 'SHORT' && sl - entry < minSlDist) sl = entry + minSlDist
 
   const slPct = (Math.abs(entry - sl) / entry) * 100
-  const minTpPct = Math.max(TP_MIN_PCT, slPct * MIN_RR)
-  let tpPct = Math.min(TP_MAX_PCT, Math.max(TP_MIN_PCT, minTpPct))
 
-  // Prefer opposite HTF liq if inside 1.5–2.5% band
+  // Dynamic scalp TP: ~2.4× ATR1m (thin books shorter, lively longer)
+  const atr1 = opts.atr1m != null && opts.atr1m > 0 ? opts.atr1m : atr15m * 0.35
+  const atr1Pct = (atr1 / entry) * 100
+  const dynamicTp = Math.min(TP_MAX_PCT, Math.max(TP_MIN_PCT, atr1Pct * 2.4))
+  const minTpPct = Math.max(TP_MIN_PCT, slPct * MIN_RR)
+  let tpPct = Math.min(TP_MAX_PCT, Math.max(dynamicTp, minTpPct))
+
+  // Prefer opposite HTF liq if inside scalp band
   if (opts.oppositeLiq != null && opts.oppositeLiq > 0) {
     const liqPct =
       side === 'LONG'

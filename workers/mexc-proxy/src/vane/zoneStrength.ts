@@ -214,13 +214,13 @@ export async function assessZoneStrength(opts: {
   }
 
   const persistOk = wallPersistMs >= WALL_PERSIST_MS
-  const densityOk = bidAskRatio >= 1.8
+  const densityOk = bidAskRatio >= 1.4
   const obiOk =
-    (opts.side === 'LONG' && (obiPct ?? 0) >= 8) ||
-    (opts.side === 'SHORT' && (obiPct ?? 0) <= -8)
+    (opts.side === 'LONG' && (obiPct ?? 0) >= 5) ||
+    (opts.side === 'SHORT' && (obiPct ?? 0) <= -5)
 
   let grade: ZoneGrade = 'NEUTRAL'
-  // STRONG: density + (persist OR tape confirm) + OBI — not all-and-persist-12s
+  // STRONG: density + (persist OR tape confirm) + OBI — scalp-friendly floors
   if (
     !spoofed &&
     densityOk &&
@@ -233,7 +233,7 @@ export async function assessZoneStrength(opts: {
     )
   } else if (
     spoofed ||
-    bidAskRatio < 1.05 ||
+    bidAskRatio < 1.02 ||
     (opts.side === 'LONG' && greenDeltaWeak && (obiPct ?? 0) < -8) ||
     (opts.side === 'SHORT' && buyVol > sellVol * 2.5 && (obiPct ?? 0) > 8)
   ) {

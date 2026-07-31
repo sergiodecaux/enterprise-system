@@ -17,8 +17,10 @@ import { pickVaneBatch } from './roundRobin'
 import {
   canOpenVanePosition,
   loadVaneRisk,
+  normalizeVanePause,
   registerVaneOpen,
   saveVaneRisk,
+  syncVaneOpenFromPapers,
   vaneTradingPaused,
 } from './portfolioRisk'
 import {
@@ -40,10 +42,12 @@ import {
 import { loadVaneUniverse } from './universe'
 import { volSpikePause } from './volSpike'
 import { assessZoneStrength } from './zoneStrength'
+import { listPaperTrades } from '../paperTrades'
 import {
   MIN_VANE_SCORE,
   TIER1_SCORE,
   WALL_PERSIST_MS,
+  type Candle,
   type Side,
   type VaneDecision,
   type VaneKv,
@@ -59,9 +63,19 @@ function phaseOfGeom(
   if (price >= low * 0.997 && price <= high * 1.003) return 'TOUCH'
   const mid = (low + high) / 2
   const dist = Math.abs(price - mid) / price
-  // Wider approach so we don't miss zones between cron ticks
-  if (dist <= 0.02) return 'APPROACH'
+  // v4: wider approach so early scalp can arm before perfect touch
+  if (dist <= 0.028) return 'APPROACH'
   return 'FAR'
+}
+
+/** Favorable 1m/3m move % for side — detects start of scalp impulse */
+function earlyMoveFavorPct(candles1m: Candle[], side: Side): number {
+  if (candles1m.length < 5) return 0
+  const last = candles1m[candles1m.length - 1]![4]
+  const ago3 = candles1m[candles1m.length - 4]![4]
+  if (!(ago3 > 0) || !(last > 0)) return 0
+  const pct = ((last - ago3) / ago3) * 100
+  return side === 'LONG' ? pct : -pct
 }
 
 function smartToGeom(
@@ -113,8 +127,8 @@ function decisionToAlert(d: VaneDecision): ScanAlert {
     style: d.path === 'FLIP' ? 'INTRADAY' : 'SCALP',
     align: 'WITH_TREND',
     tradePlan: plan,
-    needsPullbackWatch: false,
-    watchOnly: false,
+    needsPullbackWatch: Boolean(d.needsPullbackWatch),
+    watchOnly: Boolean(d.watchOnly),
   }
 }
 
@@ -149,6 +163,7 @@ async function analyzeSymbol(opts: {
   const bias4h = tfBias(c4h)
   const bias1d = tfBias(c1d)
   const atr15 = atr(c15m, 14) || price * 0.008
+  const atr1m = atr(c1m, 8) || price * 0.002
   const htf = computeHtfTrendLite(c1h, c4h)
   const map = buildHtfLiquidityMap({
     candles4h: c4h,
@@ -227,10 +242,15 @@ async function analyzeSymbol(opts: {
     }
   }
 
-  // Skip expensive depth/deals unless near zone or flip armed
+  // Skip expensive depth/deals unless near zone, FAR-in-radar, or flip armed
   const nearOrFlip = candidates.some((c) => {
     const ph = phaseOfGeom(price, c.zone.zoneLow, c.zone.zoneHigh)
-    return ph === 'TOUCH' || ph === 'APPROACH' || c.pathHint === 'FLIP'
+    return (
+      ph === 'TOUCH' ||
+      ph === 'APPROACH' ||
+      ph === 'FAR' ||
+      c.pathHint === 'FLIP'
+    )
   })
   if (!nearOrFlip) return null
 
@@ -347,6 +367,8 @@ async function analyzeSymbol(opts: {
 
   const aligns = directionAligns(direction.bias, originSide)
   const conflicts = directionConflicts(direction.bias, originSide)
+  const earlyFavor = earlyMoveFavorPct(c1m, originSide)
+  const tickerChg = Math.abs(Number(opts.ticker.riseFallRate ?? 0) * 100)
 
   // Determine actionable path
   let path: VanePath | null = emitPath
@@ -395,12 +417,41 @@ async function analyzeSymbol(opts: {
     !path &&
     phaseGeom === 'APPROACH' &&
     aligns &&
-    zone.strength >= 6 &&
+    zone.strength >= 4 &&
     !conflicts &&
     (book.grade === 'STRONG' ||
       book.absorption ||
       book.cvdConfirm ||
-      (zone.touches >= 3 && book.grade !== 'WEAK'))
+      (zone.touches >= 2 && book.grade !== 'WEAK'))
+  ) {
+    path = 'HOLD'
+  }
+  // v4 EARLY SCALP: coin starts moving into/near zone (0.25–1.1% /3m)
+  if (
+    !path &&
+    (phaseGeom === 'TOUCH' || phaseGeom === 'APPROACH') &&
+    earlyFavor >= 0.25 &&
+    earlyFavor <= 1.15 &&
+    book.grade !== 'WEAK' &&
+    aligns &&
+    !conflicts &&
+    !book.greenDeltaWeak &&
+    (book.absorption ||
+      book.cvdConfirm ||
+      book.grade === 'STRONG' ||
+      earlyFavor >= 0.45)
+  ) {
+    path = 'HOLD'
+  }
+  // Hot ticker + zone approach: 24h mover starting to push with tape
+  if (
+    !path &&
+    phaseGeom === 'APPROACH' &&
+    tickerChg >= 2.5 &&
+    earlyFavor >= 0.2 &&
+    book.grade !== 'WEAK' &&
+    aligns &&
+    zone.strength >= 4
   ) {
     path = 'HOLD'
   }
@@ -413,11 +464,27 @@ async function analyzeSymbol(opts: {
   ) {
     // Stay silent until break confirm — FSM will emit FLIP later
   }
+
+  // v4 WAIT ZONE: FAR/early APPROACH — arm watch + paper WAITING, no chase
+  let waitOnly = false
+  if (
+    !path &&
+    (phaseGeom === 'FAR' || phaseGeom === 'APPROACH') &&
+    aligns &&
+    !conflicts &&
+    zone.strength >= 5 &&
+    book.grade !== 'WEAK' &&
+    direction.confidence >= 45
+  ) {
+    path = 'HOLD'
+    waitOnly = true
+  }
+
   if (!path) {
     await saveVaneState(opts.kv, {
       ...state,
       score: 0,
-      reason: `no path · phase=${phaseGeom} book=${book.grade} dir=${direction.bias} rank=${zoneRank.score}`,
+      reason: `no path · phase=${phaseGeom} book=${book.grade} dir=${direction.bias} early=${earlyFavor.toFixed(2)} rank=${zoneRank.score}`,
     })
     return null
   }
@@ -469,6 +536,7 @@ async function analyzeSymbol(opts: {
     entry,
     structureExtreme,
     atr15m: atr15,
+    atr1m,
     oppositeLiq: pick.oppositeLiq,
   })
   if (!risk.ok) {
@@ -511,17 +579,22 @@ async function analyzeSymbol(opts: {
   })
 
   if (!card.ready || !card.tier || card.score < MIN_VANE_SCORE) {
-    await saveVaneState(opts.kv, {
-      ...state,
-      score: card.score,
-      reason: `score ${card.score} < ${MIN_VANE_SCORE} · ${direction.summary}`,
-    })
-    return null
+    // Wait-zone arms can emit slightly under full score — paper still waits reclaim
+    if (!(waitOnly && card.score >= 40)) {
+      await saveVaneState(opts.kv, {
+        ...state,
+        score: card.score,
+        reason: `score ${card.score} < ${MIN_VANE_SCORE} · ${direction.summary}`,
+      })
+      return null
+    }
   }
+
+  const emitTier = card.tier ?? 'TIER2'
 
   // Tier-1 LONG hold prefers sweep reclaim
   if (
-    card.tier === 'TIER1' &&
+    emitTier === 'TIER1' &&
     path === 'HOLD' &&
     tradeSide === 'LONG' &&
     !sweepReclaim &&
@@ -536,31 +609,68 @@ async function analyzeSymbol(opts: {
   const invalidate =
     tradeSide === 'LONG' ? risk.sl * 0.999 : risk.sl * 1.001
   const sizeMult = regimePol.sizeMult
-  const riskPct = riskPctForTier(card.tier) * sizeMult
+  const riskPct = riskPctForTier(emitTier) * sizeMult
   const winPct = Math.min(
     90,
-    Math.max(58, Math.round(50 + card.score * 0.38 + (tradeAligns ? 3 : 0)))
+    Math.max(55, Math.round(48 + card.score * 0.4 + (tradeAligns ? 3 : 0)))
   )
+
+  const mode: 'WAIT' | 'SCALP' | 'HOLD' | 'FLIP' = waitOnly
+    ? 'WAIT'
+    : path === 'FLIP'
+      ? 'FLIP'
+      : earlyFavor >= 0.25
+        ? 'SCALP'
+        : 'HOLD'
 
   const setup =
     path === 'FLIP'
       ? `VANE_SR_FLIP_${tradeSide}`
-      : pick.isInternal
-        ? `VANE_INTERNAL_${tradeSide}`
-        : `VANE_HOLD_${tradeSide}`
+      : waitOnly
+        ? `VANE_WAIT_${tradeSide}`
+        : pick.isInternal
+          ? `VANE_INTERNAL_${tradeSide}`
+          : mode === 'SCALP'
+            ? `VANE_SCALP_${tradeSide}`
+            : `VANE_HOLD_${tradeSide}`
 
-  const title = `${card.tier === 'TIER1' ? '🎯' : '📌'} ${tradeSide} ${symbol.replace('_USDT', '')} · ${path}`
+  const coin = symbol.replace('_USDT', '')
+  const title =
+    mode === 'WAIT'
+      ? `👁 WAIT ЗОНА · ${tradeSide} ${coin}`
+      : mode === 'SCALP'
+        ? `⚡ SCALP СТАРТ · ${tradeSide} ${coin}`
+        : mode === 'FLIP'
+          ? `🔁 FLIP · ${tradeSide} ${coin}`
+          : `${emitTier === 'TIER1' ? '🎯' : '📌'} HOLD ЗОНА · ${tradeSide} ${coin}`
+
   const text = [
-    `Vane ${path} · ${card.tier} · score ${card.score}/100`,
+    mode === 'WAIT'
+      ? `Режим: WAIT · ${emitTier} · score ${card.score}/100`
+      : mode === 'SCALP'
+        ? `Режим: SCALP СТАРТ · ${emitTier} · score ${card.score}/100`
+        : mode === 'FLIP'
+          ? `Режим: S/R FLIP · ${emitTier} · score ${card.score}/100`
+          : `Режим: HOLD ЗОНА · ${emitTier} · score ${card.score}/100`,
+    mode === 'WAIT'
+      ? 'Не догоняю — жду касание/reclaim зоны, потом вход.'
+      : mode === 'SCALP'
+        ? 'Монета начинает ход у зоны — быстрый скальп-вход после confirm.'
+        : 'Зона + структура — вход после подтверждения стакана.',
     `Карта: ${direction.summary}`,
+    earlyFavor >= 0.15
+      ? `Импульс ~${earlyFavor.toFixed(2)}% /3м · 24h ${(Number(opts.ticker.riseFallRate ?? 0) * 100).toFixed(1)}%`
+      : null,
     `Зона ${zone.tf} ${zone.source} ${zone.zoneLow.toFixed(6)}–${zone.zoneHigh.toFixed(6)} · ${zoneRank.holdHint}`,
-    `Лимит ${entry.toFixed(6)} · SL ${risk.sl.toFixed(6)} (−${risk.slPct.toFixed(2)}%) · TP ${risk.tp.toFixed(6)} (+${risk.tpPct.toFixed(2)}%)`,
+    `Лимит ${entry.toFixed(6)} · SL ${risk.sl.toFixed(6)} (−${risk.slPct.toFixed(2)}%) · TP ${risk.tp.toFixed(6)} (+${risk.tpPct.toFixed(2)}% · ATR1m)`,
     `R:R 1:${risk.rr.toFixed(2)} · риск ~${riskPct.toFixed(2)}% · size×${sizeMult}`,
     `Стакан: ${book.grade} density×${book.bidAskRatio.toFixed(1)} wall ${Math.round(book.wallPersistMs / 1000)}с`,
     ...book.notes.slice(0, 2),
-    ...card.factors.slice(0, 5),
+    ...card.factors.slice(0, 4),
     state.reason ? `FSM: ${state.reason}` : '',
-    'Post-Only paper · не догонять.',
+    mode === 'WAIT'
+      ? 'TTL wait до 4ч · Post-Only · без market chase.'
+      : 'Post-Only paper · не догонять market.',
   ]
     .filter(Boolean)
     .join('\n')
@@ -569,16 +679,16 @@ async function analyzeSymbol(opts: {
     ...state,
     phase: path === 'HOLD' ? 'LONG_LIMIT' : 'SHORT_LIMIT',
     path,
-    tier: card.tier,
+    tier: emitTier,
     score: card.score,
-    reason: 'emit',
+    reason: waitOnly ? 'wait_zone' : mode === 'SCALP' ? 'early_scalp' : 'emit',
   })
 
   return {
     symbol,
     side: tradeSide,
     path,
-    tier: card.tier,
+    tier: emitTier,
     score: card.score,
     setup,
     zone,
@@ -597,7 +707,9 @@ async function analyzeSymbol(opts: {
     ],
     title,
     text,
-    dedupeKey: `vane:${path}:${symbol}:${tradeSide}:${Math.floor(Date.now() / 900_000)}`,
+    dedupeKey: `vane:${mode.toLowerCase()}:${symbol}:${tradeSide}:${Math.floor(Date.now() / 600_000)}`,
+    needsPullbackWatch: waitOnly || phaseGeom === 'APPROACH' || phaseGeom === 'FAR',
+    watchOnly: false,
   }
 }
 
@@ -609,26 +721,56 @@ export async function runVaneScan(opts?: {
 }): Promise<ScanAlert[]> {
   const session = evaluateVaneSession()
   const kv = opts?.kv
-  const risk = await loadVaneRisk(kv)
+  let risk = await loadVaneRisk(kv)
+  risk = normalizeVanePause(risk)
+
+  // Rebuild open book from live paper — unsticks WAIT timeouts that never freed slots
+  try {
+    const papers = await listPaperTrades(
+      kv ? { SUBSCRIBERS: kv as unknown as KVNamespace } : {}
+    )
+    const synced = syncVaneOpenFromPapers(risk, papers)
+    if (
+      synced.openSymbols.join() !== risk.openSymbols.join() ||
+      JSON.stringify(synced.openSides) !== JSON.stringify(risk.openSides)
+    ) {
+      risk = synced
+      await saveVaneRisk(kv, risk)
+      console.log(
+        '[vane] synced open slots:',
+        risk.openSymbols.join(',') || 'none'
+      )
+    }
+  } catch (err) {
+    console.error('[vane] paper sync failed', err)
+  }
+
   const paused = vaneTradingPaused(risk)
   if (paused.paused) {
     console.log('[vane] paused:', paused.reason)
     return []
   }
+  if (!session.ok) {
+    console.log('[vane] session blackout:', session.reason)
+    return []
+  }
 
   const btc = await loadBtcShield()
   const universe = await loadVaneUniverse({ pinSymbols: opts?.pinSymbols })
-  // Scan the whole TOP-5 every minute (was 5-of-50 round-robin → missed bounces)
-  const scanN = Math.max(universe.length, opts?.batchSize ?? 5)
+  // v4: scan hot movers first within TOP-18 (was full TOP-5 only)
+  const scanN = Math.min(
+    universe.length,
+    Math.max(10, opts?.batchSize ?? 12)
+  )
   const { batch: queue, cursor, nextCursor } = await pickVaneBatch({
     kv,
     universe,
     pinSymbols: opts?.pinSymbols,
     batchSize: scanN,
-    hotSlots: Math.min(3, Math.max(1, scanN - 1)),
+    hotSlots: Math.min(8, Math.max(4, scanN - 2)),
   })
   console.log(
-    `[vane] auto-search cursor ${cursor}→${nextCursor} n=${queue.length}:`,
+    `[vane] scalp-start cursor ${cursor}→${nextCursor} n=${queue.length}/${universe.length}:`,
     queue.map((t) => t.symbol).join(',')
   )
 
@@ -642,7 +784,7 @@ export async function runVaneScan(opts?: {
           ticker: t,
           kv,
           btc,
-          sessionOk: session.ok,
+          sessionOk: true,
           sessionReason: session.reason,
         })
       )
@@ -661,7 +803,7 @@ export async function runVaneScan(opts?: {
 
   const alerts: ScanAlert[] = []
   let openRisk = risk
-  let tier2Slots = 1
+  let tier2Slots = 3
 
   for (const d of decisions) {
     if (d.tier === 'TIER2') {
@@ -678,7 +820,7 @@ export async function runVaneScan(opts?: {
     openRisk = registerVaneOpen(openRisk, d.symbol, d.side)
     alerts.push(decisionToAlert(d))
     // Cap TG emissions per vane tick
-    if (alerts.length >= 2) break
+    if (alerts.length >= 4) break
   }
 
   if (openRisk !== risk) await saveVaneRisk(kv, openRisk)

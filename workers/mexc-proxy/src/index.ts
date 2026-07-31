@@ -17,7 +17,8 @@
  */
 
 import type { ScanAlert, TradePlanPayload } from './scanner'
-import { runVaneScan } from './vane'
+import { runVaneScan, loadVaneRisk, vaneTradingPaused } from './vane'
+import { evaluateVaneSession } from './vane/sessionFilter'
 import { BOT_ENGINE, SNIPER_ENGINE } from './botEngine'
 import {
   channelForAlertType,
@@ -50,6 +51,7 @@ import {
   resolveBotJournal,
   formatCorridorWrReport,
 } from './botJournal'
+import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 
@@ -1148,6 +1150,8 @@ async function runCronScan(
         const paper = await createPaperTradeFromPlan(env, {
           ...a.tradePlan,
           alertType: 'MEME',
+          target1: a.tradePlan.target1,
+          target3: a.tradePlan.target3,
         })
         if (paper.created && paper.comment) {
           title = paper.comment.title
@@ -1164,9 +1168,12 @@ async function runCronScan(
         } else {
           skipped++
           console.log(
-            '[cron] meme paper skipped — still broadcasting alert',
+            '[cron] meme paper skipped —',
+            paper.skipReason ?? 'unknown',
             a.dedupeKey
           )
+          // Cooldown: don't spam TG with same symbol re-alerts.
+          if (paper.skipReason === 'cooldown') return
         }
       }
       const cr = await broadcastAlert(env, {
@@ -1286,6 +1293,25 @@ async function runCronScan(
               : outcome.status === 'BE'
                 ? '🛡'
                 : '⏱'
+        const autopsy =
+          outcome.outcomeHeadline && outcome.outcomeDetail
+            ? formatOutcomeAnalysisLines({
+                closeReason: outcome.closeReason ?? null,
+                primaryTag: outcome.outcomePrimaryTag ?? 'RESOLVED',
+                tags: outcome.outcomeTags ?? [],
+                headline: outcome.outcomeHeadline,
+                detail: outcome.outcomeDetail,
+                lesson: outcome.outcomeLesson ?? '',
+                tone:
+                  outcome.status === 'WIN'
+                    ? 'win'
+                    : outcome.status === 'LOSS'
+                      ? 'loss'
+                      : outcome.status === 'INVALIDATED'
+                        ? 'skip'
+                        : 'neutral',
+              })
+            : []
         const r = await broadcastAlert(env, {
           type: 'SYSTEM',
           channel: outcome.alertType === 'SNIPER' ? 'sniper' : 'meme',
@@ -1299,6 +1325,7 @@ async function runCronScan(
                 : ''
             }`,
             `MFE +${outcome.mfePercent.toFixed(2)}% · MAE −${outcome.maePercent.toFixed(2)}%`,
+            ...autopsy,
           ].join('\n'),
           dedupeKey: `journal:result:${outcome.id}:${outcome.status}`,
         })
@@ -1623,7 +1650,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🎯 <b>ENTERPRISE VANE</b>\n\nСам ищет сигналы 24/7 (каждую минуту).\nTOP-50 · hot movers + round-robin\nСильная зона → LONG · пробой+ретест → SHORT\n\nКоманды:\n/zone BTC 94000-96000\n/status · /trades · /journal\n/scan — ручной догон · /stop'
+        ? '🎯 <b>ENTERPRISE VANE</b>\n\nСам ищет скальп-ходы 24/7 (каждую минуту).\nTOP-18 · hot movers · early scalp + жду зону\nСтарт движения → SCALP · зона далеко → WAIT\n\nКоманды:\n/zone BTC 94000-96000\n/status · /trades · /journal\n/scan — ручной догон · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · Liquidation Echo · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     await sendDemoSignal(env, chatId, channel)
@@ -1844,6 +1871,16 @@ async function dispatchCommand(
     )
 
     if (channel === 'sniper') {
+      const vaneRisk = await loadVaneRisk(
+        env.SUBSCRIBERS
+          ? {
+              get: (key) => env.SUBSCRIBERS!.get(key),
+              put: (key, value) => env.SUBSCRIBERS!.put(key, value),
+            }
+          : undefined
+      )
+      const pause = vaneTradingPaused(vaneRisk)
+      const session = evaluateVaneSession()
       await tgSend(
         env,
         chatId,
@@ -1853,9 +1890,16 @@ async function dispatchCommand(
           SNIPER_ENGINE.label,
           SNIPER_ENGINE.deployedNote,
           ``,
-          `Автопоиск: каждую минуту (hot + TOP-50 rotation)`,
-          `HOLD / FLIP · TP 1.5–2% · ATR SL · R:R≥1.8`,
+          `Автопоиск: каждую минуту · TOP-18 · SCALP / WAIT / HOLD`,
+          `TP ≈2.4×ATR1m (0.75–1.8%) · R:R≥1.2 · cluster LONGs ≤2`,
           `Сделок в работе: ${live}`,
+          `Open slots: ${vaneRisk.openSymbols.map((s) => s.replace('_USDT', '')).join(', ') || '—'}`,
+          pause.paused
+            ? `⏸ ПАУЗА: ${pause.reason}`
+            : `▶ Торговля: ON · день PnL ${vaneRisk.dayPnlPct.toFixed(2)}% · streak LOSS ${vaneRisk.consecutiveLosses}`,
+          session.ok
+            ? `Сессия: ${session.session} OK`
+            : `Сессия BLOCK: ${session.reason}`,
           `Sniper alerts: ${me.sniper ? 'ON' : 'OFF'}`,
           `Подписчиков: ${list.length}`,
           `chatId: <code>${chatId}</code>`,

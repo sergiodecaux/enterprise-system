@@ -352,12 +352,23 @@ export function buildDirectedSignal(input: {
       100
   }
 
+  const style = input.tradeStyle ?? 'INTRADAY'
+  const stampedSetups = setups.map((s) =>
+    s.tradeStyle ? s : { ...s, tradeStyle: style }
+  )
+  const stampedBest =
+    bestSetup == null
+      ? null
+      : bestSetup.tradeStyle
+        ? bestSetup
+        : { ...bestSetup, tradeStyle: style }
+
   return {
     side,
     live,
     primary,
-    setups,
-    bestSetup,
+    setups: stampedSetups,
+    bestSetup: stampedBest,
     catchZone,
     winPct,
     doubts: [...new Set(doubts)].slice(0, 6),

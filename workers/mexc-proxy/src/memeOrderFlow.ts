@@ -24,6 +24,8 @@ const BOOK_STATE_KEY = 'scanner:meme_order_flow_v26'
 const MAX_SCAN = 8
 const MAX_ALERTS = 2
 const MIN_CONF = 84
+/** Absorption alone was 0W/1L + 2 dead after v26.1 — require stronger confirm */
+const MIN_CONF_ABSORPTION = 92
 const MAX_SPREAD_BPS = 45
 const MAX_SPREAD_BPS_STRONG = 55
 
@@ -35,6 +37,8 @@ const TP1_PCT = 0.018
 const TP3_PCT = 0.04
 /** Wall-release: tape in trade direction */
 const MIN_FLOW_SHARE_WALL = 52
+/** Absorption: need clearer tape than pre-v26.2 (was 45) */
+const MIN_FLOW_SHARE_ABS = 52
 /** FOMO chase into pump without wall/abs */
 const MAX_FOMO_FLOW_NO_WALL = 72
 
@@ -210,10 +214,17 @@ export function allowMemeFlowEvent(
           : `weak_sell_flow=${event.flowSharePct.toFixed(0)}`,
     }
   }
-  if (isAbs && event.flowSharePct < 45) {
+  if (isAbs && event.flowSharePct < MIN_FLOW_SHARE_ABS) {
     return {
       ok: false,
       reason: `weak_absorption_tape=${event.flowSharePct.toFixed(0)}`,
+    }
+  }
+  // Pure absorption without a wall needs elite conf (CONT_ABSORPTION weak post-v26.1)
+  if (isAbs && !isWall && event.confidence < MIN_CONF_ABSORPTION) {
+    return {
+      ok: false,
+      reason: `abs_conf<${MIN_CONF_ABSORPTION}`,
     }
   }
 
@@ -300,7 +311,7 @@ function toAlert(
       `SL ${lv.sl} (~${(SL_PCT * 100).toFixed(1)}%) · TP1 ${lv.tp1} · TP ${lv.tp} (~${(TP_PCT * 100).toFixed(1)}%)`,
       `spread ${event.spreadBps.toFixed(0)}bps · conf ${event.confidence} · flow ${event.flowSharePct.toFixed(0)}%`,
       ...event.notes.slice(0, 3),
-      'v26: journal autopsy · WITH day · no trap/liq/spoof/fade',
+      'v26.2: WITH day · TP1+tight trail · abs conf≥92 · cooldown 75м',
     ].join('\n'),
     dedupeKey: `cron:mof26:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
     score: event.confidence,

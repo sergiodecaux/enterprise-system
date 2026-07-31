@@ -32,6 +32,12 @@ export interface BotJournalEntryDto {
   maePercent: number
   dedupeKey: string
   resolveSource: 'AUTO' | 'TIMEOUT' | null
+  closeReason?: string | null
+  outcomePrimaryTag?: string | null
+  outcomeTags?: string[]
+  outcomeHeadline?: string | null
+  outcomeDetail?: string | null
+  outcomeLesson?: string | null
 }
 
 export interface BotSetupStatsDto {

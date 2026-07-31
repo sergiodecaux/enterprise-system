@@ -38,6 +38,8 @@ import {
   type SignalSide,
 } from '../../engine/signals/buildDirectedSignal'
 import type { ConditionalSetup } from '../../engine/setups'
+import type { SetupTradeStyle } from '../../engine/setups/types'
+import { HORIZON_PROFILES } from '../../engine/zones/horizonProfiles'
 import { useAppStore } from '../../store/useAppStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { logger } from '../../utils/logger'
@@ -49,6 +51,22 @@ import {
 import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 
 const BTC = 'BTC/USDT:USDT'
+
+const STYLE_OPTIONS: Array<{
+  id: SetupTradeStyle
+  label: string
+  hint: string
+}> = [
+  { id: 'SCALP', label: 'Скальп', hint: '5–45м · ближние зоны' },
+  { id: 'INTRADAY', label: 'Интрадей', hint: '2–8ч · основная сессия' },
+  { id: 'SWING', label: 'Свинг', hint: 'дни · HTF зоны' },
+]
+
+function ttlHoursForStyle(style: SetupTradeStyle): number {
+  if (style === 'SCALP') return 18
+  if (style === 'SWING') return 96
+  return 48
+}
 
 function fmtPx(p: number): string {
   if (!(p > 0)) return '—'
@@ -72,6 +90,7 @@ const SignalsView = () => {
   const [catalog, setCatalog] = useState<MexcTicker[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [selected, setSelected] = useState<MexcTicker | null>(null)
+  const [tradeStyle, setTradeStyle] = useState<SetupTradeStyle>('INTRADAY')
   const [sideBusy, setSideBusy] = useState<SignalSide | null>(null)
   const [result, setResult] = useState<DirectedSignalResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -174,15 +193,20 @@ const SignalsView = () => {
       }
 
       const existing = signals.find((s) => s.internalSymbol === symbol)
+      const style = tradeStyle
+      const prof = HORIZON_PROFILES[style]
 
-      const [btc1d, coin1d, c4h, c1h, c15m] = await Promise.all([
+      const [btc1d, coin1d, c4h, c1h, c15m, c5m] = await Promise.all([
         marketContext?.dailyAnalysis
           ? Promise.resolve(null)
           : fetchOhlcv(BTC, '1d', 60),
         fetchOhlcv(symbol, '1d', 120),
         fetchOhlcv(symbol, '4h', 100),
         fetchOhlcv(symbol, '1h', 100),
-        fetchOhlcv(symbol, '15m', 80),
+        fetchOhlcv(symbol, '15m', style === 'SCALP' ? 120 : 80),
+        style === 'SCALP'
+          ? fetchOhlcv(symbol, '5m', 120)
+          : Promise.resolve([] as Awaited<ReturnType<typeof fetchOhlcv>>),
       ])
       await sleep(40)
 
@@ -223,8 +247,9 @@ const SignalsView = () => {
         internalSymbol: symbol,
         ohlcv4h: c4h,
         ohlcv1h: c1h,
-        ohlcv15m: c15m,
+        ohlcv15m: c15m.length >= 20 ? c15m : c1h,
         ohlcv1d: coin1d.length >= 20 ? coin1d : undefined,
+        ohlcv5m: c5m.length >= 20 ? c5m : undefined,
         priceChange24h: selected.priceChangePercent,
         dailyBias,
         btcTrend,
@@ -233,24 +258,50 @@ const SignalsView = () => {
         marketCtxBoost: ctxBoost.marketCtxBoost || undefined,
         marketCtxNotes: ctxBoost.notes.length ? ctxBoost.notes : undefined,
       })
-      upsertSignal(signal)
-      pushSignalSnapshot(signal)
+      // Stamp selected horizon so ScoreCard / journal / watch see the same style
+      const styledSignal = {
+        ...signal,
+        tradeStyle: style,
+        styleReasons: [
+          ...(signal.styleReasons ?? []),
+          `Signals tab · ${prof.tag} ${prof.label}`,
+        ],
+      }
+      upsertSignal(styledSignal)
+      pushSignalSnapshot(styledSignal)
 
-      const price = selected.lastPrice > 0 ? selected.lastPrice : signal.price
+      const price =
+        selected.lastPrice > 0 ? selected.lastPrice : styledSignal.price
       const base = coinBaseFromInternal(symbol)
       const coinNews = workerCtx?.coinNews?.[base]
       const coinSent = newsIntel.coinSentiments[base]
 
+      // Chart TF for path/zones: SCALP→5m/15m, INTRA→15m/1h, SWING→1h (+1d fib)
+      const pathCandles =
+        style === 'SCALP'
+          ? c5m.length >= 20
+            ? c5m
+            : c15m.length >= 20
+              ? c15m
+              : c1h
+          : style === 'SWING'
+            ? c1h.length >= 20
+              ? c1h
+              : c4h
+            : c15m.length >= 20
+              ? c15m
+              : c1h
+
       const directed = buildDirectedSignal({
         side,
-        candles: c15m.length >= 20 ? c15m : c1h,
+        candles: pathCandles,
         candles1d: coin1d,
         candles1h: c1h,
         symbol,
         flatSymbol: flat,
         price,
-        signal,
-        mmIntent: mmIntentMap[symbol] ?? signal.mmIntent ?? null,
+        signal: styledSignal,
+        mmIntent: mmIntentMap[symbol] ?? styledSignal.mmIntent ?? null,
         liquidityMap: liquidityMaps[symbol] ?? null,
         fearGreed: workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? null,
         fearGreedLabel:
@@ -264,8 +315,16 @@ const SignalsView = () => {
           coinSent?.items?.slice(0, 3).map((i) => i.title),
         dailyBias: dailyBias.bias,
         btcTrend,
-        tradeStyle: 'INTRADAY',
+        tradeStyle: style,
       })
+
+      // Ensure setup carries horizon for bot watch / Lab
+      if (directed.bestSetup && !directed.bestSetup.tradeStyle) {
+        directed.bestSetup = { ...directed.bestSetup, tradeStyle: style }
+      }
+      for (const s of directed.setups) {
+        if (!s.tradeStyle) s.tradeStyle = style
+      }
 
       setResult(directed)
       haptic.success()
@@ -300,10 +359,16 @@ const SignalsView = () => {
       return
     }
 
+    const style = result.bestSetup.tradeStyle ?? tradeStyle
+    const ttlHours = ttlHoursForStyle(style)
     const setup: ConditionalSetup = {
       ...result.bestSetup,
+      tradeStyle: style,
       symbol: toFlatSymbol(selected.symbol),
       internalSymbol: selected.symbol,
+      title: result.bestSetup.title.startsWith('#')
+        ? result.bestSetup.title
+        : `${HORIZON_PROFILES[style].tag} ${result.bestSetup.title}`,
     }
 
     setWatchBusy(true)
@@ -316,7 +381,7 @@ const SignalsView = () => {
           internalSymbol: selected.symbol,
           setup,
           createdAt: Date.now(),
-          expiresAt: Date.now() + 48 * 3600_000,
+          expiresAt: Date.now() + ttlHours * 3600_000,
           lastStatus: setup.status,
           readyNotified: false,
           invalidatedNotified: false,
@@ -333,7 +398,7 @@ const SignalsView = () => {
         setup,
         symbol: toFlatSymbol(selected.symbol),
         internalSymbol: selected.symbol,
-        ttlHours: 48,
+        ttlHours,
       })
       if (watch) {
         upsertWatchedSetup(watch)
@@ -341,7 +406,7 @@ const SignalsView = () => {
         setConfirmOpen(false)
         haptic.success()
         showAlert(
-          `Бот следит за ${toDisplayName(selected.symbol)} ${setup.side} — алерт при READY`
+          `Бот следит за ${toDisplayName(selected.symbol)} ${setup.side} · ${style} — алерт при READY`
         )
       } else {
         upsertWatchedSetup({
@@ -351,7 +416,7 @@ const SignalsView = () => {
           internalSymbol: selected.symbol,
           setup,
           createdAt: Date.now(),
-          expiresAt: Date.now() + 48 * 3600_000,
+          expiresAt: Date.now() + ttlHours * 3600_000,
           lastStatus: setup.status,
           readyNotified: false,
           invalidatedNotified: false,
@@ -379,7 +444,7 @@ const SignalsView = () => {
           </h1>
         </div>
         <p className="font-mono text-[11px] text-holo/45">
-          Монета → LONG/SHORT → зона ловли → оценка → оповещение в бота
+          Стиль → монета → LONG/SHORT → зона под горизонт → бот
         </p>
       </div>
 
@@ -489,8 +554,53 @@ const SignalsView = () => {
         )}
       </div>
 
+      {/* Trade style: SCALP / INTRA / SWING */}
+      <div className="px-4 pt-4">
+        <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/45">
+          Горизонт сделки
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {STYLE_OPTIONS.map((opt) => {
+            const active = tradeStyle === opt.id
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                disabled={!!sideBusy}
+                onClick={() => {
+                  setTradeStyle(opt.id)
+                  setResult(null)
+                  setWatchedOk(false)
+                  setConfirmOpen(false)
+                  setError(null)
+                  haptic.impact()
+                }}
+                className={`rounded-xl border px-2 py-2.5 text-left transition-colors disabled:opacity-40 ${
+                  active
+                    ? 'border-amber-400/50 bg-amber-500/15 text-amber-100'
+                    : 'border-hull-border bg-hull/40 text-holo/55 hover:border-holo/30 hover:text-holo/80'
+                }`}
+              >
+                <div className="font-mono text-[11px] font-bold uppercase">
+                  {opt.label}
+                </div>
+                <div className="mt-0.5 font-mono text-[9px] opacity-70 leading-snug">
+                  {opt.hint}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        <p className="mt-1.5 font-mono text-[10px] text-holo/35">
+          {HORIZON_PROFILES[tradeStyle].tag} · зоны до{' '}
+          {HORIZON_PROFILES[tradeStyle].maxDistPct}% · TP×
+          {HORIZON_PROFILES[tradeStyle].tpMult} · R{' '}
+          {HORIZON_PROFILES[tradeStyle].rMultiples.join('/')}
+        </p>
+      </div>
+
       {/* LONG / SHORT */}
-      <div className="grid grid-cols-2 gap-3 px-4 pt-4">
+      <div className="grid grid-cols-2 gap-3 px-4 pt-3">
         <button
           type="button"
           disabled={!selected || !!sideBusy}
@@ -521,7 +631,7 @@ const SignalsView = () => {
 
       {!selected && (
         <p className="px-4 pt-3 font-mono text-[11px] text-holo/35">
-          Выберите монету, затем нажмите Long или Short
+          Выберите стиль и монету, затем Long или Short
         </p>
       )}
 
@@ -544,7 +654,8 @@ const SignalsView = () => {
           >
             <div className="flex items-center justify-between gap-2">
               <div className="font-mono text-sm font-bold text-holo">
-                {toDisplayName(selected.symbol)} · {result.side}
+                {toDisplayName(selected.symbol)} · {result.side} ·{' '}
+                {HORIZON_PROFILES[tradeStyle].tag}
               </div>
               <div
                 className={`font-mono text-lg font-bold ${
@@ -555,7 +666,7 @@ const SignalsView = () => {
               </div>
             </div>
             <p className="mt-1 font-mono text-[10px] text-holo/40">
-              Оценка вероятности (не исторический WR)
+              {HORIZON_PROFILES[tradeStyle].label} · оценка (не исторический WR)
             </p>
             <p className="mt-2 font-mono text-xs leading-snug text-holo/80">
               {result.primary.title}
@@ -709,8 +820,9 @@ const SignalsView = () => {
                 <span className="font-bold text-holo">
                   {toDisplayName(selected.symbol)}
                 </span>{' '}
-                и напишет, когда зона {result.side} станет READY (или
-                инвалидируется). TTL 48ч.
+                и напишет, когда зона {result.side} ·{' '}
+                {HORIZON_PROFILES[tradeStyle].tag} станет READY (или
+                инвалидируется). TTL {ttlHoursForStyle(tradeStyle)}ч.
               </p>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button

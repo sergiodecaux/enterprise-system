@@ -5,4 +5,6 @@ export {
   saveVaneRisk,
   applyVaneOutcome,
   vaneTradingPaused,
+  syncVaneOpenFromPapers,
+  unregisterVaneSymbol,
 } from './portfolioRisk'

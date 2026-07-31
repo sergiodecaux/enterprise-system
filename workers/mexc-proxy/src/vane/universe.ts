@@ -1,10 +1,13 @@
 import { fetchTickers, quoteVol, type VaneTicker } from './mexc'
 
-const MIN_QUOTE_VOL = 8_000_000
-const MAX_SPREAD_PCT = 0.15
-/** Elite missed bounces on TOP-50 (5/min RR). Focus = top liquid alts only. */
-const TOP_ALTS = 5
-const MIN_OI = 2_000
+const MIN_QUOTE_VOL = 4_000_000
+const MAX_SPREAD_PCT = 0.18
+/**
+ * v4: TOP-18 liquid alts so early movers are visible.
+ * Batch still prioritizes hot |chg| via pickVaneBatch.
+ */
+const TOP_ALTS = 18
+const MIN_OI = 1_500
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -34,6 +37,9 @@ const PREFERRED_ALTS = [
   'BNB_USDT',
   'XRP_USDT',
   'AVAX_USDT',
+  'LINK_USDT',
+  'DOGE_USDT',
+  'SUI_USDT',
 ] as const
 
 export function isBlueChip(symbol: string): boolean {
@@ -48,9 +54,13 @@ export function spreadPct(t: VaneTicker): number {
   return ((ask - bid) / mid) * 100
 }
 
+function absChg(t: VaneTicker): number {
+  return Math.abs(Number(t.riseFallRate ?? 0) * 100)
+}
+
 /**
- * TOP-5 liquid alt USDT-M perps (BTC excluded — shield loads BTC separately).
- * Full list fits in one cron batch → zone touches are not missed.
+ * TOP liquid alt USDT-M perps (BTC excluded — shield loads BTC separately).
+ * Mix: preferred majors + hottest movers by |24h chg|.
  */
 export async function loadVaneUniverse(opts?: {
   pinSymbols?: string[]
@@ -84,6 +94,10 @@ export async function loadVaneUniverse(opts?: {
         ? 0
         : 1
       if (pa !== pb) return pa - pb
+      // Prefer names that are already moving (early scalp radar)
+      const ca = absChg(a)
+      const cb = absChg(b)
+      if (Math.abs(cb - ca) > 0.35) return cb - ca
       const ba = isBlueChip(a.symbol) ? 0 : 1
       const bb = isBlueChip(b.symbol) ? 0 : 1
       if (ba !== bb) return ba - bb

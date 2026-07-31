@@ -140,6 +140,44 @@ const BotTradeCard = ({ trade }: Props) => {
           MFE +{trade.mfePercent.toFixed(2)}% · MAE −{trade.maePercent.toFixed(2)}%
         </span>
       </div>
+
+      {trade.outcomeHeadline && trade.status !== 'OPEN' && (
+        <div
+          className={`mt-2 rounded-lg border px-2.5 py-2 ${
+            trade.status === 'WIN'
+              ? 'border-matrix/25 bg-matrix/5'
+              : trade.status === 'LOSS'
+                ? 'border-alert/25 bg-alert/5'
+                : 'border-hull-border/50 bg-black/20'
+          }`}
+        >
+          <div className="font-mono text-[9px] font-bold text-holo/85">
+            Разбор · {trade.outcomeHeadline}
+          </div>
+          {trade.outcomeDetail && (
+            <p className="mt-1 font-mono text-[8px] leading-relaxed text-holo/55">
+              {trade.outcomeDetail}
+            </p>
+          )}
+          {trade.outcomeLesson && (
+            <p className="mt-1 font-mono text-[8px] leading-relaxed text-sky-200/70">
+              → {trade.outcomeLesson}
+            </p>
+          )}
+          {trade.outcomeTags && trade.outcomeTags.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {trade.outcomeTags.slice(0, 5).map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded border border-hull-border/50 px-1 py-0.5 font-mono text-[7px] text-holo/40"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

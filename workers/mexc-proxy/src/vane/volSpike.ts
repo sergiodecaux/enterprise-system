@@ -1,7 +1,7 @@
 import { atr } from './mexc'
 import type { Candle } from './types'
 
-/** Pause entries when 1m ATR spikes > 3× recent day average */
+/** Pause entries when 1m ATR spikes > 4.5× recent day average (was 3× — killed early moves) */
 export function volSpikePause(candles1m: Candle[]): {
   pause: boolean
   atr1m: number
@@ -28,7 +28,7 @@ export function volSpikePause(candles1m: Candle[]): {
   }
   const dayAvg = n > 0 ? sum / n : 0
   const ratio = dayAvg > 0 ? atr1m / dayAvg : 0
-  if (ratio >= 3) {
+  if (ratio >= 4.5) {
     return {
       pause: true,
       atr1m,
