@@ -1648,7 +1648,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🎯 <b>ENTERPRISE VANE</b>\n\nСам ловит MACRO-ходы 24/7 (каждую минуту).\nTP 1.5–3.8% · WITH HTF · импульс уже пошёл\n🚀 MACRO приоритет · без WAIT-шума\n\nКоманды:\n/zone BTC 94000-96000\n/status · /trades · /journal\n/scan — ручной догон · /stop'
+        ? '🎯 <b>ENTERPRISE VANE</b>\n\nЛовит MACRO-ходы везде: зона · боковик · импульс.\nПамять по истории символа · без mid-range пилы\nTP 1.5–3.8% · 🚀 ZONE / RANGE / MOM\n\nКоманды:\n/zone BTC 94000-96000\n/status · /trades · /journal\n/scan — ручной догон · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · Liquidation Echo · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     await sendDemoSignal(env, chatId, channel)
@@ -1888,7 +1888,7 @@ async function dispatchCommand(
           SNIPER_ENGINE.label,
           SNIPER_ENGINE.deployedNote,
           ``,
-          `Автопоиск: каждую минуту · MACRO ходы · без WAIT-шума`,
+          `Автопоиск: MACRO ZONE/RANGE/MOM · память истории · без WAIT`,
           `TP ≈2.4×ATR1m (0.75–1.8%) · R:R≥1.2 · cluster LONGs ≤2`,
           `Сделок в работе: ${live}`,
           `Open slots: ${vaneRisk.openSymbols.map((s) => s.replace('_USDT', '')).join(', ') || '—'}`,

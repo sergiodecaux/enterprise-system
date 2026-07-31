@@ -29,6 +29,7 @@ import {
   MACRO_TRAIL_AFTER_TP1,
   MACRO_TRAIL_PCT,
 } from './vane/macroStrategy'
+import { rememberMacroOutcome } from './vane/macroMemory'
 
 const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 5
@@ -1066,6 +1067,15 @@ async function updateVaneRiskOnClose(
     isLoss: pricePnl < -0.1,
   })
   await saveVaneRisk(kv, next)
+  if (isMacroSetup(t.setup)) {
+    await rememberMacroOutcome(kv, {
+      symbol: t.symbol,
+      side: t.side,
+      pnlPct: pricePnl,
+      isLoss: pricePnl < -0.15,
+      isWin: pricePnl > 0.35,
+    })
+  }
 }
 
 function hitTp(t: PaperTrade, snap: TickerSnap): boolean {

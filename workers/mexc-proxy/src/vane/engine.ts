@@ -43,8 +43,19 @@ import {
   MACRO_MIN_SCORE,
   MACRO_RISK_PCT,
   MACRO_TP1_PCT,
+  detectLocalRange,
+  moveFavorPct,
   qualifyMacro,
+  rangePosition,
+  syntheticMomentumZone,
+  syntheticRangeZone,
 } from './macroStrategy'
+import {
+  loadMacroMemory,
+  memoryAllowsTrade,
+  memorySummary,
+  rememberMacroAnalysis,
+} from './macroMemory'
 import { buildVaneScoreCard, vaneRegimePolicy } from './scoreCard'
 import { evaluateVaneSession } from './sessionFilter'
 import {
@@ -184,24 +195,32 @@ async function analyzeSymbol(opts: {
     price,
   })
 
-  // Candidate sides: prefer SSL long / BSL short near price
+  // Candidate sides: HTF zones + range/momentum (не только сильные SSL/BSL)
   const candidates: Array<{
     side: Side
     zone: VaneZoneGeom
     pathHint: VanePath
     isInternal: boolean
     oppositeLiq: number | null
+    origin: 'HTF' | 'INTERNAL' | 'RANGE' | 'MOMENTUM' | 'FLIP'
   }> = []
+
+  const localRange = detectLocalRange(c15m, 24)
+  const chg24Signed = Number(opts.ticker.riseFallRate ?? 0) * 100
 
   for (const side of ['LONG', 'SHORT'] as Side[]) {
     const smart = findSmartZone(side, price, map, atr15, {
-      // TOP-5 majors: same relaxed distance/touches as blue chips
       relaxed: true,
     })
     if (!smart) continue
     const ph = smart.phase
-    // MACRO v6: only TOUCH/APPROACH — FAR wait arms = TG noise + useless skips
-    const inRadar = ph === 'TOUCH' || ph === 'APPROACH'
+    // Zone TOUCH/APPROACH + FAR within 2.5% if hot mover (macro can start approaching)
+    const inRadar =
+      ph === 'TOUCH' ||
+      ph === 'APPROACH' ||
+      (ph === 'FAR' &&
+        smart.distancePct <= 2.5 &&
+        Math.abs(chg24Signed) >= 2)
     if (inRadar) {
       candidates.push({
         side,
@@ -209,11 +228,11 @@ async function analyzeSymbol(opts: {
         pathHint: 'HOLD',
         isInternal: false,
         oppositeLiq: smart.target,
+        origin: 'HTF',
       })
     }
   }
 
-  // Tier-2 internals along 4H trend
   for (const side of ['LONG', 'SHORT'] as Side[]) {
     const iz = findInternalZone({
       side,
@@ -230,13 +249,38 @@ async function analyzeSymbol(opts: {
           pathHint: 'HOLD',
           isInternal: true,
           oppositeLiq: null,
+          origin: 'INTERNAL',
         })
       }
     }
   }
 
+  // Боковик: edges / break without HTF zone
+  if (localRange) {
+    const pos = rangePosition(price, localRange)
+    if (pos === 'NEAR_LOW' || pos === 'BROKE_UP' || pos === 'BROKE_DOWN') {
+      candidates.push({
+        side: 'LONG',
+        zone: syntheticRangeZone('LONG', localRange, price),
+        pathHint: 'HOLD',
+        isInternal: true,
+        oppositeLiq: localRange.high,
+        origin: 'RANGE',
+      })
+    }
+    if (pos === 'NEAR_HIGH' || pos === 'BROKE_DOWN' || pos === 'BROKE_UP') {
+      candidates.push({
+        side: 'SHORT',
+        zone: syntheticRangeZone('SHORT', localRange, price),
+        pathHint: 'HOLD',
+        isInternal: true,
+        oppositeLiq: localRange.low,
+        origin: 'RANGE',
+      })
+    }
+  }
+
   if (!candidates.length) {
-    // Still advance flip state if we have prior armed break
     const prev = await loadVaneState(opts.kv, symbol)
     if (prev && (prev.phase === 'RETEST_WAIT' || prev.phase === 'BREAK_ARMED' || prev.phase === 'WEAK_BREAK')) {
       candidates.push({
@@ -245,26 +289,32 @@ async function analyzeSymbol(opts: {
         pathHint: 'FLIP',
         isInternal: prev.zone.tf === '15m',
         oppositeLiq: null,
+        origin: 'FLIP',
       })
-    } else {
+    } else if (Math.abs(chg24Signed) < 1.2) {
+      // Quiet coin, no structure — skip before LTF
       return null
     }
+    // Hot mover without zone: still load LTF for MOMENTUM path below
   }
 
-  // Fast HTF abort — no LTF/book if map is FLAT/weak (kills empty noise + subrequests)
+  // Soft HTF abort — allow FLAT/RANGING if range or hot 24h (макро в боковике)
   const htfQuick = computeVaneDirection({
     htf,
     bias4h,
     bias1d,
     regime,
     bookGrade: 'NEUTRAL',
-    bookSide: candidates[0]!.side,
+    bookSide: candidates[0]?.side ?? (chg24Signed >= 0 ? 'LONG' : 'SHORT'),
     nearestLongDist: null,
     nearestShortDist: null,
   })
   if (
     htfQuick.bias === 'FLAT' &&
-    htfQuick.confidence < MACRO_DIR_CONF_MIN - 10
+    htfQuick.confidence < 35 &&
+    Math.abs(chg24Signed) < 1.5 &&
+    !localRange?.compressed &&
+    !candidates.some((c) => c.origin === 'RANGE' || c.origin === 'HTF')
   ) {
     return null
   }
@@ -280,14 +330,51 @@ async function analyzeSymbol(opts: {
   if (spike.pause) return null
   const atr1m = atr(c1m, 8) || price * 0.002
 
-  // Skip expensive depth/deals unless near zone or flip armed
+  // Momentum synthetic if still no candidates (hot move without HTF zone)
+  if (!candidates.length) {
+    const momSide: Side = chg24Signed >= 0 ? 'LONG' : 'SHORT'
+    const mz = syntheticMomentumZone(momSide, c5m.length ? c5m : c1m, price)
+    if (mz) {
+      candidates.push({
+        side: momSide,
+        zone: mz,
+        pathHint: 'HOLD',
+        isInternal: true,
+        oppositeLiq: null,
+        origin: 'MOMENTUM',
+      })
+    } else {
+      return null
+    }
+  } else {
+    // Also seed opposite momentum if impulse already favors one side strongly
+    for (const side of ['LONG', 'SHORT'] as Side[]) {
+      const fav = earlyMoveFavorPct(c1m, side)
+      if (fav < 0.7) continue
+      if (candidates.some((c) => c.side === side && c.origin === 'MOMENTUM')) {
+        continue
+      }
+      const mz = syntheticMomentumZone(side, c5m.length ? c5m : c1m, price)
+      if (mz) {
+        candidates.push({
+          side,
+          zone: mz,
+          pathHint: 'HOLD',
+          isInternal: true,
+          oppositeLiq: null,
+          origin: 'MOMENTUM',
+        })
+      }
+    }
+  }
+
+  // Skip expensive depth unless near structure, range/momentum, or flip
   const nearOrFlip = candidates.some((c) => {
+    if (c.origin === 'RANGE' || c.origin === 'MOMENTUM' || c.pathHint === 'FLIP') {
+      return true
+    }
     const ph = phaseOfGeom(price, c.zone.zoneLow, c.zone.zoneHigh)
-    return (
-      ph === 'TOUCH' ||
-      ph === 'APPROACH' ||
-      c.pathHint === 'FLIP'
-    )
+    return ph === 'TOUCH' || ph === 'APPROACH' || ph === 'FAR'
   })
   if (!nearOrFlip) return null
 
@@ -408,9 +495,14 @@ async function analyzeSymbol(opts: {
   const conflicts = directionConflicts(direction.bias, originSide)
   const earlyFavor = earlyMoveFavorPct(c1m, originSide)
   const tickerChg = Math.abs(Number(opts.ticker.riseFallRate ?? 0) * 100)
+  const chg24Raw = Number(opts.ticker.riseFallRate ?? 0) * 100
+  const chg24Favor = originSide === 'LONG' ? chg24Raw : -chg24Raw
   const candleWith = candle1mWithSide(c1m, originSide)
+  const move5m = moveFavorPct(c5m.length ? c5m : c1m, originSide, 3)
+  const rangePos = localRange ? rangePosition(price, localRange) : null
+  const macroMem = await loadMacroMemory(opts.kv, symbol)
 
-  // MACRO first — directional move; MICRO is secondary high-WR scalp
+  // MACRO — ZONE / RANGE_BREAK / MOMENTUM + history memory
   const macroQ = qualifyMacro({
     phase: phaseGeom,
     earlyFavorPct: earlyFavor,
@@ -424,8 +516,15 @@ async function analyzeSymbol(opts: {
     zoneTouches: zone.touches,
     candle1mWithUs: candleWith,
     directionConfidence: direction.confidence,
-    isInternal: pick.isInternal,
+    isInternal: pick.isInternal || pick.origin === 'RANGE' || pick.origin === 'MOMENTUM',
     chg24Abs: tickerChg,
+    chg24Favor,
+    regime,
+    range: localRange,
+    rangePos,
+    memory: macroMem,
+    side: originSide,
+    move5mFavor: move5m,
   })
   const microQ = qualifyMicro({
     phase: phaseGeom,
@@ -463,25 +562,35 @@ async function analyzeSymbol(opts: {
     candleWith &&
     earlyFavor >= 0.45 &&
     earlyFavor <= 2.0 &&
-    zone.strength >= 6 &&
+    zone.strength >= 4 &&
     (phaseGeom === 'TOUCH' ||
-      (phaseGeom === 'APPROACH' && (book.absorption || book.cvdConfirm)))
+      phaseGeom === 'APPROACH' ||
+      pick.origin === 'RANGE' ||
+      pick.origin === 'MOMENTUM') &&
+    (book.absorption || book.cvdConfirm || pick.origin === 'MOMENTUM')
   ) {
     path = 'HOLD'
     if (
       earlyFavor >= 0.55 &&
-      earlyFavor <= 2.2 &&
-      direction.confidence >= MACRO_DIR_CONF_MIN
+      earlyFavor <= 2.4 &&
+      direction.confidence >= MACRO_DIR_CONF_MIN - 5
     ) {
       macroMode = true
     }
   }
 
   if (!path) {
+    await rememberMacroAnalysis(opts.kv, {
+      symbol,
+      side: 'FLAT',
+      context: 'SKIP',
+      reason: macroQ.reason,
+      note: `skip ${phaseGeom}/${book.grade}/e${earlyFavor.toFixed(2)}/${macroQ.reason}`,
+    })
     await saveVaneState(opts.kv, {
       ...state,
       score: 0,
-      reason: `no path · phase=${phaseGeom} book=${book.grade} dir=${direction.bias} early=${earlyFavor.toFixed(2)} macro=${macroQ.reason} micro=${microQ.reason} rank=${zoneRank.score}`,
+      reason: `skip · ${macroQ.reason} · ${memorySummary(macroMem)}`,
     })
     return null
   }
@@ -502,6 +611,16 @@ async function analyzeSymbol(opts: {
   }
 
   const tradeSide: Side = path === 'FLIP' ? flipSide(originSide) : originSide
+  if (macroMode) {
+    const memGate = memoryAllowsTrade(macroMem, tradeSide)
+    if (!memGate.ok) {
+      await saveVaneState(opts.kv, {
+        ...state,
+        reason: memGate.reason,
+      })
+      return null
+    }
+  }
   const shield = btcShieldAllows({
     symbol,
     side: tradeSide,
@@ -636,10 +755,11 @@ async function analyzeSymbol(opts: {
             ? `VANE_INTERNAL_${tradeSide}`
             : `VANE_HOLD_${tradeSide}`
 
+  const macroCtx = macroQ.context ?? (pick.origin === 'RANGE' ? 'RANGE_BREAK' : pick.origin === 'MOMENTUM' ? 'MOMENTUM' : 'ZONE')
   const coin = symbol.replace('_USDT', '')
   const title =
     mode === 'MACRO'
-      ? `🚀 MACRO · ${tradeSide} ${coin}`
+      ? `🚀 MACRO ${macroCtx === 'RANGE_BREAK' ? 'RANGE' : macroCtx === 'MOMENTUM' ? 'MOM' : 'ZONE'} · ${tradeSide} ${coin}`
       : mode === 'MICRO'
         ? `💎 MICRO · ${tradeSide} ${coin}`
         : mode === 'FLIP'
@@ -648,24 +768,28 @@ async function analyzeSymbol(opts: {
 
   const text = [
     mode === 'MACRO'
-      ? `Режим: MACRO · ${emitTier} · score ${card.score}/100 · risk ${riskPct.toFixed(2)}%`
+      ? `Режим: MACRO ${macroCtx} · ${emitTier} · score ${card.score}/100 · risk ${riskPct.toFixed(2)}% · ${regime}`
       : mode === 'MICRO'
         ? `Режим: MICRO high-WR · ${emitTier} · score ${card.score}/100 · risk ${riskPct.toFixed(2)}%`
         : `Режим: ${mode} · ${emitTier} · score ${card.score}/100`,
     mode === 'MACRO'
-      ? `Стратегия: TP ${risk.tpPct.toFixed(2)}% · SL ${risk.slPct.toFixed(2)}% · maker · тело хода · цель 1.5–3.8%`
+      ? `Стратегия: ловим макро-ход (зона / боковик / импульс) · TP ${risk.tpPct.toFixed(2)}% · SL ${risk.slPct.toFixed(2)}%`
       : mode === 'MICRO'
-        ? `Стратегия: TP ${risk.tpPct.toFixed(2)}% · SL ${risk.slPct.toFixed(2)}% · maker · импульс уже пошёл · цель WR≥65%`
+        ? `Стратегия: TP ${risk.tpPct.toFixed(2)}% · SL ${risk.slPct.toFixed(2)}% · maker chip`
         : 'Зона + confirm · Post-Only.',
     `Карта: ${direction.summary}`,
+    memorySummary(macroMem),
     earlyFavor >= 0.15
-      ? `Импульс ~${earlyFavor.toFixed(2)}% /3м · 24h ${(Number(opts.ticker.riseFallRate ?? 0) * 100).toFixed(1)}%`
+      ? `Импульс ~${earlyFavor.toFixed(2)}% /3м · 5м ${move5m.toFixed(2)}% · 24h ${(Number(opts.ticker.riseFallRate ?? 0) * 100).toFixed(1)}%`
       : null,
     macroMode
       ? `Теги: ${macroQ.tags.join(' · ')}`
       : microMode
         ? `Теги: ${microQ.tags.join(' · ')}`
         : null,
+    localRange
+      ? `Range 15м ${localRange.low.toFixed(6)}–${localRange.high.toFixed(6)} (${localRange.widthPct.toFixed(1)}%)${rangePos ? ` · ${rangePos}` : ''}`
+      : null,
     `Зона ${zone.tf} ${zone.source} ${zone.zoneLow.toFixed(6)}–${zone.zoneHigh.toFixed(6)} · ${zoneRank.holdHint}`,
     `Лимит ${entry.toFixed(6)} · SL ${risk.sl.toFixed(6)} (−${risk.slPct.toFixed(2)}%) · TP1 ${target1.toFixed(6)} · TP ${risk.tp.toFixed(6)} (+${risk.tpPct.toFixed(2)}%)`,
     `R:R 1:${risk.rr.toFixed(2)} · size×${sizeMult}`,
@@ -673,13 +797,23 @@ async function analyzeSymbol(opts: {
     ...book.notes.slice(0, 2),
     ...card.factors.slice(0, 3),
     mode === 'MACRO'
-      ? 'BE @ +0.55% · TP1 0.9% · trail · не усреднять · риск 0.85% equity.'
+      ? 'BE @ +0.55% · TP1 0.9% · память блокирует повторные LOSS · не усреднять.'
       : mode === 'MICRO'
-        ? 'BE @ +0.28% · TP1 0.4% · trail тугой · не усреднять · риск 0.35% equity.'
+        ? 'BE @ +0.28% · TP1 0.4% · trail тугой.'
         : 'Post-Only · не догонять.',
   ]
     .filter(Boolean)
     .join('\n')
+
+  if (macroMode) {
+    await rememberMacroAnalysis(opts.kv, {
+      symbol,
+      side: tradeSide,
+      context: macroCtx,
+      reason: macroQ.reason,
+      note: `${tradeSide} ${macroCtx} score${card.score} e${earlyFavor.toFixed(2)}`,
+    })
+  }
 
   await saveVaneState(opts.kv, {
     ...state,
@@ -687,7 +821,11 @@ async function analyzeSymbol(opts: {
     path,
     tier: emitTier,
     score: card.score,
-    reason: macroMode ? 'macro_emit' : microMode ? 'micro_emit' : 'emit',
+    reason: macroMode
+      ? `macro_${macroCtx}`
+      : microMode
+        ? 'micro_emit'
+        : 'emit',
   })
 
   return {
