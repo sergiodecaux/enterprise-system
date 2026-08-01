@@ -406,7 +406,7 @@ const SignalsView = () => {
         setConfirmOpen(false)
         haptic.success()
         showAlert(
-          `Бот следит за ${toDisplayName(selected.symbol)} ${setup.side} · ${style} — алерт при READY`
+          `Elite следит за ${toDisplayName(selected.symbol)} ${setup.side} · ${style}. Нужен /start в @Enterpriseelite_bot — алерт при READY + журнал WR`
         )
       } else {
         upsertWatchedSetup({

@@ -48,7 +48,9 @@ import {
   deleteWatch,
   listWatchesForChat,
   countActiveWatches,
+  monitorWatchedSetups,
   type ConditionalSetupPayload,
+  type WatchedSetupRecord,
 } from './watchedSetups'
 import {
   getBotJournalPayload,
@@ -670,6 +672,18 @@ async function handleTelegram(
     const auth = await assertAlertAuth(env, request, body.chatId)
     if (!auth.ok) return json({ error: auth.error }, 401)
     const watch = await createWatch(env, body)
+    // Immediately mirror Mini App «Сигналы» into Elite bot
+    if (tokenForChannel(env, 'sniper')) {
+      const msg = formatWatchArmedMessage(watch)
+      await broadcastAlert(env, {
+        type: 'SETUP_WATCH',
+        channel: 'sniper',
+        chatId: body.chatId,
+        title: msg.title,
+        text: msg.text,
+        dedupeKey: `watch:armed:${watch.watchId}`,
+      })
+    }
     return json({ ok: true, watch })
   }
 
@@ -704,16 +718,21 @@ async function handleTelegram(
       ttlHours: body.ttlHours,
     })
     if (tokenForChannel(env, 'sniper') && watches.length > 0) {
+      const heads = watches.slice(0, 3).map((w) => {
+        const m = formatWatchArmedMessage(w)
+        return `${m.title}\n${m.text}`
+      })
       await tgSend(
         env,
         body.chatId,
         [
-          `<b>📡 Мониторинг включён</b>`,
-          `Сетапов на сервере: <b>${watches.length}</b>`,
-          `Символ: ${body.symbol}`,
-          `Отчёт в Telegram каждые <b>5 минут</b> · уровни сетапов обновляются каждые <b>10 минут</b>.`,
-          `Cron worker: каждые 2 мин проверяет зоны / READY / INVALIDATED / устаревший откат.`,
-        ].join('\n'),
+          `<b>📡 Мониторинг включён · Elite</b>`,
+          `Сетапов: <b>${watches.length}</b> · ${body.symbol}`,
+          `Источник: Mini App → Сигналы`,
+          `Фазы каждые ~2 мин · READY → журнал Lab WR`,
+          '',
+          ...heads,
+        ].join('\n\n'),
         'sniper'
       )
     }
@@ -806,39 +825,70 @@ function isDedupFresh(raw: string | null | undefined, ttlMs: number): boolean {
 }
 
 /**
- * Meme deal → Predator + Elite mirror.
- * Elite gets the same journalable signal so Lab can track WR on both bots.
+ * Mini App «Сигналы» setup → TradePlan for journal Lab + paper.
  */
-async function broadcastMemeToPredatorAndElite(
-  env: Env,
-  payload: { title: string; text: string; dedupeKey: string }
-): Promise<{ ok: boolean; sent: number; failed: number }> {
-  const meme = await broadcastAlert(env, {
-    type: 'SYSTEM',
-    channel: 'meme',
-    title: payload.title,
-    text: payload.text,
-    dedupeKey: payload.dedupeKey,
-  })
-  const elite = await broadcastAlert(env, {
-    type: 'SYSTEM',
-    channel: 'sniper',
-    title: payload.title,
-    text: [
-      '🦈 MEME сигнал · дубль в Elite для журнала WR',
-      'Тот же сетап, что в Mini App → Сделки / Lab',
-      '',
-      payload.text,
-    ].join('\n'),
-    dedupeKey: `${payload.dedupeKey}:elite`,
-  })
+function setupToTradePlan(
+  symbol: string,
+  setup: ConditionalSetupPayload
+): TradePlanPayload {
+  const zoneLow = Math.min(setup.entryZone.bottom, setup.entryZone.top)
+  const zoneHigh = Math.max(setup.entryZone.bottom, setup.entryZone.top)
+  const flat = symbol.includes('_')
+    ? symbol
+    : `${symbol.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}_USDT`
   return {
-    ok: meme.ok || elite.ok,
-    sent: meme.sent + elite.sent,
-    failed: meme.failed + elite.failed,
+    side: setup.side,
+    symbol: flat,
+    setup: setup.title || setup.kind,
+    signalPrice: setup.limitEntry,
+    entryIdeal: setup.limitEntry,
+    zoneLow,
+    zoneHigh,
+    invalidate:
+      setup.side === 'LONG' ? zoneHigh * 1.004 : zoneLow * 0.996,
+    sl: setup.invalidation,
+    tp: setup.targetsLadder?.r2 ?? setup.target,
+    target1: setup.targetsLadder?.r1,
+    target3: setup.targetsLadder?.r3 ?? setup.magnet?.price,
+    zoneSource:
+      setup.kind.includes('SSL')
+        ? 'SSL'
+        : setup.kind.includes('BSL')
+          ? 'BSL'
+          : 'SWING',
+    zonePhase: 'TOUCH',
+    targetLabel: setup.magnet?.label,
   }
 }
 
+function formatWatchArmedMessage(watch: WatchedSetupRecord): {
+  title: string
+  text: string
+} {
+  const s = watch.setup
+  const icon = s.side === 'LONG' ? '🟢' : '🔴'
+  const style = s.tradeStyle ?? ''
+  return {
+    title: `👁 Сигнал · ${watch.symbol} · слежу`,
+    text: [
+      `${icon} ${s.side} ${watch.symbol}${style ? ` · ${style}` : ''}`,
+      s.title,
+      '',
+      `Зона: ${s.entryZone.bottom} – ${s.entryZone.top}`,
+      `Лимит: ${s.limitEntry} · SL ${s.invalidation} · TP ${s.targetsLadder?.r2 ?? s.target}`,
+      `Win% ~${Math.round(s.probability)}%`,
+      '',
+      'Источник: Mini App → вкладка Сигналы',
+      'Фазы: APPROACH → TOUCH → REACTION → FUEL → READY',
+      'В журнал Lab пишется при READY — собираем WR.',
+      'Не входи до READY.',
+    ].join('\n'),
+  }
+}
+
+/**
+ * Meme deal → Predator only (Elite is for Mini App alt Signals).
+ */
 async function broadcastAlert(
   env: Env,
   payload: AlertPayload
@@ -1158,7 +1208,7 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
   ])
   await announceEngineToChannel(env, 'sniper', SNIPER_ENGINE, [
     'Hourly /brief · daily close · зоны · F&G · новости',
-    'Плюс дубль MEME-сделок (как в Mini App) → журнал Lab WR',
+    'Mini App → Сигналы (альты): слежение + READY → журнал Lab WR',
   ])
 }
 
@@ -1273,15 +1323,16 @@ async function runCronScan(
         })
         if (logged) journalLogged++
       }
-      // Predator + Elite mirror (same deal as Mini App journal signals)
-      const dual = await broadcastMemeToPredatorAndElite(env, {
+      const cr = await broadcastAlert(env, {
+        type: 'SYSTEM',
+        channel: 'meme',
         title,
         text,
         dedupeKey,
       })
-      paperComments += dual.sent
-      sent += dual.sent
-      failed += dual.failed
+      paperComments += cr.sent
+      sent += cr.sent
+      failed += cr.failed
       return
     }
 
@@ -1420,28 +1471,16 @@ async function runCronScan(
           `MFE +${outcome.mfePercent.toFixed(2)}% · MAE −${outcome.maePercent.toFixed(2)}%`,
           ...autopsy,
         ].join('\n')
-        const resultKey = `journal:result:${outcome.id}:${outcome.status}`
-        if (outcome.alertType === 'MEME') {
-          const dual = await broadcastMemeToPredatorAndElite(env, {
-            title: resultTitle,
-            text: resultText,
-            dedupeKey: resultKey,
-          })
-          resultAlerts += dual.sent
-          failed += dual.failed
-          if (dual.sent > 0) tgBudget--
-        } else {
-          const r = await broadcastAlert(env, {
-            type: 'SYSTEM',
-            channel: 'sniper',
-            title: resultTitle,
-            text: resultText,
-            dedupeKey: resultKey,
-          })
-          resultAlerts += r.sent
-          failed += r.failed
-          if (r.sent > 0) tgBudget--
-        }
+        const r = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: outcome.alertType === 'SNIPER' ? 'sniper' : 'meme',
+          title: resultTitle,
+          text: resultText,
+          dedupeKey: `journal:result:${outcome.id}:${outcome.status}`,
+        })
+        resultAlerts += r.sent
+        failed += r.failed
+        if (r.sent > 0) tgBudget--
       }
     } catch (err) {
       console.error('[cron] journal result failed', err)
@@ -1570,6 +1609,62 @@ async function runCronScan(
     }
   }
 
+  const runSignalWatches = async () => {
+    if (!env.TELEGRAM_SNIPER_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN) return
+    try {
+      const alerts = await monitorWatchedSetups(env)
+      let budget = 8
+      for (const a of alerts) {
+        if (budget <= 0) break
+        const r = await broadcastAlert(env, {
+          type: 'SETUP_WATCH',
+          channel: 'sniper',
+          chatId: a.chatId,
+          title: a.title,
+          text: a.text,
+          dedupeKey: a.dedupeKey,
+        })
+        if (r.sent > 0) {
+          watchAlerts += r.sent
+          sent += r.sent
+          budget--
+        } else {
+          failed += r.failed
+        }
+
+        // Journal + paper only on READY — Lab WR for Mini App Signals
+        if (a.kind === 'READY' && a.setup && a.symbol) {
+          const plan = setupToTradePlan(a.symbol, a.setup)
+          const logged = await recordBotAlert(env, {
+            alertType: 'SNIPER',
+            score: Math.round(a.setup.probability),
+            dedupeKey: a.dedupeKey,
+            plan,
+          })
+          if (logged) journalLogged++
+          try {
+            await createPaperTradeFromPlan(env, {
+              ...plan,
+              alertType: 'SNIPER',
+            })
+          } catch (err) {
+            console.error('[cron] signal watch paper failed', err)
+          }
+        }
+      }
+      if (alerts.length) {
+        console.log(
+          '[cron] signal watches',
+          alerts
+            .map((x) => `${x.kind ?? '?'}:${x.symbol ?? x.chatId}`)
+            .slice(0, 8)
+        )
+      }
+    } catch (err) {
+      console.error('[cron] monitorWatchedSetups failed', err)
+    }
+  }
+
   // Lightweight housekeeping only on paper ticks (or full manual scan)
   if (role === 'paper' || role === 'all') {
     try {
@@ -1590,6 +1685,7 @@ async function runCronScan(
     }
     await runJournal()
     await runPaper()
+    await runSignalWatches()
   }
 
   if (role === 'predator' || role === 'all') {
@@ -1827,7 +1923,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> — помощник + MEME Lab\n\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны · скальп/интра · ликвидации\nРаз в сутки: как закрылся день\nПлюс дубль MEME-сделок (как в Mini App) → журнал WR\n\nКоманды:\n/brief — доклад сейчас\n/brief ETH — по монете\n/market — рынок + страх/жадность\n/zone BTC 94000-96000\n/status · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> — помощник + Signals Lab\n\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны · скальп/интра · ликвидации\nРаз в сутки: как закрылся день\nMini App → вкладка <b>Сигналы</b> (альты): слежение → READY в этот бот → журнал WR\n\nКоманды:\n/brief — доклад сейчас\n/brief ETH — по монете\n/market — рынок + страх/жадность\n/zone BTC 94000-96000\n/status · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · Liquidation Echo · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
@@ -2149,7 +2245,7 @@ async function dispatchCommand(
           ``,
           `Доклад: каждый час :05 UTC · суточный 00:05 UTC`,
           `Вселенная: BTC + ETH SOL BNB XRP AVAX LINK DOGE SUI`,
-          `Режим: помощник + дубль MEME в журнал Lab`,
+          `Режим: помощник + Mini App Сигналы → журнал Lab`,
           session.ok
             ? `Сессия: ${session.session} OK`
             : `Сессия: ${session.reason}`,

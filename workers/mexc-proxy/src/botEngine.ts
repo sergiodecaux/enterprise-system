@@ -3,19 +3,19 @@ export const BOT_ENGINE = {
   id: 'meme-day-continue-v26.4',
   label: 'MEME: Day Continue WR-hunt',
   deployedNote:
-    'v26.4: TOP-18 WR-hunt · всегда в журнал Lab · дубль сигнала + результата в Elite.',
+    'v26.4: TOP-18 WR-hunt · всегда в журнал Lab · Predator only (не Elite).',
 } as const
 
 /**
- * Enterpriseelite_bot — market assistant + meme journal mirror.
+ * Enterpriseelite_bot — market assistant + Mini App Signals (alts) lab.
  * Hourly TOP-8+BTC brief · daily close · zones · F&G · news · liq map.
- * Plus Predator meme deals mirrored for WR lab stats.
+ * Watches from Mini App «Сигналы» → READY → journal SNIPER WR.
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-assistant-v1.1',
-  label: 'ELITE: Assistant + MEME Lab',
+  id: 'elite-signals-lab-v1',
+  label: 'ELITE: Assistant + Signals Lab',
   deployedNote:
-    'v1.1: hourly/daily brief · + дубль MEME-сделок из Mini App/Predator в журнал WR (без VANE-спама).',
+    'v1: hourly/daily brief · Mini App Сигналы (альты) → Elite + журнал WR при READY.',
 } as const
 
 /** Alias for clarity in Elite-facing code */

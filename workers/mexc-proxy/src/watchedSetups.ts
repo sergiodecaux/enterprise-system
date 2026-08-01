@@ -44,6 +44,7 @@ export interface ConditionalSetupPayload {
   triggerSummary: string
   reasoning: string[]
   status: SetupStatus
+  tradeStyle?: 'SCALP' | 'INTRADAY' | 'SWING'
   symbol?: string
   internalSymbol?: string
   createdAt: number
@@ -90,6 +91,11 @@ export interface WatchAlert {
   title: string
   text: string
   dedupeKey: string
+  /** READY / INVALIDATED used for Elite journal + paper */
+  kind?: 'READY' | 'INVALIDATED' | 'PHASE' | 'DIGEST'
+  watchId?: string
+  symbol?: string
+  setup?: ConditionalSetupPayload
 }
 
 type Candle = [number, number, number, number, number, number]
@@ -812,7 +818,7 @@ function formatLifecyclePhase(
     title: titleMap[phase] ?? `Фаза ${phase}`,
     text: [
       `${icon} ${s.side} ${w.symbol} · ${s.title}`,
-      `Фаза: <b>${phase}</b>`,
+      `Фаза: ${phase}`,
       `Цепочка: ${chain}`,
       '',
       snap.narrative,
@@ -838,6 +844,10 @@ function formatLifecyclePhase(
       .filter(Boolean)
       .join('\n'),
     dedupeKey: `watch:${w.watchId}:phase:${phase}:${Math.floor(Date.now() / 120_000)}`,
+    kind: 'PHASE',
+    watchId: w.watchId,
+    symbol: w.symbol,
+    setup: s,
   }
 }
 
@@ -883,10 +893,16 @@ function formatReady(
       '',
       `Условие: ${s.triggerSummary}`,
       ...(s.reasoning?.slice(0, 3) ?? []),
+      '',
+      'Источник: Mini App → Сигналы · журнал Lab WR',
     ]
       .filter(Boolean)
       .join('\n'),
     dedupeKey: `watch:${w.watchId}:READY`,
+    kind: 'READY',
+    watchId: w.watchId,
+    symbol: w.symbol,
+    setup: s,
   }
 }
 
@@ -909,6 +925,10 @@ function formatInvalidated(
       .filter(Boolean)
       .join('\n'),
     dedupeKey: `watch:${w.watchId}:INVALIDATED`,
+    kind: 'INVALIDATED',
+    watchId: w.watchId,
+    symbol: w.symbol,
+    setup: w.setup,
   }
 }
 
@@ -1420,6 +1440,7 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
       ].join('\n'),
       // Unique per send window; retries ok if previous send failed (dedup after success)
       dedupeKey: `watch_digest:${chatId}:${Math.floor(now / DIGEST_MS)}`,
+      kind: 'DIGEST',
     })
   }
 
