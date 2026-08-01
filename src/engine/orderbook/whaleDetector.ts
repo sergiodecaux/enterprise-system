@@ -144,6 +144,44 @@ export function buildWhaleAlerts(
   })
 }
 
+/** Max jump before we accept a new whale price (stops chart/panel jitter) */
+const WHALE_STICK_PCT = 0.18
+
+/**
+ * Keep previous whale level if the new candidate is almost the same price
+ * (order book often flickers between nearby large levels).
+ */
+export function stabilizeWhaleOrder(
+  prev: WhaleOrder | null,
+  next: WhaleOrder | null,
+  midPrice: number
+): WhaleOrder | null {
+  if (!next) return null
+  if (!prev) return next
+  if (prev.side !== next.side) return next
+  const base = Math.max(midPrice, prev.price, 1e-12)
+  const jumpPct = (Math.abs(next.price - prev.price) / base) * 100
+  // Same-ish level: keep price sticky, refresh volume/distance
+  if (jumpPct < WHALE_STICK_PCT) {
+    return {
+      ...next,
+      price: prev.price,
+      distancePct: (Math.abs(midPrice - prev.price) / Math.max(midPrice, 1e-12)) * 100,
+    }
+  }
+  // Prefer staying on the larger book unless new is clearly bigger
+  if (next.volumeUsd < prev.volumeUsd * 1.15 && jumpPct < 0.55) {
+    return {
+      ...prev,
+      volume: next.volume,
+      volumeUsd: Math.max(prev.volumeUsd, next.volumeUsd),
+      distancePct: (Math.abs(midPrice - prev.price) / Math.max(midPrice, 1e-12)) * 100,
+      detectedAt: next.detectedAt,
+    }
+  }
+  return next
+}
+
 /**
  * updateWhaleWatcher — обновляет состояние Whale Watcher.
  *
@@ -201,7 +239,7 @@ export function updateWhaleWatcher(
   // Фильтруем просроченные
   const allAlerts = [...updatedPrev, ...newAlerts].filter((a) => !a.isExpired)
 
-  // Топ support/resistance
+  // Топ support/resistance — со стабилизацией цены (без «прыжков» каждые 2с)
   const activeBids = freshOrders
     .filter((o) => o.side === 'BID')
     .sort((a, b) => b.volumeUsd - a.volumeUsd)
@@ -209,8 +247,16 @@ export function updateWhaleWatcher(
     .filter((o) => o.side === 'ASK')
     .sort((a, b) => b.volumeUsd - a.volumeUsd)
 
-  const strongestSupport = activeBids[0] ?? null
-  const strongestResistance = activeAsks[0] ?? null
+  const strongestSupport = stabilizeWhaleOrder(
+    prev?.strongestSupport ?? null,
+    activeBids[0] ?? null,
+    currentPrice
+  )
+  const strongestResistance = stabilizeWhaleOrder(
+    prev?.strongestResistance ?? null,
+    activeAsks[0] ?? null,
+    currentPrice
+  )
 
   // Score boost: 0..1.5
   // Логика: крупный BID ниже цены = поддержка для LONG

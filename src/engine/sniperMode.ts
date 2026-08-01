@@ -1,9 +1,10 @@
 import type { CoinSignal, TradeStyle } from './types'
 import { getStyleProfile } from './strategies'
 import { isSurgicalReady } from './surgical/surgicalEntry'
+import { evaluateHistWrPolicy, blendConfidenceWithHist } from './analysis/histWrPolicy'
 
 /**
- * Расширенный снайперский сигнал с калиброванным винрейтом и R:R
+ * Расширенный снайперский сигнал с калиброванным Confidence (не hist WR)
  */
 export interface SniperSignal extends CoinSignal {
   /** Калиброванный Confidence Score (не historical WR; cap 95%) */
@@ -22,6 +23,9 @@ export interface SniperSignal extends CoinSignal {
   strengthFiltersActive: number
   /** Гарантированный tradeStyle */
   tradeStyle: TradeStyle
+  /** Journal hist WR when sample enough */
+  histWinRate?: number | null
+  histSampleN?: number
 }
 
 /**
@@ -130,6 +134,10 @@ export function isSniperQuality(signal: CoinSignal): boolean {
   const rr = reward / risk
   if (rr < profile.minRiskReward) return false
 
+  // Journal feedback: toxic hist WR blocks sniper
+  const hist = evaluateHistWrPolicy(signal)
+  if (hist.action === 'block') return false
+
   return true
 }
 
@@ -199,13 +207,20 @@ export function toSniperSignal(signal: CoinSignal): SniperSignal {
   const riskPercent = (risk / entryPrice) * 100
   const rewardPercent = (reward / entryPrice) * 100
 
-  const calibratedWinRate = calculateCalibratedWinRate(signal)
+  const histPolicy = evaluateHistWrPolicy(signal)
+  const calibratedWinRate = blendConfidenceWithHist(
+    calculateCalibratedWinRate(signal),
+    histPolicy
+  )
 
   const reasons: string[] = []
   let strengthFilters = 0
 
   const profile = getStyleProfile(tradeStyle)
   reasons.push(`${profile.badge} [${profile.timeframeHint}]`)
+  if (histPolicy.action === 'boost' || histPolicy.action === 'demote') {
+    reasons.push(histPolicy.reason)
+  }
 
   if (signal.zones.length > 0) {
     const htfZones = signal.zones.filter(
@@ -294,6 +309,8 @@ export function toSniperSignal(signal: CoinSignal): SniperSignal {
     entryPrice,
     sniperReasons: reasons,
     strengthFiltersActive: strengthFilters,
+    histWinRate: histPolicy.winRate,
+    histSampleN: histPolicy.decided,
   }
 }
 

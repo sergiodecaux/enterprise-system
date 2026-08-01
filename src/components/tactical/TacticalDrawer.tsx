@@ -20,9 +20,7 @@ import type {
   SurgicalEntrySnapshot,
   TapeMomentumState,
   BuyerAggressionResult,
-  WhaleWatcherState,
 } from '../../engine/types'
-import { formatWhaleVolume } from '../../engine/orderbook/whaleDetector'
 import WhaleAlertBanner from './WhaleAlertBanner'
 import SessionDNAPanel from './SessionDNAPanel'
 import LTFAlignmentPanel from './LTFAlignmentPanel'
@@ -229,84 +227,6 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
             : ''}
         </p>
       )}
-    </div>
-  )
-}
-
-/** Панель Whale Watcher в Drawer — без баннеров в потоке (они в оверлее drawer) */
-const WhaleWatcherPanel = ({ state }: { state: WhaleWatcherState }) => {
-  const hasWhales =
-    state.strongestSupport !== null || state.strongestResistance !== null
-
-  const activeCount = state.alerts.filter((a) => a.isActive && !a.isExpired).length
-
-  if (!hasWhales && activeCount === 0) return null
-
-  const formatPrice = (price: number): string => {
-    if (price >= 1000)
-      return price.toLocaleString('en-US', { maximumFractionDigits: 0 })
-    if (price >= 1) return price.toFixed(4)
-    return price.toFixed(6)
-  }
-
-  return (
-    <div className="min-h-[7.5rem] rounded-xl border border-hull-border bg-hull p-3">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-base">🐋</span>
-        <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
-          Наблюдатель китов
-        </span>
-        {activeCount > 0 && (
-          <span className="rounded bg-cyan-400/15 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300">
-            {activeCount} алерт{activeCount > 1 ? 'а' : ''} ↑
-          </span>
-        )}
-        {state.scoreBoost > 0 && (
-          <span className="ml-auto rounded bg-cyan-400/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-400">
-            +{state.scoreBoost.toFixed(1)} к оценке
-          </span>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        {state.strongestSupport && (
-          <div className="rounded-lg border border-matrix/20 bg-matrix/5 p-2">
-            <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
-              Поддержка китов
-            </div>
-            <div className="font-mono text-sm font-bold text-matrix">
-              {formatPrice(state.strongestSupport.price)}
-            </div>
-            <div className="font-mono text-[10px] text-matrix/70">
-              {formatWhaleVolume(state.strongestSupport.volumeUsd)}
-            </div>
-            <div className="mt-1 font-mono text-[9px] text-holo/30">
-              {state.strongestSupport.distancePct.toFixed(2)}% ниже
-            </div>
-          </div>
-        )}
-
-        {state.strongestResistance && (
-          <div className="rounded-lg border border-alert/20 bg-alert/5 p-2">
-            <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
-              Сопротивление китов
-            </div>
-            <div className="font-mono text-sm font-bold text-alert">
-              {formatPrice(state.strongestResistance.price)}
-            </div>
-            <div className="font-mono text-[10px] text-alert/70">
-              {formatWhaleVolume(state.strongestResistance.volumeUsd)}
-            </div>
-            <div className="mt-1 font-mono text-[9px] text-holo/30">
-              {state.strongestResistance.distancePct.toFixed(2)}% выше
-            </div>
-          </div>
-        )}
-      </div>
-
-      <p className="mt-2 font-mono text-[9px] text-holo/20">
-        Обновляется каждые 2 сек · Порог: $1M+
-      </p>
     </div>
   )
 }
@@ -645,28 +565,12 @@ const TacticalDrawer = () => {
           transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
-        {/* Киты: toast поверх drawer, без влияния на скролл/высоту контента */}
-        {whaleState &&
-          whaleState.alerts.filter((a) => a.isActive && !a.isExpired).length >
-            0 && (
-            <div className="pointer-events-none absolute inset-x-3 bottom-3 z-[60] sm:bottom-4">
-              <div className="pointer-events-auto ml-auto max-h-28 max-w-sm space-y-1 overflow-y-auto overscroll-contain rounded-xl border border-cyan-500/20 bg-space/95 p-1.5 shadow-lg shadow-black/50 backdrop-blur-md">
-                {whaleState.alerts
-                  .filter((a) => a.isActive && !a.isExpired)
-                  .slice(0, 2)
-                  .map((alert) => (
-                    <WhaleAlertBanner key={alert.id} alert={alert} />
-                  ))}
-              </div>
-            </div>
-          )}
-
         <div className="flex-shrink-0">
           <div className="my-3 flex justify-center">
             <div className="h-1 w-12 rounded-full bg-hull-border" />
           </div>
 
-          <div className="border-b border-hull-border/50 px-4 pb-4">
+          <div className="border-b border-hull-border/50 px-4 pb-3">
             <div className="mb-2 flex items-start justify-between">
               <div className="flex-1">
                 <h2 className="mb-1 font-mono text-2xl font-bold text-holo">
@@ -703,6 +607,22 @@ const TacticalDrawer = () => {
               </button>
             </div>
           </div>
+
+          {/* Киты: фиксированная полоса под шапкой — не плавают внизу графика */}
+          {whaleState &&
+            whaleState.alerts.filter((a) => a.isActive && !a.isExpired).length >
+              0 && (
+              <div className="border-b border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-1.5">
+                <div className="max-h-[4.5rem] space-y-1 overflow-y-auto overscroll-contain">
+                  {whaleState.alerts
+                    .filter((a) => a.isActive && !a.isExpired)
+                    .slice(0, 2)
+                    .map((alert) => (
+                      <WhaleAlertBanner key={alert.id} alert={alert} />
+                    ))}
+                </div>
+              </div>
+            )}
         </div>
 
         <div
@@ -735,7 +655,7 @@ const TacticalDrawer = () => {
 
           <CollapsibleSection
             title="Анализ+"
-            subtitle="WR · gate · playbook · статус"
+            subtitle="Score · Hist WR · gate · playbook"
             defaultOpen
           >
             <CoinAnalysisUpgradePanel
@@ -1072,7 +992,6 @@ const TacticalDrawer = () => {
                 document
                   .getElementById('live-signal-cta')
                   ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                // Second tap path: auto-trigger after scroll settles
                 window.setTimeout(() => {
                   document.getElementById('live-signal-cta')?.click()
                 }, 280)
@@ -1100,10 +1019,9 @@ const TacticalDrawer = () => {
           />
 
           <CollapsibleSection
-            title="Стакан / киты"
+            title="Стакан"
             subtitle="уровни · стены · imbalance"
           >
-            {whaleState && <WhaleWatcherPanel state={whaleState} />}
             <OrderBookPanel symbol={signal.internalSymbol} />
           </CollapsibleSection>
 

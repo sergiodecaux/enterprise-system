@@ -217,8 +217,18 @@ const SniperCard = ({ signal }: SniperCardProps) => {
               {signal.calibratedWinRate}%
             </div>
             <div className="font-mono text-[10px] uppercase text-holo/40">
-              Confidence
+              Conf
             </div>
+            {signal.histWinRate != null &&
+              (signal.histSampleN ?? 0) >= 3 && (
+                <div className="font-mono text-[9px] text-holo/45">
+                  Hist WR {Math.round(signal.histWinRate)}%
+                  <span className="text-holo/30">
+                    {' '}
+                    n={signal.histSampleN}
+                  </span>
+                </div>
+              )}
           </div>
         </div>
 

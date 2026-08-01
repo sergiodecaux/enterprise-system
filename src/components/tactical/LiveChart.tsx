@@ -77,6 +77,7 @@ import {
   subscribeTelegramAlerts,
 } from '../../api/telegram/alerts'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
+import WhaleLevelsOverlay from './WhaleLevelsOverlay'
 
 interface LiveChartProps {
   symbol: string
@@ -106,9 +107,9 @@ const INDICATOR_COLORS: Record<string, string> = {
   vwap: '#f97316',
 }
 
-const CHART_HEIGHT = 340
+const CHART_HEIGHT = 440
 const CHART_HEIGHT_EXPANDED = () =>
-  Math.min(Math.round(window.innerHeight * 0.78), 720)
+  Math.min(Math.round(window.innerHeight * 0.84), 820)
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
@@ -123,6 +124,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const setSessionSettings = useAppStore((s) => s.setSessionSettings)
   const eqLiquidityMap = useAppStore((s) => s.liquidityMaps[symbol] ?? null)
   const setLiquidityMap = useAppStore((s) => s.setLiquidityMap)
+  const whaleState = useAppStore((s) => s.whaleWatcher[symbol] ?? null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1140,29 +1142,47 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { color: '#111111' },
-        textColor: '#e0e0e080',
+        background: { color: '#0c0e12' },
+        textColor: 'rgba(220, 230, 240, 0.55)',
+        fontSize: 11,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       },
       grid: {
-        vertLines: { color: '#1a1a1a' },
-        horzLines: { color: '#1a1a1a' },
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.045)' },
       },
-      crosshair: { mode: 0 },
+      crosshair: {
+        mode: 1,
+        vertLine: {
+          color: 'rgba(148, 163, 184, 0.35)',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#1e293b',
+        },
+        horzLine: {
+          color: 'rgba(148, 163, 184, 0.35)',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#1e293b',
+        },
+      },
       timeScale: {
-        borderColor: '#2a2a2a',
+        borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 6,
+        rightOffset: 8,
+        barSpacing: 7,
+        minBarSpacing: 3,
         lockVisibleTimeRangeOnResize: true,
       },
       rightPriceScale: {
-        borderColor: '#2a2a2a',
-        scaleMargins: { top: 0.08, bottom: 0.12 },
+        borderColor: 'rgba(255,255,255,0.08)',
+        scaleMargins: { top: 0.08, bottom: 0.1 },
         autoScale: true,
+        entireTextOnly: true,
       },
       width: containerRef.current.clientWidth,
       height: chartHeightRef.current,
-      // Mobile-first: pan freely; expand mode allows vert drag
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -1173,23 +1193,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         axisPressedMouseMove: { time: true, price: true },
         mouseWheel: true,
         pinch: true,
-        axisDoubleClickReset: false,
+        axisDoubleClickReset: true,
       },
       kineticScroll: {
-        touch: false,
+        touch: true,
         mouse: false,
       },
     })
 
     const candleSeries = chart.addCandlestickSeries({
-      upColor: '#00ff41',
-      downColor: '#ff003c',
-      borderUpColor: '#00ff41',
-      borderDownColor: '#ff003c',
-      wickUpColor: '#00ff4180',
-      wickDownColor: '#ff003c80',
+      upColor: '#22c55e',
+      downColor: '#f43f5e',
+      borderUpColor: '#16a34a',
+      borderDownColor: '#e11d48',
+      wickUpColor: 'rgba(34, 197, 94, 0.7)',
+      wickDownColor: 'rgba(244, 63, 94, 0.7)',
       lastValueVisible: true,
-      priceLineVisible: false,
+      priceLineVisible: true,
+      priceLineColor: 'rgba(148, 163, 184, 0.4)',
+      priceLineWidth: 1,
+      priceLineStyle: 2,
     })
 
     chartRef.current = chart
@@ -1565,6 +1588,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     zonesMode,
   ])
 
+  /** Candle span for whale overlay — ignore book levels that would distort view */
+  const candlePriceSpan = useMemo(() => {
+    if (!lwcData.length) return { floor: 0, ceil: 0 }
+    let floor = Number.POSITIVE_INFINITY
+    let ceil = 0
+    for (const c of lwcData) {
+      if (c.low < floor) floor = c.low
+      if (c.high > ceil) ceil = c.high
+    }
+    return { floor, ceil }
+  }, [lwcData])
+
+  const resetChartView = useCallback(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    chart.priceScale('right').applyOptions({ autoScale: true })
+    chart.timeScale().fitContent()
+    haptic.impact()
+  }, [haptic])
+
   const oscillators: Array<'rsi' | 'macd' | 'stochastic' | 'atr'> = []
   if (!cleanMode) {
     if (chartPreferences.indicators.rsi) oscillators.push('rsi')
@@ -1701,7 +1744,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </button>
         </div>
       )}
-      {/* Full-width CTA — always visible above TF toolbar (Telegram mobile) */}
+      {/* Compact signal CTA */}
       <button
         id="live-signal-cta"
         type="button"
@@ -1714,30 +1757,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           }
           handleFindLiveSignal()
         }}
-        className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+        className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
           signalMode
-            ? 'border-amber-400/60 bg-amber-500/20'
-            : 'border-amber-400/45 bg-gradient-to-r from-amber-500/20 to-amber-600/10'
+            ? 'border-amber-400/55 bg-amber-500/15'
+            : 'border-amber-400/30 bg-amber-500/8'
         }`}
       >
-        <div>
-          <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-100">
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-100/90">
             {signalMode ? 'Скрыть сигнал' : 'Найти сигнал'}
           </div>
-          <div className="mt-0.5 font-mono text-[9px] text-amber-100/55">
+          <div className="truncate font-mono text-[9px] text-amber-100/45">
             {signalMode && liveSignal
-              ? `${liveSignal.primary.side !== 'FLAT' ? liveSignal.primary.side + ' · ' : ''}${liveSignal.primary.title} · ${liveSignal.primary.winPct}%`
-              : 'Тест зоны · SMC hunt · варианты развития прямо сейчас'}
+              ? `${liveSignal.primary.side !== 'FLAT' ? liveSignal.primary.side + ' · ' : ''}${liveSignal.primary.title} · Conf ${liveSignal.primary.winPct}%`
+              : 'Зона · SMC · варианты прямо сейчас'}
           </div>
         </div>
-        <span className="shrink-0 rounded-md border border-amber-300/40 bg-amber-400/20 px-2 py-1 font-mono text-[10px] font-bold text-amber-50">
+        <span className="shrink-0 rounded border border-amber-300/35 bg-amber-400/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-50">
           {signalMode ? 'ON' : 'GO'}
         </span>
       </button>
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="font-mono text-xs uppercase tracking-wider text-holo/40">
+          <span className="font-mono text-xs uppercase tracking-wider text-holo/50">
             {t('chart_title')}
           </span>
           {sessionSettings.enabled && !cleanMode && (
@@ -1751,7 +1794,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-1">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => applyCleanMode(!cleanMode)}
@@ -1763,197 +1806,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             title="Чистый режим — меньше слоёв"
           >
             {cleanMode ? t('chart_clean') : t('chart_full')}
-          </button>
-          {CHART_TIMEFRAMES.map((tf) => (
-            <button
-              key={tf.id}
-              type="button"
-              onClick={() => setTimeframe(tf.id)}
-              className={`rounded px-2 py-1 font-mono text-xs transition-colors ${
-                timeframe === tf.id
-                  ? 'border border-matrix/50 bg-matrix/20 text-matrix'
-                  : 'border border-transparent text-holo/40 hover:bg-hull-light hover:text-holo/70'
-              }`}
-            >
-              {tf.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => {
-              setShowForecast(true)
-              setForecastHorizon((h: ForecastHorizon) => {
-                const order: ForecastHorizon[] = ['SCALP', 'INTRA', 'SWING']
-                const idx = order.indexOf(h === 'MACRO' ? 'SWING' : h)
-                const next = order[(idx + 1) % order.length]
-                if (
-                  next === 'SWING' &&
-                  (timeframe === '1m' ||
-                    timeframe === '5m' ||
-                    timeframe === '15m')
-                ) {
-                  setTimeframe('4h')
-                }
-                if (
-                  next === 'SCALP' &&
-                  (timeframe === '4h' || timeframe === '1d')
-                ) {
-                  setTimeframe('5m')
-                }
-                return next
-              })
-            }}
-            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showForecast
-                ? forecastHorizon === 'SCALP'
-                  ? 'border border-amber-400/50 bg-amber-500/15 text-amber-300'
-                  : forecastHorizon === 'SWING' || forecastHorizon === 'MACRO'
-                    ? 'border border-cyan-400/50 bg-cyan-500/15 text-cyan-300'
-                    : 'border border-matrix/50 bg-matrix/15 text-matrix'
-                : 'border border-hull-border text-holo/40 hover:text-holo/70'
-            }`}
-            title="Горизонт прогноза: SCALP → INTRA → SWING"
-          >
-            {forecastHorizon === 'MACRO'
-              ? 'SWING'
-              : forecastHorizon}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (signalMode) {
-                setSignalMode(false)
-                setLiveSignal(null)
-                haptic.impact()
-                return
-              }
-              handleFindLiveSignal()
-            }}
-            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              signalMode
-                ? 'border border-amber-400/55 bg-amber-500/20 text-amber-100'
-                : 'border border-amber-400/35 bg-amber-500/10 text-amber-200/90 hover:bg-amber-500/20'
-            }`}
-            title="Самый вероятный ход сейчас: тест зоны / SMC hunt / варианты развития"
-          >
-            Сигнал
-            {signalMode && liveSignal
-              ? ` · ${liveSignal.primary.winPct}%`
-              : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (zonesMode) {
-                setZonesMode(false)
-                setFoundChartZones([])
-                setFoundZones([])
-                haptic.impact()
-                return
-              }
-              setSignalMode(false)
-              setLiveSignal(null)
-              void handleFindZones()
-            }}
-            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              zonesMode
-                ? 'border border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
-                : 'border border-hull-border text-holo/40 hover:text-holo/70'
-            }`}
-            title={`Зоны под горизонт ${forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon} (переключи SCALP→INTRA→SWING слева)`}
-          >
-            Зоны
-            {foundZones.length > 0 && zonesMode
-              ? ` · ${foundZones.length}`
-              : ''}
-            {zonesMode
-              ? ` · ${horizonToStyle(forecastHorizon) === 'INTRADAY' ? 'INTRA' : horizonToStyle(forecastHorizon)}`
-              : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (tradesMode) {
-                setTradesMode(false)
-                setTradesGlobalView(null)
-                setTradesMagnet(null)
-                setPickedSetups([])
-                setShowSetupPicker(false)
-                haptic.impact()
-                return
-              }
-              setSignalMode(false)
-              setLiveSignal(null)
-              void handleFindProbableTrades()
-            }}
-            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              tradesMode
-                ? 'border border-sky-400/50 bg-sky-500/15 text-sky-300'
-                : 'border border-hull-border text-holo/40 hover:text-holo/70'
-            }`}
-            title={`Вероятные сделки под ${forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon}: путь, 1R/2R/3R, магнит → бот`}
-          >
-            Сделки
-            {tradesMode && pickedSetups.length > 0
-              ? ` · ${pickedSetups.length}`
-              : ''}
-            {tradesMode
-              ? ` · ${horizonToStyle(forecastHorizon) === 'INTRADAY' ? 'INTRA' : horizonToStyle(forecastHorizon)}`
-              : ''}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSignalMode(false)
-              setLiveSignal(null)
-              handlePickSetups()
-            }}
-            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showSetupPicker && !zonesMode && !tradesMode && !signalMode
-                ? 'border border-matrix/50 bg-matrix/15 text-matrix'
-                : 'border border-hull-border text-holo/40 hover:text-holo/70'
-            }`}
-            title="Подобрать условные сетапы"
-          >
-            Сетапы
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowDirection((v) => !v)
-              haptic.impact()
-            }}
-            className={`inline-flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showDirection
-                ? directionConsensus.bias === 'UP'
-                  ? 'border border-emerald-400/50 bg-emerald-500/15 text-emerald-300'
-                  : directionConsensus.bias === 'DOWN'
-                    ? 'border border-rose-400/50 bg-rose-500/15 text-rose-300'
-                    : 'border border-holo/40 bg-holo/10 text-holo/80'
-                : 'border border-hull-border text-holo/40 hover:text-holo/70'
-            }`}
-            title="Стрелка направления: сопоставление HTF / Score / MM / прогноз / стакан"
-          >
-            <ArrowUpDown className="h-3 w-3" />
-            {showDirection
-              ? directionConsensus.bias === 'UP'
-                ? '↑'
-                : directionConsensus.bias === 'DOWN'
-                  ? '↓'
-                  : '·'
-              : 'Выкл'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowForecast((v) => !v)}
-            className={`rounded-lg p-1.5 transition-colors ${
-              showForecast
-                ? 'bg-holo/20 text-holo'
-                : 'bg-hull-light/40 text-holo/60 hover:bg-hull-light/70 hover:text-holo'
-            }`}
-            title={t('forecast_toggle')}
-          >
-            <Eye className="h-4 w-4" />
           </button>
           <button
             type="button"
@@ -1985,15 +1837,216 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </div>
       </div>
 
+      {/* Tool rail — ТФ · анализ · вид */}
+      <div className="-mx-1 space-y-1.5 px-1">
+        <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+            {CHART_TIMEFRAMES.map((tf) => (
+              <button
+                key={tf.id}
+                type="button"
+                onClick={() => setTimeframe(tf.id)}
+                className={`rounded-md px-2.5 py-1.5 font-mono text-[11px] font-semibold transition-colors ${
+                  timeframe === tf.id
+                    ? 'bg-emerald-500/20 text-emerald-300'
+                    : 'text-white/40 hover:text-white/70'
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={resetChartView}
+            className="shrink-0 rounded-lg border border-white/[0.08] bg-[#10141a] px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase text-white/45 hover:text-white/75"
+            title="Сбросить масштаб"
+          >
+            Fit
+          </button>
+        </div>
+        <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setShowForecast(true)
+                setForecastHorizon((h: ForecastHorizon) => {
+                  const order: ForecastHorizon[] = ['SCALP', 'INTRA', 'SWING']
+                  const idx = order.indexOf(h === 'MACRO' ? 'SWING' : h)
+                  const next = order[(idx + 1) % order.length]
+                  if (
+                    next === 'SWING' &&
+                    (timeframe === '1m' ||
+                      timeframe === '5m' ||
+                      timeframe === '15m')
+                  ) {
+                    setTimeframe('4h')
+                  }
+                  if (
+                    next === 'SCALP' &&
+                    (timeframe === '4h' || timeframe === '1d')
+                  ) {
+                    setTimeframe('5m')
+                  }
+                  return next
+                })
+              }}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                showForecast
+                  ? forecastHorizon === 'SCALP'
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : forecastHorizon === 'SWING' || forecastHorizon === 'MACRO'
+                      ? 'bg-cyan-500/20 text-cyan-300'
+                      : 'bg-emerald-500/15 text-emerald-300'
+                  : 'text-white/35'
+              }`}
+              title="Горизонт: SCALP → INTRA → SWING"
+            >
+              {forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (signalMode) {
+                  setSignalMode(false)
+                  setLiveSignal(null)
+                  haptic.impact()
+                  return
+                }
+                handleFindLiveSignal()
+              }}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                signalMode
+                  ? 'bg-amber-500/25 text-amber-100'
+                  : 'text-amber-200/65 hover:text-amber-100'
+              }`}
+            >
+              Сигнал
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (zonesMode) {
+                  setZonesMode(false)
+                  setFoundChartZones([])
+                  setFoundZones([])
+                  haptic.impact()
+                  return
+                }
+                setSignalMode(false)
+                setLiveSignal(null)
+                void handleFindZones()
+              }}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                zonesMode
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'text-white/35 hover:text-white/70'
+              }`}
+            >
+              Зоны{foundZones.length > 0 && zonesMode ? ` ${foundZones.length}` : ''}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (tradesMode) {
+                  setTradesMode(false)
+                  setTradesGlobalView(null)
+                  setTradesMagnet(null)
+                  setPickedSetups([])
+                  setShowSetupPicker(false)
+                  haptic.impact()
+                  return
+                }
+                setSignalMode(false)
+                setLiveSignal(null)
+                void handleFindProbableTrades()
+              }}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                tradesMode
+                  ? 'bg-sky-500/20 text-sky-300'
+                  : 'text-white/35 hover:text-white/70'
+              }`}
+            >
+              Сделки
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSignalMode(false)
+                setLiveSignal(null)
+                handlePickSetups()
+              }}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                showSetupPicker && !zonesMode && !tradesMode && !signalMode
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : 'text-white/35 hover:text-white/70'
+              }`}
+            >
+              Сетапы
+            </button>
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+            <button
+              type="button"
+              onClick={() => setShowDirection((v) => !v)}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                showDirection
+                  ? 'bg-violet-500/20 text-violet-300'
+                  : 'text-white/35'
+              }`}
+              title="Стрелка направления"
+            >
+              <ArrowUpDown className="inline h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setChartPreferences({
+                  showLabels: !chartPreferences.showLabels,
+                })
+              }
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                chartPreferences.showLabels
+                  ? 'bg-white/15 text-white'
+                  : 'text-white/35'
+              }`}
+              title="Подписи уровней"
+            >
+              <Eye className="inline h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Legend — компактная шпаргалка */}
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2 py-1 font-mono text-[9px]">
+        <span className="text-sky-300/90">IN</span>
+        <span className="text-rose-300/90">SL</span>
+        <span className="text-emerald-300/90">TP</span>
+        <span className="text-teal-300/85">SSL</span>
+        <span className="text-rose-300/75">BSL</span>
+        {(whaleState?.strongestSupport || whaleState?.strongestResistance) && (
+          <span className="text-cyan-300/90">кит на графике</span>
+        )}
+        {signal?.scoreCard?.grade && (
+          <span className="text-white/45">Score {signal.scoreCard.grade}</span>
+        )}
+        <span className="ml-auto text-white/25">
+          pinch · drag · dbl-tap scale · {timeframe}
+        </span>
+      </div>
+
       <div
-        className={`relative w-full overflow-hidden rounded-lg border border-hull-border bg-hull ${
-          chartExpanded ? 'shadow-[0_0_0_1px_rgba(0,255,65,0.12)]' : ''
+        className={`relative w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#0c0e12] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
+          chartExpanded ? 'ring-1 ring-emerald-500/30' : ''
         }`}
         style={{
           height: chartHeight,
           touchAction: chartExpanded ? 'none' : 'pan-x pinch-zoom',
         }}
         onTouchStart={(e) => e.stopPropagation()}
+        onDoubleClick={resetChartView}
       >
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-hull/60 font-mono text-xs text-holo/40">
@@ -2072,6 +2125,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             }
           />
         )}
+        {chartReady > 0 && (
+          <WhaleLevelsOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            whaleState={whaleState}
+            priceFloor={candlePriceSpan.floor}
+            priceCeil={candlePriceSpan.ceil}
+          />
+        )}
         {showDirection &&
           chartReady > 0 &&
           lastCandleTs > 0 &&
@@ -2089,7 +2152,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         {zonesMode &&
           chartReady > 0 &&
           (zoneGuide?.below || zoneGuide?.above) && (
-            <div className="pointer-events-none absolute bottom-2 left-2 right-14 z-[3] flex flex-wrap gap-1.5">
+            <div className="pointer-events-none absolute right-2 top-12 z-[3] flex max-w-[58%] flex-col gap-1.5">
               {zoneGuide?.below && (
                 <div className="rounded-md border border-teal-400/45 bg-black/70 px-2 py-1 font-mono text-[9px] text-teal-200 shadow-lg backdrop-blur-sm">
                   <span className="font-bold">▼ ПОДДЕРЖКА · лонг ↑</span>
@@ -2174,10 +2237,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
       </div>
 
-      {!chartExpanded &&
-        chartPreferences.indicators.volume &&
+      {chartPreferences.indicators.volume &&
         indicators.volume.length > 0 && (
-          <VolumePanel volumeData={indicators.volume} height={40} />
+          <VolumePanel volumeData={indicators.volume} height={chartExpanded ? 56 : 44} />
         )}
 
       {!chartExpanded &&
@@ -2192,6 +2254,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             height={60}
           />
         ))}
+
+      {chartExpanded && oscillators.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {oscillators.map((mode) => (
+            <OscillatorPanel
+              key={mode}
+              mode={mode}
+              rsiData={indicators.rsi}
+              macdData={indicators.macd}
+              stochasticData={indicators.stochastic}
+              atrData={indicators.atr}
+              height={72}
+            />
+          ))}
+        </div>
+      )}
 
       {!chartExpanded && !cleanMode && (
         <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />

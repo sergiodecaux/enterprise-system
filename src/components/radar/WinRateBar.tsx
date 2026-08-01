@@ -2,9 +2,15 @@ interface WinRateBarProps {
   value: number
   /** Compact rail for coin rows (fixed width, no layout jump) */
   compact?: boolean
+  /** Honest label — default Score (ScoreCard %), not historical WR */
+  label?: string
 }
 
-const WinRateBar = ({ value, compact = false }: WinRateBarProps) => {
+const WinRateBar = ({
+  value,
+  compact = false,
+  label = 'Score',
+}: WinRateBarProps) => {
   const getBarColorClass = () => {
     if (value >= 70) return 'bg-matrix'
     if (value >= 50) return 'bg-yellow-500'
@@ -21,7 +27,30 @@ const WinRateBar = ({ value, compact = false }: WinRateBarProps) => {
 
   if (compact) {
     return (
-      <div className="flex w-[3.25rem] shrink-0 items-center gap-1">
+      <div
+        className="flex w-[3.25rem] shrink-0 flex-col items-end gap-0.5"
+        title={`${label} ${Math.round(value)}% (модель / ScoreCard, не hist WR)`}
+      >
+        <div className="flex w-full items-center gap-1">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hull-light">
+            <div
+              className={`h-full rounded-full transition-[width] duration-300 ${getBarColorClass()}`}
+              style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+            />
+          </div>
+          <span
+            className={`w-6 text-right font-mono text-[9px] tabular-nums ${getTextColorClass()}`}
+          >
+            {Math.round(value)}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex w-36 flex-col gap-0.5">
+      <div className="flex items-center gap-2">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hull-light">
           <div
             className={`h-full rounded-full transition-[width] duration-300 ${getBarColorClass()}`}
@@ -29,24 +58,13 @@ const WinRateBar = ({ value, compact = false }: WinRateBarProps) => {
           />
         </div>
         <span
-          className={`w-6 text-right font-mono text-[9px] tabular-nums ${getTextColorClass()}`}
+          className={`w-8 text-right font-mono text-xs tabular-nums ${getTextColorClass()}`}
         >
-          {Math.round(value)}
+          {Math.round(value)}%
         </span>
       </div>
-    )
-  }
-
-  return (
-    <div className="flex w-32 items-center gap-2">
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-hull-light">
-        <div
-          className={`h-full rounded-full transition-[width] duration-300 ${getBarColorClass()}`}
-          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
-        />
-      </div>
-      <span className={`w-8 text-right font-mono text-xs tabular-nums ${getTextColorClass()}`}>
-        {Math.round(value)}%
+      <span className="font-mono text-[9px] uppercase tracking-wide text-holo/35">
+        {label}
       </span>
     </div>
   )

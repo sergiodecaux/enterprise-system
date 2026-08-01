@@ -14,6 +14,13 @@ export {
   type GateItem,
 } from './readyGate'
 export {
+  evaluateHistWrPolicy,
+  blendConfidenceWithHist,
+  queryHistWrForSignal,
+  type HistWrPolicy,
+  type HistWrAction,
+} from './histWrPolicy'
+export {
   evaluateIdeaStatus,
   type IdeaStatus,
   type IdeaLife,

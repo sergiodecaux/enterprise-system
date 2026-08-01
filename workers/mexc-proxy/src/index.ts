@@ -1035,15 +1035,16 @@ async function maybeHeartbeat(env: Env): Promise<number> {
 
 /** If Telegram has been silent too long, poke both bots (proves Worker→TG). */
 async function maybeDeliveryProbe(env: Env): Promise<number> {
-  // Gate on KV only — Cache can look "fresh" while KV (and ops) see a 2-day-old stamp.
+  // Must use durableGet: recordDelivery writes Cache (+ throttled KV).
+  // KV-only gate saw lastAt=0 forever → probe on every paper cron → spam.
   let lastAt = 0
   try {
-    const raw = await env.SUBSCRIBERS?.get(LAST_TG_KEY)
+    const raw = await durableGet(env, LAST_TG_KEY)
     if (raw) lastAt = Number((JSON.parse(raw) as { at?: number }).at || 0)
   } catch {
     lastAt = 0
   }
-  if (lastAt && Date.now() - lastAt < DELIVERY_PROBE_MS) return 0
+  if (lastAt > 0 && Date.now() - lastAt < DELIVERY_PROBE_MS) return 0
 
   let sent = 0
   const ts = new Date().toISOString()
@@ -1829,8 +1830,8 @@ async function removeSubscriber(
 
 const HEARTBEAT_KEY = 'telegram:last_heartbeat'
 const HEARTBEAT_MS = 30 * 60_000 // every 30 min
-/** If no successful/failed delivery recorded for this long → force Worker→TG poke */
-const DELIVERY_PROBE_MS = 45 * 60_000
+/** If no TG delivery stamp for this long → Worker→TG self-check (not a signal) */
+const DELIVERY_PROBE_MS = 6 * 60 * 60_000
 
 interface TelegramUpdate {
   message?: {
@@ -2401,8 +2402,9 @@ async function recordDelivery(
   payload: Record<string, unknown>
 ): Promise<void> {
   const body = JSON.stringify({ ...payload, at: Date.now() })
-  // Cache only — TG delivery stamps burned hundreds of KV writes/day
-  await runtimePut(LAST_TG_KEY, body)
+  // Cache always; KV throttled so probe gate survives isolate/colo churn
+  // without burning the free-plan write budget on every TG send.
+  await durablePut(env, LAST_TG_KEY, body, 60 * 60 * 24, 40 * 60_000)
 }
 
 async function tgSendDetailed(

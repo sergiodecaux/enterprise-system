@@ -17,6 +17,10 @@ import {
   type LiveSignalResult,
 } from '../trades/findLiveSignal'
 import type { FoundTradeZone } from '../zones/findTradeZones'
+import {
+  blendConfidenceWithHist,
+  evaluateHistWrPolicy,
+} from '../analysis/histWrPolicy'
 
 export type SignalSide = 'LONG' | 'SHORT'
 
@@ -299,19 +303,31 @@ export function buildDirectedSignal(input: {
         }
       : null)
 
-  const winPct = Math.round(
+  const modelPct = Math.round(
     bestSetup?.probability ??
       primary.winPct ??
       input.signal?.styleConfidence ??
       input.signal?.probabilityPct ??
       0
   )
+  const histPolicy = input.signal
+    ? evaluateHistWrPolicy(input.signal)
+    : null
+  const winPct = histPolicy
+    ? blendConfidenceWithHist(modelPct, histPolicy)
+    : modelPct
 
   const doubts: string[] = []
   const missing = input.signal?.scoreCard?.missingFactors ?? []
   for (const m of missing.slice(0, 4)) doubts.push(m)
   if (input.signal?.scoreCard?.grade === 'SKIP') {
     doubts.push('ScoreCard SKIP — вход только от зоны')
+  }
+  if (histPolicy?.action === 'block' || histPolicy?.action === 'demote') {
+    doubts.push(histPolicy.reason)
+  }
+  if (histPolicy?.action === 'boost') {
+    doubts.push(histPolicy.reason)
   }
   if (primary.invalidation) doubts.push(primary.invalidation)
   if (bestSetup) {

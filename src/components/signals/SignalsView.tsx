@@ -337,7 +337,7 @@ const SignalsView = () => {
     }
   }
 
-  const handleConfirmWatch = async () => {
+  const handleConfirmWatch = async (opts?: { early?: boolean }) => {
     if (!result?.bestSetup || !selected) {
       showAlert('Нет готового сетапа для слежения — зона слишком слабая')
       return
@@ -345,14 +345,23 @@ const SignalsView = () => {
     const signalForGate = signals.find(
       (s) => s.internalSymbol === selected.symbol
     )
-    if (signalForGate) {
-      const gate = evaluateReadyGate(signalForGate)
-      if (!gate.ready) {
-        showAlert(
-          `Gate не готов (${gate.passCount}/${gate.needCount}): ${gate.summary}. Можно следить, но вход рано.`
-        )
-      }
+    const gate = signalForGate ? evaluateReadyGate(signalForGate) : null
+    const allowEarly = opts?.early === true
+
+    if (gate && !gate.ready && !allowEarly) {
+      showAlert(
+        `Gate не готов (${gate.passCount}/${gate.needCount}): ${gate.summary}. Выбери «Ранний watch» или дождись READY.`
+      )
+      return
     }
+
+    if (gate?.items.some((i) => i.id === 'hist_wr' && i.status === 'FAIL')) {
+      showAlert(
+        `Hist WR в журнале токсичный — Elite watch заблокирован. Смени сторону/стиль или дождись другой истории.`
+      )
+      return
+    }
+
     const chatId = resolveChatId()
     if (!chatId) {
       showAlert('Сначала подпишитесь на Telegram-алерты (колокольчик)')
@@ -361,14 +370,24 @@ const SignalsView = () => {
 
     const style = result.bestSetup.tradeStyle ?? tradeStyle
     const ttlHours = ttlHoursForStyle(style)
+    const earlyTag = allowEarly && gate && !gate.ready
     const setup: ConditionalSetup = {
       ...result.bestSetup,
       tradeStyle: style,
       symbol: toFlatSymbol(selected.symbol),
       internalSymbol: selected.symbol,
-      title: result.bestSetup.title.startsWith('#')
-        ? result.bestSetup.title
-        : `${HORIZON_PROFILES[style].tag} ${result.bestSetup.title}`,
+      title: (() => {
+        const base = result.bestSetup.title.startsWith('#')
+          ? result.bestSetup.title
+          : `${HORIZON_PROFILES[style].tag} ${result.bestSetup.title}`
+        return earlyTag ? `⏳ EARLY · ${base}` : base
+      })(),
+      reasoning: earlyTag
+        ? [
+            `EARLY watch — gate ${gate!.passCount}/${gate!.needCount}: ${gate!.summary}`,
+            ...(result.bestSetup.reasoning ?? []),
+          ]
+        : result.bestSetup.reasoning,
     }
 
     setWatchBusy(true)
@@ -406,7 +425,9 @@ const SignalsView = () => {
         setConfirmOpen(false)
         haptic.success()
         showAlert(
-          `Elite следит за ${toDisplayName(selected.symbol)} ${setup.side} · ${style}. Нужен /start в @Enterpriseelite_bot — алерт при READY + журнал WR`
+          earlyTag
+            ? `Elite: ранний watch ${toDisplayName(selected.symbol)} ${setup.side} · ${style} (gate ещё не READY)`
+            : `Elite следит за ${toDisplayName(selected.symbol)} ${setup.side} · ${style}. /start в @Enterpriseelite_bot — READY + журнал WR`
         )
       } else {
         upsertWatchedSetup({
@@ -657,6 +678,7 @@ const SignalsView = () => {
                 {toDisplayName(selected.symbol)} · {result.side} ·{' '}
                 {HORIZON_PROFILES[tradeStyle].tag}
               </div>
+            <div className="flex flex-col items-end">
               <div
                 className={`font-mono text-lg font-bold ${
                   result.side === 'LONG' ? 'text-matrix' : 'text-alert'
@@ -664,9 +686,14 @@ const SignalsView = () => {
               >
                 ~{result.winPct}%
               </div>
+              <div className="font-mono text-[9px] uppercase text-holo/40">
+                Conf
+              </div>
+            </div>
             </div>
             <p className="mt-1 font-mono text-[10px] text-holo/40">
-              {HORIZON_PROFILES[tradeStyle].label} · оценка (не исторический WR)
+              {HORIZON_PROFILES[tradeStyle].label} · Conf (модель ± hist WR), не
+              гарантия
             </p>
             <p className="mt-2 font-mono text-xs leading-snug text-holo/80">
               {result.primary.title}
@@ -824,11 +851,32 @@ const SignalsView = () => {
                 {HORIZON_PROFILES[tradeStyle].tag} станет READY (или
                 инвалидируется). TTL {ttlHoursForStyle(tradeStyle)}ч.
               </p>
+              {(() => {
+                const gateSig = signals.find(
+                  (s) => s.internalSymbol === selected.symbol
+                )
+                const g = gateSig ? evaluateReadyGate(gateSig) : null
+                if (!g) return null
+                return (
+                  <p
+                    className={`mt-2 font-mono text-[11px] ${
+                      g.ready ? 'text-matrix' : 'text-amber-200/90'
+                    }`}
+                  >
+                    Gate: {g.summary}
+                    {!g.ready
+                      ? ' — обычный watch закрыт, нужен «Ранний» или ждать.'
+                      : ''}
+                  </p>
+                )
+              })()}
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   disabled={watchBusy}
-                  onClick={() => setConfirmOpen(false)}
+                  onClick={() => {
+                    setConfirmOpen(false)
+                  }}
                   className="rounded-lg border border-hull-border py-2.5 font-mono text-xs font-bold uppercase text-holo/60 hover:bg-hull"
                 >
                   Нет
@@ -836,7 +884,7 @@ const SignalsView = () => {
                 <button
                   type="button"
                   disabled={watchBusy || !setup}
-                  onClick={handleConfirmWatch}
+                  onClick={() => handleConfirmWatch({ early: false })}
                   className="flex items-center justify-center gap-1.5 rounded-lg border border-sky-400/50 bg-sky-500/20 py-2.5 font-mono text-xs font-bold uppercase text-sky-200 hover:bg-sky-500/30 disabled:opacity-40"
                 >
                   {watchBusy ? (
@@ -847,6 +895,14 @@ const SignalsView = () => {
                   Да, следить
                 </button>
               </div>
+              <button
+                type="button"
+                disabled={watchBusy || !setup}
+                onClick={() => handleConfirmWatch({ early: true })}
+                className="mt-2 w-full rounded-lg border border-amber-400/35 bg-amber-500/10 py-2 font-mono text-[10px] font-bold uppercase text-amber-200/90 hover:bg-amber-500/15 disabled:opacity-40"
+              >
+                Ранний watch (gate ещё не READY)
+              </button>
             </div>
           )}
 

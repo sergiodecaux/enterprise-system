@@ -110,26 +110,34 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
         {getSignalText()}
       </div>
 
-      <div className="flex w-[5.75rem] shrink-0 items-center justify-end gap-0.5 overflow-hidden">
-        <WinRateBar value={signal.probabilityPct} compact />
-        <span
-          className={`inline-flex w-4 justify-center font-mono text-[9px] font-bold ${
-            signal.scoreCard
-              ? signal.scoreCard.ready
-                ? 'text-matrix'
-                : signal.scoreCard.grade === 'B'
-                  ? 'text-yellow-400'
-                  : 'text-holo/40'
-              : 'invisible'
-          }`}
-          title={
-            signal.scoreCard
-              ? `ScoreCard ${signal.scoreCard.totalScore}/${signal.scoreCard.maxScore}`
-              : undefined
-          }
-        >
-          {signal.scoreCard?.grade ?? '·'}
+      <div className="flex w-[5.75rem] shrink-0 flex-col items-end justify-center gap-0.5 overflow-hidden">
+        <div className="flex items-center justify-end gap-0.5">
+          <WinRateBar value={signal.probabilityPct} compact label="Score" />
+          <span
+            className={`inline-flex w-4 justify-center font-mono text-[9px] font-bold ${
+              signal.scoreCard
+                ? signal.scoreCard.ready
+                  ? 'text-matrix'
+                  : signal.scoreCard.grade === 'B'
+                    ? 'text-yellow-400'
+                    : 'text-holo/40'
+                : 'invisible'
+            }`}
+            title={
+              signal.scoreCard
+                ? `ScoreCard ${signal.scoreCard.totalScore}/${signal.scoreCard.maxScore}`
+                : undefined
+            }
+          >
+            {signal.scoreCard?.grade ?? '·'}
+          </span>
+        </div>
+        <span className="font-mono text-[8px] uppercase tracking-wide text-holo/30">
+          Score
         </span>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-0.5">
         <span
           className={`inline-flex w-3.5 justify-center text-[9px] ${
             liqMap && liqMap.liquidityBoost > 0.5 ? 'text-yellow-400' : 'invisible'

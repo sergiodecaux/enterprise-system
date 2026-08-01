@@ -133,7 +133,7 @@ const CoinAnalysisUpgradePanel = ({
           {hist.winRate != null ? (
             <>
               <div className="font-mono text-sm font-bold text-holo">
-                WR {hist.winRate.toFixed(0)}%
+                Hist WR {hist.winRate.toFixed(0)}%
                 <span className="ml-1 text-[10px] font-normal text-holo/45">
                   ({hist.wins}W/{hist.losses}L)
                 </span>

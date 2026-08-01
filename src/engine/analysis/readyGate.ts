@@ -5,6 +5,10 @@
 import type { CoinSignal } from '../types'
 import type { AssetType } from '../composite/assetClassifier'
 import { classifyAsset } from '../composite/assetClassifier'
+import {
+  evaluateHistWrPolicy,
+  histWrToGateItem,
+} from './histWrPolicy'
 
 export type GateStatus = 'PASS' | 'PENDING' | 'FAIL'
 
@@ -184,9 +188,15 @@ export function evaluateReadyGate(signal: CoinSignal): ReadyGateResult {
     detail: microDetail,
   })
 
-  // Hard FAIL blocks ready
+  // 5. Historical WR from local journal (feedback loop)
+  const histPolicy = evaluateHistWrPolicy(signal)
+  items.push(histWrToGateItem(histPolicy))
+
+  // Hard FAIL blocks ready (Score / HTF / Zone / toxic hist WR)
   const hardFail = items.some(
-    (i) => i.status === 'FAIL' && (i.id === 'score' || i.id === 'htf' || i.id === 'zone')
+    (i) =>
+      i.status === 'FAIL' &&
+      (i.id === 'score' || i.id === 'htf' || i.id === 'zone' || i.id === 'hist_wr')
   )
   const passCount = items.filter((i) => i.status === 'PASS').length
   const needCount = assetType === 'MEME' ? 2 : 3
