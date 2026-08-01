@@ -13,6 +13,7 @@ import {
   estimateMovePotential,
   type MovePotential,
 } from './movePotential'
+import { kvPutThrottled } from './kvWrite'
 
 export type SetupStatus =
   | 'HYPOTHESIS'
@@ -104,6 +105,36 @@ const WATCH_KEY = 'telegram:watched_setups'
 const DIGEST_MS = 5 * 60_000
 const REFRESH_MS = 10 * 60_000
 const memoryWatches: WatchedSetupRecord[] = []
+
+function watchCacheRequest(): Request {
+  return new Request('https://enterprise-system-runtime.invalid/watched-setups')
+}
+
+async function readWatchCache(): Promise<WatchedSetupRecord[] | null> {
+  try {
+    const response = await caches.default.match(watchCacheRequest())
+    if (!response) return null
+    return (await response.json()) as WatchedSetupRecord[]
+  } catch {
+    return null
+  }
+}
+
+async function writeWatchCache(list: WatchedSetupRecord[]): Promise<void> {
+  try {
+    await caches.default.put(
+      watchCacheRequest(),
+      new Response(JSON.stringify(list), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=7200',
+        },
+      })
+    )
+  } catch {
+    /* memory only */
+  }
+}
 
 interface WatchEvalSnapshot {
   status: SetupStatus
@@ -718,24 +749,43 @@ function liveWatchWinPct(
 }
 
 export async function listWatches(env: Env): Promise<WatchedSetupRecord[]> {
-  if (!env.SUBSCRIBERS) return [...memoryWatches]
-  const raw = await env.SUBSCRIBERS.get(WATCH_KEY)
-  if (!raw) return [...memoryWatches]
-  try {
-    return JSON.parse(raw) as WatchedSetupRecord[]
-  } catch {
+  if (memoryWatches.length) return [...memoryWatches]
+  const cached = await readWatchCache()
+  if (cached?.length) {
+    memoryWatches.length = 0
+    memoryWatches.push(...cached)
     return [...memoryWatches]
+  }
+  if (!env.SUBSCRIBERS) return []
+  const raw = await env.SUBSCRIBERS.get(WATCH_KEY)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw) as WatchedSetupRecord[]
+    memoryWatches.length = 0
+    memoryWatches.push(...parsed)
+    await writeWatchCache(parsed)
+    return [...memoryWatches]
+  } catch {
+    return []
   }
 }
 
 async function saveWatches(
   env: Env,
-  list: WatchedSetupRecord[]
+  list: WatchedSetupRecord[],
+  forceKv = false
 ): Promise<void> {
   memoryWatches.length = 0
   memoryWatches.push(...list)
+  await writeWatchCache(list)
   if (!env.SUBSCRIBERS) return
-  await env.SUBSCRIBERS.put(WATCH_KEY, JSON.stringify(list))
+  await kvPutThrottled(
+    env.SUBSCRIBERS,
+    WATCH_KEY,
+    JSON.stringify(list),
+    12 * 60_000,
+    { force: forceKv }
+  )
 }
 
 export async function createWatch(
@@ -769,7 +819,7 @@ export async function createWatch(
       !(w.chatId === input.chatId && w.setup.id === input.setup.id)
   )
   filtered.push(watch)
-  await saveWatches(env, filtered)
+  await saveWatches(env, filtered, true)
   return watch
 }
 
@@ -783,7 +833,7 @@ export async function deleteWatch(
     (w) => !(w.chatId === chatId && w.watchId === watchId)
   )
   if (next.length === list.length) return false
-  await saveWatches(env, next)
+  await saveWatches(env, next, true)
   return true
 }
 
@@ -1199,7 +1249,7 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   if (active.length === 0) {
     // Avoid burning a KV write every two minutes when there is nothing to
     // monitor. Save only once when stale records actually need pruning.
-    if (list.length > 0) await saveWatches(env, [])
+    if (list.length > 0) await saveWatches(env, [], true)
     return []
   }
 
@@ -1445,7 +1495,10 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   }
 
   void expired
-  await saveWatches(env, next)
+  const forceKv = alerts.some(
+    (a) => a.kind === 'READY' || a.kind === 'INVALIDATED'
+  )
+  await saveWatches(env, next, forceKv)
   return alerts
 }
 
@@ -1505,6 +1558,6 @@ export async function createWatchesBatch(
     created.push(watch)
     filtered.push(watch)
   }
-  await saveWatches(env, filtered)
+  await saveWatches(env, filtered, true)
   return created
 }

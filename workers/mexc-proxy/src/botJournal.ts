@@ -7,6 +7,7 @@ import {
   analyzeTradeOutcome,
   type TradeOutcomeAnalysis,
 } from './tradeOutcomeAnalysis'
+import { kvPutThrottled } from './kvWrite'
 
 const JOURNAL_KEY = 'telegram:bot_journal'
 const GATES_KEY = 'telegram:bot_gates'
@@ -231,11 +232,13 @@ async function saveJournal(
   memoryJournal.push(...trimmed)
   await writeJournalCache(trimmed)
   if (!env.SUBSCRIBERS || !checkpoint) return
-  try {
-    await env.SUBSCRIBERS.put(JOURNAL_KEY, JSON.stringify(trimmed))
-  } catch {
-    // New signals continue through Telegram/cache while daily KV is exhausted.
-  }
+  // Free KV budget: checkpoint at most ~every 10m (Cache holds live journal)
+  await kvPutThrottled(
+    env.SUBSCRIBERS,
+    JOURNAL_KEY,
+    JSON.stringify(trimmed),
+    10 * 60_000
+  )
 }
 
 export async function recordBotAlert(
@@ -1049,11 +1052,12 @@ async function recomputeAndSaveGates(env: Env): Promise<BotAdaptiveGates> {
   const gates = deriveAdaptiveGates(analytics)
   memoryGates = gates
   if (env.SUBSCRIBERS) {
-    try {
-      await env.SUBSCRIBERS.put(GATES_KEY, JSON.stringify(gates))
-    } catch {
-      // Adaptive gates remain available in memory for this runtime.
-    }
+    await kvPutThrottled(
+      env.SUBSCRIBERS,
+      GATES_KEY,
+      JSON.stringify(gates),
+      30 * 60_000
+    )
   }
   return gates
 }

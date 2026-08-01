@@ -62,6 +62,7 @@ import {
 import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
+import { kvPutThrottled } from './kvWrite'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 const LAST_SCAN_KEY = 'telegram:last_scan_status'
@@ -164,14 +165,13 @@ async function durablePut(
   env: Env,
   key: string,
   value: string,
-  expirationTtl = 60 * 60 * 24 * 7
+  expirationTtl = 60 * 60 * 24 * 7,
+  minIntervalMs = 25 * 60_000
 ): Promise<void> {
   await runtimePut(key, value)
-  try {
-    await env.SUBSCRIBERS?.put(key, value, { expirationTtl })
-  } catch {
-    /* quota */
-  }
+  await kvPutThrottled(env.SUBSCRIBERS, key, value, minIntervalMs, {
+    expirationTtl,
+  })
 }
 
 function latestBookTimestamp(raw: string | null): number {
@@ -207,15 +207,8 @@ function createOrderBookStateStore(env: Env) {
     },
     async put(key: string, value: string): Promise<void> {
       await runtimePut(`book:${key}`, value)
-      // Always checkpoint to KV. Throttling to 6m broke the 3-snap sequence on
-      // cold isolates → age>6m → empty events → multi-hour meme silence.
-      if (env.SUBSCRIBERS) {
-        try {
-          await env.SUBSCRIBERS.put(key, value)
-        } catch {
-          // Quota exhaustion recovers after daily reset; Cache still helps.
-        }
-      }
+      // Free KV: ≤1000 writes/day. Cache holds live sequence; KV every ~15m.
+      await kvPutThrottled(env.SUBSCRIBERS, key, value, 15 * 60_000)
     },
   }
 }
@@ -1192,13 +1185,9 @@ async function announceEngineToChannel(
   if (sent > 0 || subs.length === 0) {
     const at = String(Date.now())
     await runtimePut(key, at)
-    try {
-      await env.SUBSCRIBERS.put(key, at, {
-        expirationTtl: 60 * 60 * 24 * 90,
-      })
-    } catch {
-      /* quota */
-    }
+    await kvPutThrottled(env.SUBSCRIBERS, key, at, 6 * 60 * 60_000, {
+      expirationTtl: 60 * 60 * 24 * 90,
+    })
   }
 }
 
@@ -1247,11 +1236,7 @@ async function runCronScan(
     startedAt: scanStartedAt,
   })
   await runtimePut(LAST_SCAN_KEY, scanRunning)
-  try {
-    await env.SUBSCRIBERS?.put(LAST_SCAN_KEY, scanRunning)
-  } catch {
-    /* quota */
-  }
+  // Cache only — last_scan was ~2 KV writes per cron (~1400+/day)
 
   let watchAlerts = 0
   let sent = 0
@@ -1268,10 +1253,35 @@ async function runCronScan(
   const seenDedup = new Set<string>()
   const allAlerts: ScanAlert[] = []
 
+  const bookStore = env.SUBSCRIBERS ? createOrderBookStateStore(env) : undefined
   const kv = env.SUBSCRIBERS
     ? {
-        get: (key: string) => env.SUBSCRIBERS!.get(key),
-        put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+        get: async (key: string) => {
+          if (
+            key.includes('book') ||
+            key.includes('order_flow') ||
+            key.includes('order_book')
+          ) {
+            return bookStore!.get(key)
+          }
+          return (
+            (await runtimeGet(`kvblob:${key}`)) ??
+            (await env.SUBSCRIBERS!.get(key))
+          )
+        },
+        put: async (key: string, value: string) => {
+          if (
+            key.includes('book') ||
+            key.includes('order_flow') ||
+            key.includes('order_book')
+          ) {
+            await bookStore!.put(key, value)
+            return
+          }
+          await runtimePut(`kvblob:${key}`, value)
+          // Hotlist / misc — at most ~once per 20m
+          await kvPutThrottled(env.SUBSCRIBERS, key, value, 20 * 60_000)
+        },
       }
     : undefined
 
@@ -1596,11 +1606,7 @@ async function runCronScan(
         }
       }
       await runtimePut(dedupKey, String(Date.now()))
-      try {
-        await env.SUBSCRIBERS?.put(dedupKey, String(Date.now()))
-      } catch {
-        /* quota */
-      }
+      // Cache-only elite stamp — hourly KV burned free quota for nothing
       console.log(
         `[elite] ${kind} parts=${briefing.htmlParts.length} coins=${briefing.coins.length} ideas=${briefing.rankedIdeas.length} subs=${subs.length}`
       )
@@ -1754,15 +1760,14 @@ async function runCronScan(
     ...result,
   })
   await runtimePut(LAST_SCAN_KEY, scanDone)
-  try {
-    await env.SUBSCRIBERS?.put(LAST_SCAN_KEY, scanDone)
-    // Per-role so vane/predator don't erase paper evidence
-    await env.SUBSCRIBERS?.put(`${LAST_SCAN_KEY}:${role}`, scanDone, {
-      expirationTtl: 60 * 60 * 24 * 3,
-    })
-  } catch {
-    /* quota */
-  }
+  // Cache only (+ rare per-role snapshot for debugging)
+  await kvPutThrottled(
+    env.SUBSCRIBERS,
+    `${LAST_SCAN_KEY}:${role}`,
+    scanDone,
+    60 * 60_000,
+    { expirationTtl: 60 * 60 * 24 * 3 }
+  )
   return result
 }
 
@@ -2396,16 +2401,8 @@ async function recordDelivery(
   payload: Record<string, unknown>
 ): Promise<void> {
   const body = JSON.stringify({ ...payload, at: Date.now() })
+  // Cache only — TG delivery stamps burned hundreds of KV writes/day
   await runtimePut(LAST_TG_KEY, body)
-  if (env.SUBSCRIBERS) {
-    try {
-      await env.SUBSCRIBERS.put(LAST_TG_KEY, body, {
-        expirationTtl: 60 * 60 * 24 * 7,
-      })
-    } catch {
-      /* quota */
-    }
-  }
 }
 
 async function tgSendDetailed(
@@ -2506,13 +2503,7 @@ async function assertDeliveryTestGate(
   }
   const now = String(Date.now())
   await runtimePut(DELIVERY_TEST_KEY, now)
-  try {
-    await env.SUBSCRIBERS?.put(DELIVERY_TEST_KEY, now, {
-      expirationTtl: 60 * 60,
-    })
-  } catch {
-    /* quota */
-  }
+  // Cache only — probe must not burn KV
   return { ok: true }
 }
 
