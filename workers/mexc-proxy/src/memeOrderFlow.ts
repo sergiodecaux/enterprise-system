@@ -1,10 +1,8 @@
 /**
- * MEME order-flow scanner v26 — Day Continue (journal autopsy 2026-07-30).
+ * MEME order-flow scanner v26.3 — Day Continue + hist-WR hunt.
  *
- * Journal 103 MEME: WR~12% · ΣPnL −24.9% · 93% LOSS с MFE&lt;0.25%.
- * Kill: TRAP/COUNTER/LIQ/SPOOF + blind fade v25 (COUNTER tag = 0% WR).
- * Keep: WITH-day continuation after wall-release / absorption.
- * Wins clustered on DUMP→SHORT and clean PUMP→LONG with real MFE 2–9%.
+ * Coverage: TOP-18 hot memes, deep-scan 16/tick (was 8 — many coins never checked).
+ * Emit: prefer CONT_BOOK_RELEASE and setups with highest journal WR; block losers.
  */
 
 import type { ScanAlert } from './scanner'
@@ -18,11 +16,20 @@ import {
   type OrderBookEvent,
   type OrderBookSnapshot,
 } from './orderBookReader'
+import {
+  allowSetupByGates,
+  isHighWrMemeSetup,
+  memeSetupRankScore,
+  setupHistoricalWr,
+  type BotAdaptiveGates,
+} from './botJournal'
 
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v26'
-const MAX_SCAN = 8
-const MAX_ALERTS = 2
+/** Scan full TOP watchlist each tick (was 8 — many coins never checked) */
+const MAX_SCAN = 16
+/** Prefer quality over spam, but allow 3 high-WR alerts */
+const MAX_ALERTS = 3
 const MIN_CONF = 84
 /** Absorption alone was 0W/1L + 2 dead after v26.1 — require stronger confirm */
 const MIN_CONF_ABSORPTION = 92
@@ -311,7 +318,7 @@ function toAlert(
       `SL ${lv.sl} (~${(SL_PCT * 100).toFixed(1)}%) · TP1 ${lv.tp1} · TP ${lv.tp} (~${(TP_PCT * 100).toFixed(1)}%)`,
       `spread ${event.spreadBps.toFixed(0)}bps · conf ${event.confidence} · flow ${event.flowSharePct.toFixed(0)}%`,
       ...event.notes.slice(0, 3),
-      'v26.2: WITH day · TP1+tight trail · abs conf≥92 · cooldown 75м',
+      'v26.3: TOP-18 scan · emit by hist WR · CONT_BOOK_RELEASE приоритет',
     ].join('\n'),
     dedupeKey: `cron:mof26:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
     score: event.confidence,
@@ -338,6 +345,8 @@ function toAlert(
 export async function runMemeOrderFlowScan(opts: {
   kv?: KvLike
   pinSymbols?: string[]
+  /** Journal adaptive gates — prefer highest WR setups */
+  gates?: BotAdaptiveGates | null
 }): Promise<{
   alerts: ScanAlert[]
   watchlist: HotMemeWatchlist
@@ -390,7 +399,8 @@ export async function runMemeOrderFlowScan(opts: {
   const batch = ranked.slice(0, MAX_SCAN)
   const state = await loadBookState(opts.kv)
   const rejects: Array<{ symbol: string; reason: string }> = []
-  const alerts: ScanAlert[] = []
+  const candidates: ScanAlert[] = []
+  const gates = opts.gates ?? null
 
   for (const coin of batch) {
     const prev = state[coin.symbol]?.previous ?? null
@@ -428,14 +438,75 @@ export async function runMemeOrderFlowScan(opts: {
       rejects.push({ symbol: coin.symbol, reason: 'no_limit' })
       continue
     }
-    alerts.push(alert)
-    if (alerts.length >= MAX_ALERTS) break
+
+    const setup = alert.tradePlan.setup
+    if (gates) {
+      const ag = allowSetupByGates(gates, setup, alert.score, 'MEME')
+      if (!ag.ok) {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: ag.reason ?? 'gates',
+        })
+        continue
+      }
+      const hist = setupHistoricalWr(gates, setup)
+      // Known losers (n≥3, WR<30) — skip unless CONT_BOOK_RELEASE override
+      if (
+        hist.n >= 3 &&
+        hist.wr < 30 &&
+        setup !== 'CONT_BOOK_RELEASE'
+      ) {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: `low_hist_wr:${hist.wr.toFixed(0)}%_n${hist.n}`,
+        })
+        continue
+      }
+    }
+
+    // Annotate winPct from journal when available
+    if (gates) {
+      const hist = setupHistoricalWr(gates, setup)
+      if (hist.n >= 3) {
+        alert.winPct = Math.round(
+          Math.min(78, Math.max(42, hist.wr * 0.7 + (alert.winPct ?? 50) * 0.3))
+        )
+        alert.text = [
+          alert.text,
+          `Hist WR ${hist.wr.toFixed(0)}% (n=${hist.n}) · rank hunt high-WR`,
+        ].join('\n')
+      }
+    }
+
+    candidates.push(alert)
   }
 
   await saveBookState(opts.kv, state)
 
-  alerts.sort((a, b) => b.score - a.score)
-  const top = alerts.slice(0, MAX_ALERTS)
+  // Sort by historical WR rank (CONT_BOOK_RELEASE first), then confidence
+  candidates.sort((a, b) => {
+    const ra = memeSetupRankScore(
+      gates,
+      a.tradePlan?.setup ?? '',
+      a.score
+    )
+    const rb = memeSetupRankScore(
+      gates,
+      b.tradePlan?.setup ?? '',
+      b.score
+    )
+    if (rb !== ra) return rb - ra
+    return b.score - a.score
+  })
+
+  // Prefer taking high-WR setups; fill remaining slots with next best
+  const high = candidates.filter((a) =>
+    isHighWrMemeSetup(gates, a.tradePlan?.setup ?? '')
+  )
+  const rest = candidates.filter(
+    (a) => !isHighWrMemeSetup(gates, a.tradePlan?.setup ?? '')
+  )
+  const top = [...high, ...rest].slice(0, MAX_ALERTS)
 
   return {
     alerts: top,
@@ -446,6 +517,6 @@ export async function runMemeOrderFlowScan(opts: {
         ? `no_ready · e.g. ${rejects[0].symbol}:${rejects[0].reason}`
         : 'no_ready_flow',
     scanned: batch.length,
-    rejects: rejects.slice(0, 12),
+    rejects: rejects.slice(0, 16),
   }
 }

@@ -52,6 +52,7 @@ import {
 } from './watchedSetups'
 import {
   getBotJournalPayload,
+  getAdaptiveGates,
   recordBotAlert,
   resolveBotJournal,
   formatCorridorWrReport,
@@ -1229,8 +1230,15 @@ async function runCronScan(
             paper.skipReason ?? 'unknown',
             a.dedupeKey
           )
-          // Cooldown: don't spam TG with same symbol re-alerts.
-          if (paper.skipReason === 'cooldown') return
+          // Still deliver TG signal (was silent on cooldown → «не все монеты»)
+          if (paper.skipReason === 'cooldown') {
+            title = a.title
+            text = [
+              a.text,
+              '',
+              '⚠ Paper cooldown по символу — сигнал без companion-сделки.',
+            ].join('\n')
+          }
         }
       }
       const cr = await broadcastAlert(env, {
@@ -1405,8 +1413,9 @@ async function runCronScan(
             (t.status === 'OPEN' || t.status === 'WAITING')
         )
         .map((t) => t.symbol)
-      // Causality lab: order-flow MM join replaces liquidation-echo wait
-      const flow = await runMemeOrderFlowScan({ kv, pinSymbols })
+      // Causality lab: order-flow MM join — TOP-18 scan, emit by hist WR
+      const gates = await getAdaptiveGates(env)
+      const flow = await runMemeOrderFlowScan({ kv, pinSymbols, gates })
       predatorHotlist = flow.watchlist.entries.map((e) => e.symbol)
       memeScanned = flow.scanned
       for (const a of flow.alerts) {
@@ -1417,10 +1426,22 @@ async function runCronScan(
         console.log(
           '[cron] meme-flow skip:',
           predatorSkip,
+          'scanned',
+          memeScanned,
           'hot',
-          predatorHotlist,
+          predatorHotlist.length,
+          predatorHotlist.slice(0, 8),
           'rejects',
-          flow.rejects.slice(0, 4)
+          flow.rejects.slice(0, 6)
+        )
+      } else {
+        console.log(
+          '[cron] meme-flow alerts',
+          flow.alerts.map((a) => `${a.tradePlan?.symbol}:${a.tradePlan?.setup}`),
+          'scanned',
+          memeScanned,
+          '/',
+          predatorHotlist.length
         )
       }
     } catch (err) {

@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-day-continue-v26.2',
-  label: 'MEME: Day Continue',
+  id: 'meme-day-continue-v26.3',
+  label: 'MEME: Day Continue WR-hunt',
   deployedNote:
-    'v26.2: BE@0.5R · TP1 lock+trail 0.45–0.6% · abs conf≥92 · symbol cooldown 75м · CONT_BOOK_RELEASE приоритет.',
+    'v26.3: TOP-18 scan (16 deep) · emit по hist WR · CONT_BOOK_RELEASE приоритет · block low-WR · TG даже при paper cooldown.',
 } as const
 
 /**

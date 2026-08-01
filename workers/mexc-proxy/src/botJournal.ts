@@ -863,8 +863,32 @@ export function deriveAdaptiveGates(
 
   for (const s of analytics.bySetup) {
     const n = s.wins + s.losses
-    if (n < 8) continue
     const parsed = parseBotSetup(s.setup)
+    // Fast block for proven losers (meme CONT era needs n≥3, not 8)
+    const earlyBlock =
+      n >= 3 &&
+      (s.winRate < 25 || s.expectancyR < -0.5) &&
+      (s.setup.startsWith('SPOOF') ||
+        s.setup.startsWith('LIQ_') ||
+        s.setup.startsWith('FADE_BOOK') ||
+        s.setup === 'BOOK_RELEASE' ||
+        s.setup === 'ABSORPTION')
+    if (earlyBlock) {
+      if (!blocked.includes(s.setup)) blocked.push(s.setup)
+      continue
+    }
+    if (n < 8) {
+      // Early boost for high-WR CONT with small but clean sample
+      if (
+        n >= 3 &&
+        s.winRate >= 60 &&
+        s.expectancyR >= 0 &&
+        (s.setup.startsWith('CONT_') || s.setup.startsWith('PUMP_') || s.setup.startsWith('DUMP_'))
+      ) {
+        if (!boosted.includes(s.setup)) boosted.push(s.setup)
+      }
+      continue
+    }
     // Block only the specific composite tag — never the whole base family
     if (s.winRate < 38 || s.expectancyR < -0.15) {
       if (!blocked.includes(s.setup)) blocked.push(s.setup)
@@ -1092,6 +1116,65 @@ export function allowSetupByGates(
     return { ok: false, reason: `score<${min + boost}` }
   }
   return { ok: true }
+}
+
+/** Historical WR for a setup from gates (0 if unknown / thin sample) */
+export function setupHistoricalWr(
+  gates: BotAdaptiveGates | null | undefined,
+  setup: string
+): { wr: number; n: number; avgR: number } {
+  if (!gates?.winPctBySetup?.length) return { wr: 0, n: 0, avgR: 0 }
+  const exact = gates.winPctBySetup.find((x) => x.setup === setup)
+  if (exact) return { wr: exact.historicalWr, n: exact.sampleN, avgR: exact.avgR }
+  // Prefix match CONT_BOOK_RELEASE vs BOOK_RELEASE
+  const soft = gates.winPctBySetup.find(
+    (x) => setup.startsWith(x.setup) || x.setup.startsWith(setup)
+  )
+  if (soft) return { wr: soft.historicalWr, n: soft.sampleN, avgR: soft.avgR }
+  return { wr: 0, n: 0, avgR: 0 }
+}
+
+/**
+ * Rank for meme emit: highest historical WR first.
+ * Unknown setups get mid prior; known losers get 0.
+ */
+export function memeSetupRankScore(
+  gates: BotAdaptiveGates | null | undefined,
+  setup: string,
+  conf: number
+): number {
+  const { wr, n, avgR } = setupHistoricalWr(gates, setup)
+  let rank = conf
+  // Hard priority: CONT_BOOK_RELEASE (journal best)
+  if (setup === 'CONT_BOOK_RELEASE') rank += 18
+  else if (setup.startsWith('CONT_')) rank += 8
+  if (n >= 3) {
+    rank += wr * 0.35
+    rank += Math.max(-8, Math.min(8, avgR * 4))
+    if (wr < 30) rank -= 40
+    if (wr >= 60) rank += 12
+  }
+  if (gates && isSetupBoosted(gates, parseBotSetup(setup).base, setup)) {
+    rank += 10
+  }
+  if (gates && isSetupBlocked(gates, parseBotSetup(setup).base, setup)) {
+    rank -= 50
+  }
+  return rank
+}
+
+/** True if setup is among top historical WR meme families we want to hunt */
+export function isHighWrMemeSetup(
+  gates: BotAdaptiveGates | null | undefined,
+  setup: string
+): boolean {
+  if (setup === 'CONT_BOOK_RELEASE') return true
+  const { wr, n } = setupHistoricalWr(gates, setup)
+  if (n >= 3 && wr >= 55) return true
+  if (gates && isSetupBoosted(gates, parseBotSetup(setup).base, setup)) {
+    return true
+  }
+  return false
 }
 
 export interface CorridorWrRow {

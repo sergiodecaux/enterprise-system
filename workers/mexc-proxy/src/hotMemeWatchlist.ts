@@ -1,15 +1,17 @@
 /**
- * Daily hot-meme watchlist: pick the strongest 24h pumps/dumps, then the
- * scanner deep-watches ONLY these for high-conviction order-flow entries.
+ * Hot-meme watchlist: TOP liquid memes by 24h heat for Day Continue scanner.
+ * Sticky soft-refresh keeps continuity but list is wide enough to cover the top.
  */
 
 const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v1'
-const REFRESH_MS = 45 * 60_000
-const MAX_PUMPS = 5
-const MAX_DUMPS = 5
-const MAX_TOTAL = 8
-const MIN_ABS_CHG_PCT = 5
-const MIN_QUOTE_VOL = 150_000
+/** Rebuild order more often so new hot names enter the top */
+const REFRESH_MS = 12 * 60_000
+const MAX_PUMPS = 10
+const MAX_DUMPS = 10
+/** Full top cover — was 8, many liquid memes never scanned */
+const MAX_TOTAL = 18
+const MIN_ABS_CHG_PCT = 4
+const MIN_QUOTE_VOL = 120_000
 
 export type DayBias = 'PUMP' | 'DUMP'
 
@@ -218,7 +220,7 @@ export function buildHotMemeWatchlist(
     entries,
     reason:
       pumps.length || dumps.length
-        ? `top ${pumps.length} pumps + ${dumps.length} dumps by 24h heat`
+        ? `top-${MAX_TOTAL}: ${pumps.length} pumps + ${dumps.length} dumps by 24h heat`
         : 'no hot memes above thresholds',
   }
 }
