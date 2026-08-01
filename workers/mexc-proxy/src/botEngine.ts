@@ -1,20 +1,21 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-day-continue-v26.3',
+  id: 'meme-day-continue-v26.4',
   label: 'MEME: Day Continue WR-hunt',
   deployedNote:
-    'v26.3: TOP-18 scan (16 deep) · emit по hist WR · CONT_BOOK_RELEASE приоритет · block low-WR · TG даже при paper cooldown.',
+    'v26.4: TOP-18 WR-hunt · всегда в журнал Lab · дубль сигнала + результата в Elite.',
 } as const
 
 /**
- * Enterpriseelite_bot — market assistant (not auto-sniper).
+ * Enterpriseelite_bot — market assistant + meme journal mirror.
  * Hourly TOP-8+BTC brief · daily close · zones · F&G · news · liq map.
+ * Plus Predator meme deals mirrored for WR lab stats.
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-assistant-v1',
-  label: 'ELITE: Market Assistant',
+  id: 'elite-assistant-v1.1',
+  label: 'ELITE: Assistant + MEME Lab',
   deployedNote:
-    'v1: почасовой доклад BTC+TOP-8 · суточный close · F&G/новости/зоны/скальп·интра · ликвидации (SSL/BSL) · без авто-спама сделок.',
+    'v1.1: hourly/daily brief · + дубль MEME-сделок из Mini App/Predator в журнал WR (без VANE-спама).',
 } as const
 
 /** Alias for clarity in Elite-facing code */
