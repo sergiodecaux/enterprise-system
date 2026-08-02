@@ -23,6 +23,9 @@ import {
   analyzeLiveMarket,
   type LiveMarketRead,
 } from './liveMarketRead'
+import type { SequenceHit } from '../sequence'
+import { setupFitsRegime } from '../sequence'
+import type { MarketRegime } from '../regime/marketRegime'
 
 export type LiveSignalPhase =
   | 'IN_ZONE'
@@ -37,6 +40,7 @@ export type LiveScenarioKind =
   | 'MM_HUNT'
   | 'CONTINUATION'
   | 'REVERSAL'
+  | 'SEQUENCE_LIMIT'
   | 'WAIT'
 
 export interface LiveScenario {
@@ -72,6 +76,8 @@ export interface LiveSignalResult {
   smcLines: string[]
   /** Trader-style: zone reaction, hour close, bounce → D1/W */
   liveMarket: LiveMarketRead | null
+  /** Remizov process limit (wall absorption exhaustion, …) */
+  sequence: SequenceHit | null
 }
 
 function distPct(price: number, level: number): number {
@@ -220,9 +226,18 @@ export function findLiveSignal(input: {
   bookImbalance?: number | null
   fearGreed?: number | null
   tradeStyle?: SetupTradeStyle
+  /** Live Remizov sequence hit from FrameBus */
+  sequence?: SequenceHit | null
 }): LiveSignalResult {
   const price = input.price
   const mm = input.mmIntent ?? input.signal?.mmIntent ?? null
+  const regime: MarketRegime =
+    input.signal?.marketRegime ?? 'RANGING'
+  const seq =
+    input.sequence && input.sequence.expiresAt > Date.now()
+      ? input.sequence
+      : null
+
   const base = findProbableTrades({
     ...input,
     mmIntent: mm,
@@ -269,24 +284,48 @@ export function findLiveSignal(input: {
 
   const scenarios: LiveScenario[] = []
 
+  // Remizov sequence limit — process, not a chart pattern
+  if (seq && seq.confidence >= 55) {
+    scenarios.push({
+      id: `sc_seq_${seq.kind}`,
+      kind: 'SEQUENCE_LIMIT',
+      side: seq.side,
+      title: seq.title,
+      winPct: seq.allowedInRegime
+        ? seq.confidence
+        : Math.max(40, Math.round(seq.confidence * 0.55)),
+      summary: seq.allowedInRegime
+        ? seq.summary
+        : `${seq.summary} · режим ${regime} — только контекст`,
+      steps: seq.steps,
+      invalidation: seq.wallPrice
+        ? `Слом стены ${seq.wallPrice.toPrecision(6)}`
+        : undefined,
+    })
+  }
+
   // Bounce plan as first-class scenario
   if (liveMarket.nearestBounce) {
     const b = liveMarket.nearestBounce
-    scenarios.push({
-      id: 'sc_htf_bounce',
-      kind:
-        liveMarket.reaction === 'BREAKING' ? 'ZONE_BREAK' : 'ZONE_TEST_BOUNCE',
-      side: b.side,
-      title: `${b.side} от ${b.zoneLabel}`,
-      winPct: b.winPct,
-      summary: b.thesis,
-      steps: b.steps,
-      invalidation: `SL ${b.invalidation.toPrecision(6)}`,
-    })
+    if (setupFitsRegime('BOUNCE', regime)) {
+      scenarios.push({
+        id: 'sc_htf_bounce',
+        kind:
+          liveMarket.reaction === 'BREAKING' ? 'ZONE_BREAK' : 'ZONE_TEST_BOUNCE',
+        side: b.side,
+        title: `${b.side} от ${b.zoneLabel}`,
+        winPct: b.winPct,
+        summary: b.thesis,
+        steps: b.steps,
+        invalidation: `SL ${b.invalidation.toPrecision(6)}`,
+      })
+    }
   }
 
   for (const v of zoneVariants.slice(0, 6)) {
     const isBreak = v.id.includes('_break_') || v.kind === 'STOP_THEN_REVERSE'
+    const fit = setupFitsRegime(isBreak ? 'BREAK' : 'BOUNCE', regime)
+    if (!fit) continue
     scenarios.push(
       scenarioFromSetup(
         v,
@@ -299,33 +338,39 @@ export function findLiveSignal(input: {
   }
 
   if (mm && mm.confidence >= 40 && mm.preferredSide) {
-    const micro = mm.hunt.microTarget
-    const macro = mm.hunt.macroTarget
-    const steps = [
-      mm.hunt.microIsStopHunt
-        ? `1) Ложный ход / stop-hunt к ${mm.hunt.microLabel || 'ликвидности'}`
-        : `1) Микро-импульс к ${mm.hunt.microLabel || 'цели'}`,
-      macro
-        ? `2) Макро-полёт к ${mm.hunt.macroLabel} @ ${macro.toPrecision(6)}`
-        : '2) Закрепление по направлению drive',
-      '3) Вход после реакции · не догонять mid-impulse',
-    ]
-    scenarios.push({
-      id: 'sc_mm_hunt',
-      kind: 'MM_HUNT',
-      side: mm.preferredSide,
-      title: `SMC · ${mm.label}`,
-      winPct: Math.min(82, Math.max(42, Math.round(mm.confidence * 0.75 + 18))),
-      summary: narrative,
-      steps,
-      invalidation: micro
-        ? `Слом за микро-целью ${micro.toPrecision(6)} без реакции`
-        : undefined,
-    })
+    const huntFit =
+      setupFitsRegime('CONTINUATION', regime) ||
+      setupFitsRegime('BREAK', regime)
+    if (huntFit) {
+      const micro = mm.hunt.microTarget
+      const macro = mm.hunt.macroTarget
+      const steps = [
+        mm.hunt.microIsStopHunt
+          ? `1) Ложный ход / stop-hunt к ${mm.hunt.microLabel || 'ликвидности'}`
+          : `1) Микро-импульс к ${mm.hunt.microLabel || 'цели'}`,
+        macro
+          ? `2) Макро-полёт к ${mm.hunt.macroLabel} @ ${macro.toPrecision(6)}`
+          : '2) Закрепление по направлению drive',
+        '3) Вход после реакции · не догонять mid-impulse',
+      ]
+      scenarios.push({
+        id: 'sc_mm_hunt',
+        kind: 'MM_HUNT',
+        side: mm.preferredSide,
+        title: `SMC · ${mm.label}`,
+        winPct: Math.min(82, Math.max(42, Math.round(mm.confidence * 0.75 + 18))),
+        summary: narrative,
+        steps,
+        invalidation: micro
+          ? `Слом за микро-целью ${micro.toPrecision(6)} без реакции`
+          : undefined,
+      })
+    }
   }
 
   for (const t of base.trades.slice(0, 3)) {
     if (scenarios.some((s) => s.setupId === t.id)) continue
+    if (!setupFitsRegime('CONTINUATION', regime)) continue
     scenarios.push(
       scenarioFromSetup(t, 'CONTINUATION', `Вероятный ход · ${t.side}`)
     )
@@ -346,6 +391,23 @@ export function findLiveSignal(input: {
         'Не догонять mid-impulse',
         'Лимит на ближайшей SSL/BSL',
         'Цель — D1/W магнит по дню',
+      ],
+    })
+  }
+
+  if (regime === 'VOLATILE_CHOP') {
+    scenarios.push({
+      id: 'sc_regime_chop',
+      kind: 'WAIT',
+      side: 'FLAT',
+      title: 'Ждать · VOLATILE_CHOP',
+      winPct: 38,
+      summary:
+        'Режим хаоса — тренд/продолжение выключены. Только предел поглощения у стены или WAIT.',
+      steps: [
+        'Не торговать mid-range в чопе',
+        'Ждать WALL_ABSORPTION_EXHAUSTION или тишину',
+        'Вернуться при RANGING / TREND',
       ],
     })
   }
@@ -377,6 +439,17 @@ export function findLiveSignal(input: {
   uniq.sort((a, b) => b.winPct - a.winPct)
 
   let primary = uniq.find((s) => s.id === 'sc_htf_bounce') ?? uniq[0]
+  // Prefer active sequence limit when allowed and strong
+  const seqSc = uniq.find((s) => s.kind === 'SEQUENCE_LIMIT')
+  if (
+    seqSc &&
+    seq &&
+    seq.allowedInRegime &&
+    seq.confidence >= 62 &&
+    seqSc.winPct >= (primary?.winPct ?? 0) - 4
+  ) {
+    primary = seqSc
+  }
   if (!primary) {
     primary = {
       id: 'sc_empty',
@@ -436,7 +509,18 @@ export function findLiveSignal(input: {
     magnet: base.magnet,
     liquidityMap: base.liquidityMap,
     driveNarrative: narrative,
-    smcLines: [...liveMarket.lines.slice(0, 4), ...smcLines].slice(0, 10),
+    smcLines: [
+      ...(seq
+        ? [
+            `SEQ ${seq.kind}: ${seq.side} ~${seq.confidence}%${
+              seq.allowedInRegime ? '' : ' (regime block)'
+            }`,
+          ]
+        : []),
+      ...liveMarket.lines.slice(0, 4),
+      ...smcLines,
+    ].slice(0, 10),
     liveMarket,
+    sequence: seq,
   }
 }

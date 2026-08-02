@@ -9,7 +9,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown } from 'lucide-react'
+import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import type { EqualLevel } from '../../engine/types'
 import {
@@ -49,6 +49,7 @@ import {
   type FoundTradeZone,
 } from '../../engine/zones/findTradeZones'
 import { findProbableTrades, findLiveSignal } from '../../engine/trades'
+import { recordSequenceHit } from '../../engine/sequence'
 import type { LiveSignalResult } from '../../engine/trades'
 import {
   pushJewelEntryAlert,
@@ -78,6 +79,10 @@ import {
 } from '../../api/telegram/alerts'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import WhaleLevelsOverlay from './WhaleLevelsOverlay'
+import SequenceProcessOverlay from './SequenceProcessOverlay'
+import ProcessStrip from './ProcessStrip'
+import ChartHintsOverlay from './ChartHintsOverlay'
+import DeltaSparkline from './DeltaSparkline'
 
 interface LiveChartProps {
   symbol: string
@@ -125,6 +130,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const eqLiquidityMap = useAppStore((s) => s.liquidityMaps[symbol] ?? null)
   const setLiquidityMap = useAppStore((s) => s.setLiquidityMap)
   const whaleState = useAppStore((s) => s.whaleWatcher[symbol] ?? null)
+  const sequenceHit = useAppStore((s) => s.sequenceHits[symbol] ?? null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -140,6 +146,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [chartExpanded, setChartExpanded] = useState(false)
   const [showDirection, setShowDirection] = useState(true)
+  const [showHints, setShowHints] = useState(false)
   const [candles, setCandles] = useState<OhlcvCandle[]>([])
   const [lwcData, setLwcData] = useState<CandlestickData[]>([])
   const [loading, setLoading] = useState(true)
@@ -847,6 +854,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       bookImbalance: orderBookMetrics?.imbalance ?? null,
       fearGreed: fearGreedValue,
       tradeStyle,
+      sequence: sequenceHit,
     })
 
     setLiveSignal(result)
@@ -863,12 +871,28 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     else if (result.trades[0]) setSelectedSetupId(result.trades[0].id)
     haptic.success()
 
+    if (result.sequence?.allowedInRegime && result.sequence.confidence >= 58) {
+      recordSequenceHit({
+        symbol,
+        flatSymbol,
+        displayName: signal?.displayName,
+        price: currentPrice,
+        hit: result.sequence,
+        sl: result.bestSetup?.invalidation ?? signal?.sl,
+        tp1: result.bestSetup?.target ?? signal?.tp1,
+      })
+    }
+
     const p = result.primary
     const lm = result.liveMarket
+    const seqNote =
+      result.sequence && result.sequence.allowedInRegime
+        ? `\nSEQ ${result.sequence.kind} ~${result.sequence.confidence}%`
+        : ''
     showAlert(
       `Сигнал: ${p.side !== 'FLAT' ? p.side + ' · ' : ''}${p.title} · ~${p.winPct}%\n${
         lm?.whatNow ?? result.phaseLabel
-      }`
+      }${seqNote}`
     )
   }, [
     currentPrice,
@@ -887,6 +911,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     showAlert,
     haptic,
     forecastHorizon,
+    sequenceHit,
   ])
 
   const watchingIds = useMemo(() => {
@@ -1700,6 +1725,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     ]
   )
 
+  const chartRegime = signal?.marketRegime ?? 'RANGING'
+  const toolsBounceOk =
+    chartRegime === 'RANGING' || chartRegime === 'TRENDING_WEAK'
+  const toolsTrendOk =
+    chartRegime === 'TRENDING_STRONG' || chartRegime === 'TRENDING_WEAK'
+  const toolsChop = chartRegime === 'VOLATILE_CHOP'
+  const activeSequence =
+    sequenceHit && sequenceHit.expiresAt > Date.now() ? sequenceHit : null
+  const processRefreshKey =
+    (sequenceHit?.detectedAt ?? 0) +
+    Math.round((ticker?.timestamp ?? 0) / 15_000)
+
   return (
     <div
       className={
@@ -1744,39 +1781,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </button>
         </div>
       )}
-      {/* Compact signal CTA */}
-      <button
-        id="live-signal-cta"
-        type="button"
-        onClick={() => {
-          if (signalMode) {
-            setSignalMode(false)
-            setLiveSignal(null)
-            haptic.impact()
-            return
-          }
-          handleFindLiveSignal()
-        }}
-        className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
-          signalMode
-            ? 'border-amber-400/55 bg-amber-500/15'
-            : 'border-amber-400/30 bg-amber-500/8'
-        }`}
-      >
-        <div className="min-w-0">
-          <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-100/90">
-            {signalMode ? 'Скрыть сигнал' : 'Найти сигнал'}
-          </div>
-          <div className="truncate font-mono text-[9px] text-amber-100/45">
-            {signalMode && liveSignal
-              ? `${liveSignal.primary.side !== 'FLAT' ? liveSignal.primary.side + ' · ' : ''}${liveSignal.primary.title} · Conf ${liveSignal.primary.winPct}%`
-              : 'Зона · SMC · варианты прямо сейчас'}
-          </div>
-        </div>
-        <span className="shrink-0 rounded border border-amber-300/35 bg-amber-400/15 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-50">
-          {signalMode ? 'ON' : 'GO'}
-        </span>
-      </button>
+      {/* Process strip — regime · OI · film · active SEQ */}
+      <ProcessStrip
+        symbol={symbol}
+        regime={chartRegime}
+        sequence={activeSequence}
+        refreshKey={processRefreshKey}
+      />
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -1795,6 +1806,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           )}
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setShowHints((v) => !v)
+              haptic.impact()
+            }}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              showHints
+                ? 'border-cyan-400/45 bg-cyan-500/20 text-cyan-200'
+                : 'border-white/10 bg-hull-light/40 text-holo/55 hover:text-holo'
+            }`}
+            title="Подсказки процесса на графике"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Подсказки</span>
+            <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
+              {showHints ? 'ON' : 'OFF'}
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => applyCleanMode(!cleanMode)}
@@ -1837,8 +1867,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </div>
       </div>
 
-      {/* Tool rail — ТФ · анализ · вид */}
-      <div className="-mx-1 space-y-1.5 px-1">
+      {/* Tool rail — ТФ + режиссёрский набор */}
+      <div className="-mx-1 space-y-1 px-1">
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             {CHART_TIMEFRAMES.map((tf) => (
@@ -1863,6 +1893,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             title="Сбросить масштаб"
           >
             Fit
+          </button>
+          <button
+            id="live-signal-cta"
+            type="button"
+            onClick={() => {
+              if (signalMode) {
+                setSignalMode(false)
+                setLiveSignal(null)
+                haptic.impact()
+                return
+              }
+              handleFindLiveSignal()
+            }}
+            className={`shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase ${
+              signalMode
+                ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
+                : 'border-amber-400/30 bg-amber-500/10 text-amber-200/80'
+            }`}
+          >
+            {signalMode ? 'Сигнал ON' : 'Сигнал'}
           </button>
         </div>
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1907,25 +1957,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             </button>
             <button
               type="button"
-              onClick={() => {
-                if (signalMode) {
-                  setSignalMode(false)
-                  setLiveSignal(null)
-                  haptic.impact()
-                  return
-                }
-                handleFindLiveSignal()
-              }}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                signalMode
-                  ? 'bg-amber-500/25 text-amber-100'
-                  : 'text-amber-200/65 hover:text-amber-100'
-              }`}
-            >
-              Сигнал
-            </button>
-            <button
-              type="button"
+              disabled={toolsChop}
               onClick={() => {
                 if (zonesMode) {
                   setZonesMode(false)
@@ -1941,13 +1973,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
               className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
                 zonesMode
                   ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'text-white/35 hover:text-white/70'
+                  : toolsBounceOk && !toolsChop
+                    ? 'text-white/55 hover:text-white/80'
+                    : 'text-white/20'
               }`}
+              title={
+                toolsChop
+                  ? 'CHOP — зоны отключены'
+                  : 'Зоны лучше в RANGE / слабом тренде'
+              }
             >
               Зоны{foundZones.length > 0 && zonesMode ? ` ${foundZones.length}` : ''}
             </button>
             <button
               type="button"
+              disabled={toolsChop || !toolsTrendOk}
               onClick={() => {
                 if (tradesMode) {
                   setTradesMode(false)
@@ -1965,8 +2005,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
               className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
                 tradesMode
                   ? 'bg-sky-500/20 text-sky-300'
-                  : 'text-white/35 hover:text-white/70'
+                  : toolsTrendOk && !toolsChop
+                    ? 'text-white/55 hover:text-white/80'
+                    : 'text-white/20'
               }`}
+              title={
+                !toolsTrendOk || toolsChop
+                  ? 'Сделки — для трендового режима'
+                  : 'Вероятные сделки'
+              }
             >
               Сделки
             </button>
@@ -2017,24 +2064,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Legend — компактная шпаргалка */}
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2 py-1 font-mono text-[9px]">
-        <span className="text-sky-300/90">IN</span>
-        <span className="text-rose-300/90">SL</span>
-        <span className="text-emerald-300/90">TP</span>
-        <span className="text-teal-300/85">SSL</span>
-        <span className="text-rose-300/75">BSL</span>
-        {(whaleState?.strongestSupport || whaleState?.strongestResistance) && (
-          <span className="text-cyan-300/90">кит на графике</span>
-        )}
-        {signal?.scoreCard?.grade && (
-          <span className="text-white/45">Score {signal.scoreCard.grade}</span>
-        )}
-        <span className="ml-auto text-white/25">
-          pinch · drag · dbl-tap scale · {timeframe}
-        </span>
       </div>
 
       <div
@@ -2133,6 +2162,34 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             whaleState={whaleState}
             priceFloor={candlePriceSpan.floor}
             priceCeil={candlePriceSpan.ceil}
+          />
+        )}
+        {chartReady > 0 && (
+          <SequenceProcessOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            sequence={
+              (signalMode && liveSignal?.sequence) || activeSequence
+            }
+          />
+        )}
+        {chartReady > 0 && (
+          <ChartHintsOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            visible={showHints}
+            symbol={symbol}
+            price={currentPrice}
+            regime={chartRegime}
+            sequence={
+              (signalMode && liveSignal?.sequence) || activeSequence
+            }
+            whale={whaleState}
+            liveSignal={signalMode ? liveSignal : null}
+            bookImbalance={orderBookMetrics?.imbalance ?? null}
+            refreshKey={processRefreshKey}
           />
         )}
         {showDirection &&
@@ -2236,6 +2293,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           />
         )}
       </div>
+
+      <DeltaSparkline
+        symbol={symbol}
+        refreshKey={processRefreshKey}
+        height={chartExpanded ? 44 : 32}
+      />
 
       {chartPreferences.indicators.volume &&
         indicators.volume.length > 0 && (

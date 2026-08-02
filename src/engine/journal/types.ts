@@ -15,6 +15,10 @@ export type JournalSetupType =
   | 'SCALP_SMC'
   | 'INTRADAY_SMC'
   | 'SWING_SMC'
+  | 'SEQUENCE_ABSORB'
+  | 'SEQUENCE_CVD_DIV'
+  | 'SEQUENCE_WALL_RELEASE'
+  | 'SEQUENCE_OI_CONFIRM'
   | 'UNKNOWN'
 
 export type JournalOutcome =

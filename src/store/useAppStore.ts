@@ -192,6 +192,7 @@ export const useAppStore = create<AppState>()(
     telegramAlertSettings: loadTelegramAlertSettings(),
     liquidityMaps: {},
     whaleWatcher: {},
+    sequenceHits: {},
     sessionDNA: {},
     tapeMomentum: {},
     po3Analysis: {},
@@ -356,6 +357,19 @@ export const useAppStore = create<AppState>()(
           [internalSymbol]: whaleState,
         },
       })),
+
+    setSequenceHit: (symbol: string, hit) =>
+      set((state) => {
+        if (!hit) {
+          if (!(symbol in state.sequenceHits)) return state
+          const next = { ...state.sequenceHits }
+          delete next[symbol]
+          return { sequenceHits: next }
+        }
+        return {
+          sequenceHits: { ...state.sequenceHits, [symbol]: hit },
+        }
+      }),
 
     setSessionDNA: (internalSymbol: string, dna: SessionDNA) =>
       set((state) => ({

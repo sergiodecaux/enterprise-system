@@ -231,6 +231,7 @@ export function buildDirectedSignal(input: {
   const setups = live.trades.filter((t) => t.side === side)
 
   let primary =
+    sideScenarios.find((s) => s.kind === 'SEQUENCE_LIMIT') ??
     sideScenarios.find((s) => s.kind === 'ZONE_TEST_BOUNCE') ??
     sideScenarios[0] ??
     null

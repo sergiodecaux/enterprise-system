@@ -24,6 +24,7 @@ import type {
   CvdTrapResult,
   VolatilityGaugeResult,
 } from './meme'
+import type { SequenceHit } from './sequence/types'
 
 /** @deprecated Kept for backward-compat imports; unused in SMC path */
 export interface IndicatorBucket {
@@ -306,6 +307,8 @@ export interface AppState {
   liquidityMaps: Record<string, LiquidityMap>
   /** Whale Watcher состояния по символу (internalSymbol → WhaleWatcherState) */
   whaleWatcher: Record<string, WhaleWatcherState>
+  /** Remizov sequence hits (process limit) — client tactical only */
+  sequenceHits: Record<string, SequenceHit>
   /** Session DNA профили по символу (internalSymbol → SessionDNA) */
   sessionDNA: Record<string, SessionDNA>
   /** Tape Momentum по символу */
@@ -344,6 +347,7 @@ export interface AppState {
   setTelegramAlertSettings: (settings: Partial<TelegramAlertSettings>) => void
   setLiquidityMap: (internalSymbol: string, map: LiquidityMap) => void
   setWhaleWatcher: (internalSymbol: string, state: WhaleWatcherState) => void
+  setSequenceHit: (symbol: string, hit: SequenceHit | null) => void
   setSessionDNA: (internalSymbol: string, dna: SessionDNA) => void
 
   /** Активные сделки пользователя */

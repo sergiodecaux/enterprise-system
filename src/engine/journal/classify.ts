@@ -109,5 +109,9 @@ export const SETUP_LABELS: Record<JournalSetupType, string> = {
   SCALP_SMC: 'Scalp SMC',
   INTRADAY_SMC: 'Intraday SMC',
   SWING_SMC: 'Swing SMC',
+  SEQUENCE_ABSORB: 'Seq · Wall Absorb',
+  SEQUENCE_CVD_DIV: 'Seq · CVD Div',
+  SEQUENCE_WALL_RELEASE: 'Seq · Wall Release',
+  SEQUENCE_OI_CONFIRM: 'Seq · OI Confirm',
   UNKNOWN: 'Other',
 }

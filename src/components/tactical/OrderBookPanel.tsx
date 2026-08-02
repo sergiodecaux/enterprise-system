@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, AlertCircle, Brain, Layers3 } from 'lucide-react'
-import { fetchDepth, fetchRecentTrades } from '../../api/mexc'
+import { fetchDepth, fetchRecentTrades, fetchTicker } from '../../api/mexc'
 import { updateWhaleWatcher } from '../../engine/orderbook/whaleDetector'
 import { useAppStore } from '../../store/useAppStore'
 import { computeTapeMomentum } from '../../engine/orderbook/tapeMomentum'
@@ -36,6 +36,8 @@ import {
 import { useOrderBookHistory } from '../../hooks/useOrderBookHistory'
 import { useMLPredictor } from '../../hooks/useMLPredictor'
 import { useMexcDepthStream } from '../../hooks/useMexcDepthStream'
+import { buildEnhancedCvd } from '../../engine/orderflow/enhancedCvd'
+import { ingestAndDetectSequence } from '../../engine/sequence'
 import type {
   OrderBookState,
   WallTrackerState,
@@ -63,6 +65,7 @@ const REST_FALLBACK_MS = 5000
 const OrderBookPanel = ({ symbol }: Props) => {
   const { t } = useTranslation()
   const setWhaleWatcher = useAppStore((s) => s.setWhaleWatcher)
+  const setSequenceHit = useAppStore((s) => s.setSequenceHit)
   const setTapeMomentum = useAppStore((s) => s.setTapeMomentum)
   const setOrderBookMetrics = useAppStore((s) => s.setOrderBookMetrics)
   const setMmIntent = useAppStore((s) => s.setMmIntent)
@@ -74,6 +77,8 @@ const OrderBookPanel = ({ symbol }: Props) => {
   // ref для предыдущего состояния whale (избегаем stale closure)
   const whaleWatcherRef = useRef(whaleWatcherPrev)
   whaleWatcherRef.current = whaleWatcherPrev
+  const oiRef = useRef<number | null>(null)
+  const oiFetchedAtRef = useRef(0)
 
   const [depthLimit, setDepthLimit] = useState(20)
   const [showML, setShowML] = useState(true)
@@ -265,6 +270,48 @@ const OrderBookPanel = ({ symbol }: Props) => {
         )
         setWhaleWatcher(symbol, whaleState)
         whaleWatcherRef.current = whaleState
+
+        // Remizov sequence layer (client tactical — not meme bot)
+        try {
+          const cvd = buildEnhancedCvd({
+            trades: tradesForIceberg.length ? tradesForIceberg : null,
+          })
+          const sig = useAppStore
+            .getState()
+            .signals.find((s) => s.internalSymbol === symbol)
+          const regime = sig?.marketRegime ?? 'RANGING'
+
+          // Refresh OI from ticker ~every 20s
+          const nowTs = Date.now()
+          if (nowTs - oiFetchedAtRef.current > 20_000) {
+            oiFetchedAtRef.current = nowTs
+            void fetchTicker(symbol)
+              .then((t) => {
+                if (t?.openInterest != null && t.openInterest > 0) {
+                  oiRef.current = t.openInterest
+                }
+              })
+              .catch(() => {
+                /* optional */
+              })
+          }
+
+          const hit = ingestAndDetectSequence({
+            symbol,
+            price: metrics.midPrice,
+            regime,
+            whale: whaleState,
+            walls: metrics.walls,
+            wallEvents: newEvents,
+            trades: tradesForIceberg.length ? tradesForIceberg : null,
+            cvd,
+            bookImbalance: metrics.imbalance,
+            openInterest: oiRef.current,
+          })
+          setSequenceHit(symbol, hit)
+        } catch {
+          /* sequence optional */
+        }
       }
 
       const alertEvents = newEvents.filter(
@@ -277,6 +324,7 @@ const OrderBookPanel = ({ symbol }: Props) => {
     [
       symbol,
       setWhaleWatcher,
+      setSequenceHit,
       setOrderBookMetrics,
       setMmIntent,
       setSpoofAlerts,
