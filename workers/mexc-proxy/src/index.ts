@@ -726,7 +726,8 @@ async function handleTelegram(
           `<b>📡 Мониторинг включён · Elite</b>`,
           `Сетапов: <b>${watches.length}</b> · ${body.symbol}`,
           `Источник: Mini App → Сигналы`,
-          `Фазы каждые ~2 мин · READY → журнал Lab WR`,
+          `Мониторинг тихий: в TG только 🎯 READY (вход) и ⛔ INVALIDATED`,
+          `Журнал Lab WR — при READY.`,
           '',
           ...heads,
         ].join('\n\n'),
@@ -805,7 +806,9 @@ async function assertAlertAuth(
 
 /** Dedup + send to subscribers of the matching Telegram bot */
 function dedupeTtlMs(type: AlertPayload['type']): number {
-  return type === 'MEME' ? 900_000 : 3600_000
+  if (type === 'MEME') return 900_000
+  if (type === 'SETUP_WATCH') return 6 * 3600_000 // READY/INVALIDATED stick
+  return 3600_000
 }
 
 /** True if dedup stamp is still within TTL (Cache used to treat any hit as forever). */
@@ -876,8 +879,7 @@ function formatWatchArmedMessage(watch: WatchedSetupRecord): {
       `Win% ~${Math.round(s.probability)}%`,
       '',
       'Источник: Mini App → вкладка Сигналы',
-      'Фазы: APPROACH → TOUCH → REACTION → FUEL → READY',
-      'В журнал Lab пишется при READY — собираем WR.',
+      'В TG придёт только READY (вход) или INVALIDATED — без спама фаз.',
       'Не входи до READY.',
     ].join('\n'),
   }
@@ -1446,6 +1448,14 @@ async function runCronScan(
       let tgBudget = 3
       for (const outcome of resolution.outcomes) {
         if (outcome.status === 'INVALIDATED') continue
+        // Elite: skip quiet TIMEOUT/BE noise — only WIN/LOSS results
+        if (
+          outcome.alertType === 'SNIPER' &&
+          outcome.status !== 'WIN' &&
+          outcome.status !== 'LOSS'
+        ) {
+          continue
+        }
         if (tgBudget <= 0) break
         const icon =
           outcome.status === 'WIN'
@@ -1624,8 +1634,12 @@ async function runCronScan(
     if (!env.TELEGRAM_SNIPER_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN) return
     try {
       const alerts = await monitorWatchedSetups(env)
-      let budget = 8
-      for (const a of alerts) {
+      // Hard filter: Elite alts = actionable only
+      const actionable = alerts.filter(
+        (a) => a.kind === 'READY' || a.kind === 'INVALIDATED'
+      )
+      let budget = 4
+      for (const a of actionable) {
         if (budget <= 0) break
         const r = await broadcastAlert(env, {
           type: 'SETUP_WATCH',
@@ -1663,10 +1677,10 @@ async function runCronScan(
           }
         }
       }
-      if (alerts.length) {
+      if (actionable.length) {
         console.log(
           '[cron] signal watches',
-          alerts
+          actionable
             .map((x) => `${x.kind ?? '?'}:${x.symbol ?? x.chatId}`)
             .slice(0, 8)
         )

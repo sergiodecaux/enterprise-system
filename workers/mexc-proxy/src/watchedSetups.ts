@@ -102,7 +102,8 @@ export interface WatchAlert {
 type Candle = [number, number, number, number, number, number]
 
 const WATCH_KEY = 'telegram:watched_setups'
-const DIGEST_MS = 5 * 60_000
+const DIGEST_MS = 60 * 60_000
+/** Elite TG: only actionable signals — no phase chatter / digests */
 const REFRESH_MS = 10 * 60_000
 const memoryWatches: WatchedSetupRecord[] = []
 
@@ -1227,9 +1228,9 @@ export async function markChatDigestSent(
 }
 
 /**
- * Cron: evaluate watches, refresh stale pullback levels every 10 min,
- * emit READY / INVALIDATED / REFRESH, plus 5-min digests.
- * Note: lastDigestAt is stamped by caller AFTER successful Telegram send.
+ * Cron: evaluate watches, refresh stale pullback levels every 10 min.
+ * Telegram: ONLY READY + INVALIDATED (no APPROACH/TOUCH spam, no 5m digests).
+ * Quiet monitoring still updates KV; user gets a real entry signal when READY.
  */
 export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   const list = await listWatches(env)
@@ -1319,11 +1320,7 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
             c1d
           )
           if (rebuilt) {
-            const prev = {
-              limit: w.setup.limitEntry,
-              zoneLo: w.setup.entryZone.bottom,
-              zoneHi: w.setup.entryZone.top,
-            }
+            // Silent rebuild — no TG spam on level refresh
             working = {
               ...w,
               setup: rebuilt,
@@ -1332,7 +1329,6 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
               lastLevelsRefreshAt: now,
               updatedAt: now,
             }
-            alerts.push(formatRefreshed(working, price, reason, prev))
           } else {
             working = { ...w, lastLevelsRefreshAt: now, updatedAt: now }
           }
@@ -1388,30 +1384,18 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
         updatedAt: Date.now(),
       }
 
-      // Hard lifecycle transitions (skip noisy FAR)
-      const prevPhase = working.lastLifecyclePhase
-      const nextPhase = snap.lifecycle
-      const noteworthy: LifecyclePhase[] = [
-        'APPROACH',
-        'TOUCH',
-        'REACTION',
-        'FUEL',
-        'READY',
-        'INVALIDATED',
-      ]
-      if (
-        price &&
-        nextPhase !== prevPhase &&
-        noteworthy.includes(nextPhase) &&
-        nextPhase !== 'READY' &&
-        nextPhase !== 'INVALIDATED'
-      ) {
-        alerts.push(formatLifecyclePhase(updated, snap))
-      }
-
+      // Hard lifecycle: track in KV, but do NOT spam TG on every phase.
+      // Elite only wants READY (enter) and INVALIDATED (cancel).
       if (price && status === 'READY' && !working.readyNotified) {
-        alerts.push(formatReady(updated, price, snap))
-        updated.readyNotified = true
+        // Raise bar: need reaction + book + decent setup probability
+        const actionable =
+          snap.reactionOk &&
+          snap.bookOk !== false &&
+          (working.setup.probability ?? 0) >= 55
+        if (actionable) {
+          alerts.push(formatReady(updated, price, snap))
+          updated.readyNotified = true
+        }
       }
       if (price && status === 'INVALIDATED' && !working.invalidatedNotified) {
         alerts.push(formatInvalidated(updated, price, snap))
@@ -1428,73 +1412,11 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
     }
   }
 
-  // One digest per chat every 5 minutes (first ≈ 5 min after create)
-  const byChat = new Map<number, WatchedSetupRecord[]>()
-  for (const w of next) {
-    const arr = byChat.get(w.chatId) ?? []
-    arr.push(w)
-    byChat.set(w.chatId, arr)
-  }
-
-  for (const [chatId, watches] of byChat) {
-    const due = watches.some((w) => {
-      const anchor = w.lastDigestAt ?? w.createdAt
-      return now - anchor >= DIGEST_MS
-    })
-    if (!due) continue
-
-    const blocks: string[] = []
-    let chars = 0
-    for (const w of watches.slice(0, 5)) {
-      const snap = snapshots.get(w.watchId)
-      if (!snap) continue
-      const block = formatDigestBlock(w, snap)
-      // Telegram hard limit ~4096; keep headroom
-      if (chars + block.length > 3200) break
-      blocks.push(block)
-      chars += block.length + 8
-    }
-    if (blocks.length === 0) continue
-
-    const armed = watches.filter((w) => w.lastStatus === 'ARMED').length
-    const ready = watches.filter((w) => w.lastStatus === 'READY').length
-    const hyp = watches.filter(
-      (w) => w.lastStatus === 'HYPOTHESIS' || !w.lastStatus
-    ).length
-
-    const phaseLine = watches
-      .slice(0, 5)
-      .map((w) => {
-        const snap = snapshots.get(w.watchId)
-        const ph = snap?.lifecycle ?? w.lastLifecyclePhase ?? 'FAR'
-        return `  · ${w.symbol} · ${ph}`
-      })
-      .join('\n')
-
-    alerts.push({
-      chatId,
-      title: `📡 Мониторинг · ${blocks.length}/${watches.length}`,
-      text: [
-        `Отчёт каждые 5 мин · ${new Date(now).toISOString().replace('T', ' ').slice(0, 16)} UTC`,
-        `Сводка: READY ${ready} · ARMED ${armed} · HYPOTHESIS ${hyp} · всего ${watches.length}`,
-        'Фазы:',
-        phaseLine || '  · —',
-        'Цепочка: APPROACH → TOUCH → REACTION → FUEL → READY',
-        `Уровни зон (4H/D) пересчитываются каждые 10 мин.`,
-        '',
-        ...blocks.flatMap((block, i) =>
-          i < blocks.length - 1 ? [block, '────────'] : [block]
-        ),
-        '',
-        'Смена фазы шлётся сразу · READY → лимит · ⛔ INVALIDATED.',
-      ].join('\n'),
-      // Unique per send window; retries ok if previous send failed (dedup after success)
-      dedupeKey: `watch_digest:${chatId}:${Math.floor(now / DIGEST_MS)}`,
-      kind: 'DIGEST',
-    })
-  }
-
+  // Digests / phase spam disabled — Elite gets READY + INVALIDATED only.
+  void DIGEST_MS
   void expired
+  void snapshots
+
   const forceKv = alerts.some(
     (a) => a.kind === 'READY' || a.kind === 'INVALIDATED'
   )
