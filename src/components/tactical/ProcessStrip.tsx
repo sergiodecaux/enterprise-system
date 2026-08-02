@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { getFrames, getOiSnapshot, type SequenceHit } from '../../engine/sequence'
+import {
+  getFrames,
+  getOiSnapshot,
+  getCachedSpotPerpHealth,
+  type SequenceHit,
+} from '../../engine/sequence'
 import type { MarketRegime } from '../../engine/regime/marketRegime'
 
 interface Props {
@@ -17,18 +22,21 @@ const REGIME_LABEL: Record<MarketRegime, string> = {
 }
 
 /**
- * Полоска процесса: режим · открытый интерес · лента кадров · активный предел.
+ * Полоска процесса: режим · OI · спот/перп · лента кадров · активный момент.
  */
 const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
   const [dots, setDots] = useState<
     Array<{ kind: string; side?: string; strength: number; tip: string }>
   >([])
   const [oiLabel, setOiLabel] = useState<string>('Интерес …')
+  const [healthLabel, setHealthLabel] = useState<string>('Спот …')
+  const [healthTip, setHealthTip] = useState<string>('')
+  const [healthTone, setHealthTone] = useState<string>('text-white/35')
 
   useEffect(() => {
     const frames = getFrames(symbol, 5 * 60_000)
     const interesting = frames.filter((f) =>
-      ['HIT', 'WALL', 'DELTA', 'OI', 'BOOK'].includes(f.kind)
+      ['HIT', 'WALL', 'DELTA', 'OI', 'BOOK', 'LIQ', 'SPOT_PERP'].includes(f.kind)
     )
     const recent = interesting.slice(-18).map((f) => ({
       kind: f.kind,
@@ -45,6 +53,25 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
     } else {
       setOiLabel('Контракты …')
     }
+
+    const hitBuy = frames
+      .filter((f) => f.kind === 'HIT' && f.side === 'BUY')
+      .reduce((s, f) => s + (f.volumeUsd ?? 0), 0)
+    const hitSell = frames
+      .filter((f) => f.kind === 'HIT' && f.side === 'SELL')
+      .reduce((s, f) => s + (f.volumeUsd ?? 0), 0)
+    // Approximate perp delta from HIT frames when trades cache empty
+    const perpApprox = hitBuy - hitSell
+    const health = getCachedSpotPerpHealth(symbol, perpApprox)
+    setHealthLabel(health.label)
+    setHealthTip(health.tip)
+    setHealthTone(
+      health.status === 'SPOT_LED' || health.status === 'ALIGNED'
+        ? 'text-emerald-300/80'
+        : health.status === 'DIVERGED' || health.status === 'PERP_LED'
+          ? 'text-amber-300/80'
+          : 'text-white/35'
+    )
   }, [symbol, refreshKey, sequence?.detectedAt])
 
   const seqLive =
@@ -65,6 +92,8 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
       return side === 'BID' ? 'bg-cyan-400' : 'bg-orange-400'
     if (kind === 'DELTA') return 'bg-violet-400'
     if (kind === 'OI') return 'bg-amber-300'
+    if (kind === 'LIQ') return 'bg-fuchsia-400'
+    if (kind === 'SPOT_PERP') return 'bg-teal-300'
     return 'bg-white/35'
   }
 
@@ -82,6 +111,12 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
           title="Как меняется число открытых контрактов"
         >
           {oiLabel}
+        </span>
+        <span
+          className={`font-mono text-[9px] font-semibold ${healthTone}`}
+          title={healthTip || 'Здоровье: спот vs перпы'}
+        >
+          {healthLabel}
         </span>
         {seqLive ? (
           <span
@@ -120,6 +155,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
             <span className="text-emerald-400/60">покупки</span>
             <span className="text-rose-400/60">продажи</span>
             <span className="text-cyan-400/60">стены</span>
+            <span className="text-fuchsia-400/55">liq</span>
             <span className="text-amber-300/50">контракты</span>
           </span>
         </div>
@@ -145,6 +181,10 @@ function frameTip(kind: string, side?: string): string {
   if (kind === 'DELTA') return 'Баланс покупок и продаж'
   if (kind === 'OI') return 'Открытый интерес'
   if (kind === 'BOOK') return 'Перевес в стакане'
+  if (kind === 'LIQ' && side === 'SHORT_LIQ') return 'Ликвидации шортов (forced buy)'
+  if (kind === 'LIQ' && side === 'LONG_LIQ') return 'Ликвидации лонгов (forced sell)'
+  if (kind === 'LIQ') return 'Волна ликвидаций'
+  if (kind === 'SPOT_PERP') return 'Спот vs перпы'
   return kind
 }
 

@@ -291,6 +291,10 @@ export default {
     } else if (path.startsWith('/news/fg')) {
       targetBase = 'https://api.alternative.me'
       targetPath = path.replace('/news/fg', '') || '/'
+    } else if (path.startsWith('/mexc-spot')) {
+      // Spot REST — must be BEFORE /mexc (prefix overlap)
+      targetBase = 'https://api.mexc.com'
+      targetPath = path.replace('/mexc-spot', '') || '/'
     } else if (path.startsWith('/mexc')) {
       targetBase = MEXC_ORIGIN
       targetPath = path.replace('/mexc', '') || '/'

@@ -11,12 +11,16 @@ export type FrameKind =
   | 'REGIME'
   | 'WALL'
   | 'OI'
+  /** Forced liquidation cascade (inferred from tape burst) */
+  | 'LIQ'
+  /** Spot vs perp health sample */
+  | 'SPOT_PERP'
 
 export interface MarketFrame {
   at: number
   kind: FrameKind
   /** Directional hint for the frame */
-  side?: 'BID' | 'ASK' | 'BUY' | 'SELL' | 'FLAT'
+  side?: 'BID' | 'ASK' | 'BUY' | 'SELL' | 'FLAT' | 'LONG_LIQ' | 'SHORT_LIQ'
   price?: number
   volumeUsd?: number
   /** 0..1 relative strength */
@@ -30,6 +34,8 @@ export type SequenceKind =
   | 'CVD_DIVERGENCE_LIMIT'
   | 'WALL_RELEASE'
   | 'OI_DELTA_CONFIRM'
+  /** Толпа заперта лимитками кита → топливо для разворота */
+  | 'TRAPPED_TRADERS'
 
 export interface SequenceHit {
   id: string
@@ -85,4 +91,13 @@ export interface SequenceEvalContext {
   bookImbalance?: number | null
   oi?: OiSnapshot | null
   now?: number
+  /** Z-score of recent hit USD vs rolling baseline */
+  hitZScore?: number | null
+  hitIsAnomaly?: boolean
+  /** Spot vs perpetual delta health */
+  spotPerpMul?: number | null
+  spotPerpStatus?: string | null
+  /** Recent inferred liquidation cascade USD */
+  liqUsd?: number | null
+  liqSide?: 'LONG_LIQ' | 'SHORT_LIQ' | null
 }

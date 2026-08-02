@@ -113,5 +113,6 @@ export const SETUP_LABELS: Record<JournalSetupType, string> = {
   SEQUENCE_CVD_DIV: 'Seq · CVD Div',
   SEQUENCE_WALL_RELEASE: 'Seq · Wall Release',
   SEQUENCE_OI_CONFIRM: 'Seq · OI Confirm',
+  SEQUENCE_TRAP: 'Seq · Trapped / Fuel',
   UNKNOWN: 'Other',
 }

@@ -24,6 +24,8 @@ export function sequenceKindToSetupType(kind: SequenceKind): JournalSetupType {
       return 'SEQUENCE_WALL_RELEASE'
     case 'OI_DELTA_CONFIRM':
       return 'SEQUENCE_OI_CONFIRM'
+    case 'TRAPPED_TRADERS':
+      return 'SEQUENCE_TRAP'
     default:
       return 'UNKNOWN'
   }

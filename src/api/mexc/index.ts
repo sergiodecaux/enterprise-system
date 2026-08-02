@@ -84,6 +84,15 @@ export function getMexcBaseUrl(): string {
   return '/mexc'
 }
 
+/** Spot REST (api.mexc.com) via worker `/mexc-spot` or Vite proxy */
+export function getMexcSpotBaseUrl(): string {
+  const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
+  if (envUrl && envUrl.trim()) {
+    return `${envUrl.replace(/\/$/, '')}/mexc-spot`
+  }
+  return '/mexc-spot'
+}
+
 export function toApiSymbol(internal: string): string {
   const s = (internal || '').trim().toUpperCase()
   if (!s) return s
@@ -415,6 +424,41 @@ export async function fetchRecentTrades(
       price: Number(item.p),
       volume: Number(item.v),
       side: item.T === 1 ? 'BUY' : 'SELL',
+    })
+  )
+}
+
+interface MexcSpotTradeRow {
+  price: string
+  qty: string
+  quoteQty?: string
+  time: number
+  isBuyerMaker: boolean
+}
+
+/**
+ * Spot tape — for Spot vs Perp health.
+ * GET /api/v3/trades?symbol=BTCUSDT (via /mexc-spot proxy)
+ */
+export async function fetchSpotRecentTrades(
+  symbol: string,
+  limit = 100
+): Promise<MexcTrade[]> {
+  const flat = toFlatSymbol(symbol).replace('_', '')
+  const spotSymbol = flat.includes('USDT') ? flat : `${flat}USDT`
+  const base = getMexcSpotBaseUrl()
+  const url = `${base}/api/v3/trades?symbol=${spotSymbol}&limit=${limit}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`MEXC spot HTTP ${res.status}`)
+  const rows = (await res.json()) as MexcSpotTradeRow[]
+  if (!Array.isArray(rows)) return []
+  return rows.map(
+    (r): MexcTrade => ({
+      timestamp: r.time < 1_000_000_000_000 ? r.time * 1000 : r.time,
+      price: Number(r.price),
+      volume: Number(r.qty),
+      // isBuyerMaker=true → maker was buyer → aggressor sold
+      side: r.isBuyerMaker ? 'SELL' : 'BUY',
     })
   )
 }

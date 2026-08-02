@@ -19,6 +19,7 @@ export type JournalSetupType =
   | 'SEQUENCE_CVD_DIV'
   | 'SEQUENCE_WALL_RELEASE'
   | 'SEQUENCE_OI_CONFIRM'
+  | 'SEQUENCE_TRAP'
   | 'UNKNOWN'
 
 export type JournalOutcome =

@@ -194,6 +194,8 @@ function kindRu(kind: string): string {
       return 'Крупную стену сняли — путь открыт'
     case 'OI_DELTA_CONFIRM':
       return 'Цена и контракты идут вместе'
+    case 'TRAPPED_TRADERS':
+      return 'Запертые у стены — топливо для разворота'
     default:
       return kind.replace(/_/g, ' ')
   }

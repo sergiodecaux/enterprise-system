@@ -2,13 +2,29 @@ import type { MexcTrade } from '../../api/mexc'
 import type { MarketRegime } from '../regime/marketRegime'
 import type { EnhancedCvdSnapshot } from '../orderflow/enhancedCvd'
 import type { WhaleWatcherState, WallEvent, OrderBookWall } from '../types'
-import { pushFrames } from './frameBus'
+import { pushFrames, getFrames } from './frameBus'
 import { detectWallAbsorptionExhaustion } from './wallAbsorptionExhaustion'
 import { detectCvdDivergenceLimit } from './cvdDivergenceLimit'
 import { detectWallRelease } from './wallRelease'
 import { detectOiDeltaConfirm } from './oiDeltaConfirm'
+import { detectTrappedTraders } from './trappedTraders'
 import { getOiSnapshot, recordOiSample, type OiSnapshot } from './oiTracker'
 import { applySequenceHistWr } from './sequenceJournal'
+import { inferLiquidationBurst, liqToFrame } from './liqInfer'
+import {
+  getHitZScore,
+  recordHitSample,
+  passesAnomalyGate,
+} from './hitBaseline'
+import {
+  deltaFromTrades,
+  getCachedSpotPerpHealth,
+  spotPerpToFrame,
+} from './spotPerpHealth'
+import {
+  announceSequenceSound,
+  playProcessSound,
+} from './processAudio'
 import type { MarketFrame, SequenceEvalContext, SequenceHit } from './types'
 
 export interface IngestOrderFlowInput {
@@ -39,12 +55,45 @@ export function ingestAndDetectSequence(
   if (input.openInterest != null && input.openInterest > 0 && input.price > 0) {
     recordOiSample(input.symbol, input.openInterest, input.price, now)
     oi = getOiSnapshot(input.symbol, 15 * 60_000, now)
+    if (oi && oi.changePct >= 0.85) {
+      playProcessSound('OI_RISE', Math.min(1, oi.changePct / 2))
+    }
   } else {
     oi = getOiSnapshot(input.symbol, 15 * 60_000, now)
   }
 
-  const frames = buildFrames(input, now, oi)
+  const liq = inferLiquidationBurst(input.trades, now)
+  if (liq) playProcessSound('LIQ', Math.min(1, liq.usd / 400_000))
+
+  const frames = buildFrames(input, now, oi, liq)
   if (frames.length) pushFrames(input.symbol, frames)
+
+  // Hit baseline + z-score
+  const hitFrames = frames.filter((f) => f.kind === 'HIT')
+  let hitUsdWindow = 0
+  for (const f of hitFrames) {
+    const usd = f.volumeUsd ?? 0
+    hitUsdWindow += usd
+    if (usd > 0) {
+      recordHitSample(input.symbol, usd, now)
+      playProcessSound(
+        f.side === 'BUY' ? 'HIT_BUY' : 'HIT_SELL',
+        Math.min(1, usd / 500_000)
+      )
+    }
+  }
+  // Prefer 5m aggregated hits for z-score
+  const recentHits = getFrames(input.symbol, 5 * 60_000, now).filter(
+    (f) => f.kind === 'HIT'
+  )
+  const hit5m = recentHits.reduce((s, f) => s + (f.volumeUsd ?? 0), 0)
+  const zInfo = getHitZScore(input.symbol, hit5m || hitUsdWindow, now)
+
+  const perpDelta = deltaFromTrades(input.trades, 5 * 60_000, now)
+  const spotPerp = getCachedSpotPerpHealth(input.symbol, perpDelta, now)
+  if (spotPerp.status !== 'UNKNOWN') {
+    pushFrames(input.symbol, [spotPerpToFrame(spotPerp, now)])
+  }
 
   const whale = input.whale
   const support = whale?.strongestSupport ?? null
@@ -57,6 +106,9 @@ export function ingestAndDetectSequence(
   const wallEatenAsk = recentEvents.some(
     (e) => e.type === 'EATEN' && e.wall.side === 'ASK' && now - e.timestamp < 60_000
   )
+  if (wallEatenBid || wallEatenAsk) {
+    playProcessSound('WALL_RELEASE', 0.8)
+  }
 
   const walls = input.walls ?? []
   const bidWallAlive =
@@ -90,33 +142,68 @@ export function ingestAndDetectSequence(
     bookImbalance: input.bookImbalance,
     oi,
     now,
+    hitZScore: zInfo.z,
+    hitIsAnomaly: zInfo.isAnomaly,
+    spotPerpMul: spotPerp.confidenceMul,
+    spotPerpStatus: spotPerp.status,
+    liqUsd: liq?.usd ?? null,
+    liqSide: liq?.side ?? null,
   }
 
   const candidates = [
+    detectTrappedTraders(ctx, zInfo),
     detectWallAbsorptionExhaustion(ctx),
     detectCvdDivergenceLimit(ctx),
     detectWallRelease(ctx),
     detectOiDeltaConfirm(ctx),
   ].filter((h): h is SequenceHit => h != null && h.expiresAt >= now)
 
-  if (!candidates.length) return null
+  // Z-score soft demote for HIT-driven kinds when not anomalous
+  const adjusted = candidates.map((h) => {
+    let conf = h.confidence
+    const hitDriven =
+      h.kind === 'WALL_ABSORPTION_EXHAUSTION' ||
+      h.kind === 'TRAPPED_TRADERS' ||
+      h.kind === 'WALL_RELEASE'
+    if (hitDriven && zInfo.ready && !passesAnomalyGate(zInfo, { soft: true })) {
+      conf = Math.round(conf * 0.55)
+    } else if (hitDriven && zInfo.ready) {
+      conf = Math.round(Math.min(92, conf * zInfo.confidenceMul))
+    }
+    // Spot/perp health
+    if (spotPerp.status !== 'UNKNOWN') {
+      conf = Math.round(Math.min(92, Math.max(30, conf * spotPerp.confidenceMul)))
+    }
+    return { ...h, confidence: conf }
+  }).filter((h) => h.confidence >= 48)
 
-  // Prefer allowed-in-regime, then confidence
-  candidates.sort((a, b) => {
+  if (!adjusted.length) return null
+
+  adjusted.sort((a, b) => {
     const aOk = a.allowedInRegime ? 1 : 0
     const bOk = b.allowedInRegime ? 1 : 0
+    // Prefer trapped traders slightly when tied
+    const aTrap = a.kind === 'TRAPPED_TRADERS' ? 1 : 0
+    const bTrap = b.kind === 'TRAPPED_TRADERS' ? 1 : 0
     if (bOk !== aOk) return bOk - aOk
+    if (bTrap !== aTrap && Math.abs(b.confidence - a.confidence) < 4) {
+      return bTrap - aTrap
+    }
     return b.confidence - a.confidence
   })
 
-  const best = candidates[0]!
-  return applySequenceHistWr(best, input.symbol)
+  const best = applySequenceHistWr(adjusted[0]!, input.symbol)
+  if (best.confidence >= 55 && best.allowedInRegime) {
+    announceSequenceSound(best.kind, best.id, best.confidence)
+  }
+  return best
 }
 
 function buildFrames(
   input: IngestOrderFlowInput,
   now: number,
-  oi: OiSnapshot | null
+  oi: OiSnapshot | null,
+  liq: ReturnType<typeof inferLiquidationBurst>
 ): MarketFrame[] {
   const out: MarketFrame[] = []
 
@@ -165,6 +252,8 @@ function buildFrames(
       },
     })
   }
+
+  if (liq) out.push(liqToFrame(liq))
 
   const whale = input.whale
   if (whale?.strongestSupport) {

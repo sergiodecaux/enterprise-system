@@ -2,7 +2,7 @@ import type { SequenceHit } from '../sequence'
 import type { MarketRegime } from '../regime/marketRegime'
 import type { WhaleWatcherState } from '../types'
 import type { LiveSignalResult } from '../trades/findLiveSignal'
-import { getOiSnapshot, getFrames } from '../sequence'
+import { getOiSnapshot, getFrames, getCachedSpotPerpHealth } from '../sequence'
 
 export interface ChartHint {
   id: string
@@ -48,17 +48,23 @@ export function buildChartHints(input: {
       seq.side === 'LONG'
         ? 'Смотри отскок вверх от стены'
         : 'Смотри откат вниз от стены'
+    const fuel =
+      seq.kind === 'TRAPPED_TRADERS' ? 'Топливо · запертые · ' : ''
     hints.push({
       id: 'seq',
       price: seq.wallPrice,
       side: seq.side,
       title: seq.allowedInRegime
-        ? `Сигнал процесса · ${seq.side === 'LONG' ? 'вверх' : 'вниз'}`
+        ? `${fuel}Сигнал процесса · ${seq.side === 'LONG' ? 'вверх' : 'вниз'}`
         : `Процесс есть, но режим другой`,
       body: seq.allowedInRegime
         ? `${kindRu(seq.kind)} (~${seq.confidence}%). ${firstSentence(seq.summary)} ${action}.`
         : `Нашли последовательность, но сейчас «${regimeLabel(regime)}» — не входи по этому сигналу. Жди смену режима.`,
-      priority: seq.allowedInRegime ? 100 : 70,
+      priority: seq.allowedInRegime
+        ? seq.kind === 'TRAPPED_TRADERS'
+          ? 105
+          : 100
+        : 70,
     })
 
     if (seq.steps[0]) {
@@ -152,6 +158,51 @@ export function buildChartHints(input: {
   }
 
   const frames = getFrames(input.symbol, 5 * 60_000)
+  const liqFrames = frames.filter((f) => f.kind === 'LIQ')
+  if (liqFrames.length >= 1) {
+    const last = liqFrames[liqFrames.length - 1]!
+    const shorts = last.side === 'SHORT_LIQ'
+    hints.push({
+      id: 'liq',
+      price: last.price ?? null,
+      side: shorts ? 'LONG' : 'SHORT',
+      title: shorts
+        ? 'Волна ликвидаций шортов'
+        : 'Волна ликвидаций лонгов',
+      body: shorts
+        ? 'Шортов выбило принудительными покупками. Если агрессия покупок сейчас падает — классический exhaustion / разворот вниз после кульминации.'
+        : 'Лонгов выбило продажами. Если продажи стихают — вероятен отскок вверх (топливо отработало).',
+      priority: 62,
+    })
+  }
+
+  const hitBuy = frames
+    .filter((f) => f.kind === 'HIT' && f.side === 'BUY')
+    .reduce((s, f) => s + (f.volumeUsd ?? 0), 0)
+  const hitSell = frames
+    .filter((f) => f.kind === 'HIT' && f.side === 'SELL')
+    .reduce((s, f) => s + (f.volumeUsd ?? 0), 0)
+  const health = getCachedSpotPerpHealth(input.symbol, hitBuy - hitSell)
+  if (health.status === 'DIVERGED' || health.status === 'PERP_LED') {
+    hints.push({
+      id: 'spot_perp',
+      price: null,
+      side: 'INFO',
+      title: health.label,
+      body: `${health.tip} Уверенность сигналов снижена.`,
+      priority: 52,
+    })
+  } else if (health.status === 'SPOT_LED') {
+    hints.push({
+      id: 'spot_perp',
+      price: null,
+      side: health.spotDeltaUsd >= 0 ? 'LONG' : 'SHORT',
+      title: 'Спот ведёт перпы',
+      body: health.tip,
+      priority: 44,
+    })
+  }
+
   const hits = frames.filter((f) => f.kind === 'HIT').length
   if (hits >= 4 && !seq) {
     hints.push({
@@ -228,6 +279,8 @@ function kindRu(kind: string): string {
       return 'Крупную стену сняли — путь открыт'
     case 'OI_DELTA_CONFIRM':
       return 'Цена + открытый интерес + поток согласованы'
+    case 'TRAPPED_TRADERS':
+      return 'Толпа заперта у стены — их стопы станут топливом'
     default:
       return kind
   }

@@ -9,7 +9,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare } from 'lucide-react'
+import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import type { EqualLevel } from '../../engine/types'
 import {
@@ -49,7 +49,7 @@ import {
   type FoundTradeZone,
 } from '../../engine/zones/findTradeZones'
 import { findProbableTrades, findLiveSignal } from '../../engine/trades'
-import { recordSequenceHit } from '../../engine/sequence'
+import { recordSequenceHit, setProcessAudioEnabled, seedHitBaselineFromCandles } from '../../engine/sequence'
 import type { LiveSignalResult } from '../../engine/trades'
 import {
   pushJewelEntryAlert,
@@ -147,6 +147,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [chartExpanded, setChartExpanded] = useState(false)
   const [showDirection, setShowDirection] = useState(true)
   const [showHints, setShowHints] = useState(false)
+  const [audioOn, setAudioOn] = useState(() => {
+    try {
+      return localStorage.getItem('enterprise_process_audio') === '1'
+    } catch {
+      return false
+    }
+  })
   const [candles, setCandles] = useState<OhlcvCandle[]>([])
   const [lwcData, setLwcData] = useState<CandlestickData[]>([])
   const [loading, setLoading] = useState(true)
@@ -1145,6 +1152,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           close: c[4],
         }))
         setCandles(data)
+        seedHitBaselineFromCandles(symbol, data)
         setLwcData(mapped)
       } catch (err) {
         logger.warn('LiveChart klines failed', err)
@@ -1824,6 +1832,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
               {showHints ? 'ON' : 'OFF'}
             </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAudioOn((v) => {
+                const next = !v
+                setProcessAudioEnabled(next)
+                return next
+              })
+              haptic.impact()
+            }}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              audioOn
+                ? 'border-violet-400/45 bg-violet-500/20 text-violet-200'
+                : 'border-white/10 bg-hull-light/40 text-holo/55 hover:text-holo'
+            }`}
+            title="Звук процесса: удары, ликвидации, момент"
+          >
+            {audioOn ? (
+              <Volume2 className="h-3.5 w-3.5" />
+            ) : (
+              <VolumeX className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">Звук</span>
           </button>
           <button
             type="button"

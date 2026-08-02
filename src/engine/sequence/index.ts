@@ -15,6 +15,7 @@ export { detectWallAbsorptionExhaustion } from './wallAbsorptionExhaustion'
 export { detectCvdDivergenceLimit } from './cvdDivergenceLimit'
 export { detectWallRelease } from './wallRelease'
 export { detectOiDeltaConfirm } from './oiDeltaConfirm'
+export { detectTrappedTraders } from './trappedTraders'
 export {
   recordOiSample,
   getOiSnapshot,
@@ -30,3 +31,31 @@ export {
   sequenceKindToSetupType,
 } from './sequenceJournal'
 export { buildChartHints, type ChartHint } from './buildChartHints'
+export {
+  getHitZScore,
+  recordHitSample,
+  seedHitBaselineFromCandles,
+  passesAnomalyGate,
+  type HitZScore,
+} from './hitBaseline'
+export {
+  inferLiquidationBurst,
+  sumRecentLiq,
+  type InferredLiq,
+} from './liqInfer'
+export {
+  computeSpotPerpHealth,
+  deltaFromTrades,
+  setSpotDeltaCache,
+  getSpotDeltaCache,
+  getCachedSpotPerpHealth,
+  type SpotPerpHealth,
+  type SpotPerpStatus,
+} from './spotPerpHealth'
+export {
+  playProcessSound,
+  announceSequenceSound,
+  isProcessAudioEnabled,
+  setProcessAudioEnabled,
+  type ProcessSound,
+} from './processAudio'

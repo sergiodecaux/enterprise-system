@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, AlertCircle, Brain, Layers3 } from 'lucide-react'
-import { fetchDepth, fetchRecentTrades, fetchTicker } from '../../api/mexc'
+import { fetchDepth, fetchRecentTrades, fetchTicker, fetchSpotRecentTrades } from '../../api/mexc'
 import { updateWhaleWatcher } from '../../engine/orderbook/whaleDetector'
 import { useAppStore } from '../../store/useAppStore'
 import { computeTapeMomentum } from '../../engine/orderbook/tapeMomentum'
@@ -37,7 +37,7 @@ import { useOrderBookHistory } from '../../hooks/useOrderBookHistory'
 import { useMLPredictor } from '../../hooks/useMLPredictor'
 import { useMexcDepthStream } from '../../hooks/useMexcDepthStream'
 import { buildEnhancedCvd } from '../../engine/orderflow/enhancedCvd'
-import { ingestAndDetectSequence } from '../../engine/sequence'
+import { ingestAndDetectSequence, setSpotDeltaCache, deltaFromTrades } from '../../engine/sequence'
 import type {
   OrderBookState,
   WallTrackerState,
@@ -79,6 +79,7 @@ const OrderBookPanel = ({ symbol }: Props) => {
   whaleWatcherRef.current = whaleWatcherPrev
   const oiRef = useRef<number | null>(null)
   const oiFetchedAtRef = useRef(0)
+  const spotFetchedAtRef = useRef(0)
 
   const [depthLimit, setDepthLimit] = useState(20)
   const [showML, setShowML] = useState(true)
@@ -293,6 +294,21 @@ const OrderBookPanel = ({ symbol }: Props) => {
               })
               .catch(() => {
                 /* optional */
+              })
+          }
+
+          // Spot tape for Spot/Perp health ~every 15s
+          if (nowTs - spotFetchedAtRef.current > 15_000) {
+            spotFetchedAtRef.current = nowTs
+            void fetchSpotRecentTrades(symbol, 80)
+              .then((spotTrades) => {
+                setSpotDeltaCache(
+                  symbol,
+                  deltaFromTrades(spotTrades, 5 * 60_000)
+                )
+              })
+              .catch(() => {
+                /* optional — CORS / proxy */
               })
           }
 

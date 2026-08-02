@@ -29,6 +29,12 @@ export function isSequenceAllowedInRegime(
     if (regime === 'RANGING') return false // continuation needs trend
     return true
   }
+  if (kind === 'TRAPPED_TRADERS') {
+    // Fuel reversals — best in range / weak trend; not in strong trend chase
+    if (regime === 'TRENDING_STRONG') return false
+    if (regime === 'VOLATILE_CHOP') return true // rare: after liq climax
+    return true
+  }
   return false
 }
 
@@ -53,6 +59,11 @@ export function regimeConfidenceMul(
   if (kind === 'OI_DELTA_CONFIRM') {
     if (regime === 'TRENDING_STRONG') return 1
     if (regime === 'TRENDING_WEAK') return 0.9
+  }
+  if (kind === 'TRAPPED_TRADERS') {
+    if (regime === 'RANGING') return 1
+    if (regime === 'TRENDING_WEAK') return 0.9
+    if (regime === 'VOLATILE_CHOP') return 0.85
   }
   return 0.7
 }
