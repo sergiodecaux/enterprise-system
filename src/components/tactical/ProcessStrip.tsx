@@ -6,29 +6,27 @@ interface Props {
   symbol: string
   regime: MarketRegime
   sequence: SequenceHit | null
-  /** Tick to re-read frame bus */
   refreshKey?: number
 }
 
 const REGIME_LABEL: Record<MarketRegime, string> = {
-  TRENDING_STRONG: 'TREND↑',
-  TRENDING_WEAK: 'TREND~',
-  RANGING: 'RANGE',
-  VOLATILE_CHOP: 'CHOP',
+  TRENDING_STRONG: 'Тренд ↑',
+  TRENDING_WEAK: 'Тренд ~',
+  RANGING: 'Боковик',
+  VOLATILE_CHOP: 'Хаос',
 }
 
 /**
- * Thin process strip: regime · active sequence · OI · 5m film dots.
+ * Полоска процесса: режим · открытый интерес · лента кадров · активный предел.
  */
 const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
   const [dots, setDots] = useState<
-    Array<{ kind: string; side?: string; strength: number }>
+    Array<{ kind: string; side?: string; strength: number; tip: string }>
   >([])
-  const [oiLabel, setOiLabel] = useState<string>('OI —')
+  const [oiLabel, setOiLabel] = useState<string>('Интерес …')
 
   useEffect(() => {
     const frames = getFrames(symbol, 5 * 60_000)
-    // Compress to last meaningful kinds for film strip
     const interesting = frames.filter((f) =>
       ['HIT', 'WALL', 'DELTA', 'OI', 'BOOK'].includes(f.kind)
     )
@@ -36,15 +34,16 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
       kind: f.kind,
       side: f.side,
       strength: f.strength ?? 0.4,
+      tip: frameTip(f.kind, f.side),
     }))
     setDots(recent)
 
     const oi = getOiSnapshot(symbol)
     if (oi) {
       const sign = oi.changePct >= 0 ? '+' : ''
-      setOiLabel(`OI ${sign}${oi.changePct.toFixed(1)}%`)
+      setOiLabel(`Контракты ${sign}${oi.changePct.toFixed(1)}%`)
     } else {
-      setOiLabel('OI …')
+      setOiLabel('Контракты …')
     }
   }, [symbol, refreshKey, sequence?.detectedAt])
 
@@ -73,12 +72,17 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
     <div className="flex flex-col gap-1 rounded-lg border border-white/[0.07] bg-[#0e1218] px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span
-          className={`rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${regimeColor}`}
-          title="Market regime — первый кадр"
+          className={`rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wide ${regimeColor}`}
+          title="Первый кадр: в каком состоянии рынок"
         >
           {REGIME_LABEL[regime]}
         </span>
-        <span className="font-mono text-[9px] text-white/35">{oiLabel}</span>
+        <span
+          className="font-mono text-[9px] text-white/40"
+          title="Как меняется число открытых контрактов"
+        >
+          {oiLabel}
+        </span>
         {seqLive ? (
           <span
             className={`ml-auto truncate rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold ${
@@ -88,19 +92,20 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
             }`}
             title={seqLive.summary}
           >
-            SEQ {seqLive.side} ~{seqLive.confidence}%
-            {!seqLive.allowedInRegime ? ' · off' : ''}
+            {seqLive.side === 'LONG' ? 'Момент ↑' : 'Момент ↓'} ~
+            {seqLive.confidence}%
+            {!seqLive.allowedInRegime ? ' · не сейчас' : ''}
           </span>
         ) : (
           <span className="ml-auto font-mono text-[9px] text-white/25">
-            process…
+            ждём процесс…
           </span>
         )}
       </div>
 
       {dots.length > 0 && (
         <div className="flex items-center gap-0.5 overflow-hidden">
-          <span className="mr-1 shrink-0 font-mono text-[8px] uppercase text-white/25">
+          <span className="mr-1 shrink-0 font-mono text-[8px] text-white/25">
             5м
           </span>
           {dots.map((d, i) => (
@@ -108,28 +113,39 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
               key={`${d.kind}-${i}`}
               className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotColor(d.kind, d.side)}`}
               style={{ opacity: 0.35 + d.strength * 0.65 }}
-              title={`${d.kind}${d.side ? ' ' + d.side : ''}`}
+              title={d.tip}
             />
           ))}
-          <span className="ml-auto flex gap-1.5 font-mono text-[7px] text-white/20">
-            <span className="text-emerald-400/50">HIT</span>
-            <span className="text-cyan-400/50">WALL</span>
-            <span className="text-violet-400/50">Δ</span>
-            <span className="text-amber-300/50">OI</span>
+          <span className="ml-auto flex flex-wrap gap-x-1.5 gap-y-0 font-mono text-[7px] text-white/25">
+            <span className="text-emerald-400/60">покупки</span>
+            <span className="text-rose-400/60">продажи</span>
+            <span className="text-cyan-400/60">стены</span>
+            <span className="text-amber-300/50">контракты</span>
           </span>
         </div>
       )}
 
       {seqLive && (
-        <p className="truncate font-mono text-[9px] leading-snug text-white/45">
+        <p className="truncate font-mono text-[9px] leading-snug text-white/50">
           {seqLive.title}
           {seqLive.histWr && seqLive.histWr.decided >= 3
-            ? ` · WR ${seqLive.histWr.winRate?.toFixed(0) ?? '—'}%`
+            ? ` · раньше сработало ${seqLive.histWr.winRate?.toFixed(0) ?? '—'}%`
             : ''}
         </p>
       )}
     </div>
   )
+}
+
+function frameTip(kind: string, side?: string): string {
+  if (kind === 'HIT' && side === 'BUY') return 'Рыночные покупки'
+  if (kind === 'HIT' && side === 'SELL') return 'Рыночные продажи'
+  if (kind === 'WALL' && side === 'BID') return 'Стена снизу (опора)'
+  if (kind === 'WALL' && side === 'ASK') return 'Стена сверху (крыша)'
+  if (kind === 'DELTA') return 'Баланс покупок и продаж'
+  if (kind === 'OI') return 'Открытый интерес'
+  if (kind === 'BOOK') return 'Перевес в стакане'
+  return kind
 }
 
 export default ProcessStrip

@@ -55,7 +55,7 @@ const DeltaSparkline = ({ symbol, refreshKey = 0, height = 36 }: Props) => {
     <div className="rounded-lg border border-white/[0.06] bg-[#0c0e12] px-2 py-1.5">
       <div className="mb-1 flex items-center justify-between">
         <span className="font-mono text-[9px] font-bold uppercase tracking-wide text-white/40">
-          Delta 5м · кадры HIT
+          Покупки / продажи · 5м
         </span>
         <span
           className={`font-mono text-[9px] font-bold ${

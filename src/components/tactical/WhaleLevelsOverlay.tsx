@@ -93,9 +93,13 @@ const WhaleLevelsOverlay = ({
         const soft = isBid
           ? 'rgba(34, 211, 238, 0.18)'
           : 'rgba(251, 146, 60, 0.18)'
-        const label = isBid ? 'BID' : 'ASK'
+        // Без BID/ASK: опора = крупные покупают лимиткой снизу, крыша = продают сверху
+        const label = isBid ? 'ОПОРА' : 'КРЫША'
+        const meaning = isBid
+          ? 'крупные хотят купить · стена снизу'
+          : 'крупные хотят продать · стена сверху'
         const vol = formatWhaleVolume(volumeUsd)
-        const dist = `${isBid ? '−' : '+'}${distancePct.toFixed(2)}%`
+        const dist = `${isBid ? 'ниже' : 'выше'} ${distancePct.toFixed(2)}%`
 
         let y: number
         let clipped: 'none' | 'top' | 'bottom' = 'none'
@@ -194,9 +198,10 @@ const WhaleLevelsOverlay = ({
           <div style="
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             font-size: 8px;
-            color: rgba(200,210,220,0.45);
+            color: rgba(200,210,220,0.5);
             padding-right: 2px;
-          ">${fmtPrice(price)}</div>
+            text-align: right;
+          ">${meaning} · ${fmtPrice(price)}</div>
         `
         overlay.appendChild(badge)
       }

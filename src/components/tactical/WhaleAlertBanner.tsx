@@ -48,8 +48,8 @@ const WhaleAlertBanner = ({ alert, onDismiss }: Props) => {
 
       <div className="min-w-0 flex-1 truncate font-mono text-[10px]">
         <span className={`font-bold uppercase ${accentColor}`}>
-          {isSupport ? 'BID' : 'ASK'}
-          {isImmediate ? ' · срочно' : ''}
+          {isSupport ? 'ОПОРА ↓' : 'КРЫША ↑'}
+          {isImmediate ? ' · близко' : ''}
         </span>
         <span className="mx-1.5 font-bold text-holo">
           {formatPrice(alert.order.price)}

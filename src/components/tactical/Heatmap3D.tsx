@@ -73,11 +73,11 @@ const Heatmap3D = ({ heatmap3D }: Props) => {
       <div className="absolute bottom-2 left-2 space-y-1 rounded bg-hull/80 px-2 py-1 text-[10px]">
         <div className="flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-matrix" />
-          <span className="text-holo/80">BID</span>
+          <span className="text-holo/80">Опора (покупки)</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-alert" />
-          <span className="text-holo/80">ASK</span>
+          <span className="text-holo/80">Крыша (продажи)</span>
         </div>
         <div className="mt-1 text-holo/50">{t('heatmap_3d_axis')}</div>
       </div>

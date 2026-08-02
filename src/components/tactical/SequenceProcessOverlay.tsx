@@ -137,23 +137,23 @@ const SequenceProcessOverlay = ({
             ${allowed ? 'animation:none;' : 'opacity:0.5;'}
           "></span>
           <span style="font-size:9px;font-weight:800;letter-spacing:0.04em;color:${accent};">
-            ПРЕДЕЛ
+            МОМЕНТ
           </span>
           <span style="font-size:10px;font-weight:700;color:rgba(240,245,250,0.92);">
-            ${sequence.side}
+            ${sequence.side === 'LONG' ? 'вверх ↑' : 'вниз ↓'}
           </span>
           <span style="font-size:9px;color:rgba(200,210,220,0.55);">
             ~${sequence.confidence}%
           </span>
         </div>
         <div style="
-          max-width:min(220px,55vw);
+          max-width:min(240px,58vw);
           font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-          font-size:8px;line-height:1.25;
-          color:rgba(200,210,220,0.5);
+          font-size:8px;line-height:1.35;
+          color:rgba(200,210,220,0.55);
           padding-left:2px;
-        ">${escapeHtml(shortKind(sequence.kind))}${
-          allowed ? '' : ' · regime block'
+        ">${escapeHtml(kindRu(sequence.kind))}${
+          allowed ? '' : ' · сейчас не входим (режим)'
         }</div>
       `
       overlay.appendChild(mark)
@@ -184,13 +184,19 @@ const SequenceProcessOverlay = ({
   )
 }
 
-function shortKind(kind: string): string {
-  return kind
-    .replace('WALL_ABSORPTION_EXHAUSTION', 'Wall absorb')
-    .replace('CVD_DIVERGENCE_LIMIT', 'CVD div')
-    .replace('WALL_RELEASE', 'Wall release')
-    .replace('OI_DELTA_CONFIRM', 'OI confirm')
-    .replace(/_/g, ' ')
+function kindRu(kind: string): string {
+  switch (kind) {
+    case 'WALL_ABSORPTION_EXHAUSTION':
+      return 'Стена выдержала удары — агрессия стихает'
+    case 'CVD_DIVERGENCE_LIMIT':
+      return 'Цена и поток сделок разошлись'
+    case 'WALL_RELEASE':
+      return 'Крупную стену сняли — путь открыт'
+    case 'OI_DELTA_CONFIRM':
+      return 'Цена и контракты идут вместе'
+    default:
+      return kind.replace(/_/g, ' ')
+  }
 }
 
 function escapeHtml(s: string): string {
