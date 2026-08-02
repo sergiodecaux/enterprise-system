@@ -1151,6 +1151,7 @@ export function memeSetupRankScore(
   let rank = conf
   // Hard priority: CONT_BOOK_RELEASE (journal best)
   if (setup === 'CONT_BOOK_RELEASE') rank += 18
+  if (setup === 'PEAK_FUEL_FAIL') rank += 14
   else if (setup.startsWith('CONT_')) rank += 8
   if (n >= 3) {
     rank += wr * 0.35
@@ -1173,6 +1174,7 @@ export function isHighWrMemeSetup(
   setup: string
 ): boolean {
   if (setup === 'CONT_BOOK_RELEASE') return true
+  if (setup === 'PEAK_FUEL_FAIL') return true
   const { wr, n } = setupHistoricalWr(gates, setup)
   if (n >= 3 && wr >= 55) return true
   if (gates && isSetupBoosted(gates, parseBotSetup(setup).base, setup)) {

@@ -2122,12 +2122,28 @@ export async function runMarketScan(
       const side = orderFlow.side
       const dayBias = biasForSymbol(hotWatchlist, t.symbol)
       // Cascade may fade an overextended pump; other patterns stay WITH day.
+      // PEAK_FUEL_FAIL: ABSORPTION/CVD SHORT on pump day when tape doesn't lift price.
       const isCascade = orderFlow.kind.startsWith('LIQ_CASCADE')
       const isMm =
         orderFlow.kind.startsWith('ABSORPTION') ||
         orderFlow.kind.startsWith('SPOOF_SWEEP') ||
         orderFlow.kind === 'CVD_DIVERGENCE' ||
         isCascade
+      const peakFuelFade =
+        dayBias === 'PUMP' &&
+        side === 'SHORT' &&
+        (orderFlow.kind.startsWith('ABSORPTION') ||
+          orderFlow.kind === 'CVD_DIVERGENCE') &&
+        (Math.abs(orderFlow.priceMoveBps) <= 14 ||
+          orderFlow.flowSharePct >= 55)
+      // TRAP_FLIP longs on pump day: journal ~10% WR — skip
+      if (
+        dayBias === 'PUMP' &&
+        side === 'LONG' &&
+        orderFlow.kind.startsWith('TRAP_FLIP')
+      ) {
+        return
+      }
       if (!isMm) {
         // Classic release/pressure fallback — still WITH day bias.
         if (dayBias === 'PUMP' && side !== 'LONG') return
@@ -2138,17 +2154,19 @@ export async function runMarketScan(
         ) {
           return
         }
-      } else if (!isCascade) {
+      } else if (!isCascade && !peakFuelFade) {
         if (dayBias === 'PUMP' && side !== 'LONG') return
         if (dayBias === 'DUMP' && side !== 'SHORT') return
       }
-      const setup = orderFlow.mmPattern
-        ? orderFlow.mmPattern
-        : orderFlow.kind.endsWith('_REMOVED')
-          ? 'BOOK_RELEASE'
-          : orderFlow.kind.includes('_WALL_')
-            ? 'BOOK_PRESSURE'
-            : 'ORDER_FLOW'
+      const setup = peakFuelFade
+        ? 'PEAK_FUEL_FAIL'
+        : orderFlow.mmPattern
+          ? orderFlow.mmPattern
+          : orderFlow.kind.endsWith('_REMOVED')
+            ? 'BOOK_RELEASE'
+            : orderFlow.kind.includes('_WALL_')
+              ? 'BOOK_PRESSURE'
+              : 'ORDER_FLOW'
       const dayTag =
         dayBias === 'PUMP'
           ? 'дневной памп'
@@ -2160,9 +2178,13 @@ export async function runMarketScan(
         setup,
         orderFlow.confidence,
         [
-          `${dayTag} · ${setup} · ${side}`,
+          peakFuelFade
+            ? `${dayTag} · PEAK_FUEL_FAIL · SHORT с пика (нет топлива)`
+            : `${dayTag} · ${setup} · ${side}`,
           `Limit-chase (post-only) @ ${orderFlow.wallPrice ?? price}`,
-          `SL~0.8% / TP~2% · join MM, не против стены`,
+          peakFuelFade
+            ? `SL~1% / TP~1.8% · скальп с выдыхания пампа`
+            : `SL~0.8% / TP~2% · join MM, не против стены`,
           ...orderFlow.notes.slice(0, 3),
         ].join('\n'),
         [
@@ -2174,7 +2196,7 @@ export async function runMarketScan(
         'MEME',
         `cron:${setup.toLowerCase()}:${t.symbol}:${side}:${Math.round((orderFlow.wallPrice ?? price) * 1e6)}`,
         'SCALP',
-        isCascade ? 'COUNTER' : 'WITH_TREND'
+        isCascade || peakFuelFade ? 'COUNTER' : 'WITH_TREND'
       )
       return
     }

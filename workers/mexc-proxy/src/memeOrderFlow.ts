@@ -1,8 +1,8 @@
 /**
- * MEME order-flow scanner v26.3 — Day Continue + hist-WR hunt.
+ * MEME order-flow scanner v26.4 — Day Continue + PEAK_FUEL_FAIL shorts.
  *
- * Coverage: TOP-18 hot memes, deep-scan 16/tick (was 8 — many coins never checked).
- * Emit: prefer CONT_BOOK_RELEASE and setups with highest journal WR; block losers.
+ * Coverage: TOP-18 hot memes, deep-scan 16/tick.
+ * Emit: CONT_* WITH day + PEAK_FUEL_FAIL (pump stall at local high → small SHORT).
  */
 
 import type { ScanAlert } from './scanner'
@@ -23,6 +23,11 @@ import {
   setupHistoricalWr,
   type BotAdaptiveGates,
 } from './botJournal'
+import {
+  detectPeakFuelFail,
+  isPeakFuelFailBookHint,
+  type Candle,
+} from './peakFuelFail'
 
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v26'
@@ -88,7 +93,11 @@ interface Ticker {
 
 type BookState = Record<
   string,
-  { previous?: OrderBookSnapshot | null; older?: OrderBookSnapshot | null }
+  {
+    previous?: OrderBookSnapshot | null
+    older?: OrderBookSnapshot | null
+    holdVol?: number | null
+  }
 >
 
 async function mexcJson<T>(path: string): Promise<T | null> {
@@ -183,7 +192,15 @@ export function allowMemeFlowEvent(
   }
 
   // WITH day only — COUNTER was 0% WR in journal
-  if (dayBias === 'PUMP' && event.side !== 'LONG') {
+  // Exception: PEAK_FUEL_FAIL — SHORT into exhausted pump peak
+  const peakFade = isPeakFuelFailBookHint({
+    dayBias,
+    side: event.side,
+    kind: event.kind,
+    priceMoveBps: event.priceMoveBps,
+    flowSharePct: event.flowSharePct,
+  })
+  if (dayBias === 'PUMP' && event.side !== 'LONG' && !peakFade) {
     return { ok: false, reason: 'against_pump_day' }
   }
   if (dayBias === 'DUMP' && event.side !== 'SHORT') {
@@ -288,22 +305,42 @@ function toAlert(
   chg24hPct: number
 ): ScanAlert {
   const detected = event.side!
+  const peakFade = isPeakFuelFailBookHint({
+    dayBias,
+    side: event.side,
+    kind: event.kind,
+    priceMoveBps: event.priceMoveBps,
+    flowSharePct: event.flowSharePct,
+  })
   const side: 'LONG' | 'SHORT' = INVERT_SIDE
     ? detected === 'LONG'
       ? 'SHORT'
       : 'LONG'
     : detected
 
-  const rawSetup = (
-    event.mmPattern ||
-    (event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
-      ? 'BOOK_RELEASE'
-      : event.kind.replace(/_LONG$|_SHORT$/, ''))
-  ).slice(0, 20)
-  const setup = `CONT_${rawSetup}`.slice(0, 32)
+  const rawSetup = peakFade
+    ? 'PEAK_FUEL_FAIL'
+    : (
+        event.mmPattern ||
+        (event.kind === 'ASK_WALL_REMOVED' || event.kind === 'BID_WALL_REMOVED'
+          ? 'BOOK_RELEASE'
+          : event.kind.replace(/_LONG$|_SHORT$/, ''))
+      ).slice(0, 20)
+  const setup = (peakFade ? rawSetup : `CONT_${rawSetup}`).slice(0, 32)
 
   const limit = event.wallPrice && event.wallPrice > 0 ? event.wallPrice : 0
-  const lv = levelsForSide(side, limit)
+  // Tighter scalp on peak fade shorts
+  const lv = peakFade
+    ? {
+        sl: limit * 1.01,
+        tp: limit * (1 - 0.018),
+        tp1: limit * (1 - 0.011),
+        tp3: limit * (1 - 0.025),
+        invalidate: limit * 1.007,
+        zoneLow: limit,
+        zoneHigh: limit * 1.0008,
+      }
+    : levelsForSide(side, limit)
   const dayTag =
     dayBias === 'PUMP' ? 'дневной памп' : dayBias === 'DUMP' ? 'дневной дамп' : 'hot'
   const name = symbol.replace('_USDT', '/USDT')
@@ -313,18 +350,25 @@ function toAlert(
     title: `🦈 MEME ${side} ${name} · ${setup}`,
     text: [
       `${dayTag} ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · ${setup}`,
-      `Day Continue: WITH ${dayBias} · детект ${detected}`,
+      peakFade
+        ? `Peak fuel fail: SHORT с пика · топливо кончилось`
+        : `Day Continue: WITH ${dayBias} · детект ${detected}`,
       `Limit @ ${limit}`,
-      `SL ${lv.sl} (~${(SL_PCT * 100).toFixed(1)}%) · TP1 ${lv.tp1} · TP ${lv.tp} (~${(TP_PCT * 100).toFixed(1)}%)`,
+      `SL ${lv.sl} · TP1 ${lv.tp1} · TP ${lv.tp}`,
       `spread ${event.spreadBps.toFixed(0)}bps · conf ${event.confidence} · flow ${event.flowSharePct.toFixed(0)}%`,
       ...event.notes.slice(0, 3),
-      'v26.3: TOP-18 scan · emit by hist WR · CONT_BOOK_RELEASE приоритет',
+      peakFade
+        ? 'v26.4: PEAK_FUEL_FAIL — не догонять памп без OI/ленты'
+        : 'v26.4: TOP-18 · hist WR · CONT + peak fade',
     ].join('\n'),
     dedupeKey: `cron:mof26:${setup.toLowerCase()}:${symbol}:${side}:${Math.round(limit * 1e6)}`,
     score: event.confidence,
-    winPct: Math.min(72, 50 + (event.confidence - 80) + (event.flowSharePct - 50) * 0.15),
+    winPct: Math.min(
+      72,
+      50 + (event.confidence - 80) + (event.flowSharePct - 50) * 0.15
+    ),
     style: 'SCALP',
-    align: 'WITH',
+    align: peakFade ? 'COUNTER' : 'WITH_TREND',
     tradePlan: {
       side,
       symbol,
@@ -340,6 +384,74 @@ function toAlert(
       target3: lv.tp3,
     },
   }
+}
+
+function peakFailToAlert(
+  symbol: string,
+  sig: NonNullable<ReturnType<typeof detectPeakFuelFail>>,
+  dayBias: 'PUMP' | 'DUMP' | null,
+  chg24hPct: number
+): ScanAlert {
+  const name = symbol.replace('_USDT', '/USDT')
+  const limit = sig.limitPrice
+  return {
+    type: 'MEME',
+    title: `🦈 MEME SHORT ${name} · PEAK_FUEL_FAIL`,
+    text: [
+      `дневной памп ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · PEAK_FUEL_FAIL`,
+      ...sig.notes,
+      'v26.4: пик без топлива → небольшой шорт',
+    ].join('\n'),
+    dedupeKey: `cron:mof26:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e6)}`,
+    score: sig.confidence,
+    winPct: Math.min(70, 48 + (sig.confidence - 78)),
+    style: 'SCALP',
+    align: 'COUNTER',
+    tradePlan: {
+      side: 'SHORT',
+      symbol,
+      setup: 'PEAK_FUEL_FAIL',
+      signalPrice: limit,
+      entryIdeal: limit,
+      zoneLow: limit,
+      zoneHigh: limit * 1.001,
+      invalidate: limit * 1.007,
+      sl: sig.sl,
+      tp: sig.tp,
+      target1: sig.tp1,
+      target3: limit * (1 - 0.025),
+    },
+  }
+}
+
+async function fetchMin1Candles(
+  symbol: string,
+  limit = 40
+): Promise<Candle[]> {
+  const json = await mexcJson<{
+    data?: {
+      time?: number[]
+      open?: number[]
+      high?: number[]
+      low?: number[]
+      close?: number[]
+      vol?: number[]
+    }
+  }>(`/api/v1/contract/kline/${symbol}?interval=Min1&limit=${limit}`)
+  const d = json?.data
+  if (!d?.time?.length) return []
+  const out: Candle[] = []
+  for (let i = 0; i < d.time.length; i++) {
+    out.push([
+      Number(d.time[i]) * 1000,
+      Number(d.open?.[i] ?? 0),
+      Number(d.high?.[i] ?? 0),
+      Number(d.low?.[i] ?? 0),
+      Number(d.close?.[i] ?? 0),
+      Number(d.vol?.[i] ?? 0),
+    ])
+  }
+  return out
 }
 
 export async function runMemeOrderFlowScan(opts: {
@@ -405,6 +517,12 @@ export async function runMemeOrderFlowScan(opts: {
   for (const coin of batch) {
     const prev = state[coin.symbol]?.previous ?? null
     const older = state[coin.symbol]?.older ?? null
+    const prevHold = state[coin.symbol]?.holdVol ?? null
+    const tickerRow = tickers.find((t) => t.symbol === coin.symbol)
+    const holdVol =
+      tickerRow?.holdVol != null ? Number(tickerRow.holdVol) : null
+    const price = Number(tickerRow?.lastPrice ?? 0)
+
     const read = await readOrderBookEvent({
       symbol: coin.symbol,
       previous: prev,
@@ -418,67 +536,136 @@ export async function runMemeOrderFlowScan(opts: {
       state[coin.symbol] = {
         older: prev,
         previous: read.snapshot,
+        holdVol: holdVol ?? prevHold,
+      }
+    } else if (holdVol != null) {
+      state[coin.symbol] = {
+        ...(state[coin.symbol] ?? {}),
+        holdVol,
       }
     }
-    const gate = allowMemeFlowEvent(
-      read.event,
-      biasForSymbol(watchlist, coin.symbol)
-    )
-    if (!gate.ok) {
+
+    const dayBias = biasForSymbol(watchlist, coin.symbol)
+    const gate = allowMemeFlowEvent(read.event, dayBias)
+
+    let pushed = false
+    if (gate.ok) {
+      const alert = toAlert(
+        coin.symbol,
+        read.event,
+        coin.dayBias,
+        coin.chg24hPct
+      )
+      if (alert.tradePlan && alert.tradePlan.signalPrice > 0) {
+        const setup = alert.tradePlan.setup
+        let blocked = false
+        if (gates) {
+          const ag = allowSetupByGates(gates, setup, alert.score, 'MEME')
+          if (!ag.ok) {
+            rejects.push({
+              symbol: coin.symbol,
+              reason: ag.reason ?? 'gates',
+            })
+            blocked = true
+          } else {
+            const hist = setupHistoricalWr(gates, setup)
+            if (
+              hist.n >= 3 &&
+              hist.wr < 30 &&
+              setup !== 'CONT_BOOK_RELEASE' &&
+              setup !== 'PEAK_FUEL_FAIL'
+            ) {
+              rejects.push({
+                symbol: coin.symbol,
+                reason: `low_hist_wr:${hist.wr.toFixed(0)}%_n${hist.n}`,
+              })
+              blocked = true
+            } else if (hist.n >= 3) {
+              alert.winPct = Math.round(
+                Math.min(
+                  78,
+                  Math.max(42, hist.wr * 0.7 + (alert.winPct ?? 50) * 0.3)
+                )
+              )
+              alert.text = [
+                alert.text,
+                `Hist WR ${hist.wr.toFixed(0)}% (n=${hist.n}) · rank hunt high-WR`,
+              ].join('\n')
+            }
+          }
+        }
+        if (!blocked) {
+          candidates.push(alert)
+          pushed = true
+        }
+      } else {
+        rejects.push({ symbol: coin.symbol, reason: 'no_limit' })
+      }
+    } else {
       rejects.push({ symbol: coin.symbol, reason: gate.reason })
-      continue
-    }
-    const alert = toAlert(
-      coin.symbol,
-      read.event,
-      coin.dayBias,
-      coin.chg24hPct
-    )
-    if (!alert.tradePlan || !(alert.tradePlan.signalPrice > 0)) {
-      rejects.push({ symbol: coin.symbol, reason: 'no_limit' })
-      continue
     }
 
-    const setup = alert.tradePlan.setup
-    if (gates) {
-      const ag = allowSetupByGates(gates, setup, alert.score, 'MEME')
-      if (!ag.ok) {
-        rejects.push({
-          symbol: coin.symbol,
-          reason: ag.reason ?? 'gates',
-        })
-        continue
-      }
-      const hist = setupHistoricalWr(gates, setup)
-      // Known losers (n≥3, WR<30) — skip unless CONT_BOOK_RELEASE override
-      if (
-        hist.n >= 3 &&
-        hist.wr < 30 &&
-        setup !== 'CONT_BOOK_RELEASE'
-      ) {
-        rejects.push({
-          symbol: coin.symbol,
-          reason: `low_hist_wr:${hist.wr.toFixed(0)}%_n${hist.n}`,
-        })
-        continue
-      }
-    }
-
-    // Annotate winPct from journal when available
-    if (gates) {
-      const hist = setupHistoricalWr(gates, setup)
-      if (hist.n >= 3) {
-        alert.winPct = Math.round(
-          Math.min(78, Math.max(42, hist.wr * 0.7 + (alert.winPct ?? 50) * 0.3))
+    // Peak fuel-fail SHORT: pump near local high without fuel
+    const bookHintsPeak =
+      read.event.kind === 'ABSORPTION_SHORT' ||
+      (read.event.kind === 'CVD_DIVERGENCE' && read.event.side === 'SHORT') ||
+      gate.reason === 'against_pump_day'
+    const wantPeakCheck =
+      !pushed &&
+      price > 0 &&
+      (coin.dayBias === 'PUMP' || coin.chg24hPct >= 8) &&
+      (bookHintsPeak || coin.chg24hPct >= 12)
+    if (wantPeakCheck) {
+      const candles = await fetchMin1Candles(coin.symbol, 40)
+      const ev = read.event
+      const peak = detectPeakFuelFail({
+        symbol: coin.symbol,
+        price,
+        chg24hPct: coin.chg24hPct,
+        dayBias: coin.dayBias,
+        holdVol,
+        prevHoldVol: prevHold,
+        candles1m: candles,
+        buyFlowPct:
+          ev.side === 'SHORT'
+            ? ev.flowSharePct
+            : ev.side === 'LONG'
+              ? 100 - ev.flowSharePct
+              : null,
+        priceMoveBps: ev.priceMoveBps,
+        absorptionShort:
+          ev.kind === 'ABSORPTION_SHORT' ||
+          (ev.mmPattern === 'ABSORPTION' && ev.side === 'SHORT'),
+        cvdBearish:
+          ev.kind === 'CVD_DIVERGENCE' && ev.side === 'SHORT',
+      })
+      if (peak?.ready) {
+        const alert = peakFailToAlert(
+          coin.symbol,
+          peak,
+          coin.dayBias,
+          coin.chg24hPct
         )
-        alert.text = [
-          alert.text,
-          `Hist WR ${hist.wr.toFixed(0)}% (n=${hist.n}) · rank hunt high-WR`,
-        ].join('\n')
+        if (gates) {
+          const ag = allowSetupByGates(
+            gates,
+            'PEAK_FUEL_FAIL',
+            alert.score,
+            'MEME'
+          )
+          if (!ag.ok) {
+            rejects.push({
+              symbol: coin.symbol,
+              reason: ag.reason ?? 'gates_peak',
+            })
+          } else {
+            candidates.push(alert)
+          }
+        } else {
+          candidates.push(alert)
+        }
       }
     }
-
-    candidates.push(alert)
   }
 
   await saveBookState(opts.kv, state)
