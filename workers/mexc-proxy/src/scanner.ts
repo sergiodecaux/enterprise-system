@@ -2121,52 +2121,22 @@ export async function runMarketScan(
       }
       const side = orderFlow.side
       const dayBias = biasForSymbol(hotWatchlist, t.symbol)
-      // Cascade may fade an overextended pump; other patterns stay WITH day.
-      // PEAK_FUEL_FAIL: ABSORPTION/CVD SHORT on pump day when tape doesn't lift price.
       const isCascade = orderFlow.kind.startsWith('LIQ_CASCADE')
-      const isMm =
-        orderFlow.kind.startsWith('ABSORPTION') ||
-        orderFlow.kind.startsWith('SPOOF_SWEEP') ||
-        orderFlow.kind === 'CVD_DIVERGENCE' ||
-        isCascade
+      // v27: meme MM join = PEAK_FUEL_FAIL only (no CONT / TRAP longs)
       const peakFuelFade =
-        dayBias === 'PUMP' &&
+        (dayBias === 'PUMP' || (t.riseFallRate ?? 0) * 100 >= 6) &&
         side === 'SHORT' &&
         (orderFlow.kind.startsWith('ABSORPTION') ||
           orderFlow.kind === 'CVD_DIVERGENCE') &&
         (Math.abs(orderFlow.priceMoveBps) <= 14 ||
           orderFlow.flowSharePct >= 55)
-      // TRAP_FLIP longs on pump day: journal ~10% WR — skip
-      if (
-        dayBias === 'PUMP' &&
-        side === 'LONG' &&
-        orderFlow.kind.startsWith('TRAP_FLIP')
-      ) {
+      if (!peakFuelFade && !isCascade) {
         return
       }
-      if (!isMm) {
-        // Classic release/pressure fallback — still WITH day bias.
-        if (dayBias === 'PUMP' && side !== 'LONG') return
-        if (dayBias === 'DUMP' && side !== 'SHORT') return
-        if (
-          orderFlow.flowSharePct < 66 ||
-          Math.abs(orderFlow.priceMoveBps) < 8
-        ) {
-          return
-        }
-      } else if (!isCascade && !peakFuelFade) {
-        if (dayBias === 'PUMP' && side !== 'LONG') return
-        if (dayBias === 'DUMP' && side !== 'SHORT') return
-      }
+      if (side === 'LONG') return
       const setup = peakFuelFade
         ? 'PEAK_FUEL_FAIL'
-        : orderFlow.mmPattern
-          ? orderFlow.mmPattern
-          : orderFlow.kind.endsWith('_REMOVED')
-            ? 'BOOK_RELEASE'
-            : orderFlow.kind.includes('_WALL_')
-              ? 'BOOK_PRESSURE'
-              : 'ORDER_FLOW'
+        : orderFlow.mmPattern || 'LIQ_CASCADE'
       const dayTag =
         dayBias === 'PUMP'
           ? 'дневной памп'

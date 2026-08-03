@@ -1522,7 +1522,7 @@ async function runCronScan(
             (t.status === 'OPEN' || t.status === 'WAITING')
         )
         .map((t) => t.symbol)
-      // Causality lab: order-flow MM join — TOP-18 scan, emit by hist WR
+      // Causality lab: PEAK_FUEL_FAIL only — all predator capacity on pump fades
       const gates = await getAdaptiveGates(env)
       const flow = await runMemeOrderFlowScan({ kv, pinSymbols, gates })
       predatorHotlist = flow.watchlist.entries.map((e) => e.symbol)
@@ -1531,9 +1531,9 @@ async function runCronScan(
         await deliver(a)
       }
       if (!flow.alerts.length) {
-        predatorSkip = flow.skipped || flow.watchlist.reason || 'no_flow'
+        predatorSkip = flow.skipped || flow.watchlist.reason || 'no_peak'
         console.log(
-          '[cron] meme-flow skip:',
+          '[cron] peak-fuel skip:',
           predatorSkip,
           'scanned',
           memeScanned,
@@ -1545,7 +1545,7 @@ async function runCronScan(
         )
       } else {
         console.log(
-          '[cron] meme-flow alerts',
+          '[cron] peak-fuel alerts',
           flow.alerts.map((a) => `${a.tradePlan?.symbol}:${a.tradePlan?.setup}`),
           'scanned',
           memeScanned,

@@ -93,7 +93,8 @@ function lowerHighStructure(candles: Candle[]): boolean {
 }
 
 /**
- * Detect exhausted pump peak → SHORT scalp.
+ * Soften slightly for peak-only mode: allow structure+failed break without
+ * full absorption when 24h pump is strong (>=12%).
  */
 export function detectPeakFuelFail(
   input: PeakFuelFailInput
@@ -165,12 +166,13 @@ export function detectPeakFuelFail(
   if (lh) notes.push('Lower high структура')
 
   // Need enough fuel-fail evidence
+  const strongPump = input.chg24hPct >= 12
   if (fuelScore < 2 && !(input.absorptionShort && technicalPeak)) {
-    return null
+    if (!(strongPump && failed && wick)) return null
   }
   if (fuelScore < 2 && !input.absorptionShort && !input.cvdBearish) {
-    // Structure alone on strong pump without fuel metric — skip
-    if (!(failed && wick)) return null
+    // Structure alone: only on strong pumps with failed break + wick
+    if (!(failed && wick && (strongPump || input.chg24hPct >= 8))) return null
   }
 
   let confidence = 72 + fuelScore * 4

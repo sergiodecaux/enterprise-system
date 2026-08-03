@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-day-continue-v26.4',
-  label: 'MEME: Day Continue WR-hunt',
+  id: 'meme-peak-fuel-v27',
+  label: 'MEME: PEAK_FUEL_FAIL only',
   deployedNote:
-    'v26.4: TOP-18 WR-hunt · всегда в журнал Lab · Predator only (не Elite).',
+    'v27: весь predator на PEAK_FUEL_FAIL (шорт с пика без топлива). CONT/TRAP выкл.',
 } as const
 
 /**
