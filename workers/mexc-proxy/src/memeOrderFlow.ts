@@ -16,7 +16,7 @@ import {
   type OrderBookSnapshot,
 } from './orderBookReader'
 import {
-  allowSetupByGates,
+  setupHistoricalWr,
   type BotAdaptiveGates,
 } from './botJournal'
 import { detectPeakFuelFail, type Candle } from './peakFuelFail'
@@ -25,8 +25,8 @@ const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 /** Cover full hotlist — peak hunt needs breadth */
 const MAX_SCAN = 18
-/** Quality over spam */
-const MAX_ALERTS = 3
+/** More alerts per tick — was missing live peaks */
+const MAX_ALERTS = 5
 /** Only emit PEAK_FUEL_FAIL */
 const PEAK_ONLY = true
 
@@ -145,9 +145,9 @@ function peakFailToAlert(
       ...sig.notes,
       'v27: весь predator на PEAK_FUEL_FAIL',
     ].join('\n'),
-    dedupeKey: `cron:mof27:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e6)}`,
+    dedupeKey: `cron:mof27:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
     score: sig.confidence,
-    winPct: Math.min(72, 50 + (sig.confidence - 78)),
+    winPct: Math.min(74, Math.max(48, 45 + (sig.confidence - 70))),
     style: 'SCALP',
     align: 'COUNTER',
     tradePlan: {
@@ -270,31 +270,54 @@ export async function runMemeOrderFlowScan(opts: {
       tickerRow?.holdVol != null ? Number(tickerRow.holdVol) : null
     const price = Number(tickerRow?.lastPrice ?? 0)
 
-    const isPump = coin.dayBias === 'PUMP' || coin.chg24hPct >= 6
+    const isPump = coin.dayBias === 'PUMP' || coin.chg24hPct >= 4
     if (!isPump) {
       rejects.push({ symbol: coin.symbol, reason: 'not_pump_skip' })
       continue
     }
 
-    const read = await readOrderBookEvent({
-      symbol: coin.symbol,
-      previous: prev,
-      older,
-      allowLiveSequence: true,
-      dayBias: coin.dayBias,
-      chg24hPct: coin.chg24hPct,
-      mexcJson,
-    })
-    if (read.snapshot) {
-      state[coin.symbol] = {
-        older: prev,
-        previous: read.snapshot,
-        holdVol: holdVol ?? prevHold,
+    // Book optional — peak structure from candles is enough
+    let evSide: 'LONG' | 'SHORT' | null = null
+    let evKind = ''
+    let evFlow = 50
+    let evMove = 0
+    let evMm: string | null = null
+    let evReady = false
+    try {
+      const read = await readOrderBookEvent({
+        symbol: coin.symbol,
+        previous: prev,
+        older,
+        allowLiveSequence: true,
+        dayBias: coin.dayBias,
+        chg24hPct: coin.chg24hPct,
+        mexcJson,
+      })
+      if (read.snapshot) {
+        state[coin.symbol] = {
+          older: prev,
+          previous: read.snapshot,
+          holdVol: holdVol ?? prevHold,
+        }
+      } else if (holdVol != null) {
+        state[coin.symbol] = {
+          ...(state[coin.symbol] ?? {}),
+          holdVol,
+        }
       }
-    } else if (holdVol != null) {
-      state[coin.symbol] = {
-        ...(state[coin.symbol] ?? {}),
-        holdVol,
+      const ev = read.event
+      evReady = ev.ready
+      evSide = ev.side
+      evKind = ev.kind
+      evFlow = ev.flowSharePct
+      evMove = ev.priceMoveBps
+      evMm = ev.mmPattern ?? null
+    } catch {
+      if (holdVol != null) {
+        state[coin.symbol] = {
+          ...(state[coin.symbol] ?? {}),
+          holdVol,
+        }
       }
     }
 
@@ -303,8 +326,7 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
 
-    const candles = await fetchMin1Candles(coin.symbol, 50)
-    const ev = read.event
+    const candles = await fetchMin1Candles(coin.symbol, 60)
     const peak = detectPeakFuelFail({
       symbol: coin.symbol,
       price,
@@ -314,27 +336,25 @@ export async function runMemeOrderFlowScan(opts: {
       prevHoldVol: prevHold,
       candles1m: candles,
       buyFlowPct:
-        ev.side === 'SHORT'
-          ? ev.flowSharePct
-          : ev.side === 'LONG'
-            ? Math.max(0, 100 - ev.flowSharePct)
-            : ev.ready
+        evSide === 'SHORT'
+          ? evFlow
+          : evSide === 'LONG'
+            ? Math.max(0, 100 - evFlow)
+            : evReady
               ? 55
-              : null,
-      priceMoveBps: ev.priceMoveBps,
+              : 58,
+      priceMoveBps: evReady ? evMove : 0,
       absorptionShort:
-        ev.kind === 'ABSORPTION_SHORT' ||
-        (ev.mmPattern === 'ABSORPTION' && ev.side === 'SHORT') ||
-        (ev.ready &&
-          ev.side === 'SHORT' &&
-          Math.abs(ev.priceMoveBps) <= 12),
-      cvdBearish: ev.kind === 'CVD_DIVERGENCE' && ev.side === 'SHORT',
+        evKind === 'ABSORPTION_SHORT' ||
+        (evMm === 'ABSORPTION' && evSide === 'SHORT') ||
+        (evReady && evSide === 'SHORT' && Math.abs(evMove) <= 16),
+      cvdBearish: evKind === 'CVD_DIVERGENCE' && evSide === 'SHORT',
     })
 
     if (!peak?.ready) {
       rejects.push({
         symbol: coin.symbol,
-        reason: ev.ready ? `no_peak:${ev.kind}` : 'no_peak_structure',
+        reason: evReady ? `no_peak:${evKind}` : 'no_peak_structure',
       })
       continue
     }
@@ -346,16 +366,11 @@ export async function runMemeOrderFlowScan(opts: {
       coin.chg24hPct
     )
     if (gates) {
-      const ag = allowSetupByGates(
-        gates,
-        'PEAK_FUEL_FAIL',
-        alert.score,
-        'MEME'
-      )
-      if (!ag.ok) {
+      const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
+      if (hist.n >= 8 && hist.wr < 28) {
         rejects.push({
           symbol: coin.symbol,
-          reason: ag.reason ?? 'gates_peak',
+          reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
         })
         continue
       }

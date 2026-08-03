@@ -806,8 +806,8 @@ async function assertAlertAuth(
 
 /** Dedup + send to subscribers of the matching Telegram bot */
 function dedupeTtlMs(type: AlertPayload['type']): number {
-  if (type === 'MEME') return 900_000
-  if (type === 'SETUP_WATCH') return 6 * 3600_000 // READY/INVALIDATED stick
+  if (type === 'MEME') return 480_000 // 8m — peak fades re-fire faster
+  if (type === 'SETUP_WATCH') return 6 * 3600_000
   return 3600_000
 }
 

@@ -6,12 +6,12 @@
 const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v1'
 /** Rebuild order more often so new hot names enter the top */
 const REFRESH_MS = 12 * 60_000
-const MAX_PUMPS = 10
-const MAX_DUMPS = 10
-/** Full top cover — was 8, many liquid memes never scanned */
-const MAX_TOTAL = 18
-const MIN_ABS_CHG_PCT = 4
-const MIN_QUOTE_VOL = 120_000
+const MAX_PUMPS = 14
+const MAX_DUMPS = 6
+/** Full top cover — peak-only needs more pumps */
+const MAX_TOTAL = 20
+const MIN_ABS_CHG_PCT = 3
+const MIN_QUOTE_VOL = 100_000
 
 export type DayBias = 'PUMP' | 'DUMP'
 
