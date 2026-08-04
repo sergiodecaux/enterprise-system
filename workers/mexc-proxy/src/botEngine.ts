@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-peak-fuel-v27.1',
-  label: 'MEME: PEAK_FUEL_FAIL only',
+  id: 'meme-peak-fuel-v27.8',
+  label: 'MEME: PEAK clear levels',
   deployedNote:
-    'v27.1: peak-only · мягче пороги · до 5 алертов/тик · dedupe 8м.',
+    'v27.8: в сигнале чёткие цены Открытие / SL / TP1 / TP · scan 14 / book 5.',
 } as const
 
 /**

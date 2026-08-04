@@ -166,6 +166,10 @@ export interface TradePlanPayload {
   vanePath?: 'HOLD' | 'FLIP'
   vaneTier?: 'TIER1' | 'TIER2'
   vaneScore?: number
+  /** Why signal fired — journal / autopsy */
+  entryReasons?: string[]
+  entryNotes?: string
+  qualityTier?: 'A' | 'B'
 }
 
 export interface ScanAlert {
@@ -2121,8 +2125,7 @@ export async function runMarketScan(
       }
       const side = orderFlow.side
       const dayBias = biasForSymbol(hotWatchlist, t.symbol)
-      const isCascade = orderFlow.kind.startsWith('LIQ_CASCADE')
-      // v27: meme MM join = PEAK_FUEL_FAIL only (no CONT / TRAP longs)
+      // v27.3: meme join = PEAK_FUEL_FAIL SHORT only (no cascade / spoof / longs)
       const peakFuelFade =
         (dayBias === 'PUMP' || (t.riseFallRate ?? 0) * 100 >= 6) &&
         side === 'SHORT' &&
@@ -2130,13 +2133,11 @@ export async function runMarketScan(
           orderFlow.kind === 'CVD_DIVERGENCE') &&
         (Math.abs(orderFlow.priceMoveBps) <= 14 ||
           orderFlow.flowSharePct >= 55)
-      if (!peakFuelFade && !isCascade) {
+      if (!peakFuelFade) {
         return
       }
       if (side === 'LONG') return
-      const setup = peakFuelFade
-        ? 'PEAK_FUEL_FAIL'
-        : orderFlow.mmPattern || 'LIQ_CASCADE'
+      const setup = 'PEAK_FUEL_FAIL'
       const dayTag =
         dayBias === 'PUMP'
           ? 'дневной памп'
@@ -2152,21 +2153,19 @@ export async function runMarketScan(
             ? `${dayTag} · PEAK_FUEL_FAIL · SHORT с пика (нет топлива)`
             : `${dayTag} · ${setup} · ${side}`,
           `Limit-chase (post-only) @ ${orderFlow.wallPrice ?? price}`,
-          peakFuelFade
-            ? `SL~1% / TP~1.8% · скальп с выдыхания пампа`
-            : `SL~0.8% / TP~2% · join MM, не против стены`,
+          `SL~1% / TP~1.8% · fuel fade с пика`,
           ...orderFlow.notes.slice(0, 3),
         ].join('\n'),
         [
-          '#MEME #MM',
+          '#MEME #PEAK',
           dayBias === 'PUMP' ? '#PUMPDAY' : '#DUMPDAY',
           `#${setup}`,
           ...orderFlow.notes,
         ],
         'MEME',
-        `cron:${setup.toLowerCase()}:${t.symbol}:${side}:${Math.round((orderFlow.wallPrice ?? price) * 1e6)}`,
+        `cron:peak_fuel_fail:${t.symbol}:SHORT:${Math.round((orderFlow.wallPrice ?? price) * 1e6)}`,
         'SCALP',
-        isCascade || peakFuelFade ? 'COUNTER' : 'WITH_TREND'
+        'COUNTER'
       )
       return
     }

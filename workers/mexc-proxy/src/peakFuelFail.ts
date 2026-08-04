@@ -1,8 +1,8 @@
 /**
  * PEAK_FUEL_FAIL — small SHORT when a pump-day meme stalls at a local high
- * without open-interest / tape fuel to continue.
+ * without fuel to continue.
  *
- * v27.1: looser gates — was missing too many live peaks.
+ * v27.6: loss autopsy — cut stall/failed-alone entries; tighter PEAK exits.
  */
 
 export type Candle = [number, number, number, number, number, number]
@@ -21,24 +21,42 @@ export interface PeakFuelFailInput {
   cvdBearish?: boolean
 }
 
+export type PeakQuality = 'A' | 'B'
+
 export interface PeakFuelFailSignal {
   ready: boolean
   side: 'SHORT'
   setup: 'PEAK_FUEL_FAIL'
   confidence: number
+  /** A = TG+paper+journal; B = decision log only */
+  quality: PeakQuality
+  fuelScore: number
+  distToHighPct: number
   limitPrice: number
   sl: number
   tp: number
   tp1: number
   notes: string[]
+  reasons: string[]
 }
 
 const SL_PCT = 0.01
 const TP_PCT = 0.018
 const TP1_PCT = 0.011
-/** How far under local high still counts as "at peak" */
 const PEAK_DIST_PCT = 1.8
 const MIN_CHG_24H = 4
+/**
+ * A after loss autopsy:
+ * - 74% losses were give-back after MFE → fix exits (paper), not only entries
+ * - stall without wick toxic → demote
+ * - mega-pumps (≥25%) need absorb/tape or stay B
+ * - keep classic structure breadth so we don't starve entries
+ */
+const A_MIN_CHG = 4
+const A_MAX_DIST = 1.25
+const A_MIN_CONF = 72
+const A_MIN_FUEL = 2
+const MEGA_PUMP_CHG = 25
 
 function recentHigh(candles: Candle[], bars = 40): number {
   const w = candles.slice(-bars)
@@ -49,7 +67,6 @@ function recentHigh(candles: Candle[], bars = 40): number {
 
 function failedBreakHigher(candles: Candle[]): boolean {
   if (candles.length < 6) return false
-  // Check last 3 closed bars for failed break
   const closed = candles.slice(0, -1)
   for (let k = 0; k < 3; k++) {
     const last = closed[closed.length - 1 - k]
@@ -65,7 +82,6 @@ function failedBreakHigher(candles: Candle[]): boolean {
 }
 
 function rejectionWick(candles: Candle[]): boolean {
-  // Last or previous candle
   for (const c of [candles[candles.length - 1], candles[candles.length - 2]]) {
     if (!c) continue
     const [, o, h, l, cl] = c
@@ -98,7 +114,6 @@ function lowerHighStructure(candles: Candle[]): boolean {
   return swings[swings.length - 1]! <= swings[swings.length - 2]! * 1.0005
 }
 
-/** Price hugging local high, last bars not extending — classic stall */
 function stallAtHigh(candles: Candle[], price: number, hi: number): boolean {
   if (!(hi > 0) || candles.length < 6) return false
   const distPct = ((hi - price) / hi) * 100
@@ -108,13 +123,9 @@ function stallAtHigh(candles: Candle[], price: number, hi: number): boolean {
   const maxClose = Math.max(...last3.map((c) => c[4]))
   const minClose = Math.min(...last3.map((c) => c[4]))
   const chopPct = ((maxClose - minClose) / price) * 100
-  // Chop under the high without clean breakout
   return chopPct <= 0.9 && maxClose <= hi * 1.0015
 }
 
-/**
- * Detect exhausted pump peak → SHORT scalp (permissive for live coverage).
- */
 export function detectPeakFuelFail(
   input: PeakFuelFailInput
 ): PeakFuelFailSignal | null {
@@ -139,6 +150,8 @@ export function detectPeakFuelFail(
 
   let fuelScore = 0
   const notes: string[] = []
+  const reasons: string[] = []
+  let oiRising = false
 
   const hv = input.holdVol
   const prev = input.prevHoldVol
@@ -147,17 +160,24 @@ export function detectPeakFuelFail(
     if (oiChg <= 0.25) {
       fuelScore += 2
       notes.push(`OI без топлива (${oiChg >= 0 ? '+' : ''}${oiChg.toFixed(2)}%)`)
+      reasons.push(`oi_flat:${oiChg.toFixed(2)}`)
     } else if (oiChg < 0.9) {
       fuelScore += 1
       notes.push(`OI слабый +${oiChg.toFixed(2)}%`)
+      reasons.push(`oi_weak:${oiChg.toFixed(2)}`)
+    } else {
+      oiRising = true
+      reasons.push(`oi_rising:${oiChg.toFixed(2)}`)
     }
   } else {
-    // No OI series yet — give structure a chance
+    // Classic: unknown OI still allows structure-based fades (live often has no ΔOI)
     fuelScore += 1
+    reasons.push('oi_unknown')
   }
 
   const buyFlow = input.buyFlowPct
   const moveBps = input.priceMoveBps
+  let tapeStall = false
   if (
     buyFlow != null &&
     moveBps != null &&
@@ -165,29 +185,47 @@ export function detectPeakFuelFail(
     Math.abs(moveBps) <= 18
   ) {
     fuelScore += 2
+    tapeStall = true
     notes.push(
       `Покупки ${buyFlow.toFixed(0)}% не двигают цену (${moveBps.toFixed(0)}bps)`
     )
+    reasons.push(`tape_stall:buy${buyFlow.toFixed(0)}_bps${moveBps.toFixed(0)}`)
   } else if (moveBps != null && Math.abs(moveBps) <= 8 && distPct <= 0.8) {
     fuelScore += 1
     notes.push(`Цена стоит у хая (${moveBps.toFixed(0)}bps)`)
+    reasons.push(`price_stall:${moveBps.toFixed(0)}bps`)
   }
 
   if (input.absorptionShort) {
     fuelScore += 2
     notes.push('Ask-стена поглощает покупки')
+    reasons.push('ask_absorption')
   }
   if (input.cvdBearish) {
     fuelScore += 1
     notes.push('CVD медвежья дивергенция')
+    reasons.push('cvd_bearish')
   }
 
-  if (failed) notes.push('Failed break выше локального хая')
-  if (wick) notes.push('Rejection wick у пика')
-  if (lh) notes.push('Lower high структура')
-  if (stall) notes.push('Застой под хаем')
+  if (failed) {
+    notes.push('Failed break выше локального хая')
+    reasons.push('failed_break')
+  }
+  if (wick) {
+    notes.push('Rejection wick у пика')
+    reasons.push('rejection_wick')
+  }
+  if (lh) {
+    notes.push('Lower high структура')
+    reasons.push('lower_high')
+  }
+  if (stall) {
+    notes.push('Застой под хаем')
+    reasons.push('stall_at_high')
+  }
+  reasons.push(`dist_high:${distPct.toFixed(2)}`)
+  reasons.push(`chg24:${input.chg24hPct.toFixed(1)}`)
 
-  // Permissive: structure at peak + any fuel hint OR strong pump alone
   const strongPump = input.chg24hPct >= 8
   if (fuelScore < 1 && !input.absorptionShort) {
     if (!(strongPump && (failed || wick || stall))) return null
@@ -199,9 +237,34 @@ export function detectPeakFuelFail(
   if (input.chg24hPct >= 12) confidence += 3
   if (distPct <= 0.5) confidence += 3
   if (stall && fuelScore >= 2) confidence += 2
-  confidence = Math.min(94, Math.round(confidence))
+  if (oiRising) confidence -= 8
+  confidence = Math.min(94, Math.max(0, Math.round(confidence)))
 
   if (confidence < 70) return null
+
+  // Autopsy: ban stall-led; mega-pump needs flow confirm; else classic structure
+  const stallOnly = stall && !failed && !wick && !lh
+  const stallLed = stall && !wick && !failed
+  const flowConfirm =
+    tapeStall || input.absorptionShort || input.cvdBearish
+  const structureOk =
+    failed || wick || lh || input.absorptionShort || input.cvdBearish || tapeStall
+  const megaPump = input.chg24hPct >= MEGA_PUMP_CHG
+  const aTier =
+    confidence >= A_MIN_CONF &&
+    fuelScore >= A_MIN_FUEL &&
+    distPct <= A_MAX_DIST &&
+    input.chg24hPct >= A_MIN_CHG &&
+    !stallOnly &&
+    !stallLed &&
+    structureOk &&
+    !oiRising &&
+    (!megaPump || flowConfirm)
+
+  const quality: PeakQuality = aTier ? 'A' : 'B'
+  reasons.push(`quality:${quality}`)
+  reasons.push(`fuel:${fuelScore}`)
+  reasons.push(`conf:${confidence}`)
 
   const limit = Math.max(price, hi * 0.997)
   return {
@@ -209,16 +272,19 @@ export function detectPeakFuelFail(
     side: 'SHORT',
     setup: 'PEAK_FUEL_FAIL',
     confidence,
+    quality,
+    fuelScore,
+    distToHighPct: distPct,
     limitPrice: limit,
     sl: limit * (1 + SL_PCT),
     tp: limit * (1 - TP_PCT),
     tp1: limit * (1 - TP1_PCT),
     notes: [
-      `Пик без топлива · SHORT скальп`,
-      `24h ${input.chg24hPct >= 0 ? '+' : ''}${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}%`,
+      `Пик без топлива · SHORT · уверенный вход`,
+      `24h ${input.chg24hPct >= 0 ? '+' : ''}${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}% · conf ${confidence}`,
       ...notes.slice(0, 4),
-      `SL~${(SL_PCT * 100).toFixed(1)}% · TP1~${(TP1_PCT * 100).toFixed(1)}% · TP~${(TP_PCT * 100).toFixed(1)}%`,
     ],
+    reasons,
   }
 }
 
@@ -229,9 +295,6 @@ export function isPeakFuelFailBookHint(opts: {
   priceMoveBps: number
   flowSharePct: number
 }): boolean {
-  if (opts.dayBias !== 'PUMP' && opts.dayBias != null) {
-    // still allow if short absorption
-  }
   if (opts.side !== 'SHORT') return false
   const abs =
     opts.kind.startsWith('ABSORPTION') || opts.kind === 'CVD_DIVERGENCE'

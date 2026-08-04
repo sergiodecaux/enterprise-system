@@ -760,8 +760,63 @@ async function handleTelegram(
   }
 
   if (path === '/telegram/journal' && request.method === 'GET') {
+    const url = new URL(request.url)
+    const peak = url.searchParams.get('peak') === '1'
+    const archive = url.searchParams.get('archive') === '1'
+    const detail = url.searchParams.get('detail') === '1'
+    const setup = url.searchParams.get('setup') || undefined
+    const format = url.searchParams.get('format')
+    const limit = Number(url.searchParams.get('limit') || 400)
+
+    if (detail || archive || setup || format === 'csv') {
+      const {
+        getJournalAnalysisDump,
+        journalToCsv,
+      } = await import('./botJournal')
+      const dump = await getJournalAnalysisDump(env, {
+        setup,
+        limit: Number.isFinite(limit) ? limit : 400,
+        includeArchive: true,
+      })
+      if (peak) {
+        const {
+          listPeakDecisions,
+          summarizePeakDecisions,
+        } = await import('./peakDecisionLog')
+        const decisions = await listPeakDecisions(env.SUBSCRIBERS, 200)
+        dump.peakDecisions = decisions
+        dump.peakSummary = summarizePeakDecisions(decisions)
+      }
+      if (format === 'csv') {
+        const csv = journalToCsv(dump.merged)
+        return new Response(csv, {
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition':
+              'attachment; filename="bot-journal-export.csv"',
+          },
+        })
+      }
+      return json({
+        ok: true,
+        ...dump,
+        archiveCount: dump.archive.length,
+      })
+    }
+
     const payload = await getBotJournalPayload(env)
-    return json({ ok: true, ...payload })
+    if (!peak) return json({ ok: true, ...payload })
+    const {
+      listPeakDecisions,
+      summarizePeakDecisions,
+    } = await import('./peakDecisionLog')
+    const decisions = await listPeakDecisions(env.SUBSCRIBERS, 120)
+    return json({
+      ok: true,
+      ...payload,
+      peakDecisions: decisions,
+      peakSummary: summarizePeakDecisions(decisions),
+    })
   }
 
   void ctx
@@ -1294,6 +1349,25 @@ async function runCronScan(
 
   const deliver = async (a: ScanAlert) => {
     if (seenDedup.has(a.dedupeKey)) return
+    // Hard gate: meme channel = PEAK_FUEL_FAIL SHORT A-tier only
+    if (a.type === 'MEME') {
+      const plan = a.tradePlan
+      if (
+        !plan ||
+        plan.setup !== 'PEAK_FUEL_FAIL' ||
+        plan.side !== 'SHORT' ||
+        plan.qualityTier !== 'A'
+      ) {
+        skipped++
+        console.log(
+          '[cron] meme blocked non-peak',
+          plan?.setup ?? 'no_plan',
+          plan?.side,
+          plan?.qualityTier
+        )
+        return
+      }
+    }
     seenDedup.add(a.dedupeKey)
     allAlerts.push(a)
 
@@ -1311,8 +1385,11 @@ async function runCronScan(
         })
         if (paper.created && paper.comment) {
           title = paper.comment.title
-          // Keep echo details (wave/fade/wall) under the companion header
-          text = [paper.comment.text, '', a.text].filter(Boolean).join('\n')
+          // PEAK: paper already has clear open/SL/TP — don't duplicate a.text levels
+          text =
+            a.tradePlan?.setup === 'PEAK_FUEL_FAIL'
+              ? paper.comment.text
+              : [paper.comment.text, '', a.text].filter(Boolean).join('\n')
           dedupeKey = paper.comment.dedupeKey
         } else {
           skipped++
@@ -1331,12 +1408,19 @@ async function runCronScan(
             ].join('\n')
           }
         }
-        // Always journal — Lab WR must not depend on paper companion success
+        // Always journal — detailed entry for later analysis
         const logged = await recordBotAlert(env, {
           alertType: 'MEME',
           score: a.score,
           dedupeKey: a.dedupeKey,
-          plan: a.tradePlan,
+          plan: {
+            ...a.tradePlan,
+            engineId: BOT_ENGINE.id,
+            paperId: paper.created
+              ? paper.comment?.dedupeKey?.replace(/^paper:fill:/, '') ||
+                undefined
+              : undefined,
+          },
         })
         if (logged) journalLogged++
       }
@@ -1423,9 +1507,13 @@ async function runCronScan(
   const runPaper = async () => {
     try {
       const comments = await monitorPaperTrades(env)
-      let tgBudget = 4
+      let tgBudget = 6
       for (const c of comments) {
         if (tgBudget <= 0) break
+        // Meme companion TG: PEAK only — missing setup = orphan/old paper → mute
+        if ((c.route ?? 'meme') === 'meme' && c.setup !== 'PEAK_FUEL_FAIL') {
+          continue
+        }
         const cr = await broadcastAlert(env, {
           type: 'SYSTEM',
           channel: c.route ?? 'meme',
@@ -1445,7 +1533,7 @@ async function runCronScan(
     try {
       const resolution = await resolveBotJournal(env)
       journalResolved = resolution.changed
-      let tgBudget = 3
+      let tgBudget = 5
       for (const outcome of resolution.outcomes) {
         if (outcome.status === 'INVALIDATED') continue
         // Elite: skip quiet TIMEOUT/BE noise — only WIN/LOSS results
@@ -1455,6 +1543,11 @@ async function runCronScan(
           outcome.status !== 'LOSS'
         ) {
           continue
+        }
+        // Meme TG: only PEAK WIN/LOSS — no orphan TIMEOUT/BE, no old setups
+        if (outcome.alertType === 'MEME') {
+          if (outcome.setup !== 'PEAK_FUEL_FAIL') continue
+          if (outcome.status !== 'WIN' && outcome.status !== 'LOSS') continue
         }
         if (tgBudget <= 0) break
         const icon =
@@ -1486,16 +1579,23 @@ async function runCronScan(
             : []
         const resultTitle = `${icon} Результат ${outcome.displayName} · ${outcome.status}`
         const resultText = [
-          `${outcome.side} · ${outcome.setup}`,
+          `${outcome.side} · ${outcome.setup}${
+            outcome.qualityTier ? ` · Q${outcome.qualityTier}` : ''
+          }`,
           `Вход ${outcome.entryPrice} → выход ${outcome.exitPrice ?? '—'}`,
           `Результат: ${outcome.status}${
             outcome.pnlPercent != null
               ? ` · ${outcome.pnlPercent >= 0 ? '+' : ''}${outcome.pnlPercent.toFixed(2)}%`
               : ''
           }`,
+          outcome.entryReasons?.length
+            ? `Причины входа: ${outcome.entryReasons.slice(0, 8).join(' · ')}`
+            : null,
           `MFE +${outcome.mfePercent.toFixed(2)}% · MAE −${outcome.maePercent.toFixed(2)}%`,
           ...autopsy,
-        ].join('\n')
+        ]
+          .filter(Boolean)
+          .join('\n')
         const r = await broadcastAlert(env, {
           type: 'SYSTEM',
           channel: outcome.alertType === 'SNIPER' ? 'sniper' : 'meme',
@@ -2310,7 +2410,7 @@ async function dispatchCommand(
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: MEME Day Continue v26 (cron */2)`,
+        `Режим: PEAK_FUEL_FAIL A-tier SHORT (cron */2)`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
         hotLine,
@@ -2342,6 +2442,38 @@ async function dispatchCommand(
     const insights = journal.analytics.insights
       .slice(0, 5)
       .map((i) => `· ${i.title}: ${i.detail}`)
+
+    const {
+      listPeakDecisions,
+      summarizePeakDecisions,
+    } = await import('./peakDecisionLog')
+    const { getJournalAnalysisDump } = await import('./botJournal')
+    const peakRows = await listPeakDecisions(env.SUBSCRIBERS, 40)
+    const peakSum = summarizePeakDecisions(peakRows)
+    const dump = await getJournalAnalysisDump(env, {
+      setup: 'PEAK_FUEL_FAIL',
+      limit: 80,
+      includeArchive: true,
+    })
+    const peakLines = peakRows.slice(0, 8).map((r) => {
+      const tag =
+        r.action === 'ALERT'
+          ? r.outcome
+            ? `${r.outcome.status}${
+                r.outcome.pnlPercent != null
+                  ? ` ${r.outcome.pnlPercent >= 0 ? '+' : ''}${r.outcome.pnlPercent.toFixed(1)}%`
+                  : ''
+              }`
+            : 'OPEN'
+          : r.action.replace('SKIP_', 'skip ')
+      return `· ${r.symbol.replace('_USDT', '')} ${tag} · ${(r.reasons ?? []).slice(0, 3).join(',')}`
+    })
+    const closedPeak = dump.merged.filter(
+      (e) => e.status === 'WIN' || e.status === 'LOSS'
+    )
+    const pw = closedPeak.filter((e) => e.status === 'WIN').length
+    const pl = closedPeak.filter((e) => e.status === 'LOSS').length
+
     await tgSend(
       env,
       chatId,
@@ -2350,6 +2482,18 @@ async function dispatchCommand(
         wrBlock,
         insights.length ? `\nИнсайты:\n${insights.join('\n')}` : '',
         `\nПороги: meme≥${journal.gates.minMemeScore} sniper≥${journal.gates.minSniperScore}`,
+        `\n<b>PEAK архив</b> · ${dump.merged.length} записей · W${pw}/L${pl}${
+          pw + pl ? ` · WR ${((100 * pw) / (pw + pl)).toFixed(0)}%` : ''
+        }`,
+        `\n<b>PEAK лог</b> · alert ${peakSum.alerts} (W${peakSum.alertWins}/L${peakSum.alertLosses}) · skip ${peakSum.skips}`,
+        peakLines.length ? peakLines.join('\n') : '· пока пусто',
+        peakSum.topSkipReasons.length
+          ? `Топ skip: ${peakSum.topSkipReasons
+              .slice(0, 4)
+              .map((x) => `${x.reason}×${x.n}`)
+              .join(' · ')}`
+          : '',
+        `\nЭкспорт: <code>/telegram/journal?detail=1&setup=PEAK_FUEL_FAIL&format=csv</code>`,
       ]
         .filter(Boolean)
         .join('\n'),

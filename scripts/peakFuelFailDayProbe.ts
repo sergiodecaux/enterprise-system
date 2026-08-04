@@ -1,7 +1,6 @@
 /**
- * Offline 24h probe for PEAK_FUEL_FAIL on current top pumps.
- * Run: npx tsx scripts/peakFuelFailDayProbe.ts
- * (or node after compile)
+ * Offline probe PEAK A vs B on live MEXC pumps.
+ * npx tsx scripts/peakFuelFailDayProbe.ts
  */
 import {
   detectPeakFuelFail,
@@ -11,7 +10,7 @@ import {
 const MEXC = 'https://contract.mexc.com'
 const SL = 0.01
 const TP = 0.018
-const HOLD_BARS = 45 // ~45 min max hold
+const HOLD_BARS = 45
 
 type Ticker = {
   symbol: string
@@ -24,7 +23,7 @@ type Ticker = {
 async function mexcJson<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${MEXC}${path}`, {
-      headers: { Accept: 'application/json', 'User-Agent': 'PeakProbe/1.0' },
+      headers: { Accept: 'application/json', 'User-Agent': 'PeakProbe/1.1' },
     })
     if (!res.ok) return null
     return (await res.json()) as T
@@ -33,7 +32,7 @@ async function mexcJson<T>(path: string): Promise<T | null> {
   }
 }
 
-async function klines(symbol: string, limit = 300): Promise<Candle[]> {
+async function klines(symbol: string, limit = 360): Promise<Candle[]> {
   const json = await mexcJson<{
     data?: {
       time?: number[]
@@ -64,14 +63,16 @@ function simulateShort(
   candles: Candle[],
   entryIdx: number,
   entry: number
-): 'WIN' | 'LOSS' | 'TIMEOUT' | 'BE' {
+): 'WIN' | 'LOSS' | 'BE' | 'TIMEOUT' {
   const sl = entry * (1 + SL)
   const tp = entry * (1 - TP)
-  for (let i = entryIdx + 1; i < Math.min(candles.length, entryIdx + 1 + HOLD_BARS); i++) {
+  for (
+    let i = entryIdx + 1;
+    i < Math.min(candles.length, entryIdx + 1 + HOLD_BARS);
+    i++
+  ) {
     const h = candles[i]![2]
     const l = candles[i]![3]
-    // conservative: SL first if both in bar
-    if (h >= sl && l <= tp) return 'LOSS'
     if (h >= sl) return 'LOSS'
     if (l <= tp) return 'WIN'
   }
@@ -83,11 +84,35 @@ function simulateShort(
   return pnl > 0 ? 'WIN' : 'LOSS'
 }
 
+type Bucket = { n: number; w: number; l: number; be: number; to: number }
+
+function bump(b: Bucket, o: string) {
+  b.n++
+  if (o === 'WIN') b.w++
+  else if (o === 'LOSS') b.l++
+  else if (o === 'BE') b.be++
+  else b.to++
+}
+
+function wr(b: Bucket) {
+  const d = b.w + b.l
+  return d ? `${((100 * b.w) / d).toFixed(1)}% (n=${d})` : 'n/a'
+}
+
+function exp(b: Bucket) {
+  const d = b.w + b.l
+  if (!d) return null
+  return (b.w / d) * TP * 100 - (b.l / d) * SL * 100
+}
+
 async function main() {
-  const tickersJson = await mexcJson<{ data?: Ticker[] }>('/api/v1/contract/ticker')
+  const tickersJson = await mexcJson<{ data?: Ticker[] }>(
+    '/api/v1/contract/ticker'
+  )
   const tickers = (tickersJson?.data ?? []).filter((t) =>
     String(t.symbol).endsWith('_USDT')
   )
+  console.log('tickers', tickers.length)
 
   const pumps = tickers
     .map((t) => ({
@@ -95,40 +120,45 @@ async function main() {
       chg: Number(t.riseFallRate ?? 0) * 100,
       vol: Number(t.amount24 ?? 0),
       holdVol: t.holdVol != null ? Number(t.holdVol) : null,
-      price: Number(t.lastPrice ?? 0),
     }))
     .filter(
       (t) =>
-        t.chg >= 8 &&
-        t.vol >= 150_000 &&
-        t.vol <= 8_000_000 &&
+        t.chg >= 5 &&
+        t.vol >= 100_000 &&
+        t.vol <= 20_000_000 &&
         !['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'BNB_USDT'].includes(t.symbol)
     )
     .sort((a, b) => b.chg - a.chg)
-    .slice(0, 18)
+    .slice(0, 22)
 
-  console.log(`Top pumps scanned: ${pumps.length}`)
-  let wins = 0
-  let losses = 0
-  let be = 0
-  let timeout = 0
-  let signals = 0
-  const rows: string[] = []
+  console.log(
+    `Top pumps: ${pumps.length}`,
+    pumps
+      .slice(0, 8)
+      .map((p) => `${p.symbol.replace('_USDT', '')}+${p.chg.toFixed(0)}%`)
+      .join(', ')
+  )
+
+  const all: Bucket = { n: 0, w: 0, l: 0, be: 0, to: 0 }
+  const A: Bucket = { n: 0, w: 0, l: 0, be: 0, to: 0 }
+  const B: Bucket = { n: 0, w: 0, l: 0, be: 0, to: 0 }
+  const sample: string[] = []
 
   for (const coin of pumps) {
-    const cs = await klines(coin.symbol, 360)
-    if (cs.length < 80) continue
+    const cs = await klines(coin.symbol, 400)
+    if (cs.length < 80) {
+      console.log('skip no klines', coin.symbol)
+      continue
+    }
     let lastFire = -999
-    for (let i = 40; i < cs.length - 5; i++) {
-      if (i - lastFire < 20) continue // cooldown 20m between signals same coin
+    for (let i = 50; i < cs.length - 5; i++) {
+      if (i - lastFire < 25) continue
       const window = cs.slice(0, i + 1)
       const px = window[window.length - 1]![4]
-      // approximate OI flat: use volume stall as weak fuel proxy when no OI series
       const recentVol =
         window.slice(-10).reduce((s, c) => s + c[5], 0) / 10
       const priorVol =
         window.slice(-30, -10).reduce((s, c) => s + c[5], 0) / 20
-      const buyFlowProxy = 62 // assume aggressive buys into peak (typical fail case)
       const moveBps =
         ((window[window.length - 1]![4] - window[window.length - 4]![4]) /
           window[window.length - 4]![4]) *
@@ -140,35 +170,33 @@ async function main() {
         chg24hPct: coin.chg,
         dayBias: 'PUMP',
         holdVol: coin.holdVol,
-        prevHoldVol: coin.holdVol != null ? coin.holdVol * 1.001 : null, // flat OI
+        prevHoldVol:
+          coin.holdVol != null ? coin.holdVol * 1.0005 : null,
         candles1m: window,
-        buyFlowPct: buyFlowProxy,
+        buyFlowPct: 60,
         priceMoveBps: moveBps,
-        absorptionShort: Math.abs(moveBps) <= 10 && recentVol > priorVol * 0.8,
+        absorptionShort:
+          Math.abs(moveBps) <= 12 && recentVol > priorVol * 0.75,
         cvdBearish: false,
       })
       if (!sig?.ready) continue
-      signals++
       lastFire = i
       const outcome = simulateShort(cs, i, sig.limitPrice)
-      if (outcome === 'WIN') wins++
-      else if (outcome === 'LOSS') losses++
-      else if (outcome === 'BE') be++
-      else timeout++
-      const t = new Date(cs[i]![0]).toISOString().slice(11, 16)
-      rows.push(
-        `${coin.symbol} ${t} UTC conf=${sig.confidence} → ${outcome} @${sig.limitPrice}`
-      )
+      bump(all, outcome)
+      bump(sig.quality === 'A' ? A : B, outcome)
+      if (sample.length < 30) {
+        sample.push(
+          `${coin.symbol.replace('_USDT', '')} Q${sig.quality} c${sig.confidence} → ${outcome}`
+        )
+      }
     }
   }
 
-  const decided = wins + losses
-  const wr = decided ? ((wins / decided) * 100).toFixed(1) : 'n/a'
-  console.log('\n=== PEAK_FUEL_FAIL 24h probe (live MEXC pumps) ===')
-  console.log(`signals=${signals} W=${wins} L=${losses} BE=${be} TO=${timeout}`)
-  console.log(`decided WR=${wr}% (n=${decided})  TP=${TP * 100}% SL=${SL * 100}% hold≤${HOLD_BARS}m`)
-  console.log('\nSample:')
-  for (const r of rows.slice(-25)) console.log(' ', r)
+  console.log('\n=== PEAK_FUEL_FAIL probe (current detector v27.4) ===')
+  console.log(`ALL ready  signals=${all.n} WR=${wr(all)} BE=${all.be}`)
+  console.log(`A-tier TG  signals=${A.n} WR=${wr(A)} BE=${A.be} exp%=${exp(A)?.toFixed(2) ?? 'n/a'}`)
+  console.log(`B-tier log signals=${B.n} WR=${wr(B)} BE=${B.be}`)
+  console.log('sample:', sample.slice(0, 20).join(' | '))
 }
 
 main().catch((e) => {

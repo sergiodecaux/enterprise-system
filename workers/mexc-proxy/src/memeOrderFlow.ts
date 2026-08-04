@@ -1,8 +1,8 @@
 /**
- * MEME order-flow scanner v27 — PEAK_FUEL_FAIL only.
+ * MEME order-flow scanner v27.3 — PEAK_FUEL_FAIL A-tier only.
  *
- * All predator capacity on pump peaks without fuel → small SHORT.
- * CONT_* / WITH-day continuation disabled (journal: trap/late longs toxic).
+ * Scan broad → log all peak decisions with reasons → TG/paper only quality A
+ * (protect WR). B-tier and skips stay in peak decision log for autopsy.
  */
 
 import type { ScanAlert } from './scanner'
@@ -20,13 +20,20 @@ import {
   type BotAdaptiveGates,
 } from './botJournal'
 import { detectPeakFuelFail, type Candle } from './peakFuelFail'
+import { appendPeakDecision } from './peakDecisionLog'
 
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
-/** Cover full hotlist — peak hunt needs breadth */
-const MAX_SCAN = 18
-/** More alerts per tick — was missing live peaks */
-const MAX_ALERTS = 5
+/**
+ * CF Workers free ~50 subrequests/invocation.
+ * Was MAX_SCAN=22 × (book+deals+klines) ≈ 60+ → «Too many subrequests».
+ * Budget: 1 ticker + SCAN klines + BOOK_SCAN×(~2 depth/deals) ≲ 35.
+ */
+const MAX_SCAN = 14
+/** Live book only for hottest pumps (optional confirm) */
+const BOOK_SCAN = 5
+/** Emit every A-tier hit this tick (paper/TG caps apply downstream) */
+const MAX_ALERTS = 6
 /** Only emit PEAK_FUEL_FAIL */
 const PEAK_ONLY = true
 
@@ -81,7 +88,7 @@ async function mexcJson<T>(path: string): Promise<T | null> {
     const res = await fetch(`${MEXC}${path}`, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'EnterpriseMemeFlow/2.7',
+        'User-Agent': 'EnterpriseMemeFlow/2.7.2',
       },
     })
     if (!res.ok) return null
@@ -126,6 +133,20 @@ export function allowMemeFlowEvent(
   return { ok: false, reason: 'peak_only_mode' }
 }
 
+function fmtPx(p: number): string {
+  if (!(p > 0)) return '—'
+  if (p >= 1000) return p.toFixed(2)
+  if (p >= 1) return p.toFixed(4)
+  if (p >= 0.01) return p.toFixed(6)
+  return p.toFixed(8)
+}
+
+function pctFrom(entry: number, level: number): string {
+  if (!(entry > 0)) return ''
+  const p = ((level - entry) / entry) * 100
+  return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`
+}
+
 function peakFailToAlert(
   symbol: string,
   sig: NonNullable<ReturnType<typeof detectPeakFuelFail>>,
@@ -134,20 +155,29 @@ function peakFailToAlert(
 ): ScanAlert {
   const name = symbol.replace('_USDT', '/USDT')
   const limit = sig.limitPrice
+  const reasonLine = sig.reasons.slice(0, 8).join(' · ')
   return {
     type: 'MEME',
-    title: `🦈 MEME SHORT ${name} · PEAK_FUEL_FAIL`,
+    title: `🦈 MEME SHORT ${name} · PEAK A`,
     text: [
-      `дневной памп ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · PEAK_FUEL_FAIL`,
+      `Уровни (SHORT):`,
+      `Открытие: ${fmtPx(limit)}`,
+      `Стоп (SL): ${fmtPx(sig.sl)} (${pctFrom(limit, sig.sl)})`,
+      `Тейк 1 (TP1): ${fmtPx(sig.tp1)} (${pctFrom(limit, sig.tp1)})`,
+      `Тейк 2 (TP): ${fmtPx(sig.tp)} (${pctFrom(limit, sig.tp)})`,
+      '',
+      `дневной памп ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · PEAK_FUEL_FAIL · класс A`,
       dayBias === 'PUMP'
         ? 'PUMP day · fade без топлива'
         : 'сильный зелёный ход · fade',
-      ...sig.notes,
-      'v27: весь predator на PEAK_FUEL_FAIL',
-    ].join('\n'),
-    dedupeKey: `cron:mof27:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
+      ...sig.notes.filter((n) => !/^SL~/i.test(n)),
+      reasonLine ? `Причины: ${reasonLine}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    dedupeKey: `cron:mof272:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
     score: sig.confidence,
-    winPct: Math.min(74, Math.max(48, 45 + (sig.confidence - 70))),
+    winPct: Math.min(78, Math.max(55, 50 + (sig.confidence - 78))),
     style: 'SCALP',
     align: 'COUNTER',
     tradePlan: {
@@ -163,6 +193,9 @@ function peakFailToAlert(
       tp: sig.tp,
       target1: sig.tp1,
       target3: limit * (1 - 0.025),
+      entryReasons: sig.reasons,
+      entryNotes: sig.notes.join(' · '),
+      qualityTier: sig.quality,
     },
   }
 }
@@ -256,6 +289,7 @@ export async function runMemeOrderFlowScan(opts: {
     )
   })
   const batch = ranked.slice(0, MAX_SCAN)
+  const bookSet = new Set(batch.slice(0, BOOK_SCAN).map((c) => c.symbol))
   const state = await loadBookState(opts.kv)
   const rejects: Array<{ symbol: string; reason: string }> = []
   const candidates: ScanAlert[] = []
@@ -276,48 +310,55 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
 
-    // Book optional — peak structure from candles is enough
+    // Book only for top BOOK_SCAN — stay under CF subrequest cap
     let evSide: 'LONG' | 'SHORT' | null = null
     let evKind = ''
     let evFlow = 50
     let evMove = 0
     let evMm: string | null = null
     let evReady = false
-    try {
-      const read = await readOrderBookEvent({
-        symbol: coin.symbol,
-        previous: prev,
-        older,
-        allowLiveSequence: true,
-        dayBias: coin.dayBias,
-        chg24hPct: coin.chg24hPct,
-        mexcJson,
-      })
-      if (read.snapshot) {
-        state[coin.symbol] = {
-          older: prev,
-          previous: read.snapshot,
-          holdVol: holdVol ?? prevHold,
+    if (bookSet.has(coin.symbol)) {
+      try {
+        const read = await readOrderBookEvent({
+          symbol: coin.symbol,
+          previous: prev,
+          older,
+          allowLiveSequence: true,
+          dayBias: coin.dayBias,
+          chg24hPct: coin.chg24hPct,
+          mexcJson,
+        })
+        if (read.snapshot) {
+          state[coin.symbol] = {
+            older: prev,
+            previous: read.snapshot,
+            holdVol: holdVol ?? prevHold,
+          }
+        } else if (holdVol != null) {
+          state[coin.symbol] = {
+            ...(state[coin.symbol] ?? {}),
+            holdVol,
+          }
         }
-      } else if (holdVol != null) {
-        state[coin.symbol] = {
-          ...(state[coin.symbol] ?? {}),
-          holdVol,
+        const ev = read.event
+        evReady = ev.ready
+        evSide = ev.side
+        evKind = ev.kind
+        evFlow = ev.flowSharePct
+        evMove = ev.priceMoveBps
+        evMm = ev.mmPattern ?? null
+      } catch {
+        if (holdVol != null) {
+          state[coin.symbol] = {
+            ...(state[coin.symbol] ?? {}),
+            holdVol,
+          }
         }
       }
-      const ev = read.event
-      evReady = ev.ready
-      evSide = ev.side
-      evKind = ev.kind
-      evFlow = ev.flowSharePct
-      evMove = ev.priceMoveBps
-      evMm = ev.mmPattern ?? null
-    } catch {
-      if (holdVol != null) {
-        state[coin.symbol] = {
-          ...(state[coin.symbol] ?? {}),
-          holdVol,
-        }
+    } else if (holdVol != null) {
+      state[coin.symbol] = {
+        ...(state[coin.symbol] ?? {}),
+        holdVol,
       }
     }
 
@@ -359,12 +400,6 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
 
-    const alert = peakFailToAlert(
-      coin.symbol,
-      peak,
-      coin.dayBias,
-      coin.chg24hPct
-    )
     if (gates) {
       const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
       if (hist.n >= 8 && hist.wr < 28) {
@@ -372,9 +407,95 @@ export async function runMemeOrderFlowScan(opts: {
           symbol: coin.symbol,
           reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
         })
+        await appendPeakDecision(opts.kv, {
+          at: Date.now(),
+          symbol: coin.symbol,
+          action: 'SKIP_GATES',
+          confidence: peak.confidence,
+          quality: peak.quality,
+          reasons: [
+            ...peak.reasons,
+            `hist_wr:${hist.wr.toFixed(0)}`,
+            `hist_n:${hist.n}`,
+          ],
+          chg24hPct: coin.chg24hPct,
+          distToHighPct: peak.distToHighPct,
+        })
         continue
       }
     }
+
+    // B-tier: log only — do not dilute WR with weak stalls
+    if (peak.quality !== 'A') {
+      rejects.push({
+        symbol: coin.symbol,
+        reason: `peak_B:${peak.confidence}`,
+      })
+      await appendPeakDecision(opts.kv, {
+        at: Date.now(),
+        symbol: coin.symbol,
+        action: 'SKIP_QUALITY',
+        confidence: peak.confidence,
+        quality: 'B',
+        reasons: peak.reasons,
+        chg24hPct: coin.chg24hPct,
+        distToHighPct: peak.distToHighPct,
+      })
+      continue
+    }
+
+    // Learn from closed PEAK: skip reason tags that lose live
+    const avoid = gates?.peakAvoidReasons ?? []
+    if (avoid.length) {
+      const hit = peak.reasons.find((r) => {
+        const tag = r.includes(':') ? r.split(':')[0]! : r
+        return avoid.includes(tag)
+      })
+      if (hit) {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: `peak_learn_avoid:${hit}`,
+        })
+        await appendPeakDecision(opts.kv, {
+          at: Date.now(),
+          symbol: coin.symbol,
+          action: 'SKIP_GATES',
+          confidence: peak.confidence,
+          quality: 'A',
+          reasons: [...peak.reasons, `avoid:${hit}`],
+          chg24hPct: coin.chg24hPct,
+          distToHighPct: peak.distToHighPct,
+        })
+        continue
+      }
+    }
+
+    // Prefer learned winning tags — slight score bump for ranking
+    const prefer = gates?.peakPreferReasons ?? []
+    if (prefer.length) {
+      const prefHit = peak.reasons.some((r) => {
+        const tag = r.includes(':') ? r.split(':')[0]! : r
+        return prefer.includes(tag)
+      })
+      if (prefHit) peak.confidence = Math.min(94, peak.confidence + 3)
+    }
+
+    const alert = peakFailToAlert(
+      coin.symbol,
+      peak,
+      coin.dayBias,
+      coin.chg24hPct
+    )
+    await appendPeakDecision(opts.kv, {
+      at: Date.now(),
+      symbol: coin.symbol,
+      action: 'ALERT',
+      confidence: peak.confidence,
+      quality: 'A',
+      reasons: peak.reasons,
+      chg24hPct: coin.chg24hPct,
+      distToHighPct: peak.distToHighPct,
+    })
     candidates.push(alert)
   }
 

@@ -8,10 +8,14 @@ import {
   type TradeOutcomeAnalysis,
 } from './tradeOutcomeAnalysis'
 import { kvPutThrottled } from './kvWrite'
+import { attachPeakOutcome } from './peakDecisionLog'
 
 const JOURNAL_KEY = 'telegram:bot_journal'
+/** Long-term closed trades for analysis (not pruned with live open book) */
+const ARCHIVE_KEY = 'telegram:bot_journal_archive'
 const GATES_KEY = 'telegram:bot_gates'
-const MAX_ENTRIES = 400
+const MAX_ENTRIES = 500
+const MAX_ARCHIVE = 1200
 const OPEN_TTL_MS = 4 * 60 * 60_000
 const MEXC = 'https://contract.mexc.com'
 const RESULT_NOTIFICATIONS_SINCE = 1_784_898_000_000
@@ -25,6 +29,13 @@ export type BotJournalStatus =
   | 'INVALIDATED'
 
 export type BotAlertKind = 'SNIPER' | 'MEME'
+
+/** One timeline beat for later autopsy */
+export interface BotJournalEvent {
+  at: number
+  kind: string
+  detail: string
+}
 
 export interface BotJournalEntry {
   id: string
@@ -62,6 +73,28 @@ export interface BotJournalEntry {
   outcomeHeadline?: string | null
   outcomeDetail?: string | null
   outcomeLesson?: string | null
+  /** Why we entered (peak reasons etc.) — for error analysis */
+  entryReasons?: string[] | null
+  entryNotes?: string | null
+  qualityTier?: 'A' | 'B' | null
+  /** Engine / build that opened the trade */
+  engineId?: string | null
+  /** Linked paper companion id */
+  paperId?: string | null
+  /** Hold duration ms after fill/create */
+  holdMs?: number | null
+  /** Snapshot of planned risk at entry (before paper adjusts) */
+  initialSl?: number | null
+  initialTp?: number | null
+  /** Parsed helpers from entryReasons for filters */
+  entryMeta?: {
+    chg24hPct?: number | null
+    distToHighPct?: number | null
+    fuelScore?: number | null
+    confidence?: number | null
+  } | null
+  /** Append-only timeline for analysis */
+  events?: BotJournalEvent[]
 }
 
 export interface BotSetupStats {
@@ -125,6 +158,10 @@ export interface BotAdaptiveGates {
   requireHighBrokenForSqueeze: boolean
   /** Empirical win% by setup for display calibration */
   winPctBySetup: WinPctCalibrationEntry[]
+  /** PEAK entry reason tags with toxic live WR — demote A→skip */
+  peakAvoidReasons?: string[]
+  /** PEAK reason tags that win more often */
+  peakPreferReasons?: string[]
   updatedAt: number
   sampleSize: number
 }
@@ -143,6 +180,85 @@ export interface TradePlanLike {
   tp: number
   target1?: number
   target3?: number
+  entryReasons?: string[]
+  entryNotes?: string
+  qualityTier?: 'A' | 'B'
+  engineId?: string
+  paperId?: string
+}
+
+function parseEntryMeta(reasons: string[] | null | undefined): BotJournalEntry['entryMeta'] {
+  if (!reasons?.length) return null
+  const num = (prefix: string) => {
+    const hit = reasons.find((r) => r.startsWith(prefix))
+    if (!hit) return null
+    const n = Number(hit.slice(prefix.length))
+    return Number.isFinite(n) ? n : null
+  }
+  return {
+    chg24hPct: num('chg24:'),
+    distToHighPct: num('dist_high:'),
+    fuelScore: num('fuel:'),
+    confidence: num('conf:'),
+  }
+}
+
+function pushEvent(
+  entry: BotJournalEntry,
+  kind: string,
+  detail: string,
+  at = Date.now()
+): BotJournalEntry {
+  const events = [...(entry.events ?? []), { at, kind, detail }].slice(-24)
+  return { ...entry, events }
+}
+
+const memoryArchive: BotJournalEntry[] = []
+
+async function listArchive(env: Env): Promise<BotJournalEntry[]> {
+  if (memoryArchive.length) return [...memoryArchive]
+  if (!env.SUBSCRIBERS) return []
+  try {
+    const raw = await env.SUBSCRIBERS.get(ARCHIVE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as BotJournalEntry[]
+    if (!Array.isArray(parsed)) return []
+    memoryArchive.length = 0
+    memoryArchive.push(...parsed.slice(0, MAX_ARCHIVE))
+    return [...memoryArchive]
+  } catch {
+    return []
+  }
+}
+
+async function archiveClosedTrades(
+  env: Env,
+  closed: BotJournalEntry[]
+): Promise<void> {
+  if (!closed.length) return
+  const arch = await listArchive(env)
+  const ids = new Set(arch.map((e) => e.id))
+  for (const e of closed) {
+    if (e.status === 'OPEN' || ids.has(e.id)) continue
+    // Prefer keeping PEAK + all decided meme/sniper for analysis
+    arch.unshift(e)
+    ids.add(e.id)
+  }
+  const trimmed = arch.slice(0, MAX_ARCHIVE)
+  memoryArchive.length = 0
+  memoryArchive.push(...trimmed)
+  if (!env.SUBSCRIBERS) return
+  try {
+    // Archive writes are rarer — allow up to ~every 5m
+    await kvPutThrottled(
+      env.SUBSCRIBERS,
+      ARCHIVE_KEY,
+      JSON.stringify(trimmed),
+      5 * 60_000
+    )
+  } catch {
+    /* quota */
+  }
 }
 
 interface Env {
@@ -250,6 +366,15 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
+  // Meme journal: PEAK fuel short only — no SPOOF/LIQ/TRAP pollution
+  if (input.alertType === 'MEME') {
+    if (
+      input.plan.setup !== 'PEAK_FUEL_FAIL' ||
+      input.plan.side !== 'SHORT'
+    ) {
+      return null
+    }
+  }
   const list = await listJournal(env)
   const nowGate = Date.now()
   if (
@@ -262,14 +387,14 @@ export async function recordBotAlert(
   ) {
     return null
   }
-  // Memes: block same symbol any side for 45m (trap flip spam).
+  // Memes: block same symbol any side for 35m (WR hygiene).
   if (
     input.alertType === 'MEME' &&
     list.some(
       (e) =>
         e.alertType === 'MEME' &&
         e.symbol === input.plan.symbol &&
-        nowGate - e.createdAt < 45 * 60_000
+        nowGate - e.createdAt < 35 * 60_000
     )
   ) {
     return null
@@ -277,7 +402,8 @@ export async function recordBotAlert(
 
   const now = Date.now()
   const memeImpulse = input.alertType === 'MEME'
-  const entry: BotJournalEntry = {
+  const reasons = input.plan.entryReasons ?? null
+  let entry: BotJournalEntry = {
     id: `bj_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
     symbol: input.plan.symbol,
     displayName: input.plan.symbol.replace('_USDT', '/USDT'),
@@ -293,7 +419,6 @@ export async function recordBotAlert(
     invalidate: input.plan.invalidate,
     zoneLow: input.plan.zoneLow,
     zoneHigh: input.plan.zoneHigh,
-    // Memes enter at market immediately — no zone wait accounting.
     filledAt: memeImpulse ? now : null,
     createdAt: now,
     expiresAt: now + (memeImpulse ? 90 * 60_000 : OPEN_TTL_MS),
@@ -306,7 +431,32 @@ export async function recordBotAlert(
     maePercent: 0,
     dedupeKey: input.dedupeKey,
     resolveSource: null,
+    entryReasons: reasons,
+    entryNotes: input.plan.entryNotes ?? null,
+    qualityTier: input.plan.qualityTier ?? null,
+    engineId: input.plan.engineId ?? null,
+    paperId: input.plan.paperId ?? null,
+    holdMs: null,
+    initialSl: input.plan.sl,
+    initialTp: input.plan.tp,
+    entryMeta: parseEntryMeta(reasons),
+    events: [],
   }
+  entry = pushEvent(
+    entry,
+    'OPEN',
+    [
+      `${entry.side} ${entry.setup}`,
+      `entry ${entry.entryPrice}`,
+      `SL ${entry.sl} TP ${entry.tp}`,
+      reasons?.length ? `reasons: ${reasons.slice(0, 10).join(' · ')}` : null,
+      entry.qualityTier ? `Q${entry.qualityTier}` : null,
+      entry.engineId ? `engine ${entry.engineId}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    now
+  )
 
   list.unshift(entry)
   await saveJournal(env, list, true)
@@ -465,6 +615,8 @@ function attachOutcomeAnalysis(
     resolveSource: entry.resolveSource,
     setupWinRate: hist.wr,
     setupSampleN: hist.n,
+    entryReasons: entry.entryReasons ?? null,
+    qualityTier: entry.qualityTier ?? null,
   })
   if (!analysis) return entry
   return applyAnalysisFields(entry, analysis)
@@ -502,15 +654,44 @@ export async function resolveBotJournal(
   const now = Date.now()
   let changed = 0
   const outcomes: BotJournalEntry[] = []
+  const peakResolved: BotJournalEntry[] = []
 
   const pushOutcome = (prev: BotJournalEntry, next: BotJournalEntry) => {
-    const analyzed = attachOutcomeAnalysis(next, list)
-    if (
-      prev.createdAt >= RESULT_NOTIFICATIONS_SINCE &&
-      prev.status === 'OPEN' &&
-      analyzed.status !== 'OPEN'
-    ) {
-      outcomes.push(analyzed)
+    let analyzed = attachOutcomeAnalysis(next, list)
+    if (prev.status === 'OPEN' && analyzed.status !== 'OPEN') {
+      const start = analyzed.filledAt ?? analyzed.createdAt
+      const holdMs =
+        analyzed.resolvedAt != null ? analyzed.resolvedAt - start : null
+      const paper = matchingPaper(analyzed, papers)
+      analyzed = {
+        ...analyzed,
+        holdMs,
+        paperId: analyzed.paperId ?? paper?.id ?? null,
+        entryMeta: analyzed.entryMeta ?? parseEntryMeta(analyzed.entryReasons),
+      }
+      analyzed = pushEvent(
+        analyzed,
+        'CLOSE',
+        [
+          analyzed.status,
+          analyzed.closeReason ? `via ${analyzed.closeReason}` : null,
+          analyzed.pnlPercent != null
+            ? `pnl ${analyzed.pnlPercent >= 0 ? '+' : ''}${analyzed.pnlPercent.toFixed(2)}%`
+            : null,
+          `MFE +${analyzed.mfePercent.toFixed(2)}% MAE −${analyzed.maePercent.toFixed(2)}%`,
+          analyzed.outcomePrimaryTag,
+          holdMs != null ? `hold ${Math.round(holdMs / 1000)}s` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        analyzed.resolvedAt ?? now
+      )
+      if (analyzed.setup === 'PEAK_FUEL_FAIL') peakResolved.push(analyzed)
+      if (
+        prev.createdAt >= RESULT_NOTIFICATIONS_SINCE
+      ) {
+        outcomes.push(analyzed)
+      }
     }
     return analyzed
   }
@@ -666,9 +847,38 @@ export async function resolveBotJournal(
 
   if (changed > 0) await saveJournal(env, list, outcomes.length > 0)
 
+  // Persist closed trades into long-term archive for analysis
+  if (outcomes.length || peakResolved.length) {
+    const toArch = [
+      ...outcomes,
+      ...peakResolved.filter((p) => !outcomes.some((o) => o.id === p.id)),
+    ]
+    // Also archive any newly closed rows still on the live list
+    const closedNow = list.filter(
+      (e) => e.status !== 'OPEN' && e.resolvedAt && now - e.resolvedAt < 15 * 60_000
+    )
+    await archiveClosedTrades(env, [...toArch, ...closedNow])
+  }
+
   // Refresh adaptive gates after resolves
   if (changed > 0) {
     await recomputeAndSaveGates(env)
+  }
+
+  // Link peak decision log ↔ journal outcomes for autopsy
+  for (const o of peakResolved) {
+    try {
+      await attachPeakOutcome(env.SUBSCRIBERS, {
+        symbol: o.symbol,
+        createdAt: o.createdAt,
+        status: o.status,
+        pnlPercent: o.pnlPercent,
+        closeReason: o.closeReason ?? null,
+        lesson: o.outcomeLesson ?? null,
+      })
+    } catch {
+      /* best-effort */
+    }
   }
 
   return { changed, outcomes }
@@ -857,11 +1067,12 @@ export function computeBotAnalytics(
 }
 
 export function deriveAdaptiveGates(
-  analytics: BotJournalAnalytics
+  analytics: BotJournalAnalytics,
+  entries: BotJournalEntry[] = []
 ): BotAdaptiveGates {
   const blocked: string[] = []
   const boosted: string[] = []
-  let minMemeScore = 62
+  let minMemeScore = 58
   let minSniperScore = 48
 
   for (const s of analytics.bySetup) {
@@ -875,9 +1086,18 @@ export function deriveAdaptiveGates(
         s.setup.startsWith('LIQ_') ||
         s.setup.startsWith('FADE_BOOK') ||
         s.setup === 'BOOK_RELEASE' ||
-        s.setup === 'ABSORPTION')
+        s.setup === 'ABSORPTION' ||
+        s.setup.startsWith('TRAP_'))
     if (earlyBlock) {
       if (!blocked.includes(s.setup)) blocked.push(s.setup)
+      continue
+    }
+    // Never block PEAK — capacity goes here; learn reason hygiene from outcomes
+    if (s.setup === 'PEAK_FUEL_FAIL') {
+      if (n >= 3 && s.winRate >= 55) {
+        if (!boosted.includes(s.setup)) boosted.push(s.setup)
+      }
+      // Soft score nudge from PEAK sample (used by scanner gates)
       continue
     }
     if (n < 8) {
@@ -905,12 +1125,23 @@ export function deriveAdaptiveGates(
     }
   }
 
+  const peak = analytics.bySetup.find((x) => x.setup === 'PEAK_FUEL_FAIL')
   const meme = analytics.byAlertType.find((x) => x.alertType === 'MEME')
-  if (meme && meme.wins + meme.losses >= 8) {
-    // Cap cold-streak floor — never silence healthy impulse tags
-    if (meme.winRate < 42) minMemeScore = 66
-    else if (meme.winRate < 50) minMemeScore = 64
-    else if (meme.winRate >= 60) minMemeScore = 60
+  // Score floor from PEAK sample when available — old toxic tags must not starve capacity
+  const wrSrc =
+    peak && peak.wins + peak.losses >= 5
+      ? peak
+      : meme && meme.wins + meme.losses >= 8
+        ? meme
+        : null
+  if (wrSrc) {
+    const decided = wrSrc.wins + wrSrc.losses
+    const wr = wrSrc.winRate
+    if (decided >= 5) {
+      if (wr < 42) minMemeScore = 62
+      else if (wr < 50) minMemeScore = 60
+      else if (wr >= 60) minMemeScore = 56
+    }
   }
 
   const sniper = analytics.byAlertType.find((x) => x.alertType === 'SNIPER')
@@ -920,6 +1151,9 @@ export function deriveAdaptiveGates(
     else if (sniper.winRate >= 60) minSniperScore = 46
   }
 
+  const { avoid: peakAvoidReasons, prefer: peakPreferReasons } =
+    learnPeakReasonTags(entries)
+
   return {
     minMemeScore,
     minSniperScore,
@@ -927,9 +1161,54 @@ export function deriveAdaptiveGates(
     boostedSetups: boosted,
     requireHighBrokenForSqueeze: false,
     winPctBySetup: buildWinPctCalibration(analytics),
+    peakAvoidReasons,
+    peakPreferReasons,
     updatedAt: Date.now(),
     sampleSize: analytics.resolved,
   }
+}
+
+/** Learn which PEAK entry reason tags lose / win in live journal. */
+function learnPeakReasonTags(entries: BotJournalEntry[]): {
+  avoid: string[]
+  prefer: string[]
+} {
+  const peak = entries.filter(
+    (e) =>
+      e.setup === 'PEAK_FUEL_FAIL' &&
+      (e.status === 'WIN' || e.status === 'LOSS') &&
+      (e.entryReasons?.length ?? 0) > 0
+  )
+  const map = new Map<string, { w: number; l: number }>()
+  for (const e of peak) {
+    for (const raw of e.entryReasons ?? []) {
+      const tag = raw.includes(':') ? raw.split(':')[0]! : raw
+      if (
+        tag === 'quality' ||
+        tag === 'fuel' ||
+        tag === 'conf' ||
+        tag === 'chg24' ||
+        tag === 'dist_high' ||
+        tag === 'realFuel'
+      ) {
+        continue
+      }
+      const row = map.get(tag) ?? { w: 0, l: 0 }
+      if (e.status === 'WIN') row.w++
+      else row.l++
+      map.set(tag, row)
+    }
+  }
+  const avoid: string[] = []
+  const prefer: string[] = []
+  for (const [tag, s] of map) {
+    const n = s.w + s.l
+    if (n < 4) continue
+    const wr = (100 * s.w) / n
+    if (wr < 35) avoid.push(tag)
+    if (wr >= 60) prefer.push(tag)
+  }
+  return { avoid, prefer }
 }
 
 /** Parse composite `PUMP_SCALP_TREND` → base / style / align */
@@ -1049,7 +1328,7 @@ export function isSetupBoosted(
 async function recomputeAndSaveGates(env: Env): Promise<BotAdaptiveGates> {
   const list = await listJournal(env)
   const analytics = computeBotAnalytics(list)
-  const gates = deriveAdaptiveGates(analytics)
+  const gates = deriveAdaptiveGates(analytics, list)
   memoryGates = gates
   if (env.SUBSCRIBERS) {
     await kvPutThrottled(
@@ -1085,12 +1364,14 @@ export async function getBotJournalPayload(env: Env): Promise<{
   analytics: BotJournalAnalytics
   entries: BotJournalEntry[]
   gates: BotAdaptiveGates
+  archive?: BotJournalEntry[]
+  archiveCount?: number
 }> {
   const entries = await listJournal(env)
   const analytics = computeBotAnalytics(entries)
   const gates = await getAdaptiveGates(env)
   // Backfill autopsy for older rows that closed before the analyzer existed.
-  const enriched = entries.slice(0, 160).map((e) =>
+  const enriched = entries.slice(0, 200).map((e) =>
     e.status !== 'OPEN' && !e.outcomeHeadline
       ? attachOutcomeAnalysis(e, entries)
       : e
@@ -1100,6 +1381,122 @@ export async function getBotJournalPayload(env: Env): Promise<{
     entries: enriched,
     gates,
   }
+}
+
+/** Full analysis dump: live + archive, optional setup filter. */
+export async function getJournalAnalysisDump(
+  env: Env,
+  opts?: { setup?: string; limit?: number; includeArchive?: boolean }
+): Promise<{
+  ok: true
+  live: BotJournalEntry[]
+  archive: BotJournalEntry[]
+  merged: BotJournalEntry[]
+  analytics: BotJournalAnalytics
+  peakSummary?: {
+    alerts: number
+    skips: number
+    alertWins: number
+    alertLosses: number
+    topSkipReasons: Array<{ reason: string; n: number }>
+  }
+  peakDecisions?: Array<Record<string, unknown>>
+}> {
+  const live = await listJournal(env)
+  const archive = opts?.includeArchive === false ? [] : await listArchive(env)
+  const byId = new Map<string, BotJournalEntry>()
+  for (const e of [...archive, ...live]) byId.set(e.id, e)
+  let merged = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt)
+  if (opts?.setup) {
+    merged = merged.filter((e) => e.setup === opts.setup)
+  }
+  const limit = opts?.limit ?? 400
+  merged = merged.slice(0, limit)
+  const analytics = computeBotAnalytics(opts?.setup ? merged : [...live])
+  return {
+    ok: true,
+    live: live.slice(0, 200),
+    archive: archive.slice(0, limit),
+    merged,
+    analytics,
+  }
+}
+
+export function journalToCsv(rows: BotJournalEntry[]): string {
+  const header = [
+    'id',
+    'createdAt',
+    'resolvedAt',
+    'holdMs',
+    'symbol',
+    'side',
+    'setup',
+    'alertType',
+    'qualityTier',
+    'status',
+    'score',
+    'entryPrice',
+    'exitPrice',
+    'sl',
+    'tp',
+    'pnlPercent',
+    'rMultiple',
+    'mfePercent',
+    'maePercent',
+    'closeReason',
+    'outcomePrimaryTag',
+    'outcomeLesson',
+    'entryReasons',
+    'entryNotes',
+    'engineId',
+    'paperId',
+    'chg24',
+    'distHigh',
+    'fuel',
+  ]
+  const esc = (v: unknown) => {
+    const s = v == null ? '' : String(v)
+    return `"${s.replace(/"/g, '""')}"`
+  }
+  const lines = [header.join(',')]
+  for (const e of rows) {
+    lines.push(
+      [
+        e.id,
+        e.createdAt,
+        e.resolvedAt ?? '',
+        e.holdMs ?? '',
+        e.symbol,
+        e.side,
+        e.setup,
+        e.alertType,
+        e.qualityTier ?? '',
+        e.status,
+        e.score,
+        e.entryPrice,
+        e.exitPrice ?? '',
+        e.sl,
+        e.tp,
+        e.pnlPercent ?? '',
+        e.rMultiple ?? '',
+        e.mfePercent,
+        e.maePercent,
+        e.closeReason ?? '',
+        e.outcomePrimaryTag ?? '',
+        e.outcomeLesson ?? '',
+        (e.entryReasons ?? []).join('|'),
+        e.entryNotes ?? '',
+        e.engineId ?? '',
+        e.paperId ?? '',
+        e.entryMeta?.chg24hPct ?? '',
+        e.entryMeta?.distToHighPct ?? '',
+        e.entryMeta?.fuelScore ?? '',
+      ]
+        .map(esc)
+        .join(',')
+    )
+  }
+  return lines.join('\n')
 }
 
 /** Should scanner emit this setup given adaptive gates? */

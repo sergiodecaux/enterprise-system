@@ -3,13 +3,13 @@
  * Sticky soft-refresh keeps continuity but list is wide enough to cover the top.
  */
 
-const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v1'
+const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v2_peak'
 /** Rebuild order more often so new hot names enter the top */
 const REFRESH_MS = 12 * 60_000
-const MAX_PUMPS = 14
-const MAX_DUMPS = 6
-/** Full top cover — peak-only needs more pumps */
-const MAX_TOTAL = 20
+/** Peak fuel short = pump fades — spend all slots on pumps */
+const MAX_PUMPS = 22
+const MAX_DUMPS = 0
+const MAX_TOTAL = 22
 const MIN_ABS_CHG_PCT = 3
 const MIN_QUOTE_VOL = 100_000
 
@@ -194,14 +194,22 @@ export function buildHotMemeWatchlist(
   }
 
   let entries = [...bySym.values()]
-    .sort((a, b) => b.score - a.score)
+    .filter((e) => e.dayBias === 'PUMP' || e.chg24hPct >= MIN_ABS_CHG_PCT)
+    .sort((a, b) => {
+      const pumpA = a.dayBias === 'PUMP' || a.chg24hPct >= 0 ? 1 : 0
+      const pumpB = b.dayBias === 'PUMP' || b.chg24hPct >= 0 ? 1 : 0
+      return pumpB - pumpA || b.score - a.score
+    })
     .slice(0, MAX_TOTAL)
 
   if (freshEnough && prev) {
     // Soft refresh: keep previous order for symbols still present; only replace drops.
     const keep = prev.entries
       .map((e) => bySym.get(e.symbol))
-      .filter((e): e is HotMemeEntry => Boolean(e))
+      .filter(
+        (e): e is HotMemeEntry =>
+          Boolean(e) && (e!.dayBias === 'PUMP' || e!.chg24hPct >= 4)
+      )
     const extras = entries.filter(
       (e) => !keep.some((k) => k.symbol === e.symbol)
     )
@@ -210,7 +218,7 @@ export function buildHotMemeWatchlist(
       updatedAt: prev.updatedAt,
       dayKey: key,
       entries,
-      reason: 'sticky-watchlist',
+      reason: 'sticky-watchlist-peak-pumps',
     }
   }
 
@@ -218,10 +226,9 @@ export function buildHotMemeWatchlist(
     updatedAt: now,
     dayKey: key,
     entries,
-    reason:
-      pumps.length || dumps.length
-        ? `top-${MAX_TOTAL}: ${pumps.length} pumps + ${dumps.length} dumps by 24h heat`
-        : 'no hot memes above thresholds',
+    reason: entries.length
+      ? `peak-pumps top-${MAX_TOTAL} by 24h heat`
+      : 'no hot pumps above thresholds',
   }
 }
 

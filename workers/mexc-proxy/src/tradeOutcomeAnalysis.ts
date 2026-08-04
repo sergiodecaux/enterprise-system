@@ -19,6 +19,9 @@ export interface OutcomeAnalysisInput {
   /** Optional historical WR for this setup (0–100), if enough samples */
   setupWinRate?: number | null
   setupSampleN?: number | null
+  /** Entry autopsy codes from peak / scanner */
+  entryReasons?: string[] | null
+  qualityTier?: 'A' | 'B' | null
 }
 
 export interface TradeOutcomeAnalysis {
@@ -79,6 +82,15 @@ export function analyzeTradeOutcome(
 
   if (input.alertType === 'MEME') tags.push('MEME')
   else tags.push('ALTS')
+  if (input.setup === 'PEAK_FUEL_FAIL') tags.push('PEAK')
+  if (input.qualityTier) tags.push(`Q_${input.qualityTier}`)
+
+  const entryBits = (input.entryReasons ?? []).filter(Boolean)
+  const stallOnlyEntry =
+    entryBits.includes('stall_at_high') &&
+    !entryBits.includes('failed_break') &&
+    !entryBits.includes('rejection_wick') &&
+    !entryBits.includes('ask_absorption')
 
   let primaryTag = 'RESOLVED'
   let headline = 'Сделка закрыта'
@@ -232,6 +244,35 @@ export function analyzeTradeOutcome(
       tags.push('STRONG_SETUP_HIST')
     } else if (input.status === 'LOSS' && wr >= 60) {
       lesson += ` Редкий проигрыш сильного тега ${input.setup} (WR ${wr.toFixed(0)}%).`
+    }
+  }
+
+  // PEAK-specific autopsy from entry reasons
+  if (input.setup === 'PEAK_FUEL_FAIL' && entryBits.length) {
+    tags.push('ENTRY_REASONS')
+    if (input.status === 'LOSS') {
+      if (stallOnlyEntry) {
+        lesson +=
+          ' PEAK: stall-only без failed/wick/absorb — ужесточить A-tier (не торговать).'
+        tags.push('PEAK_STALL_WEAK')
+      }
+      const dist = entryBits.find((r) => r.startsWith('dist_high:'))
+      if (dist) {
+        const d = Number(dist.split(':')[1])
+        if (Number.isFinite(d) && d > 1.0) {
+          lesson += ` PEAK: вход далеко от хая (${d.toFixed(2)}%) — ждать ближе к пику.`
+          tags.push('PEAK_FAR_FROM_HIGH')
+        }
+      }
+      if (
+        !entryBits.includes('ask_absorption') &&
+        !entryBits.includes('cvd_bearish')
+      ) {
+        lesson += ' PEAK: без book confirm — ложный fade на продолжении пампa.'
+        tags.push('PEAK_NO_BOOK')
+      }
+    } else if (input.status === 'WIN') {
+      lesson += ` PEAK вход: ${entryBits.slice(0, 5).join(', ')}.`
     }
   }
 

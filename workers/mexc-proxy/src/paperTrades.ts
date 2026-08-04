@@ -32,17 +32,23 @@ import {
 import { rememberMacroOutcome } from './vane/macroMemory'
 
 const PAPER_KEY = 'telegram:paper_trades'
-const MAX_ACTIVE = 5
-/** Cap concurrent meme impulses — journal showed too many open at once */
-const MAX_ACTIVE_MEME = 2
-/** v26.2: UAI 3×/3ч — держим символ тихим после любой активности */
-const MEME_SYMBOL_COOLDOWN_MS = 75 * 60_000
+const MAX_ACTIVE = 6
+/** All paper slots for PEAK fuel shorts — no shared starvation */
+const MAX_ACTIVE_MEME = 6
+/** Align with journal symbol hygiene — free slots for next peak sooner */
+const MEME_SYMBOL_COOLDOWN_MS = 35 * 60_000
 /** Trail width once MFE is real (was 1.2% → отдавали почти весь импульс) */
 const MEME_TRAIL_TIGHT = 0.006
 const MEME_TRAIL_RUNNER = 0.0045
 const MEME_TRAIL_EARLY = 0.01
 /** Arm trail / BE after this favorable move */
 const MEME_ARM_PCT = 0.0055
+/** PEAK give-back autopsy: arm earlier, trail tighter */
+const PEAK_ARM_PCT = 0.004
+const PEAK_TRAIL_TIGHT = 0.0035
+const PEAK_TRAIL_RUNNER = 0.0028
+const PEAK_TRAIL_EARLY = 0.007
+const PEAK_BE_R = 0.35
 const WAITING_TTL_MS = 90 * 60_000
 /** Vane HOLD can wait for zone reclaim longer (v4 scalp+wait) */
 const WAITING_TTL_VANE_MS = 240 * 60_000
@@ -82,14 +88,16 @@ export interface TradePlan {
   invalidate: number
   sl: number
   tp: number
-  /** Partial take — memes lock BE + tighten trail here */
   target1?: number
   target3?: number
   alertType: AlertKind
-  /** Vane path HOLD | FLIP */
   vanePath?: 'HOLD' | 'FLIP'
   vaneTier?: 'TIER1' | 'TIER2'
   vaneScore?: number
+  /** Why signal fired — persisted for autopsy */
+  entryReasons?: string[]
+  entryNotes?: string
+  qualityTier?: 'A' | 'B'
 }
 
 export interface PaperTrade {
@@ -131,6 +139,9 @@ export interface PaperTrade {
   vanePath?: 'HOLD' | 'FLIP'
   vaneTier?: 'TIER1' | 'TIER2'
   vaneScore?: number
+  entryReasons?: string[]
+  entryNotes?: string
+  qualityTier?: 'A' | 'B'
 }
 
 export interface PaperComment {
@@ -140,6 +151,8 @@ export interface PaperComment {
   alertType: AlertKind | 'SYSTEM'
   /** Telegram bot channel: meme Predator bot vs sniper/alts bot */
   route?: 'meme' | 'sniper'
+  /** When set, meme TG skips non-PEAK companion noise */
+  setup?: string
 }
 
 interface PaperEnv {
@@ -210,6 +223,12 @@ function fmt(p: number): string {
   if (p >= 1) return p.toFixed(4)
   if (p >= 0.01) return p.toFixed(6)
   return p.toFixed(8)
+}
+
+function pctFromEntry(entry: number, level: number): string {
+  if (!(entry > 0)) return '—'
+  const p = ((level - entry) / entry) * 100
+  return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`
 }
 
 function pnlPct(side: PaperSide, entry: number, price: number): number {
@@ -735,8 +754,15 @@ export async function createPaperTradeFromPlan(
 ): Promise<{
   created: boolean
   comment: PaperComment | null
-  skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped'
+  skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped' | 'setup'
 }> {
+  // Meme companion: only PEAK fuel shorts
+  if (
+    plan.alertType === 'MEME' &&
+    (plan.setup !== 'PEAK_FUEL_FAIL' || plan.side !== 'SHORT')
+  ) {
+    return { created: false, comment: null, skipReason: 'setup' }
+  }
   const list = await listPaperTrades(env)
   const now = Date.now()
 
@@ -874,6 +900,9 @@ export async function createPaperTradeFromPlan(
     vanePath: plan.vanePath,
     vaneTier: plan.vaneTier,
     vaneScore: plan.vaneScore,
+    entryReasons: plan.entryReasons,
+    entryNotes: plan.entryNotes,
+    qualityTier: plan.qualityTier,
   }
 
   pruned.push(trade)
@@ -899,12 +928,22 @@ export async function createPaperTradeFromPlan(
               `RR ~1:1.6 · unit 10% equity.`,
             ].join('\n')
           : [
-              `Limit-chase (post-only) · v26.2 exits.`,
-              `Сетап: ${plan.setup}`,
-              `Лимит/mark: ${fmt(fill!)} · SL ${fmt(sl)} · TP1 ${target1 != null ? fmt(target1) : '—'} · TP ${fmt(tp)}`,
-              `BE @ +0.5R · trail ~0.6% после MFE · cooldown 75м.`,
+              `Сетап: ${plan.setup} · класс ${plan.qualityTier ?? 'A'}`,
+              `Уровни (${plan.side}):`,
+              `Открытие: ${fmt(fill!)}`,
+              `Стоп (SL): ${fmt(sl)} (${pctFromEntry(fill!, sl)})`,
+              `Тейк 1 (TP1): ${target1 != null ? fmt(target1) : '—'}${
+                target1 != null ? ` (${pctFromEntry(fill!, target1)})` : ''
+              }`,
+              `Тейк 2 (TP): ${fmt(tp)} (${pctFromEntry(fill!, tp)})`,
+              plan.entryReasons?.length
+                ? `Причины: ${plan.entryReasons.slice(0, 8).join(' · ')}`
+                : null,
+              `BE @ +0.5R · trail после MFE · cooldown 35м · slots до 6.`,
               `Сопровождение ${cadence}.`,
-            ].join('\n'),
+            ]
+              .filter(Boolean)
+              .join('\n'),
         dedupeKey: `paper:fill:${trade.id}`,
       }
     : {
@@ -1100,7 +1139,16 @@ function memeFavorPct(t: PaperTrade, price: number): number {
   return Math.max(0, pnlPct(t.side, fill, price))
 }
 
+function isPeakSetup(t: PaperTrade): boolean {
+  return t.setup === 'PEAK_FUEL_FAIL'
+}
+
 function memeTrailPct(t: PaperTrade, peakFavorPct: number): number {
+  if (isPeakSetup(t)) {
+    if (t.tp1Sent || peakFavorPct >= 0.9) return PEAK_TRAIL_RUNNER
+    if (peakFavorPct >= PEAK_ARM_PCT) return PEAK_TRAIL_TIGHT
+    return PEAK_TRAIL_EARLY
+  }
   if (t.tp1Sent || peakFavorPct >= 1.0) return MEME_TRAIL_RUNNER
   if (peakFavorPct >= MEME_ARM_PCT) return MEME_TRAIL_TIGHT
   return MEME_TRAIL_EARLY
@@ -1156,13 +1204,15 @@ function updateTrail(t: PaperTrade, price: number): {
 
 function trailHit(t: PaperTrade, snap: TickerSnap): boolean {
   if (t.trailingStop == null || t.fillPrice == null || t.peak == null) return false
-  const arm = isMemeTrade(t)
-    ? MEME_ARM_PCT
-    : isMacroSetup(t.setup)
-      ? MACRO_ARM_PCT
-      : isMicroSetup(t.setup)
-        ? MICRO_ARM_PCT
-        : 0.03
+  const arm = isPeakSetup(t)
+    ? PEAK_ARM_PCT
+    : isMemeTrade(t)
+      ? MEME_ARM_PCT
+      : isMacroSetup(t.setup)
+        ? MACRO_ARM_PCT
+        : isMicroSetup(t.setup)
+          ? MICRO_ARM_PCT
+          : 0.03
   if (t.side === 'LONG') {
     return snap.low <= t.trailingStop && t.peak > t.fillPrice * (1 + arm)
   }
@@ -1207,6 +1257,20 @@ export async function monitorPaperTrades(
   const comments: PaperComment[] = []
   let dirty = false
 
+  const pushComment = (
+    t: PaperTrade,
+    c: Omit<PaperComment, 'setup' | 'route'> &
+      Partial<Pick<PaperComment, 'setup' | 'route'>>
+  ) => {
+    comments.push({
+      ...c,
+      setup: c.setup ?? t.setup,
+      route:
+        c.route ??
+        (t.alertType === 'MEME' ? 'meme' : 'sniper'),
+    })
+  }
+
   for (const t of list) {
     if (t.status === 'CLOSED') continue
 
@@ -1217,7 +1281,7 @@ export async function monitorPaperTrades(
       t.closeReason = wasWaiting ? 'timeout_waiting' : 'timeout_open'
       dirty = true
       await updateVaneRiskOnClose(env, t, t.fillPrice)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: wasWaiting
           ? `⏱ Пример закрыт: нет входа ${nameOf(t.symbol)}`
@@ -1243,7 +1307,7 @@ export async function monitorPaperTrades(
         t.closeReason = 'invalidate'
         dirty = true
         await updateVaneRiskOnClose(env, t, null)
-        comments.push({
+        pushComment(t, {
           alertType: 'SYSTEM',
           title: `⏭ Пример: пропуск ${nameOf(t.symbol)}`,
           text: [
@@ -1263,7 +1327,7 @@ export async function monitorPaperTrades(
         t.lastPulseAt = now
         t.lastWinPct = winPct
         dirty = true
-        comments.push({
+        pushComment(t, {
           alertType: 'SYSTEM',
           title: `👀 Зона коснулась: жду подтверждение ${nameOf(t.symbol)}`,
           text: [
@@ -1286,7 +1350,7 @@ export async function monitorPaperTrades(
           t.closeReason = 'invalidate'
           dirty = true
           await updateVaneRiskOnClose(env, t, null)
-          comments.push({
+          pushComment(t, {
             alertType: 'SYSTEM',
             title: `⏭ Вход отменён ${nameOf(t.symbol)}`,
             text: `После касания зоны подтверждения стакана не было, цена нарушила SL-уровень. Сделка не открывалась.`,
@@ -1325,7 +1389,7 @@ export async function monitorPaperTrades(
         t.lastWinPct = winPct
         t.lastPulseAt = now
         dirty = true
-        comments.push({
+        pushComment(t, {
           alertType: 'SYSTEM',
           title: `✅ Пример: вошёл ${t.side} ${nameOf(t.symbol)}`,
           text: [
@@ -1351,7 +1415,8 @@ export async function monitorPaperTrades(
         t.lastPulseAt = now
         t.lastWinPct = winPct
         dirty = true
-        comments.push(
+        pushComment(
+          t,
           buildCommentary({
             t,
             price: snap.last,
@@ -1398,7 +1463,7 @@ export async function monitorPaperTrades(
       t.closeReason = 'dead_entry'
       dirty = true
       await updateVaneRiskOnClose(env, t, snap.last)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `✂ MEME мёртвый вход ${nameOf(t.symbol)}`,
         text: [
@@ -1413,7 +1478,7 @@ export async function monitorPaperTrades(
     if (trail.moved && !t.trailMovedSent) {
       t.trailMovedSent = true
       dirty = true
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `📈 Пример: трейл ${nameOf(t.symbol)}`,
         text: [
@@ -1425,17 +1490,24 @@ export async function monitorPaperTrades(
       })
     }
 
-    // v26.2 memes BE @0.5R; MICRO/MACRO early BE — protect R on real moves.
-    const beR = isMemeTrade(t)
-      ? 0.5
-      : isMacroSetup(t.setup)
-        ? MACRO_BE_R
-        : isMicroSetup(t.setup)
-          ? MICRO_BE_R
-          : 0.6
+    // PEAK autopsy: BE earlier (0.35R / ~0.4% MFE) — 74% losses were give-backs
+    const beR = isPeakSetup(t)
+      ? PEAK_BE_R
+      : isMemeTrade(t)
+        ? 0.5
+        : isMacroSetup(t.setup)
+          ? MACRO_BE_R
+          : isMicroSetup(t.setup)
+            ? MICRO_BE_R
+            : 0.6
     const favorPct = memeFavorPct(t, snap.last)
+    const peakEarlyBe =
+      isPeakSetup(t) && favorPct >= PEAK_ARM_PCT && favorR >= 0.28
     const memeEarlyBe =
-      isMemeTrade(t) && favorPct >= MEME_ARM_PCT && favorR >= 0.35
+      isMemeTrade(t) &&
+      !isPeakSetup(t) &&
+      favorPct >= MEME_ARM_PCT &&
+      favorR >= 0.35
     const microEarlyBe =
       isMicroSetup(t.setup) &&
       favorPct >= MICRO_BE_MFE_PCT &&
@@ -1444,21 +1516,31 @@ export async function monitorPaperTrades(
       isMacroSetup(t.setup) &&
       favorPct >= MACRO_BE_MFE_PCT &&
       favorR >= MACRO_BE_R * 0.85
-    if (!t.beSent && (favorR >= beR || memeEarlyBe || microEarlyBe || macroEarlyBe)) {
+    if (
+      !t.beSent &&
+      (favorR >= beR || peakEarlyBe || memeEarlyBe || microEarlyBe || macroEarlyBe)
+    ) {
       t.beSent = true
-      t.sl = fill
+      // PEAK: lock tiny profit (+0.15%) not flat BE — reduce give-back to full SL
+      t.sl = isPeakSetup(t)
+        ? t.side === 'SHORT'
+          ? fill * (1 - 0.0015)
+          : fill * (1 + 0.0015)
+        : fill
       dirty = true
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `🛡 Пример: BE ${nameOf(t.symbol)}`,
         text: [
-          isMacroSetup(t.setup)
-            ? `MACRO +${favorPct.toFixed(2)}% — стоп в BE (${fmt(fill)}).`
-            : isMicroSetup(t.setup)
-              ? `MICRO +${favorPct.toFixed(2)}% — стоп в BE (${fmt(fill)}).`
-              : isMemeTrade(t)
-                ? `Прогресс +${favorPct.toFixed(2)}% / ${favorR.toFixed(2)}R — стоп в безубыток (${fmt(fill)}).`
-                : `Есть +${beR}R — стоп в безубыток (${fmt(fill)}).`,
+          isPeakSetup(t)
+            ? `PEAK +${favorPct.toFixed(2)}% — стоп в плюс ~0.15% (анти give-back).`
+            : isMacroSetup(t.setup)
+              ? `MACRO +${favorPct.toFixed(2)}% — стоп в BE (${fmt(fill)}).`
+              : isMicroSetup(t.setup)
+                ? `MICRO +${favorPct.toFixed(2)}% — стоп в BE (${fmt(fill)}).`
+                : isMemeTrade(t)
+                  ? `Прогресс +${favorPct.toFixed(2)}% / ${favorR.toFixed(2)}R — стоп в безубыток (${fmt(fill)}).`
+                  : `Есть +${beR}R — стоп в безубыток (${fmt(fill)}).`,
           `Вероятность ${winPct}% · ${brief.pressureLabel}`,
           `Цель всё ещё ${fmt(t.tp)}${t.target1 ? ` · TP1 ${fmt(t.target1)}` : ''}.`,
         ].join('\n'),
@@ -1490,7 +1572,7 @@ export async function monitorPaperTrades(
         : isMicroSetup(t.setup)
           ? 'MICRO'
           : 'MEME'
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `🎯 ${label} TP1 ${nameOf(t.symbol)}`,
         text: [
@@ -1525,7 +1607,7 @@ export async function monitorPaperTrades(
       dirty = true
       await updatePredatorRiskOnClose(env, t, exit)
       await updateVaneRiskOnClose(env, t, exit)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `⏱ PREDATOR time-stop ${nameOf(t.symbol)}`,
         text: [
@@ -1544,7 +1626,7 @@ export async function monitorPaperTrades(
       t.closeReason = 'trail'
       dirty = true
       await updateVaneRiskOnClose(env, t, snap.last)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `⏹ MEME выход ${nameOf(t.symbol)}`,
         text: [
@@ -1567,7 +1649,7 @@ export async function monitorPaperTrades(
         t.side === 'LONG' ? Math.max(snap.last, t.tp) : Math.min(snap.last, t.tp)
       await updatePredatorRiskOnClose(env, t, exit)
       await updateVaneRiskOnClose(env, t, exit)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `🎯 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : t.setup.startsWith('VANE_') ? 'VANE' : 'Пример'}: цель ${nameOf(t.symbol)}`,
         text: [
@@ -1587,7 +1669,7 @@ export async function monitorPaperTrades(
       dirty = true
       const exit = t.trailingStop ?? snap.last
       await updateVaneRiskOnClose(env, t, exit)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `🚨 Пример: трейл-выход ${nameOf(t.symbol)}`,
         text: [
@@ -1607,7 +1689,7 @@ export async function monitorPaperTrades(
       dirty = true
       await updatePredatorRiskOnClose(env, t, t.sl)
       await updateVaneRiskOnClose(env, t, t.sl)
-      comments.push({
+      pushComment(t, {
         alertType: 'SYSTEM',
         title: `🛑 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : 'Пример'}: стоп ${nameOf(t.symbol)}`,
         text: [
@@ -1625,7 +1707,8 @@ export async function monitorPaperTrades(
       t.lastPulseAt = now
       t.lastWinPct = winPct
       dirty = true
-      comments.push(
+      pushComment(
+        t,
         buildCommentary({
           t,
           price: snap.last,
