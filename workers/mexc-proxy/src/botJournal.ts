@@ -81,6 +81,8 @@ export interface BotJournalEntry {
   engineId?: string | null
   /** Linked paper companion id */
   paperId?: string | null
+  /** true if entry TG was actually delivered (false → orphan result risk) */
+  tgEntrySent?: boolean | null
   /** Hold duration ms after fill/create */
   holdMs?: number | null
   /** Snapshot of planned risk at entry (before paper adjusts) */
@@ -185,6 +187,7 @@ export interface TradePlanLike {
   qualityTier?: 'A' | 'B'
   engineId?: string
   paperId?: string
+  tgEntrySent?: boolean
 }
 
 function parseEntryMeta(reasons: string[] | null | undefined): BotJournalEntry['entryMeta'] {
@@ -436,6 +439,7 @@ export async function recordBotAlert(
     qualityTier: input.plan.qualityTier ?? null,
     engineId: input.plan.engineId ?? null,
     paperId: input.plan.paperId ?? null,
+    tgEntrySent: input.plan.tgEntrySent ?? null,
     holdMs: null,
     initialSl: input.plan.sl,
     initialTp: input.plan.tp,
@@ -819,7 +823,13 @@ export async function resolveBotJournal(
     }
 
     if (status) {
-      const exit = price
+      // Last-price resolve can overshoot SL by 10%+ after a gap — clamp to planned SL
+      let exit = price
+      if (status === 'LOSS' && closeReason === 'sl') {
+        exit = working.sl
+      } else if (status === 'WIN' && closeReason === 'tp') {
+        exit = working.tp
+      }
       const pnl = pnlPct(working.side, working.entryPrice, exit)
       list[i] = pushOutcome(working, {
         ...working,

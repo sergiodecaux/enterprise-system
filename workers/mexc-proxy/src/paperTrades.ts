@@ -98,6 +98,8 @@ export interface TradePlan {
   entryReasons?: string[]
   entryNotes?: string
   qualityTier?: 'A' | 'B'
+  /** Skip extra MEXC ticker fetch when caller already has mark */
+  markPrice?: number
 }
 
 export interface PaperTrade {
@@ -815,17 +817,28 @@ export async function createPaperTradeFromPlan(
   let zoneLow = plan.zoneLow
   let zoneHigh = plan.zoneHigh
   if (isMeme) {
-    const snap = await fetchTickerSnap(plan.symbol)
-    const mark = snap?.last && snap.last > 0 ? snap.last : fill
+    const isPeak = plan.setup === 'PEAK_FUEL_FAIL'
+    // PEAK: use scan mark — no second MEXC fetch (CF subrequest budget)
+    let mark =
+      plan.markPrice && plan.markPrice > 0
+        ? plan.markPrice
+        : fill && fill > 0
+          ? fill
+          : null
+    let snap: TickerSnap | null = null
+    if (!isPeak || !(mark && mark > 0)) {
+      snap = await fetchTickerSnap(plan.symbol)
+      mark = snap?.last && snap.last > 0 ? snap.last : mark
+    }
     if (!(mark && mark > 0)) {
       return { created: false, comment: null, skipReason: 'bad_mark' }
     }
     fill = mark
     entryIdeal = mark
-    const minSlPct = 0.018
+    // PEAK keeps detector SL (~1%); other memes enforce min distance
+    const minSlPct = isPeak ? 0 : 0.018
     if (plan.side === 'LONG') {
-      sl = Math.min(plan.sl, mark * (1 - minSlPct))
-      // Already stopped at open → skip (was causing <5s LOSS spam)
+      if (minSlPct > 0) sl = Math.min(plan.sl, mark * (1 - minSlPct))
       if (snap && (snap.last <= sl || snap.low <= sl)) {
         return { created: false, comment: null, skipReason: 'pre_stopped' }
       }
@@ -835,15 +848,26 @@ export async function createPaperTradeFromPlan(
       if (!(target1 != null && target1 > mark)) target1 = mark * 1.018
       if (!(target3 != null && target3 > mark)) target3 = mark * 1.04
     } else {
-      sl = Math.max(plan.sl, mark * (1 + minSlPct))
+      if (minSlPct > 0) sl = Math.max(plan.sl, mark * (1 + minSlPct))
+      else sl = plan.sl
+      // Without live snap, skip pre_stopped for PEAK (entry already TG'd)
       if (snap && (snap.last >= sl || snap.high >= sl)) {
         return { created: false, comment: null, skipReason: 'pre_stopped' }
       }
       zoneLow = Math.min(zoneLow, mark)
       zoneHigh = Math.max(zoneHigh, mark * 1.001)
-      if (!(tp < mark)) tp = mark * 0.972
-      if (!(target1 != null && target1 < mark)) target1 = mark * 0.982
-      if (!(target3 != null && target3 < mark)) target3 = mark * 0.96
+      if (!(tp < mark)) tp = mark * (isPeak ? 0.982 : 0.972)
+      if (!(target1 != null && target1 < mark))
+        target1 = mark * (isPeak ? 0.989 : 0.982)
+      if (!(target3 != null && target3 < mark))
+        target3 = mark * (isPeak ? 0.975 : 0.96)
+      // Rebase PEAK levels from actual mark if scan price drifted
+      if (isPeak && Math.abs(mark - plan.entryIdeal) / mark > 0.001) {
+        sl = mark * 1.01
+        tp = mark * 0.982
+        target1 = mark * 0.989
+        target3 = mark * 0.975
+      }
     }
   }
   const trade: PaperTrade = {

@@ -63,6 +63,10 @@ import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 import { kvPutThrottled } from './kvWrite'
+import {
+  enqueuePendingMeme,
+  flushPendingMemeAlerts,
+} from './pendingMemeTg'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 const LAST_SCAN_KEY = 'telegram:last_scan_status'
@@ -1372,58 +1376,11 @@ async function runCronScan(
     allAlerts.push(a)
 
     if (a.type === 'MEME') {
-      // Never silent-drop a predator/meme signal if paper caps block companion trade.
+      // TG FIRST — scan already burns CF subrequests; paper/ticker after TG
+      // was causing: journal logged + entry TG failed («результаты без сигналов»).
       let title = a.title
       let text = a.text
       let dedupeKey = a.dedupeKey
-      if (a.tradePlan) {
-        const paper = await createPaperTradeFromPlan(env, {
-          ...a.tradePlan,
-          alertType: 'MEME',
-          target1: a.tradePlan.target1,
-          target3: a.tradePlan.target3,
-        })
-        if (paper.created && paper.comment) {
-          title = paper.comment.title
-          // PEAK: paper already has clear open/SL/TP — don't duplicate a.text levels
-          text =
-            a.tradePlan?.setup === 'PEAK_FUEL_FAIL'
-              ? paper.comment.text
-              : [paper.comment.text, '', a.text].filter(Boolean).join('\n')
-          dedupeKey = paper.comment.dedupeKey
-        } else {
-          skipped++
-          console.log(
-            '[cron] meme paper skipped —',
-            paper.skipReason ?? 'unknown',
-            a.dedupeKey
-          )
-          // Still deliver TG signal (was silent on cooldown → «не все монеты»)
-          if (paper.skipReason === 'cooldown') {
-            title = a.title
-            text = [
-              a.text,
-              '',
-              '⚠ Paper cooldown по символу — сигнал без companion-сделки.',
-            ].join('\n')
-          }
-        }
-        // Always journal — detailed entry for later analysis
-        const logged = await recordBotAlert(env, {
-          alertType: 'MEME',
-          score: a.score,
-          dedupeKey: a.dedupeKey,
-          plan: {
-            ...a.tradePlan,
-            engineId: BOT_ENGINE.id,
-            paperId: paper.created
-              ? paper.comment?.dedupeKey?.replace(/^paper:fill:/, '') ||
-                undefined
-              : undefined,
-          },
-        })
-        if (logged) journalLogged++
-      }
       const cr = await broadcastAlert(env, {
         type: 'SYSTEM',
         channel: 'meme',
@@ -1434,6 +1391,58 @@ async function runCronScan(
       paperComments += cr.sent
       sent += cr.sent
       failed += cr.failed
+
+      // Predator tick often exhausted CF subrequests — queue for paper cron
+      let queued = false
+      if (cr.sent === 0 && !cr.skipped) {
+        try {
+          await enqueuePendingMeme(env, { title, text, dedupeKey })
+          queued = true
+          console.log('[cron] meme entry queued for paper flush', dedupeKey)
+        } catch (err) {
+          console.error('[cron] pending meme enqueue failed', err)
+        }
+      }
+
+      if (a.tradePlan) {
+        let paperId: string | undefined
+        try {
+          const paper = await createPaperTradeFromPlan(env, {
+            ...a.tradePlan,
+            alertType: 'MEME',
+            target1: a.tradePlan.target1,
+            target3: a.tradePlan.target3,
+            markPrice:
+              a.tradePlan.signalPrice || a.tradePlan.entryIdeal || undefined,
+          })
+          if (paper.created && paper.comment) {
+            paperId =
+              paper.comment.dedupeKey?.replace(/^paper:fill:/, '') || undefined
+          } else {
+            skipped++
+            console.log(
+              '[cron] meme paper skipped —',
+              paper.skipReason ?? 'unknown',
+              a.dedupeKey
+            )
+          }
+        } catch (err) {
+          console.error('[cron] meme paper failed', err)
+        }
+        const logged = await recordBotAlert(env, {
+          alertType: 'MEME',
+          score: a.score,
+          dedupeKey: a.dedupeKey,
+          plan: {
+            ...a.tradePlan,
+            engineId: BOT_ENGINE.id,
+            paperId,
+            // queued → paper cron will deliver; don't mute later results
+            tgEntrySent: cr.sent > 0 || queued,
+          },
+        })
+        if (logged) journalLogged++
+      }
       return
     }
 
@@ -1505,6 +1514,37 @@ async function runCronScan(
   }
 
   const runPaper = async () => {
+    // Fresh subrequest budget — deliver PEAK entries that predator couldn't send
+    try {
+      const flushed = await flushPendingMemeAlerts(
+        env,
+        async (item) => {
+          const r = await broadcastAlert(env, {
+            type: 'SYSTEM',
+            channel: 'meme',
+            title: item.title,
+            text: item.text,
+            dedupeKey: item.dedupeKey,
+          })
+          sent += r.sent
+          failed += r.failed
+          paperComments += r.sent
+          return r
+        },
+        5
+      )
+      if (flushed.flushed > 0 || flushed.left > 0) {
+        console.log(
+          '[cron] pending meme flush',
+          flushed.flushed,
+          'left',
+          flushed.left
+        )
+      }
+    } catch (err) {
+      console.error('[cron] pending meme flush failed', err)
+    }
+
     try {
       const comments = await monitorPaperTrades(env)
       let tgBudget = 6
@@ -1512,6 +1552,18 @@ async function runCronScan(
         if (tgBudget <= 0) break
         // Meme companion TG: PEAK only — missing setup = orphan/old paper → mute
         if ((c.route ?? 'meme') === 'meme' && c.setup !== 'PEAK_FUEL_FAIL') {
+          continue
+        }
+        // PEAK closes: journal sends «Результат» — mute duplicate paper стоп/цель
+        if (
+          (c.route ?? 'meme') === 'meme' &&
+          c.setup === 'PEAK_FUEL_FAIL' &&
+          (c.dedupeKey.startsWith('paper:sl:') ||
+            c.dedupeKey.startsWith('paper:tp:') ||
+            c.dedupeKey.startsWith('paper:trailhit:') ||
+            c.dedupeKey.startsWith('paper:expire:') ||
+            c.dedupeKey.startsWith('paper:dead:'))
+        ) {
           continue
         }
         const cr = await broadcastAlert(env, {
@@ -1548,6 +1600,8 @@ async function runCronScan(
         if (outcome.alertType === 'MEME') {
           if (outcome.setup !== 'PEAK_FUEL_FAIL') continue
           if (outcome.status !== 'WIN' && outcome.status !== 'LOSS') continue
+          // No entry TG → don't spam «Результат» without signal
+          if (outcome.tgEntrySent === false) continue
         }
         if (tgBudget <= 0) break
         const icon =
@@ -1815,29 +1869,6 @@ async function runCronScan(
 
   if (role === 'predator' || role === 'all') {
     await runPredator()
-    // Echo time-stop needs paper monitor soon after fill — cheap pass
-    if (role === 'predator') {
-      try {
-        const comments = await monitorPaperTrades(env)
-        let tgBudget = 2
-        for (const c of comments) {
-          if (tgBudget <= 0) break
-          if (!c.title.includes('PREDATOR') && !c.dedupeKey.includes('timestop'))
-            continue
-          const cr = await broadcastAlert(env, {
-            type: 'SYSTEM',
-            channel: 'meme',
-            title: c.title,
-            text: c.text,
-            dedupeKey: c.dedupeKey,
-          })
-          paperComments += cr.sent
-          if (cr.sent > 0) tgBudget--
-        }
-      } catch (err) {
-        console.error('[cron] predator paper slice failed', err)
-      }
-    }
   }
 
   if (role === 'vane' || role === 'all') {

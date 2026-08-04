@@ -26,14 +26,14 @@ const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 /**
  * CF Workers free ~50 subrequests/invocation.
- * Was MAX_SCAN=22 × (book+deals+klines) ≈ 60+ → «Too many subrequests».
- * Budget: 1 ticker + SCAN klines + BOOK_SCAN×(~2 depth/deals) ≲ 35.
+ * Lean scan leaves headroom for TG (+ pending flush on paper cron).
+ * Budget: 1 ticker + 10 klines ≲ 12 — book off (candles carry PEAK).
  */
-const MAX_SCAN = 14
-/** Live book only for hottest pumps (optional confirm) */
-const BOOK_SCAN = 5
+const MAX_SCAN = 10
+/** Book off — each book+deals pair ate ~2 subreq and caused silent TG */
+const BOOK_SCAN = 0
 /** Emit every A-tier hit this tick (paper/TG caps apply downstream) */
-const MAX_ALERTS = 6
+const MAX_ALERTS = 3
 /** Only emit PEAK_FUEL_FAIL */
 const PEAK_ONLY = true
 
