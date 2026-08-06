@@ -92,6 +92,14 @@ export async function listPeakDecisions(
   return list.slice(0, limit)
 }
 
+/** Wipe decision log for a clean post-fix autopsy window. */
+export async function clearPeakDecisions(kv?: KvLike): Promise<number> {
+  const list = await load(kv)
+  const n = list.length
+  await save(kv, [])
+  return n
+}
+
 /** Attach resolve autopsy onto the matching ALERT decision (best-effort). */
 export async function attachPeakOutcome(
   kv: KvLike | undefined,

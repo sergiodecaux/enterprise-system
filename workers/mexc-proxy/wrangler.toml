@@ -2,24 +2,25 @@ name = "mexc-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-# Split roles = separate CPU budgets.
-# Cron strings must match controller.cron in scheduled() exactly.
+# PRIMARY worker — Account A
+# Fill secrets: TELEGRAM_* ALERT_SECRET FAILOVER_SECRET
+# Vars below point peer at STANDBY worker URL after you deploy it.
+
 [triggers]
 crons = [
-  "*/2 * * * *",      # predator (memes)
-  "1-59/2 * * * *",   # paper monitor + journal
-  "5 * * * *",        # Elite Assistant hourly (BTC + TOP-8)
-  "5 0 * * *"         # Elite Assistant daily close UTC
+  "*/2 * * * *",
+  "1-59/2 * * * *",
+  "5 * * * *",
+  "5 0 * * *"
 ]
 
-# Free plan: no [limits] cpu_ms (paid-only). Stay under ~50 subrequests/invocation.
+[vars]
+FAILOVER_ROLE = "primary"
+FAILOVER_PEER_URL = "https://mexc-proxy-b.mexc-standby.workers.dev"
+PUBLIC_BASE_URL = "https://mexc-proxy.sergiodecaux.workers.dev"
+FAILOVER_DAILY_BUDGET = "80000"
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"
 id = "71e923e3dfd14345be664ce6b7351b87"
 preview_id = "161ce13638eb4cd296886b26e37a35bb"
-
-# Secrets (CLI):
-#   npx wrangler secret put TELEGRAM_BOT_TOKEN
-#   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN
-#   npx wrangler secret put ALERT_SECRET

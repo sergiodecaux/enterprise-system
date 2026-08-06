@@ -203,6 +203,70 @@ function imbalance(asks: Level[], bids: Level[]): number {
   return ask + bid > 0 ? ((bid - ask) / (bid + ask)) * 100 : 0
 }
 
+/** Retail noise on asks: $5–10 sells that bait shorts (not real walls). */
+export interface CrowdBookMetrics {
+  crowdAskLevels: number
+  crowdAskUsd: number
+  realAskUsd: number
+  crowdAskShare: number
+  /** Many tiny asks + thin real ask = shorts get lured */
+  shortBaitAsks: boolean
+  /** Real buy support vs crowd noise */
+  bidSupportUsd: number
+}
+
+const CROWD_USD_LO = 1
+const CROWD_USD_HI = 10
+const REAL_LEVEL_USD = 120
+
+export function analyzeCrowdBook(
+  snap: OrderBookSnapshot | null | undefined
+): CrowdBookMetrics {
+  if (!snap?.asks?.length) {
+    return {
+      crowdAskLevels: 0,
+      crowdAskUsd: 0,
+      realAskUsd: 0,
+      crowdAskShare: 0,
+      shortBaitAsks: false,
+      bidSupportUsd: 0,
+    }
+  }
+  const nearAsks = snap.asks.slice(0, 15)
+  let crowdAskLevels = 0
+  let crowdAskUsd = 0
+  let realAskUsd = 0
+  for (const [price, vol] of nearAsks) {
+    const usd = price * vol
+    if (!(usd > 0)) continue
+    if (usd >= CROWD_USD_LO && usd <= CROWD_USD_HI) {
+      crowdAskLevels++
+      crowdAskUsd += usd
+    } else if (usd >= REAL_LEVEL_USD) {
+      realAskUsd += usd
+    }
+  }
+  const crowdAskShare =
+    nearAsks.length > 0 ? crowdAskLevels / nearAsks.length : 0
+  let bidSupportUsd = 0
+  for (const [price, vol] of (snap.bids ?? []).slice(0, 8)) {
+    const usd = price * vol
+    if (usd >= REAL_LEVEL_USD) bidSupportUsd += usd
+  }
+  // Trap for shorts: ≥3 tiny $1–10 ask clips OR ≥30% of near asks are retail-sized
+  const shortBaitAsks =
+    (crowdAskLevels >= 3 || crowdAskShare >= 0.3) &&
+    realAskUsd < Math.max(350, crowdAskUsd * 10)
+  return {
+    crowdAskLevels,
+    crowdAskUsd: Number(crowdAskUsd.toFixed(1)),
+    realAskUsd: Number(realAskUsd.toFixed(1)),
+    crowdAskShare: Number(crowdAskShare.toFixed(2)),
+    shortBaitAsks,
+    bidSupportUsd: Number(bidSupportUsd.toFixed(1)),
+  }
+}
+
 function nearestVolume(
   levels: Level[],
   price: number,

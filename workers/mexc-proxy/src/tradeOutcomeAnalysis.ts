@@ -83,6 +83,8 @@ export function analyzeTradeOutcome(
   if (input.alertType === 'MEME') tags.push('MEME')
   else tags.push('ALTS')
   if (input.setup === 'PEAK_FUEL_FAIL') tags.push('PEAK')
+  if (input.setup === 'DUMP_FUEL_FAIL') tags.push('DUMP_RECLAIM')
+  if (input.setup === 'PUMP_CONTINUE') tags.push('PUMP_SQUEEZE')
   if (input.qualityTier) tags.push(`Q_${input.qualityTier}`)
 
   const entryBits = (input.entryReasons ?? []).filter(Boolean)
@@ -247,8 +249,13 @@ export function analyzeTradeOutcome(
     }
   }
 
-  // PEAK-specific autopsy from entry reasons
-  if (input.setup === 'PEAK_FUEL_FAIL' && entryBits.length) {
+  // PEAK/DUMP autopsy from entry reasons
+  if (
+    (input.setup === 'PEAK_FUEL_FAIL' ||
+      input.setup === 'DUMP_FUEL_FAIL' ||
+      input.setup === 'PUMP_CONTINUE') &&
+    entryBits.length
+  ) {
     tags.push('ENTRY_REASONS')
     if (input.status === 'LOSS') {
       if (stallOnlyEntry) {
@@ -256,19 +263,25 @@ export function analyzeTradeOutcome(
           ' PEAK: stall-only без failed/wick/absorb — ужесточить A-tier (не торговать).'
         tags.push('PEAK_STALL_WEAK')
       }
-      const dist = entryBits.find((r) => r.startsWith('dist_high:'))
-      if (dist) {
-        const d = Number(dist.split(':')[1])
-        if (Number.isFinite(d) && d > 1.0) {
-          lesson += ` PEAK: вход далеко от хая (${d.toFixed(2)}%) — ждать ближе к пику.`
-          tags.push('PEAK_FAR_FROM_HIGH')
+      if (!entryBits.includes('post_dump')) {
+        lesson +=
+          ' PEAK: шорт без слива с пика (tip-of-pump) — ждать dump + lower high как на UB.'
+        tags.push('PEAK_NO_POST_DUMP')
+      }
+      const dump = entryBits.find((r) => r.startsWith('dump:'))
+      if (dump) {
+        const d = Number(dump.split(':')[1])
+        if (Number.isFinite(d) && d < 5) {
+          lesson += ` PEAK: слабый dump (${d.toFixed(1)}%) — паттерн ещё не как на скрине.`
+          tags.push('PEAK_WEAK_DUMP')
         }
       }
       if (
         !entryBits.includes('ask_absorption') &&
-        !entryBits.includes('cvd_bearish')
+        !entryBits.includes('cvd_bearish') &&
+        !entryBits.includes('post_dump')
       ) {
-        lesson += ' PEAK: без book confirm — ложный fade на продолжении пампa.'
+        lesson += ' PEAK: без book/post_dump — ложный fade на продолжении пампa.'
         tags.push('PEAK_NO_BOOK')
       }
     } else if (input.status === 'WIN') {

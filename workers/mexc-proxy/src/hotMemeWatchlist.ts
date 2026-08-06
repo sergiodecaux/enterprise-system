@@ -3,15 +3,28 @@
  * Sticky soft-refresh keeps continuity but list is wide enough to cover the top.
  */
 
-const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v2_peak'
+const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v5_liq'
 /** Rebuild order more often so new hot names enter the top */
-const REFRESH_MS = 12 * 60_000
-/** Peak fuel short = pump fades — spend all slots on pumps */
-const MAX_PUMPS = 22
-const MAX_DUMPS = 0
-const MAX_TOTAL = 22
+const REFRESH_MS = 10 * 60_000
+/**
+ * Dual lane: rockets (worked) + calmer mid-liq — both kept, not either/or.
+ * Scan still caps how many we deep-scan per tick (CF budget).
+ */
+const MAX_ROCKETS = 14
+const MAX_CALM = 12
+/** Dump lane for DUMP_FUEL_FAIL LONGs (mirror of pump shorts). */
+const MAX_DUMPS = 10
+const MAX_TOTAL = 28
+/** Force full rebuild if sticky list collapses (was stuck at 1 coin → no signals) */
+const MIN_HEALTHY_LIST = 10
 const MIN_ABS_CHG_PCT = 3
-const MIN_QUOTE_VOL = 100_000
+/** Rockets: was 100k — thin names (LONGXIA…) SL'd; need tradeable depth */
+const MIN_QUOTE_VOL = 500_000
+/** Calm lane: more liquid, milder 24h — slower path to TP */
+const CALM_VOL_MIN = 1_000_000
+const CALM_VOL_MAX = 25_000_000
+const CALM_CHG_MIN = 5
+const CALM_CHG_MAX = 28
 
 export type DayBias = 'PUMP' | 'DUMP'
 
@@ -58,11 +71,24 @@ function quoteVol(t: HotMemeTickerLike): number {
   return price > 0 && vol > 0 ? price * vol : 0
 }
 
-function heatScore(chgAbs: number, vol: number): number {
+/** Classic rocket heat — thin/hot books that already worked */
+function rocketScore(chgAbs: number, vol: number): number {
   const volFactor = Math.log10(Math.max(vol, 10_000))
-  // Prefer thin books ($200k–$2M) where MM patterns are readable.
-  const thinBonus = vol >= 200_000 && vol <= 2_000_000 ? 1.25 : vol > 5_000_000 ? 0.85 : 1
+  const thinBonus =
+    vol >= 200_000 && vol <= 2_000_000 ? 1.25 : vol > 5_000_000 ? 0.85 : 1
   return chgAbs * volFactor * thinBonus
+}
+
+/** Calm mid-liq — slower fades, more time to enter */
+function calmScore(chgAbs: number, vol: number): number {
+  if (vol < CALM_VOL_MIN || vol > CALM_VOL_MAX) return 0
+  if (chgAbs < CALM_CHG_MIN || chgAbs > CALM_CHG_MAX) return 0
+  const volFactor = Math.log10(Math.max(vol, 10_000))
+  return chgAbs * volFactor * 1.15
+}
+
+function heatScore(chgAbs: number, vol: number): number {
+  return Math.max(rocketScore(chgAbs, vol), calmScore(chgAbs, vol))
 }
 
 export async function loadHotMemeWatchlist(
@@ -109,8 +135,10 @@ export function buildHotMemeWatchlist(
   const now = opts.now ?? Date.now()
   const key = dayKeyUtc(now)
   const prev = opts.previous
+  const listHealthy = (prev?.entries?.length ?? 0) >= MIN_HEALTHY_LIST
   const freshEnough =
     prev &&
+    listHealthy &&
     prev.dayKey === key &&
     now - prev.updatedAt < REFRESH_MS &&
     prev.entries.length > 0
@@ -143,17 +171,39 @@ export function buildHotMemeWatchlist(
       } satisfies HotMemeEntry
     })
 
-  const pumps = candidates
-    .filter((e) => e.dayBias === 'PUMP')
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_PUMPS)
+  const pumpsAll = candidates.filter((e) => e.dayBias === 'PUMP')
+  const rockets = [...pumpsAll]
+    .sort(
+      (a, b) =>
+        rocketScore(Math.abs(b.chg24hPct), b.quoteVolUsd) -
+        rocketScore(Math.abs(a.chg24hPct), a.quoteVolUsd)
+    )
+    .slice(0, MAX_ROCKETS)
+  const calm = [...pumpsAll]
+    .filter(
+      (e) =>
+        e.quoteVolUsd >= CALM_VOL_MIN &&
+        e.quoteVolUsd <= CALM_VOL_MAX &&
+        e.chg24hPct >= CALM_CHG_MIN &&
+        e.chg24hPct <= CALM_CHG_MAX
+    )
+    .sort(
+      (a, b) =>
+        calmScore(Math.abs(b.chg24hPct), b.quoteVolUsd) -
+        calmScore(Math.abs(a.chg24hPct), a.quoteVolUsd)
+    )
+    .slice(0, MAX_CALM)
+  // Rockets first (proven), then unique calm names — both lanes live together
+  const bySym = new Map<string, HotMemeEntry>()
+  for (const e of rockets) bySym.set(e.symbol, e)
+  for (const e of calm) {
+    if (!bySym.has(e.symbol)) bySym.set(e.symbol, e)
+  }
   const dumps = candidates
     .filter((e) => e.dayBias === 'DUMP')
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_DUMPS)
-
-  const bySym = new Map<string, HotMemeEntry>()
-  for (const e of [...pumps, ...dumps]) bySym.set(e.symbol, e)
+  for (const e of dumps) bySym.set(e.symbol, e)
 
   // Sticky: keep prior watchlist names if still hot enough (|chg|≥4) today.
   if (prev?.dayKey === key) {
@@ -194,11 +244,12 @@ export function buildHotMemeWatchlist(
   }
 
   let entries = [...bySym.values()]
-    .filter((e) => e.dayBias === 'PUMP' || e.chg24hPct >= MIN_ABS_CHG_PCT)
+    .filter((e) => Math.abs(e.chg24hPct) >= MIN_ABS_CHG_PCT)
     .sort((a, b) => {
-      const pumpA = a.dayBias === 'PUMP' || a.chg24hPct >= 0 ? 1 : 0
-      const pumpB = b.dayBias === 'PUMP' || b.chg24hPct >= 0 ? 1 : 0
-      return pumpB - pumpA || b.score - a.score
+      // Keep both lanes; mild pump bias only for tie-breaks
+      const pumpA = a.dayBias === 'PUMP' ? 1 : 0
+      const pumpB = b.dayBias === 'PUMP' ? 1 : 0
+      return b.score - a.score || pumpB - pumpA
     })
     .slice(0, MAX_TOTAL)
 
@@ -208,17 +259,26 @@ export function buildHotMemeWatchlist(
       .map((e) => bySym.get(e.symbol))
       .filter(
         (e): e is HotMemeEntry =>
-          Boolean(e) && (e!.dayBias === 'PUMP' || e!.chg24hPct >= 4)
+          Boolean(e) && Math.abs(e!.chg24hPct) >= 4
       )
+    // Collapsed sticky (e.g. 1 coin) → full rebuild, don't lock forever
+    if (keep.length < MIN_HEALTHY_LIST) {
+      return {
+        updatedAt: now,
+        dayKey: key,
+        entries,
+        reason: `rebuild-unhealthy-sticky keep=${keep.length}`,
+      }
+    }
     const extras = entries.filter(
       (e) => !keep.some((k) => k.symbol === e.symbol)
     )
     entries = [...keep, ...extras].slice(0, MAX_TOTAL)
     return {
-      updatedAt: prev.updatedAt,
+      updatedAt: now,
       dayKey: key,
       entries,
-      reason: 'sticky-watchlist-peak-pumps',
+      reason: 'sticky-watchlist-pump+dump',
     }
   }
 
@@ -227,8 +287,8 @@ export function buildHotMemeWatchlist(
     dayKey: key,
     entries,
     reason: entries.length
-      ? `peak-pumps top-${MAX_TOTAL} by 24h heat`
-      : 'no hot pumps above thresholds',
+      ? `pump+dump dual-lane top-${MAX_TOTAL}`
+      : 'no hot memes above thresholds',
   }
 }
 

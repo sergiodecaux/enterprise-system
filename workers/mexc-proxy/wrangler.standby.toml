@@ -1,0 +1,27 @@
+# STANDBY worker — second Cloudflare account
+# Deploy: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID for B, then:
+#   npx wrangler deploy -c wrangler.standby.toml
+# Secrets (same as primary): TELEGRAM_* ALERT_SECRET FAILOVER_SECRET
+
+name = "mexc-proxy-b"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+account_id = "e3a84d77aed7dfee0a33638e6aca557f"
+
+[triggers]
+crons = [
+  "*/2 * * * *",
+  "1-59/2 * * * *",
+  "5 * * * *",
+  "5 0 * * *"
+]
+
+[vars]
+FAILOVER_ROLE = "standby"
+FAILOVER_DAILY_BUDGET = "80000"
+FAILOVER_PEER_URL = "https://mexc-proxy.sergiodecaux.workers.dev"
+PUBLIC_BASE_URL = "https://mexc-proxy-b.mexc-standby.workers.dev"
+
+[[kv_namespaces]]
+binding = "SUBSCRIBERS"
+id = "ef480f0c060b4b2f9fddad01201eaf7f"

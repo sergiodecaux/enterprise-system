@@ -10,7 +10,7 @@ import {
 import { kvPutThrottled } from './kvWrite'
 import { attachPeakOutcome } from './peakDecisionLog'
 
-const JOURNAL_KEY = 'telegram:bot_journal'
+const JOURNAL_KEY = 'telegram:bot_journal_v287'
 /** Long-term closed trades for analysis (not pruned with live open book) */
 const ARCHIVE_KEY = 'telegram:bot_journal_archive'
 const GATES_KEY = 'telegram:bot_gates'
@@ -64,7 +64,7 @@ export interface BotJournalEntry {
   mfePercent: number
   maePercent: number
   dedupeKey: string
-  resolveSource: 'AUTO' | 'TIMEOUT' | null
+  resolveSource: 'AUTO' | 'TIMEOUT' | 'MANUAL' | null
   /** Paper / resolve close code: tp | sl | trail | dead_entry | … */
   closeReason?: string | null
   /** Immediate autopsy after resolve */
@@ -342,7 +342,8 @@ async function listJournal(env: Env): Promise<BotJournalEntry[]> {
 async function saveJournal(
   env: Env,
   list: BotJournalEntry[],
-  checkpoint = false
+  checkpoint = false,
+  forceKv = false
 ): Promise<void> {
   const trimmed = list
     .sort((a, b) => b.createdAt - a.createdAt)
@@ -350,7 +351,11 @@ async function saveJournal(
   memoryJournal.length = 0
   memoryJournal.push(...trimmed)
   await writeJournalCache(trimmed)
-  if (!env.SUBSCRIBERS || !checkpoint) return
+  if (!env.SUBSCRIBERS || (!checkpoint && !forceKv)) return
+  if (forceKv) {
+    await env.SUBSCRIBERS.put(JOURNAL_KEY, JSON.stringify(trimmed))
+    return
+  }
   // Free KV budget: checkpoint at most ~every 10m (Cache holds live journal)
   await kvPutThrottled(
     env.SUBSCRIBERS,
@@ -369,12 +374,15 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
-  // Meme journal: PEAK fuel short only — no SPOOF/LIQ/TRAP pollution
+  // Meme journal: PEAK SHORT + DUMP LONG + PUMP_CONTINUE LONG
   if (input.alertType === 'MEME') {
-    if (
-      input.plan.setup !== 'PEAK_FUEL_FAIL' ||
-      input.plan.side !== 'SHORT'
-    ) {
+    const peakOk =
+      input.plan.setup === 'PEAK_FUEL_FAIL' && input.plan.side === 'SHORT'
+    const dumpOk =
+      input.plan.setup === 'DUMP_FUEL_FAIL' && input.plan.side === 'LONG'
+    const pumpOk =
+      input.plan.setup === 'PUMP_CONTINUE' && input.plan.side === 'LONG'
+    if (!peakOk && !dumpOk && !pumpOk) {
       return null
     }
   }
@@ -555,17 +563,38 @@ function paperOutcome(
     status = 'WIN'
     exit = paper.tp
   } else if (paper.closeReason === 'sl') {
-    status = paper.beSent ? 'BE' : 'LOSS'
     exit = paper.sl
+    const slPnl = pnlPct(entry.side, fill, exit)
+    // Profit-lock BE only when exit is flat/tiny green — real stops stay LOSS
+    status =
+      Math.abs(slPnl) < 0.08 || (paper.beSent && slPnl >= -0.05 && slPnl < 0.25)
+        ? 'BE'
+        : 'LOSS'
   } else if (paper.closeReason === 'trail') {
     exit = paper.trailingStop ?? fill
     const pnl = pnlPct(entry.side, fill, exit)
     status = Math.abs(pnl) < 0.05 ? 'BE' : pnl > 0 ? 'WIN' : 'LOSS'
   } else if (
     paper.closeReason === 'invalidate' ||
-    paper.closeReason === 'timeout_waiting'
+    paper.closeReason === 'timeout_waiting' ||
+    paper.closeReason === 'stale_entry'
   ) {
     status = 'INVALIDATED'
+  } else if (
+    paper.closeReason === 'dead_entry' ||
+    paper.closeReason === 'timeout_open' ||
+    paper.closeReason === 'time_stop'
+  ) {
+    // Cut losers / time-outs were TIMEOUT and inflated WR — count as LOSS if red
+    exit = paper.trailingStop ?? paper.peak ?? fill
+    // Prefer last known adverse: use SL distance proxy when peak never moved
+    if (paper.closeReason === 'dead_entry') {
+      exit = fill // ~flat cut; still LOSS for hygiene
+      status = 'LOSS'
+    } else {
+      const pnl = pnlPct(entry.side, fill, exit)
+      status = pnl < -0.05 ? 'LOSS' : Math.abs(pnl) < 0.05 ? 'BE' : 'TIMEOUT'
+    }
   } else {
     status = 'TIMEOUT'
   }
@@ -690,7 +719,12 @@ export async function resolveBotJournal(
           .join(' · '),
         analyzed.resolvedAt ?? now
       )
-      if (analyzed.setup === 'PEAK_FUEL_FAIL') peakResolved.push(analyzed)
+      if (
+        analyzed.setup === 'PEAK_FUEL_FAIL' ||
+        analyzed.setup === 'DUMP_FUEL_FAIL' ||
+        analyzed.setup === 'PUMP_CONTINUE'
+      )
+        peakResolved.push(analyzed)
       if (
         prev.createdAt >= RESULT_NOTIFICATIONS_SINCE
       ) {
@@ -1393,6 +1427,41 @@ export async function getBotJournalPayload(env: Env): Promise<{
   }
 }
 
+/**
+ * Archive all PEAK rows, clear them from live journal, recompute gates.
+ * Starts a clean honest-WR window after paper/accounting fixes.
+ */
+export async function resetPeakJournalLive(env: Env): Promise<{
+  archived: number
+  remaining: number
+  gates: BotAdaptiveGates
+}> {
+  const list = await listJournal(env)
+  const peak = list.filter((e) => e.setup === 'PEAK_FUEL_FAIL')
+  const keep = list.filter((e) => e.setup !== 'PEAK_FUEL_FAIL')
+  if (peak.length) {
+    await archiveClosedTrades(
+      env,
+      peak.map((e) =>
+        e.status === 'OPEN'
+          ? {
+              ...e,
+              status: 'INVALIDATED' as const,
+              resolvedAt: Date.now(),
+              closeReason: 'reset_epoch',
+              resolveSource: 'MANUAL' as const,
+              pnlPercent: 0,
+              rMultiple: 0,
+            }
+          : e
+      )
+    )
+  }
+  await saveJournal(env, keep, true, true)
+  const gates = await recomputeAndSaveGates(env)
+  return { archived: peak.length, remaining: keep.length, gates }
+}
+
 /** Full analysis dump: live + archive, optional setup filter. */
 export async function getJournalAnalysisDump(
   env: Env,
@@ -1559,6 +1628,8 @@ export function memeSetupRankScore(
   // Hard priority: CONT_BOOK_RELEASE (journal best)
   if (setup === 'CONT_BOOK_RELEASE') rank += 18
   if (setup === 'PEAK_FUEL_FAIL') rank += 14
+  if (setup === 'DUMP_FUEL_FAIL') rank += 14
+  if (setup === 'PUMP_CONTINUE') rank += 16
   else if (setup.startsWith('CONT_')) rank += 8
   if (n >= 3) {
     rank += wr * 0.35
@@ -1582,6 +1653,8 @@ export function isHighWrMemeSetup(
 ): boolean {
   if (setup === 'CONT_BOOK_RELEASE') return true
   if (setup === 'PEAK_FUEL_FAIL') return true
+  if (setup === 'DUMP_FUEL_FAIL') return true
+  if (setup === 'PUMP_CONTINUE') return true
   const { wr, n } = setupHistoricalWr(gates, setup)
   if (n >= 3 && wr >= 55) return true
   if (gates && isSetupBoosted(gates, parseBotSetup(setup).base, setup)) {

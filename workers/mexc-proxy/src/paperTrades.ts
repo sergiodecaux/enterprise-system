@@ -299,17 +299,18 @@ async function fetchTickerSnap(symbol: string): Promise<TickerSnap | null> {
   const last = Number(row.lastPrice)
   if (!(last > 0)) return null
 
+  // Only current Min1 — 3-bar lookback was awarding TP from pre-entry wicks.
   const k = await mexcJson<{
     data: { high: number[]; low: number[]; close: number[] }
-  }>(`/api/v1/contract/kline/${symbol}?interval=Min1&limit=3`)
+  }>(`/api/v1/contract/kline/${symbol}?interval=Min1&limit=1`)
 
   let high = last
   let low = last
   const hs = k?.data?.high
   const ls = k?.data?.low
   if (hs?.length && ls?.length) {
-    high = Math.max(...hs.map(Number), last)
-    low = Math.min(...ls.map(Number), last)
+    high = Math.max(Number(hs[hs.length - 1]), last)
+    low = Math.min(Number(ls[ls.length - 1]), last)
   }
 
   return {
@@ -758,12 +759,14 @@ export async function createPaperTradeFromPlan(
   comment: PaperComment | null
   skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped' | 'setup'
 }> {
-  // Meme companion: only PEAK fuel shorts
-  if (
-    plan.alertType === 'MEME' &&
-    (plan.setup !== 'PEAK_FUEL_FAIL' || plan.side !== 'SHORT')
-  ) {
-    return { created: false, comment: null, skipReason: 'setup' }
+  // Meme companion: PEAK SHORT + DUMP LONG + PUMP_CONTINUE LONG
+  if (plan.alertType === 'MEME') {
+    const peakOk = plan.setup === 'PEAK_FUEL_FAIL' && plan.side === 'SHORT'
+    const dumpOk = plan.setup === 'DUMP_FUEL_FAIL' && plan.side === 'LONG'
+    const pumpOk = plan.setup === 'PUMP_CONTINUE' && plan.side === 'LONG'
+    if (!peakOk && !dumpOk && !pumpOk) {
+      return { created: false, comment: null, skipReason: 'setup' }
+    }
   }
   const list = await listPaperTrades(env)
   const now = Date.now()
@@ -790,12 +793,14 @@ export async function createPaperTradeFromPlan(
       return { created: false, comment: null, skipReason: 'caps' }
     }
     // Same symbol within 75м from last create/close (v26.2).
+    // Flip-after-wrong-SL bypasses — must reconfigure immediately.
+    const flipBypass = plan.entryReasons?.includes('flip_after_wrong_side')
     const recentSame = pruned.find((t) => {
       if (t.symbol !== plan.symbol || t.alertType !== 'MEME') return false
       const last = Math.max(t.createdAt, t.closedAt ?? 0)
       return now - last < MEME_SYMBOL_COOLDOWN_MS
     })
-    if (recentSame) {
+    if (recentSame && !flipBypass) {
       return { created: false, comment: null, skipReason: 'cooldown' }
     }
   }
@@ -817,8 +822,11 @@ export async function createPaperTradeFromPlan(
   let zoneLow = plan.zoneLow
   let zoneHigh = plan.zoneHigh
   if (isMeme) {
-    const isPeak = plan.setup === 'PEAK_FUEL_FAIL'
-    // PEAK: use scan mark — no second MEXC fetch (CF subrequest budget)
+    const isPeakLike =
+      plan.setup === 'PEAK_FUEL_FAIL' ||
+      plan.setup === 'DUMP_FUEL_FAIL' ||
+      plan.setup === 'PUMP_CONTINUE'
+    // Peak-like: use scan mark — no second MEXC fetch (CF subrequest budget)
     let mark =
       plan.markPrice && plan.markPrice > 0
         ? plan.markPrice
@@ -826,7 +834,7 @@ export async function createPaperTradeFromPlan(
           ? fill
           : null
     let snap: TickerSnap | null = null
-    if (!isPeak || !(mark && mark > 0)) {
+    if (!isPeakLike || !(mark && mark > 0)) {
       snap = await fetchTickerSnap(plan.symbol)
       mark = snap?.last && snap.last > 0 ? snap.last : mark
     }
@@ -835,8 +843,8 @@ export async function createPaperTradeFromPlan(
     }
     fill = mark
     entryIdeal = mark
-    // PEAK keeps detector SL (~1%); other memes enforce min distance
-    const minSlPct = isPeak ? 0 : 0.018
+    // Peak-like keeps detector SL; other memes enforce min distance
+    const minSlPct = isPeakLike ? 0 : 0.018
     if (plan.side === 'LONG') {
       if (minSlPct > 0) sl = Math.min(plan.sl, mark * (1 - minSlPct))
       if (snap && (snap.last <= sl || snap.low <= sl)) {
@@ -870,6 +878,14 @@ export async function createPaperTradeFromPlan(
       }
     }
   }
+  const alreadyConfirmed = plan.entryReasons?.includes('confirm_2m_ok')
+  const needsConfirm =
+    isMeme &&
+    !alreadyConfirmed &&
+    (plan.setup === 'PUMP_CONTINUE' ||
+      plan.setup === 'DUMP_FUEL_FAIL' ||
+      plan.setup === 'PEAK_FUEL_FAIL')
+  // After scanner 2m confirm → OPEN. First-tick / flip → WAIT for book+chart.
   const trade: PaperTrade = {
     id: `${plan.symbol}:${plan.side}:${now}`,
     symbol: plan.symbol,
@@ -877,29 +893,36 @@ export async function createPaperTradeFromPlan(
     setup: plan.setup,
     alertType: plan.alertType,
     signalPrice: plan.signalPrice,
-    zoneLow,
-    zoneHigh,
+    zoneLow: needsConfirm
+      ? Math.min(zoneLow, entryIdeal * (plan.side === 'LONG' ? 0.994 : 0.997))
+      : zoneLow,
+    zoneHigh: needsConfirm
+      ? Math.max(zoneHigh, entryIdeal * (plan.side === 'LONG' ? 1.003 : 1.006))
+      : zoneHigh,
     entryIdeal,
     invalidate: plan.invalidate,
     sl,
     tp,
     target1,
     target3,
-    status: isMeme ? 'OPEN' : 'WAITING',
-    fillPrice: fill,
-    zoneTouchedAt: isMeme ? now : null,
-    zoneTouchPrice: fill,
-    peak: fill,
-    trailingStop: fill
-      ? plan.side === 'LONG'
-        ? fill * (isMeme ? 1 - MEME_TRAIL_EARLY : 0.982)
-        : fill * (isMeme ? 1 + MEME_TRAIL_EARLY : 1.018)
-      : null,
+    status: needsConfirm ? 'WAITING' : isMeme ? 'OPEN' : 'WAITING',
+    fillPrice: needsConfirm ? null : fill,
+    zoneTouchedAt: needsConfirm ? now : isMeme ? now : null,
+    zoneTouchPrice: needsConfirm ? entryIdeal : fill,
+    peak: needsConfirm ? null : fill,
+    trailingStop:
+      needsConfirm || !fill
+        ? null
+        : plan.side === 'LONG'
+          ? fill * (isMeme ? 1 - MEME_TRAIL_EARLY : 0.982)
+          : fill * (isMeme ? 1 + MEME_TRAIL_EARLY : 1.018),
     createdAt: now,
-    openedAt: isMeme ? now : null,
+    openedAt: needsConfirm ? null : isMeme ? now : null,
     expiresAt:
       now +
-      (plan.setup === 'LIQUIDATION_ECHO'
+      (needsConfirm
+        ? 5 * 60_000
+        : plan.setup === 'LIQUIDATION_ECHO'
         ? OPEN_TTL_ECHO_MS
         : isMeme
           ? OPEN_TTL_MEME_MS
@@ -939,32 +962,54 @@ export async function createPaperTradeFromPlan(
   const route: 'meme' | 'sniper' = isMeme ? 'meme' : 'sniper'
   const flipTtl =
     plan.vanePath === 'FLIP' ? 'TTL ретеста ~60–75 мин' : `Сопровождение ${cadence}`
+  const ticker = nameOf(plan.symbol).replace('/USDT', '')
   const comment: PaperComment = isMeme
-    ? {
+    ? needsConfirm
+      ? {
+          alertType: 'SYSTEM',
+          route,
+          title: `⏳ Жду 2м · ${ticker} ${plan.side}`,
+          text: [
+            `Сигнал есть, но вход НЕ сейчас — жду подтверждение стакана + 2 закрытых свечи.`,
+            `Зона ${fmt(trade.zoneLow)}–${fmt(trade.zoneHigh)} · ориентир ${fmt(entryIdeal)}`,
+            `SL ${fmt(sl)} · TP ${fmt(tp)} · ${plan.setup}`,
+            `Если за ~3–4 мин нет подтверждения — отменю. При раннем стопе переверну сторону.`,
+          ].join('\n'),
+          dedupeKey: `paper:wait:${trade.id}`,
+          setup: plan.setup,
+        }
+      : {
         alertType: 'SYSTEM',
         route,
-        title: `${icon} ${isEcho ? 'PREDATOR' : 'MEME'} ВХОД ${plan.side} ${nameOf(plan.symbol)}`,
+        // Price-first for lock-screen preview (same as PEAK entry alert)
+        title: `${fmt(fill!)} ${ticker} · ${plan.side === 'SHORT' ? '🔴' : '🟢'} ${plan.side}`,
         text: isEcho
           ? [
-              `Liquidation Echo · Post-Only fill (maker).`,
-              `Вход ${fmt(fill!)} · TP +1.1% ${fmt(plan.tp)} · SL −0.7% ${fmt(plan.sl)}`,
-              `Time-stop 12с → выход лимитом в спред (без market).`,
-              `RR ~1:1.6 · unit 10% equity.`,
+              `⚡ Liquidation Echo · Post-Only fill (maker).`,
+              `🎯 ВХОД ${fmt(fill!)} · 🟢 TP +1.1% ${fmt(plan.tp)} · 🛑 SL −0.7% ${fmt(plan.sl)}`,
+              `⏱ Time-stop 12с → выход лимитом в спред (без market).`,
+              `💎 RR ~1:1.6 · unit 10% equity.`,
             ].join('\n')
           : [
-              `Сетап: ${plan.setup} · класс ${plan.qualityTier ?? 'A'}`,
-              `Уровни (${plan.side}):`,
-              `Открытие: ${fmt(fill!)}`,
-              `Стоп (SL): ${fmt(sl)} (${pctFromEntry(fill!, sl)})`,
-              `Тейк 1 (TP1): ${target1 != null ? fmt(target1) : '—'}${
-                target1 != null ? ` (${pctFromEntry(fill!, target1)})` : ''
-              }`,
-              `Тейк 2 (TP): ${fmt(tp)} (${pctFromEntry(fill!, tp)})`,
+              `🎯 ВХОД ${fmt(fill!)}`,
+              `🛑 SL ${fmt(sl)} (${pctFromEntry(fill!, sl)})`,
+              `🟢 TP1 ${
+                target1 != null ? fmt(target1) : '—'
+              }${target1 != null ? ` (${pctFromEntry(fill!, target1)})` : ''} · 💎 TP ${fmt(tp)} (${pctFromEntry(fill!, tp)})`,
+              `📌 Сетап ${plan.setup} · класс ${plan.qualityTier ?? 'A'}`,
               plan.entryReasons?.length
-                ? `Причины: ${plan.entryReasons.slice(0, 8).join(' · ')}`
+                ? `⚡ Почему: ${plan.entryReasons
+                    .filter(
+                      (r) =>
+                        !/^(quality|fuel|conf|dist_high|chg24|promote|oi_unknown)/.test(
+                          r
+                        )
+                    )
+                    .slice(0, 6)
+                    .join(' · ')}`
                 : null,
-              `BE @ +0.5R · trail после MFE · cooldown 35м · slots до 6.`,
-              `Сопровождение ${cadence}.`,
+              `🛡 BE @ +0.5R · trail после MFE · cooldown 35м`,
+              `📡 Сопровождение ${cadence}.`,
             ]
               .filter(Boolean)
               .join('\n'),
@@ -1007,12 +1052,52 @@ function invalidatedWithoutFill(t: PaperTrade, snap: TickerSnap): boolean {
   return snap.low <= t.invalidate && !touchesZone(t, snap)
 }
 
+function isSqueezeSetup(setup: string): boolean {
+  return (
+    setup === 'PUMP_CONTINUE' ||
+    setup === 'DUMP_FUEL_FAIL' ||
+    setup === 'PEAK_FUEL_FAIL'
+  )
+}
+
+function confirmsMemeSqueeze(
+  t: PaperTrade,
+  snap: TickerSnap,
+  brief: MarketBrief,
+  now: number
+): boolean {
+  // Force ~2m wait after arming — matches user “подожди 2 минуты”
+  if (now - t.createdAt < 90_000) return false
+  if (!t.zoneTouchedAt) return false
+  const bookAligned =
+    brief.bookImb != null &&
+    (t.side === 'LONG' ? brief.bookImb >= 10 : brief.bookImb <= -10)
+  const pressureAligned =
+    t.side === 'LONG'
+      ? brief.pressure === 'BUYERS'
+      : brief.pressure === 'SELLERS'
+  const tapeAligned =
+    t.side === 'LONG'
+      ? brief.move1mPct >= 0.12 && brief.candleBias !== 'DOWN'
+      : brief.move1mPct <= -0.12 && brief.candleBias !== 'UP'
+  const hold =
+    t.side === 'LONG'
+      ? snap.last >= t.entryIdeal * 0.997 && snap.low > t.sl
+      : snap.last <= t.entryIdeal * 1.003 && snap.high < t.sl
+  // Need book OR (pressure+tape), never open on price alone
+  return hold && (bookAligned || (pressureAligned && tapeAligned))
+}
+
 function confirmsEntry(
   t: PaperTrade,
   snap: TickerSnap,
-  brief: MarketBrief
+  brief: MarketBrief,
+  now = Date.now()
 ): boolean {
   if (!t.zoneTouchedAt) return false
+  if (isSqueezeSetup(t.setup) && isMemeTrade(t)) {
+    return confirmsMemeSqueeze(t, snap, brief, now)
+  }
   if (t.setup.startsWith('VANE_')) return confirmsVaneEntry(t, snap, brief)
   const pressureAligned =
     t.side === 'LONG'
@@ -1141,18 +1226,40 @@ async function updateVaneRiskOnClose(
   }
 }
 
+/** PEAK/meme: last-price only — OHLC same-bar TP-before-SL inflated WR. */
+function useLastPriceExits(t: PaperTrade): boolean {
+  return (
+    isMemeTrade(t) ||
+    t.setup === 'PEAK_FUEL_FAIL' ||
+    t.setup === 'DUMP_FUEL_FAIL' ||
+    t.setup === 'PUMP_CONTINUE'
+  )
+}
+
 function hitTp(t: PaperTrade, snap: TickerSnap): boolean {
+  if (useLastPriceExits(t)) {
+    if (t.side === 'LONG') return snap.last >= t.tp
+    return snap.last <= t.tp
+  }
   if (t.side === 'LONG') return snap.high >= t.tp
   return snap.low <= t.tp
 }
 
 function hitTp1(t: PaperTrade, snap: TickerSnap): boolean {
   if (!(t.target1 != null && t.target1 > 0)) return false
+  if (useLastPriceExits(t)) {
+    if (t.side === 'LONG') return snap.last >= t.target1
+    return snap.last <= t.target1
+  }
   if (t.side === 'LONG') return snap.high >= t.target1
   return snap.low <= t.target1
 }
 
 function hitSl(t: PaperTrade, snap: TickerSnap): boolean {
+  if (useLastPriceExits(t)) {
+    if (t.side === 'LONG') return snap.last <= t.sl
+    return snap.last >= t.sl
+  }
   if (t.side === 'LONG') return snap.low <= t.sl
   return snap.high >= t.sl
 }
@@ -1164,7 +1271,11 @@ function memeFavorPct(t: PaperTrade, price: number): number {
 }
 
 function isPeakSetup(t: PaperTrade): boolean {
-  return t.setup === 'PEAK_FUEL_FAIL'
+  return (
+    t.setup === 'PEAK_FUEL_FAIL' ||
+    t.setup === 'DUMP_FUEL_FAIL' ||
+    t.setup === 'PUMP_CONTINUE'
+  )
 }
 
 function memeTrailPct(t: PaperTrade, peakFavorPct: number): number {
@@ -1237,10 +1348,17 @@ function trailHit(t: PaperTrade, snap: TickerSnap): boolean {
         : isMicroSetup(t.setup)
           ? MICRO_ARM_PCT
           : 0.03
+  const px = useLastPriceExits(t)
   if (t.side === 'LONG') {
-    return snap.low <= t.trailingStop && t.peak > t.fillPrice * (1 + arm)
+    const breached = px
+      ? snap.last <= t.trailingStop
+      : snap.low <= t.trailingStop
+    return breached && t.peak > t.fillPrice * (1 + arm)
   }
-  return snap.high >= t.trailingStop && t.peak < t.fillPrice * (1 - arm)
+  const breached = px
+    ? snap.last >= t.trailingStop
+    : snap.high >= t.trailingStop
+  return breached && t.peak < t.fillPrice * (1 - arm)
 }
 
 function memeBookExit(
@@ -1384,7 +1502,7 @@ export async function monitorPaperTrades(
         }
       }
 
-      if (confirmsEntry(t, snap, brief)) {
+      if (confirmsEntry(t, snap, brief, now)) {
         const fill = snap.last
         const isMacro = isMacroSetup(t.setup)
         const isMicro = isMicroSetup(t.setup)
@@ -1456,7 +1574,38 @@ export async function monitorPaperTrades(
     }
 
     // OPEN milestones + commentary
-    const fill = t.fillPrice!
+    let fill = t.fillPrice!
+    const ageMs = t.openedAt != null ? now - t.openedAt : now - t.createdAt
+
+    // PEAK: invalidate late chase — never rebase fill/levels (that manufactured WINs).
+    if (
+      isPeakSetup(t) &&
+      ageMs < 180_000 &&
+      Math.abs(fill - t.signalPrice) / Math.max(fill, 1e-12) < 0.002
+    ) {
+      const favorPct = pnlPct(t.side, fill, snap.last)
+      const pastTp =
+        t.side === 'SHORT' ? snap.last <= t.tp : snap.last >= t.tp
+      if ((pastTp && favorPct >= 1.0) || favorPct >= 1.4) {
+        t.status = 'CLOSED'
+        t.closedAt = now
+        t.closeReason = 'stale_entry'
+        dirty = true
+        await updateVaneRiskOnClose(env, t, snap.last)
+        pushComment(t, {
+          alertType: 'SYSTEM',
+          title: `⏳ PEAK опоздал ${nameOf(t.symbol)}`,
+          text: [
+            `Цена уже ушла до первого сопровождения (лаг cron/TG).`,
+            `Скан ${fmt(fill)} → сейчас ${fmt(snap.last)} (${favorPct >= 0 ? '+' : ''}${favorPct.toFixed(2)}%) — не считаю WIN.`,
+            `Жду следующий пик без догона.`,
+          ].join('\n'),
+          dedupeKey: `paper:stale:${t.id}`,
+        })
+        continue
+      }
+    }
+
     const trail = updateTrail(t, snap.last)
     if (trail.peak !== t.peak || trail.trailingStop !== t.trailingStop) {
       t.peak = trail.peak
@@ -1663,6 +1812,73 @@ export async function monitorPaperTrades(
       continue
     }
 
+    // SL before TP — same-bar ambiguity must not become WIN.
+    if (hitSl(t, snap)) {
+      t.status = 'CLOSED'
+      t.closedAt = now
+      t.closeReason = 'sl'
+      dirty = true
+      await updatePredatorRiskOnClose(env, t, t.sl)
+      await updateVaneRiskOnClose(env, t, t.sl)
+      const earlyWrong =
+        isSqueezeSetup(t.setup) &&
+        ageMs < 4 * 60_000 &&
+        ((t.side === 'LONG' &&
+          (brief.pressure === 'SELLERS' || brief.move1mPct <= -0.2)) ||
+          (t.side === 'SHORT' &&
+            (brief.pressure === 'BUYERS' || brief.move1mPct >= 0.2)))
+      pushComment(t, {
+        alertType: 'SYSTEM',
+        title: `🛑 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : 'Пример'}: стоп ${nameOf(t.symbol)}`,
+        text: [
+          `Стоп (Last Price). Без догона.`,
+          `Результат ${pnlPct(t.side, fill, t.sl).toFixed(2)}%`,
+          brief.pressureLabel,
+          earlyWrong
+            ? `⚡ Направление не угадали — перестраиваю на ${(t.side === 'LONG' ? 'SHORT' : 'LONG')}.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        dedupeKey: `paper:sl:${t.id}`,
+        setup: t.setup,
+      })
+      if (earlyWrong) {
+        const flipSide = t.side === 'LONG' ? 'SHORT' : 'LONG'
+        const mark = snap.last
+        const flipSetup =
+          flipSide === 'SHORT' ? 'PEAK_FUEL_FAIL' : 'PUMP_CONTINUE'
+        const flip = await createPaperTradeFromPlan(env, {
+          side: flipSide,
+          symbol: t.symbol,
+          setup: flipSetup,
+          signalPrice: mark,
+          entryIdeal: mark,
+          zoneLow: flipSide === 'LONG' ? mark * 0.994 : mark * 0.997,
+          zoneHigh: flipSide === 'LONG' ? mark * 1.003 : mark * 1.006,
+          invalidate: flipSide === 'LONG' ? mark * 0.985 : mark * 1.015,
+          sl: flipSide === 'LONG' ? mark * 0.99 : mark * 1.01,
+          tp: flipSide === 'LONG' ? mark * 1.018 : mark * 0.982,
+          target1: flipSide === 'LONG' ? mark * 1.011 : mark * 0.989,
+          alertType: 'MEME',
+          markPrice: mark,
+          qualityTier: 'A',
+          entryReasons: [
+            'flip_after_wrong_side',
+            `from:${t.setup}`,
+            `age_ms:${ageMs}`,
+          ],
+          entryNotes: `Авто-флип после раннего SL ${t.side} → ${flipSide}`,
+        })
+        if (flip.created && flip.comment) {
+          // Bypass cooldown was issue - createPaper checks cooldown from closed trade
+          // We just closed so cooldown blocks. Need skip cooldown for flip.
+          pushComment(t, flip.comment)
+        }
+      }
+      continue
+    }
+
     if (hitTp(t, snap) && !t.tpSent) {
       t.tpSent = true
       t.status = 'CLOSED'
@@ -1677,7 +1893,7 @@ export async function monitorPaperTrades(
         alertType: 'SYSTEM',
         title: `🎯 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : t.setup.startsWith('VANE_') ? 'VANE' : 'Пример'}: цель ${nameOf(t.symbol)}`,
         text: [
-          `Закрыто по TP (maker target).`,
+          `Закрыто по TP (Last Price).`,
           `Вход ${fmt(fill)} → ~${fmt(exit)} · ${pnlPct(t.side, fill, exit).toFixed(2)}%`,
           brief.pressureLabel,
         ].join('\n'),
@@ -1702,26 +1918,6 @@ export async function monitorPaperTrades(
           brief.pressureLabel,
         ].join('\n'),
         dedupeKey: `paper:trailhit:${t.id}`,
-      })
-      continue
-    }
-
-    if (hitSl(t, snap)) {
-      t.status = 'CLOSED'
-      t.closedAt = now
-      t.closeReason = 'sl'
-      dirty = true
-      await updatePredatorRiskOnClose(env, t, t.sl)
-      await updateVaneRiskOnClose(env, t, t.sl)
-      pushComment(t, {
-        alertType: 'SYSTEM',
-        title: `🛑 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : 'Пример'}: стоп ${nameOf(t.symbol)}`,
-        text: [
-          `Стоп за минимумом волны (Last Price). Без догона.`,
-          `Результат ${pnlPct(t.side, fill, t.sl).toFixed(2)}%`,
-          brief.pressureLabel,
-        ].join('\n'),
-        dedupeKey: `paper:sl:${t.id}`,
       })
       continue
     }

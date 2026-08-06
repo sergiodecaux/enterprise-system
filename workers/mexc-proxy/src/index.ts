@@ -5,6 +5,8 @@
  *   npx wrangler secret put TELEGRAM_BOT_TOKEN          # meme / Predator
  *   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN   # Elite Assistant (Enterpriseelite_bot)
  *   npx wrangler secret put ALERT_SECRET
+ *   npx wrangler secret put MEXC_ACCESS_KEY             # optional: RU/account symbol filter
+ *   npx wrangler secret put MEXC_SECRET_KEY
  *
  * KV:
  *   binding SUBSCRIBERS (see wrangler.toml)
@@ -67,6 +69,17 @@ import {
   enqueuePendingMeme,
   flushPendingMemeAlerts,
 } from './pendingMemeTg'
+import {
+  activateThisWorker,
+  authorizeFailover,
+  failoverConfigured,
+  handoffToPeer,
+  loadFailoverState,
+  maybeHandoffOnBudget,
+  noteFailoverFailure,
+  shouldRunCronWork,
+  standbyThisWorker,
+} from './failover'
 
 const MEXC_ORIGIN = 'https://contract.mexc.com'
 const LAST_SCAN_KEY = 'telegram:last_scan_status'
@@ -224,6 +237,17 @@ interface Env {
   /** Set to 0/false to restore VANE auto-alerts on Elite bot */
   ELITE_ASSISTANT_ONLY?: string
   SUBSCRIBERS?: KVNamespace
+  /** primary | standby — dual CF account failover */
+  FAILOVER_ROLE?: string
+  FAILOVER_PEER_URL?: string
+  FAILOVER_SECRET?: string
+  /** This worker public URL, e.g. https://mexc-proxy-xxx.workers.dev */
+  PUBLIC_BASE_URL?: string
+  /** Soft daily invocation budget (Free ≈100k). Default 80000 */
+  FAILOVER_DAILY_BUDGET?: string
+  /** MEXC futures API — filter symbols available to this account/region */
+  MEXC_ACCESS_KEY?: string
+  MEXC_SECRET_KEY?: string
 }
 
 interface Subscriber {
@@ -428,6 +452,12 @@ async function handleTelegram(
             })),
           }
         : null,
+      failover: {
+        configured: failoverConfigured(env),
+        ...(await loadFailoverState(env)),
+        dailyBudget: Number(env.FAILOVER_DAILY_BUDGET ?? 80_000),
+        publicBaseUrl: env.PUBLIC_BASE_URL ?? null,
+      },
       lastScan,
       lastDelivery,
     })
@@ -523,6 +553,73 @@ async function handleTelegram(
       const msg = err instanceof Error ? err.message : String(err)
       return json({ ok: false, error: msg }, 500)
     }
+  }
+
+  // Dual-account failover
+  if (path === '/telegram/failover/status' && request.method === 'GET') {
+    const state = await loadFailoverState(env)
+    return json({
+      ok: true,
+      configured: failoverConfigured(env),
+      role: state.role,
+      active: state.active,
+      dayKey: state.dayKey,
+      requestCount: state.requestCount,
+      dailyBudget: Number(env.FAILOVER_DAILY_BUDGET ?? 80_000),
+      subrequestFails: state.subrequestFails,
+      lastHandoffAt: state.lastHandoffAt,
+      lastReason: state.lastReason,
+      peerUrl: state.peerUrl,
+      publicBaseUrl: env.PUBLIC_BASE_URL ?? null,
+    })
+  }
+
+  if (path === '/telegram/failover/activate' && request.method === 'POST') {
+    if (!authorizeFailover(request, env)) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    let reason = 'manual_or_peer_activate'
+    try {
+      const body = (await request.json()) as { reason?: string }
+      if (body?.reason) reason = String(body.reason).slice(0, 200)
+    } catch {
+      // empty body ok
+    }
+    const r = await activateThisWorker(env, reason)
+    try {
+      await broadcastAlert(env, {
+        type: 'SYSTEM',
+        channel: 'meme',
+        title: '🔀 Failover ACTIVE',
+        text: [
+          `Этот Worker взял ботов (${env.FAILOVER_ROLE ?? 'primary'}).`,
+          `Причина: ${reason}`,
+          r.webhooks
+            ? `Webhook meme=${r.webhooks.meme} sniper=${r.webhooks.sniper}`
+            : 'PUBLIC_BASE_URL не задан — webhook не переключал',
+        ].join('\n'),
+        dedupeKey: `failover:active:${Date.now()}`,
+      })
+    } catch {
+      // ignore
+    }
+    return json({ ok: true, ...r })
+  }
+
+  if (path === '/telegram/failover/standby' && request.method === 'POST') {
+    if (!authorizeFailover(request, env)) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    const state = await standbyThisWorker(env, 'manual_standby')
+    return json({ ok: true, state })
+  }
+
+  if (path === '/telegram/failover/handoff' && request.method === 'POST') {
+    if (!authorizeFailover(request, env)) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    const r = await handoffToPeer(env, 'manual_handoff')
+    return json(r)
   }
 
   // Manual scan trigger (cron test)
@@ -761,6 +858,26 @@ async function handleTelegram(
     if (!chatId) return json({ error: 'chatId required' }, 400)
     const watches = await listWatchesForChat(env, chatId)
     return json({ ok: true, watches })
+  }
+
+  if (path === '/telegram/journal/reset-peak' && request.method === 'POST') {
+    const secret =
+      request.headers.get('X-Alert-Secret') ||
+      new URL(request.url).searchParams.get('secret')
+    if (!env.ALERT_SECRET || secret !== env.ALERT_SECRET) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    const { resetPeakJournalLive } = await import('./botJournal')
+    const { clearPeakDecisions } = await import('./peakDecisionLog')
+    const result = await resetPeakJournalLive(env)
+    const clearedDecisions = await clearPeakDecisions(env.SUBSCRIBERS)
+    return json({
+      ok: true,
+      ...result,
+      clearedDecisions,
+      engine: BOT_ENGINE.id,
+      note: 'PEAK live journal archived; honest WR window starts now',
+    })
   }
 
   if (path === '/telegram/journal' && request.method === 'GET') {
@@ -1295,6 +1412,33 @@ async function runCronScan(
       paperComments: 0,
     }
   }
+
+  // Dual CF: standby idle, or primary over daily budget → handoff + skip
+  const gate = await shouldRunCronWork(env)
+  if (!gate.run) {
+    if (gate.reason === 'daily_budget') {
+      await maybeHandoffOnBudget(env)
+    }
+    const idle = JSON.stringify({
+      status: 'STANDBY_IDLE',
+      role,
+      failover: gate.state,
+      reason: gate.reason,
+      at: Date.now(),
+    })
+    await runtimePut(LAST_SCAN_KEY, idle)
+    return {
+      role,
+      alerts: 0,
+      sent: 0,
+      skipped: 0,
+      heartbeat: 0,
+      paperComments: 0,
+      predatorSkip: gate.reason ?? 'failover_idle',
+    }
+  }
+  await maybeHandoffOnBudget(env)
+
   const scanStartedAt = Date.now()
   const scanRunning = JSON.stringify({
     status: 'RUNNING',
@@ -1345,7 +1489,23 @@ async function runCronScan(
             return
           }
           await runtimePut(`kvblob:${key}`, value)
-          // Hotlist / misc — at most ~once per 20m
+          // Critical scan/journal keys must not wait 20m — silence was invisible
+          const critical =
+            key.includes('peak_decision') ||
+            key.includes('hot_meme_watchlist') ||
+            key.includes('bot_journal') ||
+            key.includes('last_scan_status') ||
+            key.includes('pending_meme')
+          if (critical) {
+            try {
+              await env.SUBSCRIBERS!.put(key, value)
+            } catch {
+              await kvPutThrottled(env.SUBSCRIBERS, key, value, 60_000, {
+                force: true,
+              })
+            }
+            return
+          }
           await kvPutThrottled(env.SUBSCRIBERS, key, value, 20 * 60_000)
         },
       }
@@ -1353,18 +1513,23 @@ async function runCronScan(
 
   const deliver = async (a: ScanAlert) => {
     if (seenDedup.has(a.dedupeKey)) return
-    // Hard gate: meme channel = PEAK_FUEL_FAIL SHORT A-tier only
+    // Hard gate: meme A-tier PEAK SHORT | DUMP LONG | PUMP_CONTINUE LONG
     if (a.type === 'MEME') {
       const plan = a.tradePlan
+      const peakShort =
+        plan?.setup === 'PEAK_FUEL_FAIL' && plan.side === 'SHORT'
+      const dumpLong =
+        plan?.setup === 'DUMP_FUEL_FAIL' && plan.side === 'LONG'
+      const pumpLong =
+        plan?.setup === 'PUMP_CONTINUE' && plan.side === 'LONG'
       if (
         !plan ||
-        plan.setup !== 'PEAK_FUEL_FAIL' ||
-        plan.side !== 'SHORT' ||
-        plan.qualityTier !== 'A'
+        plan.qualityTier !== 'A' ||
+        !(peakShort || dumpLong || pumpLong)
       ) {
         skipped++
         console.log(
-          '[cron] meme blocked non-peak',
+          '[cron] meme blocked non-setup',
           plan?.setup ?? 'no_plan',
           plan?.side,
           plan?.qualityTier
@@ -1550,19 +1715,27 @@ async function runCronScan(
       let tgBudget = 6
       for (const c of comments) {
         if (tgBudget <= 0) break
-        // Meme companion TG: PEAK only — missing setup = orphan/old paper → mute
-        if ((c.route ?? 'meme') === 'meme' && c.setup !== 'PEAK_FUEL_FAIL') {
-          continue
-        }
-        // PEAK closes: journal sends «Результат» — mute duplicate paper стоп/цель
+        // Meme companion TG: PEAK/DUMP only — missing setup = orphan/old paper → mute
         if (
           (c.route ?? 'meme') === 'meme' &&
-          c.setup === 'PEAK_FUEL_FAIL' &&
+          c.setup !== 'PEAK_FUEL_FAIL' &&
+          c.setup !== 'DUMP_FUEL_FAIL' &&
+          c.setup !== 'PUMP_CONTINUE'
+        ) {
+          continue
+        }
+        // Setup closes: journal sends «Результат» — mute duplicate paper стоп/цель/stale
+        if (
+          (c.route ?? 'meme') === 'meme' &&
+          (c.setup === 'PEAK_FUEL_FAIL' ||
+            c.setup === 'DUMP_FUEL_FAIL' ||
+            c.setup === 'PUMP_CONTINUE') &&
           (c.dedupeKey.startsWith('paper:sl:') ||
             c.dedupeKey.startsWith('paper:tp:') ||
             c.dedupeKey.startsWith('paper:trailhit:') ||
             c.dedupeKey.startsWith('paper:expire:') ||
-            c.dedupeKey.startsWith('paper:dead:'))
+            c.dedupeKey.startsWith('paper:dead:') ||
+            c.dedupeKey.startsWith('paper:stale:'))
         ) {
           continue
         }
@@ -1596,11 +1769,15 @@ async function runCronScan(
         ) {
           continue
         }
-        // Meme TG: only PEAK WIN/LOSS — no orphan TIMEOUT/BE, no old setups
+        // Meme TG: only PEAK/DUMP WIN/LOSS — no orphan TIMEOUT/BE, no old setups
         if (outcome.alertType === 'MEME') {
-          if (outcome.setup !== 'PEAK_FUEL_FAIL') continue
+          if (
+            outcome.setup !== 'PEAK_FUEL_FAIL' &&
+            outcome.setup !== 'DUMP_FUEL_FAIL' &&
+            outcome.setup !== 'PUMP_CONTINUE'
+          )
+            continue
           if (outcome.status !== 'WIN' && outcome.status !== 'LOSS') continue
-          // No entry TG → don't spam «Результат» without signal
           if (outcome.tgEntrySent === false) continue
         }
         if (tgBudget <= 0) break
@@ -1676,13 +1853,26 @@ async function runCronScan(
             (t.status === 'OPEN' || t.status === 'WAITING')
         )
         .map((t) => t.symbol)
-      // Causality lab: PEAK_FUEL_FAIL only — all predator capacity on pump fades
+      // Dual causality lab: PEAK SHORT + DUMP LONG on memes only
       const gates = await getAdaptiveGates(env)
-      const flow = await runMemeOrderFlowScan({ kv, pinSymbols, gates })
-      predatorHotlist = flow.watchlist.entries.map((e) => e.symbol)
+      const flow = await runMemeOrderFlowScan({
+        kv,
+        pinSymbols,
+        gates,
+        mexcEnv: env,
+      })
+      predatorHotlist =
+        flow.scannedSymbols?.length
+          ? flow.scannedSymbols
+          : flow.watchlist.entries.map((e) => e.symbol)
       memeScanned = flow.scanned
       for (const a of flow.alerts) {
-        await deliver(a)
+        try {
+          await deliver(a)
+        } catch (err) {
+          failed++
+          console.error('[cron] meme deliver failed', a.dedupeKey, err)
+        }
       }
       if (!flow.alerts.length) {
         predatorSkip = flow.skipped || flow.watchlist.reason || 'no_peak'
@@ -1707,7 +1897,18 @@ async function runCronScan(
           predatorHotlist.length
         )
       }
+      // Expose rejects on scan status for Lab /status debugging
+      if (flow.rejects.length) {
+        predatorSkip =
+          (predatorSkip ? predatorSkip + ' · ' : '') +
+          flow.rejects
+            .slice(0, 4)
+            .map((r) => `${r.symbol}:${r.reason}`)
+            .join(',')
+      }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      predatorSkip = `scan_error:${msg.slice(0, 160)}`
       console.error('[cron] meme order-flow scan failed', err)
     }
   }
@@ -1898,9 +2099,9 @@ async function runCronScan(
     journalLogged,
     journalResolved,
     resultAlerts,
-    predatorSkip: predatorSkip || undefined,
+    predatorSkip: predatorSkip || (role === 'predator' ? 'ok' : undefined),
     predatorHotlist: predatorHotlist.length ? predatorHotlist : undefined,
-    memeScanned: memeScanned || undefined,
+    memeScanned: role === 'predator' ? memeScanned : undefined,
   }
   const scanDone = JSON.stringify({
     status: 'COMPLETED',
@@ -1910,13 +2111,13 @@ async function runCronScan(
     ...result,
   })
   await runtimePut(LAST_SCAN_KEY, scanDone)
-  // Cache only (+ rare per-role snapshot for debugging)
+  // Always persist per-role snapshot so silence is diagnosable (was 60m throttle)
   await kvPutThrottled(
     env.SUBSCRIBERS,
     `${LAST_SCAN_KEY}:${role}`,
     scanDone,
-    60 * 60_000,
-    { expirationTtl: 60 * 60 * 24 * 3 }
+    90_000,
+    { force: true, expirationTtl: 60 * 60 * 24 * 3 }
   )
   return result
 }
@@ -2441,7 +2642,7 @@ async function dispatchCommand(
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: PEAK_FUEL_FAIL A-tier SHORT (cron */2)`,
+        `Режим: PUMP_CONTINUE LONG (бывший SL→TP) + DUMP LONG · PEAK SHORT rare`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
         hotLine,
@@ -2598,6 +2799,13 @@ async function recordDelivery(
   // Cache always; KV throttled so probe gate survives isolate/colo churn
   // without burning the free-plan write budget on every TG send.
   await durablePut(env, LAST_TG_KEY, body, 60 * 60 * 24, 40 * 60_000)
+  if (payload.ok === false && typeof payload.error === 'string') {
+    try {
+      await noteFailoverFailure(env, payload.error)
+    } catch {
+      // ignore
+    }
+  }
 }
 
 async function tgSendDetailed(
