@@ -395,7 +395,18 @@ export async function runMemeOrderFlowScan(opts: {
     if (!peak?.ready) {
       rejects.push({
         symbol: coin.symbol,
-        reason: evReady ? `no_peak:${evKind}` : 'no_peak_structure',
+        reason: evReady
+          ? `no_peak_or_weakness:${evKind}`
+          : 'no_weakness_confirm',
+      })
+      await appendPeakDecision(opts.kv, {
+        at: Date.now(),
+        symbol: coin.symbol,
+        action: 'SKIP_STRUCTURE',
+        confidence: 0,
+        quality: 'NONE',
+        reasons: ['no_weakness_confirm', evReady ? evKind : 'no_book'],
+        chg24hPct: coin.chg24hPct,
       })
       continue
     }

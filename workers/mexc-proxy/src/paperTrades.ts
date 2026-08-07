@@ -806,6 +806,23 @@ export async function closeNonPeakMemePapers(env: PaperEnv): Promise<number> {
   return n
 }
 
+/** Close all open/waiting meme papers (stats reset / clean lab). */
+export async function closeAllMemePapers(env: PaperEnv): Promise<number> {
+  const list = await listPaperTrades(env)
+  const now = Date.now()
+  let n = 0
+  for (const t of list) {
+    if (t.alertType !== 'MEME') continue
+    if (t.status !== 'WAITING' && t.status !== 'OPEN') continue
+    t.status = 'CLOSED'
+    t.closedAt = now
+    t.closeReason = 'stats_reset'
+    n++
+  }
+  if (n) await savePaperTrades(env, list)
+  return n
+}
+
 async function savePaperTrades(
   env: PaperEnv,
   list: PaperTrade[]
@@ -813,6 +830,11 @@ async function savePaperTrades(
   memoryPapers.length = 0
   memoryPapers.push(...list)
   await writePaperCache(list)
+  try {
+    await env.SUBSCRIBERS?.put(PAPER_KEY, JSON.stringify(list))
+  } catch {
+    /* quota */
+  }
 }
 
 function activeCount(list: PaperTrade[]): number {

@@ -1,8 +1,9 @@
 /**
- * PEAK_FUEL_FAIL — small SHORT when a pump-day meme stalls at a local high
- * without fuel to continue.
+ * PEAK_FUEL_FAIL — SHORT only when a pump-day meme shows weakness at the high.
  *
- * v27.6: loss autopsy — cut stall/failed-alone entries; tighter PEAK exits.
+ * Hard rule: never short a coin that is still pumping without weakness confirm.
+ * Weakness = failed break / rejection wick / lower high / rollover / book absorb / CVD.
+ * Stall alone or green momentum into the high → no A-tier (no TG).
  */
 
 export type Candle = [number, number, number, number, number, number]
@@ -43,20 +44,13 @@ export interface PeakFuelFailSignal {
 const SL_PCT = 0.01
 const TP_PCT = 0.018
 const TP1_PCT = 0.011
-const PEAK_DIST_PCT = 1.8
+const PEAK_DIST_PCT = 1.6
 const MIN_CHG_24H = 4
-/**
- * A after loss autopsy:
- * - 74% losses were give-back after MFE → fix exits (paper), not only entries
- * - stall without wick toxic → demote
- * - mega-pumps (≥25%) need absorb/tape or stay B
- * - keep classic structure breadth so we don't starve entries
- */
-const A_MIN_CHG = 4
-const A_MAX_DIST = 1.25
-const A_MIN_CONF = 72
+const A_MIN_CHG = 5
+const A_MAX_DIST = 1.15
+const A_MIN_CONF = 74
 const A_MIN_FUEL = 2
-const MEGA_PUMP_CHG = 25
+const MEGA_PUMP_CHG = 20
 
 function recentHigh(candles: Candle[], bars = 40): number {
   const w = candles.slice(-bars)
@@ -126,6 +120,46 @@ function stallAtHigh(candles: Candle[], price: number, hi: number): boolean {
   return chopPct <= 0.9 && maxClose <= hi * 1.0015
 }
 
+/** Still ripping into the high — green impulse, no pause. */
+function stillPumpingHard(candles: Candle[]): boolean {
+  const closed = candles.slice(0, -1).slice(-5)
+  if (closed.length < 4) return false
+  let green = 0
+  for (const c of closed) {
+    if (c[4] > c[1] * 1.0002) green++
+  }
+  const first = closed[0]![4]
+  const last = closed[closed.length - 1]![4]
+  if (!(first > 0)) return false
+  const liftPct = ((last - first) / first) * 100
+  return green >= 3 && liftPct >= 0.45
+}
+
+/**
+ * Soft weakness: left the high and prints a red / lower close.
+ * Stall glued to ATH without this ≠ weakness.
+ */
+function rolloverWeakness(
+  candles: Candle[],
+  price: number,
+  hi: number
+): boolean {
+  if (!(hi > 0)) return false
+  const distPct = ((hi - price) / hi) * 100
+  if (distPct < 0.28) return false
+  const closed = candles.slice(0, -1)
+  const last = closed[closed.length - 1]
+  if (!last) return false
+  const red = last[4] < last[1]
+  const prev = closed[closed.length - 2]
+  const lowerClose = Boolean(prev && last[4] < prev[4] * 0.9997)
+  const twoReds =
+    Boolean(prev) &&
+    prev![4] < prev![1] &&
+    last[4] < last[1]
+  return red || lowerClose || twoReds
+}
+
 export function detectPeakFuelFail(
   input: PeakFuelFailInput
 ): PeakFuelFailSignal | null {
@@ -145,8 +179,16 @@ export function detectPeakFuelFail(
   const wick = rejectionWick(input.candles1m)
   const lh = lowerHighStructure(input.candles1m)
   const stall = stallAtHigh(input.candles1m, price, hi)
-  const technicalPeak = failed || wick || lh || stall
-  if (!technicalPeak) return null
+  const rollover = rolloverWeakness(input.candles1m, price, hi)
+  const pumping = stillPumpingHard(input.candles1m)
+
+  // Hard ban: pumping into high without structure/book weakness
+  const structureWeak = failed || wick || lh
+  const bookWeak = Boolean(input.absorptionShort || input.cvdBearish)
+  const weaknessConfirm = structureWeak || bookWeak || rollover
+
+  if (!weaknessConfirm) return null
+  if (pumping && !(failed || wick || bookWeak)) return null
 
   let fuelScore = 0
   const notes: string[] = []
@@ -170,8 +212,6 @@ export function detectPeakFuelFail(
       reasons.push(`oi_rising:${oiChg.toFixed(2)}`)
     }
   } else {
-    // Classic: unknown OI still allows structure-based fades (live often has no ΔOI)
-    fuelScore += 1
     reasons.push('oi_unknown')
   }
 
@@ -190,10 +230,10 @@ export function detectPeakFuelFail(
       `Покупки ${buyFlow.toFixed(0)}% не двигают цену (${moveBps.toFixed(0)}bps)`
     )
     reasons.push(`tape_stall:buy${buyFlow.toFixed(0)}_bps${moveBps.toFixed(0)}`)
-  } else if (moveBps != null && Math.abs(moveBps) <= 8 && distPct <= 0.8) {
+  } else if (moveBps != null && moveBps <= -6 && distPct >= 0.25) {
     fuelScore += 1
-    notes.push(`Цена стоит у хая (${moveBps.toFixed(0)}bps)`)
-    reasons.push(`price_stall:${moveBps.toFixed(0)}bps`)
+    notes.push(`Откат от хая (${moveBps.toFixed(0)}bps)`)
+    reasons.push(`price_fade:${moveBps.toFixed(0)}bps`)
   }
 
   if (input.absorptionShort) {
@@ -219,47 +259,51 @@ export function detectPeakFuelFail(
     notes.push('Lower high структура')
     reasons.push('lower_high')
   }
+  if (rollover) {
+    notes.push('Слабость: откат/красная от хая')
+    reasons.push('rollover_weak')
+  }
   if (stall) {
-    notes.push('Застой под хаем')
+    notes.push('Застой под хаем (недостаточно без слабости)')
     reasons.push('stall_at_high')
   }
+  reasons.push('weakness_ok')
   reasons.push(`dist_high:${distPct.toFixed(2)}`)
   reasons.push(`chg24:${input.chg24hPct.toFixed(1)}`)
 
-  const strongPump = input.chg24hPct >= 8
-  if (fuelScore < 1 && !input.absorptionShort) {
-    if (!(strongPump && (failed || wick || stall))) return null
-  }
+  // Structure/book already required — fuel helps quality, not a bypass
+  if (fuelScore < 1 && structureWeak) fuelScore += 1
 
-  let confidence = 68 + fuelScore * 4
-  if (failed || wick) confidence += 4
-  if (input.absorptionShort || fuelScore >= 3) confidence += 5
-  if (input.chg24hPct >= 12) confidence += 3
-  if (distPct <= 0.5) confidence += 3
-  if (stall && fuelScore >= 2) confidence += 2
-  if (oiRising) confidence -= 8
+  let confidence = 70 + fuelScore * 4
+  if (failed || wick) confidence += 5
+  if (bookWeak) confidence += 5
+  if (rollover && (failed || wick || lh)) confidence += 3
+  if (input.chg24hPct >= 12) confidence += 2
+  if (distPct <= 0.55) confidence += 2
+  if (oiRising) confidence -= 10
+  if (pumping) confidence -= 6
+  if (stall && !failed && !wick) confidence -= 4
   confidence = Math.min(94, Math.max(0, Math.round(confidence)))
 
-  if (confidence < 70) return null
+  if (confidence < 72) return null
 
-  // Autopsy: ban stall-led; mega-pump needs flow confirm; else classic structure
-  const stallOnly = stall && !failed && !wick && !lh
-  const stallLed = stall && !wick && !failed
-  const flowConfirm =
-    tapeStall || input.absorptionShort || input.cvdBearish
-  const structureOk =
-    failed || wick || lh || input.absorptionShort || input.cvdBearish || tapeStall
   const megaPump = input.chg24hPct >= MEGA_PUMP_CHG
+  // A-tier: real weakness + fuel; mega-pump needs book or failed/wick (not soft rollover alone)
+  const aWeakness =
+    failed ||
+    wick ||
+    lh ||
+    bookWeak ||
+    (rollover && (tapeStall || fuelScore >= 2))
   const aTier =
     confidence >= A_MIN_CONF &&
     fuelScore >= A_MIN_FUEL &&
     distPct <= A_MAX_DIST &&
     input.chg24hPct >= A_MIN_CHG &&
-    !stallOnly &&
-    !stallLed &&
-    structureOk &&
+    aWeakness &&
     !oiRising &&
-    (!megaPump || flowConfirm)
+    !pumping &&
+    (!megaPump || failed || wick || bookWeak)
 
   const quality: PeakQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)
@@ -280,7 +324,7 @@ export function detectPeakFuelFail(
     tp: limit * (1 - TP_PCT),
     tp1: limit * (1 - TP1_PCT),
     notes: [
-      `Пик без топлива · SHORT · уверенный вход`,
+      `Пик + слабость · SHORT · класс ${quality}`,
       `24h ${input.chg24hPct >= 0 ? '+' : ''}${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}% · conf ${confidence}`,
       ...notes.slice(0, 4),
     ],

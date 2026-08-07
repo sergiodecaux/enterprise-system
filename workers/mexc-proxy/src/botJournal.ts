@@ -1452,6 +1452,38 @@ export async function resetPeakJournalLive(env: Env): Promise<{
   return { archived: peak.length, remaining: keep.length, gates }
 }
 
+/**
+ * Full clean slate for PEAK SHORT lab: wipe live meme PEAK + archive PEAK
+ * + gates (recomputed empty). SNIPER rows stay.
+ */
+export async function resetAllPeakStats(env: Env): Promise<{
+  liveRemoved: number
+  archiveRemoved: number
+  gates: BotAdaptiveGates
+}> {
+  const list = await listJournal(env)
+  const keepLive = list.filter(
+    (e) => !(e.alertType === 'MEME' || e.setup === 'PEAK_FUEL_FAIL')
+  )
+  const liveRemoved = list.length - keepLive.length
+  await saveJournal(env, keepLive, true, true)
+
+  const arch = await listArchive(env)
+  const keepArch = arch.filter(
+    (e) => !(e.alertType === 'MEME' || e.setup === 'PEAK_FUEL_FAIL')
+  )
+  const archiveRemoved = arch.length - keepArch.length
+  memoryArchive.length = 0
+  memoryArchive.push(...keepArch.slice(0, MAX_ARCHIVE))
+  if (env.SUBSCRIBERS) {
+    await env.SUBSCRIBERS.put(ARCHIVE_KEY, JSON.stringify(memoryArchive))
+  }
+
+  memoryGates = null
+  const gates = await recomputeAndSaveGates(env)
+  return { liveRemoved, archiveRemoved, gates }
+}
+
 /** Full analysis dump: live + archive, optional setup filter. */
 export async function getJournalAnalysisDump(
   env: Env,

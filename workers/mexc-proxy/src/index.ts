@@ -952,16 +952,20 @@ async function handleTelegram(
     if (!env.ALERT_SECRET || secret !== env.ALERT_SECRET) {
       return json({ error: 'Unauthorized' }, 401)
     }
-    const { resetPeakJournalLive } = await import('./botJournal')
+    const { resetAllPeakStats } = await import('./botJournal')
     const { clearPeakDecisions } = await import('./peakDecisionLog')
-    const result = await resetPeakJournalLive(env)
+    const { closeAllMemePapers } = await import('./paperTrades')
+    const result = await resetAllPeakStats(env)
     const clearedDecisions = await clearPeakDecisions(env.SUBSCRIBERS)
+    const closedMemePapers = await closeAllMemePapers(env)
+    await env.SUBSCRIBERS?.delete('telegram:peak_only_purged_v283')
     return json({
       ok: true,
       ...result,
       clearedDecisions,
+      closedMemePapers,
       engine: BOT_ENGINE.id,
-      note: 'PEAK live journal archived; honest WR window starts now',
+      note: 'PEAK stats wiped — clean WR lab; short only with weakness confirm',
     })
   }
 
