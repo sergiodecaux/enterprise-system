@@ -10,7 +10,8 @@ import {
 import { kvPutThrottled } from './kvWrite'
 import { attachPeakOutcome } from './peakDecisionLog'
 
-const JOURNAL_KEY = 'telegram:bot_journal_v287'
+/** Bump key + cache URL when wiping lab — old Cache must not resurrect stats */
+const JOURNAL_KEY = 'telegram:bot_journal_v288'
 /** Long-term closed trades for analysis (not pruned with live open book) */
 const ARCHIVE_KEY = 'telegram:bot_journal_archive'
 const GATES_KEY = 'telegram:bot_gates'
@@ -271,7 +272,7 @@ interface Env {
 const memoryJournal: BotJournalEntry[] = []
 
 function journalCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/bot-journal')
+  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v288')
 }
 
 async function readJournalCache(): Promise<BotJournalEntry[] | null> {
@@ -327,16 +328,26 @@ function rMult(
 }
 
 async function listJournal(env: Env): Promise<BotJournalEntry[]> {
+  // KV is source of truth — Cache-first resurrected wiped journals
+  if (env.SUBSCRIBERS) {
+    try {
+      const raw = await env.SUBSCRIBERS.get(JOURNAL_KEY)
+      if (raw != null) {
+        const parsed = JSON.parse(raw) as BotJournalEntry[]
+        if (Array.isArray(parsed)) {
+          memoryJournal.length = 0
+          memoryJournal.push(...parsed)
+          await writeJournalCache(parsed)
+          return [...parsed]
+        }
+      }
+    } catch {
+      /* fallthrough */
+    }
+  }
   const cached = await readJournalCache()
   if (cached) return cached
-  if (!env.SUBSCRIBERS) return [...memoryJournal]
-  const raw = await env.SUBSCRIBERS.get(JOURNAL_KEY)
-  if (!raw) return [...memoryJournal]
-  try {
-    return JSON.parse(raw) as BotJournalEntry[]
-  } catch {
-    return [...memoryJournal]
-  }
+  return [...memoryJournal]
 }
 
 async function saveJournal(
