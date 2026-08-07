@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-dual-v31.4',
-  label: 'MEME: squeeze LONG + dump LONG',
+  id: 'meme-peak-fuel-v28.2',
+  label: 'MEME: PEAK SHORT only',
   deployedNote:
-    'v31.4: wait ~2m book+chart confirm · early SL → flip side.',
+    'v28.2: PEAK SHORT A · SL 1%/TP 1.8% · primary self-heal если failover заглушил cron.',
 } as const
 
 /**

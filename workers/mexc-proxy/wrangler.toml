@@ -1,6 +1,7 @@
 name = "mexc-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
+account_id = "b64dba72f0f7d3fb29ece70dda27d747"
 
 # PRIMARY worker — Account A
 # Fill secrets: TELEGRAM_* ALERT_SECRET FAILOVER_SECRET

@@ -374,15 +374,12 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
-  // Meme journal: PEAK SHORT + DUMP LONG + PUMP_CONTINUE LONG
+  // Meme journal: PEAK fuel short only
   if (input.alertType === 'MEME') {
-    const peakOk =
-      input.plan.setup === 'PEAK_FUEL_FAIL' && input.plan.side === 'SHORT'
-    const dumpOk =
-      input.plan.setup === 'DUMP_FUEL_FAIL' && input.plan.side === 'LONG'
-    const pumpOk =
-      input.plan.setup === 'PUMP_CONTINUE' && input.plan.side === 'LONG'
-    if (!peakOk && !dumpOk && !pumpOk) {
+    if (
+      input.plan.setup !== 'PEAK_FUEL_FAIL' ||
+      input.plan.side !== 'SHORT'
+    ) {
       return null
     }
   }

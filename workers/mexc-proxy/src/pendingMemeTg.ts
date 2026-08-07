@@ -23,23 +23,39 @@ function cacheReq(): Request {
 }
 
 async function readList(env: EnvLike): Promise<PendingMemeAlert[]> {
+  // Always merge KV + Cache — Cache-only read left pending alerts stuck
+  // when predator wrote KV on another isolate and paper saw empty cache.
+  let fromKv: PendingMemeAlert[] = []
+  let fromCache: PendingMemeAlert[] = []
+  try {
+    const raw = await env.SUBSCRIBERS?.get(KV_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as PendingMemeAlert[]
+      if (Array.isArray(parsed)) fromKv = parsed
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     const hit = await caches.default.match(cacheReq())
     if (hit) {
       const parsed = (await hit.json()) as PendingMemeAlert[]
-      if (Array.isArray(parsed)) return parsed
+      if (Array.isArray(parsed)) fromCache = parsed
     }
   } catch {
-    // fall through
+    /* ignore */
   }
-  try {
-    const raw = await env.SUBSCRIBERS?.get(KV_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as PendingMemeAlert[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
+  const byKey = new Map<string, PendingMemeAlert>()
+  for (const x of [...fromCache, ...fromKv]) {
+    if (!x?.dedupeKey) continue
+    const prev = byKey.get(x.dedupeKey)
+    if (!prev || (x.enqueuedAt ?? 0) >= (prev.enqueuedAt ?? 0)) {
+      byKey.set(x.dedupeKey, x)
+    }
   }
+  return [...byKey.values()].sort(
+    (a, b) => (b.enqueuedAt ?? 0) - (a.enqueuedAt ?? 0)
+  )
 }
 
 async function writeList(env: EnvLike, list: PendingMemeAlert[]): Promise<void> {
