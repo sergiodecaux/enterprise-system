@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-peak-fuel-v28.2',
+  id: 'meme-peak-fuel-v28.3',
   label: 'MEME: PEAK SHORT only',
   deployedNote:
-    'v28.2: PEAK SHORT A · SL 1%/TP 1.8% · primary self-heal если failover заглушил cron.',
+    'v28.3: только PEAK SHORT A · своя статистика/гейты по PEAK · dual LONG в архив.',
 } as const
 
 /**

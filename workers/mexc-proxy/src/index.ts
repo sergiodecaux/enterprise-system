@@ -40,6 +40,7 @@ import {
 } from './userZoneWatch'
 import {
   createPaperTradeFromPlan,
+  closeNonPeakMemePapers,
   formatTradesStatus,
   listPaperTrades,
   monitorPaperTrades,
@@ -60,6 +61,8 @@ import {
   recordBotAlert,
   resolveBotJournal,
   formatCorridorWrReport,
+  formatPeakShortStatsReport,
+  purgeNonPeakMemeJournal,
 } from './botJournal'
 import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
@@ -1911,6 +1914,23 @@ async function runCronScan(
 
   const runJournal = async () => {
     try {
+      // One-shot hygiene: drop dual LONG noise so PEAK keeps its own book
+      try {
+        const purgedFlag = await env.SUBSCRIBERS?.get(
+          'telegram:peak_only_purged_v283'
+        )
+        if (!purgedFlag) {
+          const jn = await purgeNonPeakMemeJournal(env)
+          const pn = await closeNonPeakMemePapers(env)
+          await env.SUBSCRIBERS?.put(
+            'telegram:peak_only_purged_v283',
+            JSON.stringify({ at: Date.now(), journal: jn, paper: pn })
+          )
+          console.log('[cron] peak-only purge', { journal: jn, paper: pn })
+        }
+      } catch (err) {
+        console.error('[cron] peak-only purge failed', err)
+      }
       const resolution = await resolveBotJournal(env)
       journalResolved = resolution.changed
       let tgBudget = 5
@@ -2728,11 +2748,14 @@ async function dispatchCommand(
         (channel === 'sniper' ? t.alertType === 'SNIPER' : t.alertType === 'MEME')
     ).length
     const journal = await getBotJournalPayload(env)
-    const wrBlock = formatCorridorWrReport(
-      journal.analytics,
-      journal.entries,
-      journal.gates
-    )
+    const wrBlock =
+      channel === 'meme'
+        ? formatPeakShortStatsReport(journal.entries, journal.gates)
+        : formatCorridorWrReport(
+            journal.analytics,
+            journal.entries,
+            journal.gates
+          )
 
     if (channel === 'sniper') {
       const session = evaluateVaneSession()
@@ -2788,7 +2811,7 @@ async function dispatchCommand(
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: LONG+SHORT · regime=bias · RANGE только при мёртвом ATR`,
+        `Режим: только PEAK_FUEL_FAIL SHORT A · SL 1% / TP 1.8%`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
         hotLine,
@@ -2812,11 +2835,14 @@ async function dispatchCommand(
       return
     }
     const journal = await getBotJournalPayload(env)
-    const wrBlock = formatCorridorWrReport(
-      journal.analytics,
-      journal.entries,
-      journal.gates
-    )
+    const wrBlock =
+      channel === 'meme'
+        ? formatPeakShortStatsReport(journal.entries, journal.gates)
+        : formatCorridorWrReport(
+            journal.analytics,
+            journal.entries,
+            journal.gates
+          )
     const insights = journal.analytics.insights
       .slice(0, 5)
       .map((i) => `· ${i.title}: ${i.detail}`)

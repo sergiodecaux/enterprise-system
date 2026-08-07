@@ -788,6 +788,24 @@ export async function listPaperTrades(env: PaperEnv): Promise<PaperTrade[]> {
   }
 }
 
+/** Close leftover dual LONG / non-PEAK meme papers so slots stay for PEAK SHORT. */
+export async function closeNonPeakMemePapers(env: PaperEnv): Promise<number> {
+  const list = await listPaperTrades(env)
+  const now = Date.now()
+  let n = 0
+  for (const t of list) {
+    if (t.alertType !== 'MEME') continue
+    if (t.status !== 'WAITING' && t.status !== 'OPEN') continue
+    if (t.setup === 'PEAK_FUEL_FAIL' && t.side === 'SHORT') continue
+    t.status = 'CLOSED'
+    t.closedAt = now
+    t.closeReason = 'non_peak_purged'
+    n++
+  }
+  if (n) await savePaperTrades(env, list)
+  return n
+}
+
 async function savePaperTrades(
   env: PaperEnv,
   list: PaperTrade[]
@@ -1070,11 +1088,7 @@ function invalidatedWithoutFill(t: PaperTrade, snap: TickerSnap): boolean {
 }
 
 function isSqueezeSetup(setup: string): boolean {
-  return (
-    setup === 'PUMP_CONTINUE' ||
-    setup === 'DUMP_FUEL_FAIL' ||
-    setup === 'PEAK_FUEL_FAIL'
-  )
+  return setup === 'PEAK_FUEL_FAIL'
 }
 
 function confirmsMemeSqueeze(
@@ -1245,12 +1259,7 @@ async function updateVaneRiskOnClose(
 
 /** PEAK/meme: last-price only — OHLC same-bar TP-before-SL inflated WR. */
 function useLastPriceExits(t: PaperTrade): boolean {
-  return (
-    isMemeTrade(t) ||
-    t.setup === 'PEAK_FUEL_FAIL' ||
-    t.setup === 'DUMP_FUEL_FAIL' ||
-    t.setup === 'PUMP_CONTINUE'
-  )
+  return isMemeTrade(t) || t.setup === 'PEAK_FUEL_FAIL'
 }
 
 function hitTp(t: PaperTrade, snap: TickerSnap): boolean {
@@ -1288,11 +1297,7 @@ function memeFavorPct(t: PaperTrade, price: number): number {
 }
 
 function isPeakSetup(t: PaperTrade): boolean {
-  return (
-    t.setup === 'PEAK_FUEL_FAIL' ||
-    t.setup === 'DUMP_FUEL_FAIL' ||
-    t.setup === 'PUMP_CONTINUE'
-  )
+  return t.setup === 'PEAK_FUEL_FAIL' && t.side === 'SHORT'
 }
 
 function memeTrailPct(t: PaperTrade, peakFavorPct: number): number {

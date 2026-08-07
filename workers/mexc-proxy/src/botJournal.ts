@@ -1166,18 +1166,11 @@ export function deriveAdaptiveGates(
     }
   }
 
+  // Meme bot = PEAK SHORT only — calibrate floor from PEAK sample, never dual LONG noise
   const peak = analytics.bySetup.find((x) => x.setup === 'PEAK_FUEL_FAIL')
-  const meme = analytics.byAlertType.find((x) => x.alertType === 'MEME')
-  // Score floor from PEAK sample when available — old toxic tags must not starve capacity
-  const wrSrc =
-    peak && peak.wins + peak.losses >= 5
-      ? peak
-      : meme && meme.wins + meme.losses >= 8
-        ? meme
-        : null
-  if (wrSrc) {
-    const decided = wrSrc.wins + wrSrc.losses
-    const wr = wrSrc.winRate
+  if (peak) {
+    const decided = peak.wins + peak.losses
+    const wr = peak.winRate
     if (decided >= 5) {
       if (wr < 42) minMemeScore = 62
       else if (wr < 50) minMemeScore = 60
@@ -1620,14 +1613,9 @@ export function memeSetupRankScore(
   setup: string,
   conf: number
 ): number {
+  if (setup !== 'PEAK_FUEL_FAIL') return 0
   const { wr, n, avgR } = setupHistoricalWr(gates, setup)
-  let rank = conf
-  // Hard priority: CONT_BOOK_RELEASE (journal best)
-  if (setup === 'CONT_BOOK_RELEASE') rank += 18
-  if (setup === 'PEAK_FUEL_FAIL') rank += 14
-  if (setup === 'DUMP_FUEL_FAIL') rank += 14
-  if (setup === 'PUMP_CONTINUE') rank += 16
-  else if (setup.startsWith('CONT_')) rank += 8
+  let rank = conf + 20
   if (n >= 3) {
     rank += wr * 0.35
     rank += Math.max(-8, Math.min(8, avgR * 4))
@@ -1637,27 +1625,15 @@ export function memeSetupRankScore(
   if (gates && isSetupBoosted(gates, parseBotSetup(setup).base, setup)) {
     rank += 10
   }
-  if (gates && isSetupBlocked(gates, parseBotSetup(setup).base, setup)) {
-    rank -= 50
-  }
   return rank
 }
 
-/** True if setup is among top historical WR meme families we want to hunt */
+/** True if setup is the live meme hunt (PEAK SHORT only) */
 export function isHighWrMemeSetup(
-  gates: BotAdaptiveGates | null | undefined,
+  _gates: BotAdaptiveGates | null | undefined,
   setup: string
 ): boolean {
-  if (setup === 'CONT_BOOK_RELEASE') return true
-  if (setup === 'PEAK_FUEL_FAIL') return true
-  if (setup === 'DUMP_FUEL_FAIL') return true
-  if (setup === 'PUMP_CONTINUE') return true
-  const { wr, n } = setupHistoricalWr(gates, setup)
-  if (n >= 3 && wr >= 55) return true
-  if (gates && isSetupBoosted(gates, parseBotSetup(setup).base, setup)) {
-    return true
-  }
-  return false
+  return setup === 'PEAK_FUEL_FAIL'
 }
 
 export interface CorridorWrRow {
@@ -1709,11 +1685,104 @@ export function computeCorridorStats(
   return rows.sort((a, b) => b.n - a.n)
 }
 
+/** PEAK SHORT-only stats for meme /status and /journal */
+export function formatPeakShortStatsReport(
+  entries: BotJournalEntry[],
+  gates: BotAdaptiveGates
+): string {
+  const peak = entries.filter(
+    (e) => e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT'
+  )
+  const wins = peak.filter((e) => e.status === 'WIN')
+  const losses = peak.filter((e) => e.status === 'LOSS')
+  const open = peak.filter((e) => e.status === 'OPEN')
+  const decided = wins.length + losses.length
+  const wr = decided > 0 ? (100 * wins.length) / decided : 0
+  const rs = peak
+    .filter(
+      (e) =>
+        e.rMultiple != null && (e.status === 'WIN' || e.status === 'LOSS')
+    )
+    .map((e) => e.rMultiple!)
+  const avgR = rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : 0
+  const pnls = peak
+    .filter(
+      (e) =>
+        e.pnlPercent != null && (e.status === 'WIN' || e.status === 'LOSS')
+    )
+    .map((e) => e.pnlPercent!)
+  const avgPnl = pnls.length
+    ? pnls.reduce((a, b) => a + b, 0) / pnls.length
+    : 0
+  const lines: string[] = [
+    `<b>PEAK SHORT · своя статистика</b>`,
+    decided
+      ? `WR ${wr.toFixed(0)}% · ${wins.length}W/${losses.length}L · E[R]=${avgR.toFixed(2)} · avg PnL ${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`
+      : `Закрытых пока нет — копим с нуля (open ${open.length})`,
+    `Открыто: ${open.length} · порог score ≥${gates.minMemeScore}`,
+  ]
+  if (gates.peakPreferReasons?.length) {
+    lines.push(
+      `Учит + : ${gates.peakPreferReasons.slice(0, 4).join(', ')}`
+    )
+  }
+  if (gates.peakAvoidReasons?.length) {
+    lines.push(
+      `Учит − : ${gates.peakAvoidReasons.slice(0, 4).join(', ')}`
+    )
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Archive non-PEAK meme rows from live journal so PEAK keeps a clean book.
+ * SNIPER / Elite rows untouched.
+ */
+export async function purgeNonPeakMemeJournal(env: Env): Promise<number> {
+  const list = await listJournal(env)
+  const drop = list.filter(
+    (e) =>
+      e.alertType === 'MEME' &&
+      (e.setup !== 'PEAK_FUEL_FAIL' || e.side !== 'SHORT')
+  )
+  if (!drop.length) return 0
+  const keep = list.filter(
+    (e) =>
+      e.alertType !== 'MEME' ||
+      (e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT')
+  )
+  await archiveClosedTrades(
+    env,
+    drop.map((e) =>
+      e.status === 'OPEN'
+        ? {
+            ...e,
+            status: 'INVALIDATED' as const,
+            resolvedAt: Date.now(),
+            closeReason: 'non_peak_purged',
+            resolveSource: 'MANUAL' as const,
+            pnlPercent: 0,
+            rMultiple: 0,
+          }
+        : e
+    )
+  )
+  await saveJournal(env, keep, true, true)
+  await recomputeAndSaveGates(env)
+  return drop.length
+}
+
 export function formatCorridorWrReport(
   analytics: BotJournalAnalytics,
   entries: BotJournalEntry[],
   gates: BotAdaptiveGates
 ): string {
+  const peak = entries.filter(
+    (e) => e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT'
+  )
+  if (peak.length) {
+    return formatPeakShortStatsReport(entries, gates)
+  }
   const corridors = computeCorridorStats(entries)
   const lines: string[] = [
     `Журнал: ${analytics.resolved} закрытых · WR ${analytics.winRate.toFixed(0)}%`,
