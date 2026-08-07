@@ -33,22 +33,22 @@ import { rememberMacroOutcome } from './vane/macroMemory'
 
 const PAPER_KEY = 'telegram:paper_trades'
 const MAX_ACTIVE = 6
-/** All paper slots for PEAK fuel shorts — no shared starvation */
-const MAX_ACTIVE_MEME = 6
-/** Align with journal symbol hygiene — free slots for next peak sooner */
-const MEME_SYMBOL_COOLDOWN_MS = 35 * 60_000
+/** One live PEAK at a time — manage it, don't spam */
+const MAX_ACTIVE_MEME = 1
+/** Same symbol cooldown after open/close */
+const MEME_SYMBOL_COOLDOWN_MS = 60 * 60_000
 /** Trail width once MFE is real (was 1.2% → отдавали почти весь импульс) */
 const MEME_TRAIL_TIGHT = 0.006
 const MEME_TRAIL_RUNNER = 0.0045
 const MEME_TRAIL_EARLY = 0.01
 /** Arm trail / BE after this favorable move */
 const MEME_ARM_PCT = 0.0035
-/** PEAK give-back autopsy: arm earlier, trail tighter */
-const PEAK_ARM_PCT = 0.0025
-const PEAK_TRAIL_TIGHT = 0.0028
-const PEAK_TRAIL_RUNNER = 0.0022
-const PEAK_TRAIL_EARLY = 0.0055
-const PEAK_BE_R = 0.28
+/** PEAK: don't arm BE/trail on noise — was 0.25% → instant BE→SL spam */
+const PEAK_ARM_PCT = 0.0055
+const PEAK_TRAIL_TIGHT = 0.0045
+const PEAK_TRAIL_RUNNER = 0.0035
+const PEAK_TRAIL_EARLY = 0.008
+const PEAK_BE_R = 0.45
 /** Partial lock at ~1R (TP1) then trail remainder */
 const MEME_PARTIAL_R = 1.0
 const WAITING_TTL_MS = 90 * 60_000
@@ -941,9 +941,9 @@ export async function createPaperTradeFromPlan(
       if (!(target1 != null && target1 > mark)) target1 = mark * 1.018
       if (!(target3 != null && target3 > mark)) target3 = mark * 1.04
     } else {
-      if (minSlPct > 0) sl = Math.max(plan.sl, mark * (1 + minSlPct))
-      else sl = plan.sl
-      // Without live snap, skip pre_stopped for PEAK (entry already TG'd)
+      // SHORT: SL must stay above mark — never inherit inverted levels
+      sl = Math.max(plan.sl, mark * (1 + (isPeak ? 0.01 : minSlPct || 0.01)))
+      if (!(sl > mark * 1.003)) sl = mark * 1.01
       if (snap && (snap.last >= sl || snap.high >= sl)) {
         return { created: false, comment: null, skipReason: 'pre_stopped' }
       }
@@ -954,8 +954,7 @@ export async function createPaperTradeFromPlan(
         target1 = mark * (isPeak ? 0.989 : 0.982)
       if (!(target3 != null && target3 < mark))
         target3 = mark * (isPeak ? 0.975 : 0.96)
-      // Rebase PEAK levels from actual mark if scan price drifted
-      if (isPeak && Math.abs(mark - plan.entryIdeal) / mark > 0.001) {
+      if (isPeak) {
         sl = mark * 1.01
         tp = mark * 0.982
         target1 = mark * 0.989
@@ -1738,19 +1737,27 @@ export async function monitorPaperTrades(
       (favorR >= beR || peakEarlyBe || memeEarlyBe || microEarlyBe || macroEarlyBe)
     ) {
       t.beSent = true
-      // PEAK: lock tiny profit (+0.15%) not flat BE — reduce give-back to full SL
-      t.sl = isPeakSetup(t)
-        ? t.side === 'SHORT'
-          ? fill * (1 - 0.0015)
-          : fill * (1 + 0.0015)
-        : fill
+      // SHORT hitSl = last >= sl. SL below fill instantly dies on any bounce to entry.
+      if (isPeakSetup(t) && t.side === 'SHORT') {
+        if (favorPct >= 0.009 && snap.last < fill * 0.997) {
+          t.sl = fill * (1 - 0.002)
+        } else {
+          t.sl = fill // flat BE — only stop if fully given back
+        }
+        // If price already back ≥ entry, keep small protective stop above
+        if (!(snap.last < fill)) t.sl = fill * 1.0035
+      } else if (isPeakSetup(t) && t.side === 'LONG') {
+        t.sl = fill * (1 + 0.0015)
+      } else {
+        t.sl = fill
+      }
       dirty = true
       pushComment(t, {
         alertType: 'SYSTEM',
         title: `🛡 Пример: BE ${nameOf(t.symbol)}`,
         text: [
           isPeakSetup(t)
-            ? `PEAK +${favorPct.toFixed(2)}% — стоп в плюс ~0.15% (анти give-back).`
+            ? `PEAK +${favorPct.toFixed(2)}% — стоп в BE (${fmt(t.sl)}), веду дальше.`
             : isMacroSetup(t.setup)
               ? `MACRO +${favorPct.toFixed(2)}% — стоп в BE (${fmt(fill)}).`
               : isMicroSetup(t.setup)
@@ -1774,9 +1781,15 @@ export async function monitorPaperTrades(
     ) {
       t.tp1Sent = true
       t.beSent = true
-      // Lock +0.1% after partial — don't give full risk back
-      t.sl =
-        t.side === 'LONG' ? fill * 1.001 : fill * 0.999
+      // After TP1: LONG SL above fill; SHORT SL below fill only if price still in profit
+      if (t.side === 'LONG') {
+        t.sl = fill * 1.001
+      } else if (isPeakSetup(t)) {
+        t.sl = snap.last < fill * 0.997 ? fill * (1 - 0.0015) : fill
+        if (!(snap.last < t.sl)) t.sl = fill * 1.002
+      } else {
+        t.sl = fill * 0.999
+      }
       const peak = t.peak ?? snap.last
       const tight = isMacroSetup(t.setup)
         ? MACRO_TRAIL_AFTER_TP1

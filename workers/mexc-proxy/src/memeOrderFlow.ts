@@ -29,11 +29,11 @@ const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
  * Lean scan leaves headroom for TG (+ pending flush on paper cron).
  * Budget: 1 ticker + 10 klines ≲ 12 — book off (candles carry PEAK).
  */
-const MAX_SCAN = 10
+const MAX_SCAN = 8
 /** Book off — each book+deals pair ate ~2 subreq and caused silent TG */
 const BOOK_SCAN = 0
-/** Emit every A-tier hit this tick (paper/TG caps apply downstream) */
-const MAX_ALERTS = 3
+/** One A-tier per tick — paper monitor must own the book */
+const MAX_ALERTS = 1
 /** Only emit PEAK_FUEL_FAIL */
 const PEAK_ONLY = true
 
@@ -175,7 +175,7 @@ function peakFailToAlert(
     ]
       .filter(Boolean)
       .join('\n'),
-    dedupeKey: `cron:mof272:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
+    dedupeKey: `cron:mof272:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
     score: sig.confidence,
     winPct: Math.min(78, Math.max(55, 50 + (sig.confidence - 78))),
     style: 'SCALP',

@@ -406,17 +406,21 @@ export async function recordBotAlert(
   ) {
     return null
   }
-  // Memes: block same symbol any side for 35m (WR hygiene).
-  if (
-    input.alertType === 'MEME' &&
-    list.some(
-      (e) =>
-        e.alertType === 'MEME' &&
-        e.symbol === input.plan.symbol &&
-        nowGate - e.createdAt < 35 * 60_000
-    )
-  ) {
-    return null
+  // Memes: one open PEAK at a time + 60m symbol cool-down
+  if (input.alertType === 'MEME') {
+    if (list.some((e) => e.alertType === 'MEME' && e.status === 'OPEN')) {
+      return null
+    }
+    if (
+      list.some(
+        (e) =>
+          e.alertType === 'MEME' &&
+          e.symbol === input.plan.symbol &&
+          nowGate - e.createdAt < 60 * 60_000
+      )
+    ) {
+      return null
+    }
   }
 
   const now = Date.now()
@@ -515,7 +519,7 @@ function matchingPaper(
       paper.symbol === entry.symbol &&
       paper.side === entry.side &&
       paper.setup === entry.setup &&
-      Math.abs(paper.createdAt - entry.createdAt) <= 15_000
+      Math.abs(paper.createdAt - entry.createdAt) <= 30 * 60_000
   )
   return (
     matches.sort(
@@ -768,6 +772,27 @@ export async function resolveBotJournal(
       if (paper.status === 'WAITING' || paper.status === 'OPEN') continue
     }
     if (e.status !== 'OPEN') continue
+
+    // TG-without-paper orphans block the 1-open gate — drop after 3m
+    if (
+      e.alertType === 'MEME' &&
+      !paper &&
+      !e.paperId &&
+      now - e.createdAt > 3 * 60_000
+    ) {
+      list[i] = pushOutcome(e, {
+        ...e,
+        status: 'INVALIDATED',
+        resolvedAt: now,
+        exitPrice: e.entryPrice,
+        pnlPercent: 0,
+        rMultiple: 0,
+        resolveSource: 'MANUAL',
+        closeReason: 'orphan_no_paper',
+      })
+      changed++
+      continue
+    }
 
     const price = prices.get(e.symbol) ?? null
     if (price == null) {
