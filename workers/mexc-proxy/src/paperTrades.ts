@@ -31,7 +31,7 @@ import {
 } from './vane/macroStrategy'
 import { rememberMacroOutcome } from './vane/macroMemory'
 
-const PAPER_KEY = 'telegram:paper_trades_v290'
+const PAPER_KEY = 'telegram:paper_trades_v291'
 const MAX_ACTIVE = 6
 /** One live PEAK at a time — manage it, don't spam */
 const MAX_ACTIVE_MEME = 1
@@ -195,7 +195,7 @@ interface MarketBrief {
 const memoryPapers: PaperTrade[] = []
 
 function paperCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v290')
+  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v291')
 }
 
 async function readPaperCache(): Promise<PaperTrade[] | null> {

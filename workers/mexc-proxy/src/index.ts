@@ -992,7 +992,7 @@ async function handleTelegram(
       clearedDecisions,
       closedPapers,
       engines: { meme: BOT_ENGINE.id, elite: SNIPER_ENGINE.id },
-      note: 'Full lab wipe v290 — PEAK SHORT + Elite DUMP LONG clean slate',
+      note: 'Full lab wipe v291 — clean slate all stats',
     })
   }
 
@@ -2083,7 +2083,7 @@ async function runCronScan(
 
   const runJournal = async () => {
     try {
-      // v290 keys are fresh empty — no wipe PUT needed (KV write quota)
+      // v291 keys are fresh empty — no wipe PUT needed (KV write quota)
       const resolution = await resolveBotJournal(env)
       journalResolved = resolution.changed
       let tgBudget = 5

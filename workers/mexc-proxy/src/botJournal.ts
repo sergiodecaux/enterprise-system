@@ -11,10 +11,10 @@ import { kvPutThrottled } from './kvWrite'
 import { attachPeakOutcome } from './peakDecisionLog'
 
 /** Bump key + cache URL when wiping lab — old Cache must not resurrect stats */
-const JOURNAL_KEY = 'telegram:bot_journal_v290'
+const JOURNAL_KEY = 'telegram:bot_journal_v291'
 /** Long-term closed trades for analysis (not pruned with live open book) */
-const ARCHIVE_KEY = 'telegram:bot_journal_archive_v290'
-const GATES_KEY = 'telegram:bot_gates_v290'
+const ARCHIVE_KEY = 'telegram:bot_journal_archive_v291'
+const GATES_KEY = 'telegram:bot_gates_v291'
 const MAX_ENTRIES = 500
 const MAX_ARCHIVE = 1200
 const OPEN_TTL_MS = 4 * 60 * 60_000
@@ -272,7 +272,7 @@ interface Env {
 const memoryJournal: BotJournalEntry[] = []
 
 function journalCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v290')
+  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v291')
 }
 
 async function readJournalCache(): Promise<BotJournalEntry[] | null> {
