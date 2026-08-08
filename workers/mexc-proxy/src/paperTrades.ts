@@ -31,7 +31,7 @@ import {
 } from './vane/macroStrategy'
 import { rememberMacroOutcome } from './vane/macroMemory'
 
-const PAPER_KEY = 'telegram:paper_trades'
+const PAPER_KEY = 'telegram:paper_trades_v290'
 const MAX_ACTIVE = 6
 /** One live PEAK at a time — manage it, don't spam */
 const MAX_ACTIVE_MEME = 1
@@ -43,12 +43,15 @@ const MEME_TRAIL_RUNNER = 0.0045
 const MEME_TRAIL_EARLY = 0.01
 /** Arm trail / BE after this favorable move */
 const MEME_ARM_PCT = 0.0035
-/** PEAK: don't arm BE/trail on noise — was 0.25% → instant BE→SL spam */
-const PEAK_ARM_PCT = 0.0055
-const PEAK_TRAIL_TIGHT = 0.0045
-const PEAK_TRAIL_RUNNER = 0.0035
-const PEAK_TRAIL_EARLY = 0.008
-const PEAK_BE_R = 0.45
+/** PEAK: arm only after real MFE — autopsy: early arm → noise exits */
+const PEAK_ARM_PCT = 0.007
+const PEAK_TRAIL_TIGHT = 0.005
+const PEAK_TRAIL_RUNNER = 0.004
+const PEAK_TRAIL_EARLY = 0.009
+const PEAK_BE_R = 0.55
+/** Elite meme LONGs — separate slot from PEAK SHORT */
+const MAX_ACTIVE_ELITE_MEME = 1
+const ELITE_MEME_SETUPS = new Set(['DUMP_FUEL_FAIL'])
 /** Partial lock at ~1R (TP1) then trail remainder */
 const MEME_PARTIAL_R = 1.0
 const WAITING_TTL_MS = 90 * 60_000
@@ -192,7 +195,7 @@ interface MarketBrief {
 const memoryPapers: PaperTrade[] = []
 
 function paperCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/paper-trades')
+  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v290')
 }
 
 async function readPaperCache(): Promise<PaperTrade[] | null> {
@@ -309,7 +312,10 @@ function pulseMs(t: PaperTrade): number {
 }
 
 function isMemeTrade(t: PaperTrade): boolean {
-  return t.alertType === 'MEME'
+  return (
+    t.alertType === 'MEME' ||
+    (t.alertType === 'SNIPER' && ELITE_MEME_SETUPS.has(t.setup))
+  )
 }
 
 async function mexcJson<T>(path: string): Promise<T | null> {
@@ -823,6 +829,22 @@ export async function closeAllMemePapers(env: PaperEnv): Promise<number> {
   return n
 }
 
+/** Close every open/waiting paper (full lab reset). */
+export async function closeAllLabPapers(env: PaperEnv): Promise<number> {
+  const list = await listPaperTrades(env)
+  const now = Date.now()
+  let n = 0
+  for (const t of list) {
+    if (t.status !== 'WAITING' && t.status !== 'OPEN') continue
+    t.status = 'CLOSED'
+    t.closedAt = now
+    t.closeReason = 'stats_reset'
+    n++
+  }
+  if (n) await savePaperTrades(env, list)
+  return n
+}
+
 async function savePaperTrades(
   env: PaperEnv,
   list: PaperTrade[]
@@ -849,10 +871,21 @@ export async function createPaperTradeFromPlan(
   comment: PaperComment | null
   skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped' | 'setup'
 }> {
-  // Meme: PEAK_FUEL_FAIL SHORT only (restored v28)
+  // Predator meme: PEAK SHORT only. Elite meme LONGs: DUMP/PUMP as SNIPER.
+  const eliteMemeLong =
+    plan.alertType === 'SNIPER' &&
+    plan.side === 'LONG' &&
+    ELITE_MEME_SETUPS.has(plan.setup)
   if (
     plan.alertType === 'MEME' &&
     (plan.setup !== 'PEAK_FUEL_FAIL' || plan.side !== 'SHORT')
+  ) {
+    return { created: false, comment: null, skipReason: 'setup' }
+  }
+  if (
+    plan.alertType === 'SNIPER' &&
+    ELITE_MEME_SETUPS.has(plan.setup) &&
+    !eliteMemeLong
   ) {
     return { created: false, comment: null, skipReason: 'setup' }
   }
@@ -871,6 +904,8 @@ export async function createPaperTradeFromPlan(
   }
 
   const isMeme = plan.alertType === 'MEME'
+  const isEliteMeme = eliteMemeLong
+  const isImpulse = isMeme || isEliteMeme
   if (isMeme) {
     const activeMemes = pruned.filter(
       (t) =>
@@ -880,8 +915,6 @@ export async function createPaperTradeFromPlan(
     if (activeMemes.length >= MAX_ACTIVE_MEME) {
       return { created: false, comment: null, skipReason: 'caps' }
     }
-    // Same symbol within 75м from last create/close (v26.2).
-    // Flip-after-wrong-SL bypasses — must reconfigure immediately.
     const flipBypass = plan.entryReasons?.includes('flip_after_wrong_side')
     const recentSame = pruned.find((t) => {
       if (t.symbol !== plan.symbol || t.alertType !== 'MEME') return false
@@ -889,6 +922,30 @@ export async function createPaperTradeFromPlan(
       return now - last < MEME_SYMBOL_COOLDOWN_MS
     })
     if (recentSame && !flipBypass) {
+      return { created: false, comment: null, skipReason: 'cooldown' }
+    }
+  }
+  if (isEliteMeme) {
+    const activeElite = pruned.filter(
+      (t) =>
+        t.alertType === 'SNIPER' &&
+        ELITE_MEME_SETUPS.has(t.setup) &&
+        (t.status === 'WAITING' || t.status === 'OPEN')
+    )
+    if (activeElite.length >= MAX_ACTIVE_ELITE_MEME) {
+      return { created: false, comment: null, skipReason: 'caps' }
+    }
+    const recentSame = pruned.find((t) => {
+      if (t.symbol !== plan.symbol) return false
+      if (
+        t.alertType !== 'SNIPER' ||
+        !ELITE_MEME_SETUPS.has(t.setup || '')
+      )
+        return false
+      const last = Math.max(t.createdAt, t.closedAt ?? 0)
+      return now - last < MEME_SYMBOL_COOLDOWN_MS
+    })
+    if (recentSame) {
       return { created: false, comment: null, skipReason: 'cooldown' }
     }
   }
@@ -900,8 +957,8 @@ export async function createPaperTradeFromPlan(
       t.side === plan.side
   )
   if (dup) return { created: false, comment: null, skipReason: 'dup' }
-  // Memes: market-mark fill, but never open if already past SL / SL too tight.
-  let fill = isMeme ? plan.signalPrice || plan.entryIdeal : null
+  // Impulse memes (PEAK SHORT / Elite DUMP LONG): market-mark fill
+  let fill = isImpulse ? plan.signalPrice || plan.entryIdeal : null
   let sl = plan.sl
   let tp = plan.tp
   let target1 = plan.target1 ?? null
@@ -909,9 +966,8 @@ export async function createPaperTradeFromPlan(
   let entryIdeal = plan.entryIdeal
   let zoneLow = plan.zoneLow
   let zoneHigh = plan.zoneHigh
-  if (isMeme) {
+  if (isImpulse) {
     const isPeak = plan.setup === 'PEAK_FUEL_FAIL'
-    // PEAK: use scan mark — no second MEXC fetch (CF subrequest budget)
     let mark =
       plan.markPrice && plan.markPrice > 0
         ? plan.markPrice
@@ -928,20 +984,19 @@ export async function createPaperTradeFromPlan(
     }
     fill = mark
     entryIdeal = mark
-    // PEAK keeps detector SL (~1%); other memes enforce min distance
-    const minSlPct = isPeak ? 0 : 0.018
+    const minSlPct = isPeak ? 0 : 0.01
     if (plan.side === 'LONG') {
-      if (minSlPct > 0) sl = Math.min(plan.sl, mark * (1 - minSlPct))
+      sl = Math.min(plan.sl, mark * (1 - Math.max(minSlPct, 0.0045)))
+      if (!(sl < mark * 0.997)) sl = mark * 0.99
       if (snap && (snap.last <= sl || snap.low <= sl)) {
         return { created: false, comment: null, skipReason: 'pre_stopped' }
       }
       zoneLow = Math.min(zoneLow, mark * 0.999)
       zoneHigh = Math.max(zoneHigh, mark)
-      if (!(tp > mark)) tp = mark * 1.028
-      if (!(target1 != null && target1 > mark)) target1 = mark * 1.018
-      if (!(target3 != null && target3 > mark)) target3 = mark * 1.04
+      if (!(tp > mark)) tp = mark * 1.018
+      if (!(target1 != null && target1 > mark)) target1 = mark * 1.011
+      if (!(target3 != null && target3 > mark)) target3 = mark * 1.028
     } else {
-      // SHORT: SL must stay above mark — never inherit inverted levels
       sl = Math.max(plan.sl, mark * (1 + (isPeak ? 0.01 : minSlPct || 0.01)))
       if (!(sl > mark * 1.003)) sl = mark * 1.01
       if (snap && (snap.last >= sl || snap.high >= sl)) {
@@ -977,23 +1032,23 @@ export async function createPaperTradeFromPlan(
     tp,
     target1,
     target3,
-    status: isMeme ? 'OPEN' : 'WAITING',
+    status: isImpulse ? 'OPEN' : 'WAITING',
     fillPrice: fill,
-    zoneTouchedAt: isMeme ? now : null,
+    zoneTouchedAt: isImpulse ? now : null,
     zoneTouchPrice: fill,
     peak: fill,
     trailingStop: fill
       ? plan.side === 'LONG'
-        ? fill * (isMeme ? 1 - MEME_TRAIL_EARLY : 0.982)
-        : fill * (isMeme ? 1 + MEME_TRAIL_EARLY : 1.018)
+        ? fill * (isImpulse ? 1 - MEME_TRAIL_EARLY : 0.982)
+        : fill * (isImpulse ? 1 + MEME_TRAIL_EARLY : 1.018)
       : null,
     createdAt: now,
-    openedAt: isMeme ? now : null,
+    openedAt: isImpulse ? now : null,
     expiresAt:
       now +
       (plan.setup === 'LIQUIDATION_ECHO'
         ? OPEN_TTL_ECHO_MS
-        : isMeme
+        : isImpulse
           ? OPEN_TTL_MEME_MS
           : plan.setup.startsWith('VANE_')
             ? isMacroSetup(plan.setup)

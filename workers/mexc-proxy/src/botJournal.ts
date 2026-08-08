@@ -11,10 +11,10 @@ import { kvPutThrottled } from './kvWrite'
 import { attachPeakOutcome } from './peakDecisionLog'
 
 /** Bump key + cache URL when wiping lab — old Cache must not resurrect stats */
-const JOURNAL_KEY = 'telegram:bot_journal_v288'
+const JOURNAL_KEY = 'telegram:bot_journal_v290'
 /** Long-term closed trades for analysis (not pruned with live open book) */
-const ARCHIVE_KEY = 'telegram:bot_journal_archive'
-const GATES_KEY = 'telegram:bot_gates'
+const ARCHIVE_KEY = 'telegram:bot_journal_archive_v290'
+const GATES_KEY = 'telegram:bot_gates_v290'
 const MAX_ENTRIES = 500
 const MAX_ARCHIVE = 1200
 const OPEN_TTL_MS = 4 * 60 * 60_000
@@ -272,7 +272,7 @@ interface Env {
 const memoryJournal: BotJournalEntry[] = []
 
 function journalCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v288')
+  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v290')
 }
 
 async function readJournalCache(): Promise<BotJournalEntry[] | null> {
@@ -385,7 +385,7 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
-  // Meme journal: PEAK fuel short only
+  // Predator: PEAK SHORT only. Elite: DUMP LONG memes as SNIPER.
   if (input.alertType === 'MEME') {
     if (
       input.plan.setup !== 'PEAK_FUEL_FAIL' ||
@@ -393,6 +393,13 @@ export async function recordBotAlert(
     ) {
       return null
     }
+  }
+  if (
+    input.alertType === 'SNIPER' &&
+    input.plan.setup === 'DUMP_FUEL_FAIL' &&
+    input.plan.side !== 'LONG'
+  ) {
+    return null
   }
   const list = await listJournal(env)
   const nowGate = Date.now()
@@ -406,7 +413,7 @@ export async function recordBotAlert(
   ) {
     return null
   }
-  // Memes: one open PEAK at a time + 60m symbol cool-down
+  // Predator memes: one open PEAK at a time + 60m symbol cool-down
   if (input.alertType === 'MEME') {
     if (list.some((e) => e.alertType === 'MEME' && e.status === 'OPEN')) {
       return null
@@ -422,9 +429,28 @@ export async function recordBotAlert(
       return null
     }
   }
+  if (
+    input.alertType === 'SNIPER' &&
+    input.plan.setup === 'DUMP_FUEL_FAIL'
+  ) {
+    if (
+      list.some(
+        (e) =>
+          e.alertType === 'SNIPER' &&
+          e.setup === 'DUMP_FUEL_FAIL' &&
+          e.status === 'OPEN'
+      )
+    ) {
+      return null
+    }
+  }
 
   const now = Date.now()
-  const memeImpulse = input.alertType === 'MEME'
+  const memeImpulse =
+    input.alertType === 'MEME' ||
+    (input.alertType === 'SNIPER' &&
+      input.plan.setup === 'DUMP_FUEL_FAIL' &&
+      input.plan.side === 'LONG')
   const reasons = input.plan.entryReasons ?? null
   let entry: BotJournalEntry = {
     id: `bj_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1518,6 +1544,34 @@ export async function resetAllPeakStats(env: Env): Promise<{
   memoryGates = null
   const gates = await recomputeAndSaveGates(env)
   return { liveRemoved, archiveRemoved, gates }
+}
+
+/** Wipe entire journal + archive + gates (Predator PEAK + Elite DUMP + alts). */
+export async function resetAllLabStats(env: Env): Promise<{
+  liveRemoved: number
+  archiveRemoved: number
+  gates: BotAdaptiveGates
+  journalKey: string
+}> {
+  const list = await listJournal(env)
+  const liveRemoved = list.length
+  await saveJournal(env, [], true, true)
+
+  const arch = await listArchive(env)
+  const archiveRemoved = arch.length
+  memoryArchive.length = 0
+  if (env.SUBSCRIBERS) {
+    await env.SUBSCRIBERS.put(ARCHIVE_KEY, JSON.stringify([]))
+  }
+
+  memoryGates = null
+  const gates = await recomputeAndSaveGates(env)
+  return {
+    liveRemoved,
+    archiveRemoved,
+    gates,
+    journalKey: JOURNAL_KEY,
+  }
 }
 
 /** Full analysis dump: live + archive, optional setup filter. */

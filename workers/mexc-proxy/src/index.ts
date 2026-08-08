@@ -40,7 +40,6 @@ import {
 } from './userZoneWatch'
 import {
   createPaperTradeFromPlan,
-  closeNonPeakMemePapers,
   formatTradesStatus,
   listPaperTrades,
   monitorPaperTrades,
@@ -62,7 +61,6 @@ import {
   resolveBotJournal,
   formatCorridorWrReport,
   formatPeakShortStatsReport,
-  purgeNonPeakMemeJournal,
 } from './botJournal'
 import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
@@ -952,20 +950,27 @@ async function handleTelegram(
     if (!env.ALERT_SECRET || secret !== env.ALERT_SECRET) {
       return json({ error: 'Unauthorized' }, 401)
     }
-    const { resetAllPeakStats } = await import('./botJournal')
+    const { resetAllLabStats } = await import('./botJournal')
     const { clearPeakDecisions } = await import('./peakDecisionLog')
-    const { closeAllMemePapers } = await import('./paperTrades')
-    const result = await resetAllPeakStats(env)
+    const { closeAllLabPapers } = await import('./paperTrades')
+    const result = await resetAllLabStats(env)
     const clearedDecisions = await clearPeakDecisions(env.SUBSCRIBERS)
-    const closedMemePapers = await closeAllMemePapers(env)
+    const closedPapers = await closeAllLabPapers(env)
     await env.SUBSCRIBERS?.delete('telegram:peak_only_purged_v283')
+    await env.SUBSCRIBERS?.delete('telegram:last_peak_alert_at')
+    await env.SUBSCRIBERS?.delete('telegram:last_elite_dump_alert_at')
+    try {
+      await env.SUBSCRIBERS?.delete('telegram:pending_meme_alerts')
+    } catch {
+      /* optional key */
+    }
     return json({
       ok: true,
       ...result,
       clearedDecisions,
-      closedMemePapers,
-      engine: BOT_ENGINE.id,
-      note: 'PEAK stats wiped — clean WR lab; short only with weakness confirm',
+      closedPapers,
+      engines: { meme: BOT_ENGINE.id, elite: SNIPER_ENGINE.id },
+      note: 'Full lab wipe v290 — PEAK SHORT + Elite DUMP LONG clean slate',
     })
   }
 
@@ -1151,7 +1156,7 @@ function formatWatchArmedMessage(watch: WatchedSetupRecord): {
 }
 
 /**
- * Meme deal → Predator only (Elite is for Mini App alt Signals).
+ * Broadcast TG alert to meme (Predator) or sniper (Elite) channel.
  */
 async function broadcastAlert(
   env: Env,
@@ -1822,6 +1827,108 @@ async function runCronScan(
       return
     }
 
+    // Elite meme LONG: DUMP_FUEL_FAIL A — paper-first → Enterpriseelite_bot
+    if (
+      a.type === 'SNIPER' &&
+      a.tradePlan?.setup === 'DUMP_FUEL_FAIL' &&
+      a.tradePlan.side === 'LONG'
+    ) {
+      if (a.tradePlan.qualityTier !== 'A') {
+        skipped++
+        return
+      }
+      try {
+        const paceRaw = await env.SUBSCRIBERS?.get(
+          'telegram:last_elite_dump_alert_at'
+        )
+        const lastAt = paceRaw ? Number(paceRaw) : 0
+        if (lastAt > 0 && Date.now() - lastAt < 15 * 60_000) {
+          skipped++
+          console.log('[cron] elite dump paced — too soon')
+          return
+        }
+      } catch {
+        /* ignore */
+      }
+
+      let paperId: string | undefined
+      let paperComment: Awaited<
+        ReturnType<typeof createPaperTradeFromPlan>
+      >['comment'] = null
+      try {
+        const paper = await createPaperTradeFromPlan(env, {
+          ...a.tradePlan,
+          alertType: 'SNIPER',
+          target1: a.tradePlan.target1,
+          target3: a.tradePlan.target3,
+          markPrice:
+            a.tradePlan.signalPrice || a.tradePlan.entryIdeal || undefined,
+        })
+        if (!paper.created) {
+          skipped++
+          console.log(
+            '[cron] elite dump blocked — no paper',
+            paper.skipReason ?? 'unknown',
+            a.dedupeKey
+          )
+          return
+        }
+        paperComment = paper.comment
+        paperId =
+          paper.comment?.dedupeKey?.replace(/^paper:fill:/, '') || undefined
+      } catch (err) {
+        skipped++
+        console.error('[cron] elite dump paper failed', err)
+        return
+      }
+
+      const cr = await broadcastAlert(env, {
+        type: 'SNIPER',
+        channel: 'sniper',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+      })
+      sent += cr.sent
+      failed += cr.failed
+
+      if (cr.sent > 0) {
+        try {
+          await env.SUBSCRIBERS?.put(
+            'telegram:last_elite_dump_alert_at',
+            String(Date.now())
+          )
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (paperComment && cr.sent > 0) {
+        const pr = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'sniper',
+          title: paperComment.title,
+          text: paperComment.text,
+          dedupeKey: paperComment.dedupeKey,
+        })
+        paperComments += pr.sent
+      }
+
+      const logged = await recordBotAlert(env, {
+        alertType: 'SNIPER',
+        score: a.score,
+        dedupeKey: a.dedupeKey,
+        plan: {
+          ...a.tradePlan,
+          engineId: SNIPER_ENGINE.id,
+          paperId,
+          tgEntrySent: cr.sent > 0,
+        },
+      })
+      if (logged) journalLogged++
+      return
+    }
+
     const alertChannel = channelForAlertType(a.type)
     let shouldCreateWatch = a.watchOnly
     if (!a.watchOnly) {
@@ -1952,23 +2059,7 @@ async function runCronScan(
 
   const runJournal = async () => {
     try {
-      // One-shot hygiene: drop dual LONG noise so PEAK keeps its own book
-      try {
-        const purgedFlag = await env.SUBSCRIBERS?.get(
-          'telegram:peak_only_purged_v283'
-        )
-        if (!purgedFlag) {
-          const jn = await purgeNonPeakMemeJournal(env)
-          const pn = await closeNonPeakMemePapers(env)
-          await env.SUBSCRIBERS?.put(
-            'telegram:peak_only_purged_v283',
-            JSON.stringify({ at: Date.now(), journal: jn, paper: pn })
-          )
-          console.log('[cron] peak-only purge', { journal: jn, paper: pn })
-        }
-      } catch (err) {
-        console.error('[cron] peak-only purge failed', err)
-      }
+      // v290 keys are fresh empty — no wipe PUT needed (KV write quota)
       const resolution = await resolveBotJournal(env)
       journalResolved = resolution.changed
       let tgBudget = 5
@@ -2057,11 +2148,12 @@ async function runCronScan(
       const pinSymbols = papers
         .filter(
           (t) =>
-            t.alertType === 'MEME' &&
-            (t.status === 'OPEN' || t.status === 'WAITING')
+            (t.status === 'OPEN' || t.status === 'WAITING') &&
+            (t.alertType === 'MEME' ||
+              (t.alertType === 'SNIPER' && t.setup === 'DUMP_FUEL_FAIL'))
         )
         .map((t) => t.symbol)
-      // PEAK_FUEL_FAIL SHORT only — restored v28 strategy
+      // PEAK SHORT → Predator; DUMP LONG A → Elite
       const gates = await getAdaptiveGates(env)
       const flow = await runMemeOrderFlowScan({
         kv,
@@ -2078,10 +2170,18 @@ async function runCronScan(
           console.error('[cron] meme deliver failed', a.dedupeKey, err)
         }
       }
-      if (!flow.alerts.length) {
+      for (const a of flow.eliteAlerts) {
+        try {
+          await deliver(a)
+        } catch (err) {
+          failed++
+          console.error('[cron] elite dump deliver failed', a.dedupeKey, err)
+        }
+      }
+      if (!flow.alerts.length && !flow.eliteAlerts.length) {
         predatorSkip = flow.skipped || flow.watchlist.reason || 'no_peak'
         console.log(
-          '[cron] peak-fuel skip:',
+          '[cron] peak/dump skip:',
           predatorSkip,
           'scanned',
           memeScanned,
@@ -2093,8 +2193,12 @@ async function runCronScan(
         )
       } else {
         console.log(
-          '[cron] peak-fuel alerts',
+          '[cron] peak alerts',
           flow.alerts.map((a) => `${a.tradePlan?.symbol}:${a.tradePlan?.setup}`),
+          'elite dumps',
+          flow.eliteAlerts.map(
+            (a) => `${a.tradePlan?.symbol}:${a.tradePlan?.setup}`
+          ),
           'scanned',
           memeScanned,
           '/',
@@ -2483,8 +2587,8 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> — помощник + Signals Lab\n\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны · скальп/интра · ликвидации\nРаз в сутки: как закрылся день\nMini App → вкладка <b>Сигналы</b> (альты): слежение → READY в этот бот → журнал WR\n\nКоманды:\n/brief — доклад сейчас\n/brief ETH — по монете\n/market — рынок + страх/жадность\n/zone BTC 94000-96000\n/status · /stop'
-        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · Liquidation Echo · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
+        ? '🏛 <b>ENTERPRISE ELITE</b> — meme LONG + Signals Lab\n\nМемы: <b>DUMP_FUEL_FAIL LONG A</b> (reclaim после дампа, не tip)\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны\nMini App → <b>Сигналы</b> (альты) → READY → журнал WR\n\nКоманды:\n/brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
+        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · PEAK SHORT A · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
       await tgSend(

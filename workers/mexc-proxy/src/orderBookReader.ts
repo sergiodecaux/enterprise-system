@@ -66,6 +66,8 @@ export interface OrderBookEvent {
 export interface OrderBookRead {
   snapshot: OrderBookSnapshot | null
   event: OrderBookEvent
+  /** Always filled when deals loaded — even if no wall/MM event */
+  tape: { buyFlowPct: number; priceMoveBps: number } | null
 }
 
 interface Level {
@@ -213,29 +215,42 @@ export interface CrowdBookMetrics {
   shortBaitAsks: boolean
   /** Real buy support vs crowd noise */
   bidSupportUsd: number
+  /** Persistent large ask (real supply) */
+  largeAskWall: boolean
+  /** Persistent large bid (real demand) */
+  largeBidWall: boolean
+  /** Wall vanished fast without trade-through → spoof */
+  spoofAskWall: boolean
+  spoofBidWall: boolean
 }
 
 const CROWD_USD_LO = 1
 const CROWD_USD_HI = 10
 const REAL_LEVEL_USD = 120
+const WALL_USD = 800
 
 export function analyzeCrowdBook(
-  snap: OrderBookSnapshot | null | undefined
+  snap: OrderBookSnapshot | null | undefined,
+  previous?: OrderBookSnapshot | null
 ): CrowdBookMetrics {
-  if (!snap?.asks?.length) {
-    return {
-      crowdAskLevels: 0,
-      crowdAskUsd: 0,
-      realAskUsd: 0,
-      crowdAskShare: 0,
-      shortBaitAsks: false,
-      bidSupportUsd: 0,
-    }
+  const empty: CrowdBookMetrics = {
+    crowdAskLevels: 0,
+    crowdAskUsd: 0,
+    realAskUsd: 0,
+    crowdAskShare: 0,
+    shortBaitAsks: false,
+    bidSupportUsd: 0,
+    largeAskWall: false,
+    largeBidWall: false,
+    spoofAskWall: false,
+    spoofBidWall: false,
   }
+  if (!snap?.asks?.length) return empty
   const nearAsks = snap.asks.slice(0, 15)
   let crowdAskLevels = 0
   let crowdAskUsd = 0
   let realAskUsd = 0
+  let largeAskWall = false
   for (const [price, vol] of nearAsks) {
     const usd = price * vol
     if (!(usd > 0)) continue
@@ -245,18 +260,71 @@ export function analyzeCrowdBook(
     } else if (usd >= REAL_LEVEL_USD) {
       realAskUsd += usd
     }
+    if (usd >= WALL_USD) largeAskWall = true
   }
   const crowdAskShare =
     nearAsks.length > 0 ? crowdAskLevels / nearAsks.length : 0
   let bidSupportUsd = 0
+  let largeBidWall = false
   for (const [price, vol] of (snap.bids ?? []).slice(0, 8)) {
     const usd = price * vol
     if (usd >= REAL_LEVEL_USD) bidSupportUsd += usd
+    if (usd >= WALL_USD) largeBidWall = true
   }
-  // Trap for shorts: ≥3 tiny $1–10 ask clips OR ≥30% of near asks are retail-sized
   const shortBaitAsks =
     (crowdAskLevels >= 3 || crowdAskShare >= 0.3) &&
     realAskUsd < Math.max(350, crowdAskUsd * 10)
+
+  // Spoof: previous had huge wall, now ≥70% gone, mid never crossed it, dt small
+  let spoofAskWall = false
+  let spoofBidWall = false
+  if (previous && snap.at - previous.at <= 4000) {
+    const medAsk =
+      previous.asks
+        .slice(0, 12)
+        .map(([, v]) => v)
+        .sort((a, b) => a - b)[Math.floor(Math.min(11, previous.asks.length) / 2)] ||
+      1
+    for (const [p, v] of previous.asks.slice(0, 10)) {
+      if (p < previous.mid) continue
+      if ((p - previous.mid) / previous.mid > 0.012) continue
+      if (v / medAsk < 5) continue
+      if (p * v < WALL_USD) continue
+      const still = snap.asks.find(
+        ([q]) => Math.abs(q - p) / snap.mid < 0.0004
+      )
+      const rem = still?.[1] ?? 0
+      const drop = (v - rem) / v
+      const crossed = snap.mid >= p * 0.9995
+      if (drop >= 0.7 && !crossed) {
+        spoofAskWall = true
+        break
+      }
+    }
+    const medBid =
+      previous.bids
+        .slice(0, 12)
+        .map(([, v]) => v)
+        .sort((a, b) => a - b)[Math.floor(Math.min(11, previous.bids.length) / 2)] ||
+      1
+    for (const [p, v] of previous.bids.slice(0, 10)) {
+      if (p > previous.mid) continue
+      if ((previous.mid - p) / previous.mid > 0.012) continue
+      if (v / medBid < 5) continue
+      if (p * v < WALL_USD) continue
+      const still = snap.bids.find(
+        ([q]) => Math.abs(q - p) / snap.mid < 0.0004
+      )
+      const rem = still?.[1] ?? 0
+      const drop = (v - rem) / v
+      const crossed = snap.mid <= p * 1.0005
+      if (drop >= 0.7 && !crossed) {
+        spoofBidWall = true
+        break
+      }
+    }
+  }
+
   return {
     crowdAskLevels,
     crowdAskUsd: Number(crowdAskUsd.toFixed(1)),
@@ -264,6 +332,10 @@ export function analyzeCrowdBook(
     crowdAskShare: Number(crowdAskShare.toFixed(2)),
     shortBaitAsks,
     bidSupportUsd: Number(bidSupportUsd.toFixed(1)),
+    largeAskWall: largeAskWall && !spoofAskWall,
+    largeBidWall: largeBidWall && !spoofBidWall,
+    spoofAskWall,
+    spoofBidWall,
   }
 }
 
@@ -441,6 +513,41 @@ function dealFlow(deals: Deal[], now: number): {
     sellVol,
     buyShare: total > 0 ? (buyVol / total) * 100 : 50,
   }
+}
+
+function computeTape(
+  deals: Deal[],
+  current: OrderBookSnapshot,
+  previous: OrderBookSnapshot | null
+): { buyFlowPct: number; priceMoveBps: number } | null {
+  const flow = dealFlow(deals, current.at)
+  if (flow.buyVol + flow.sellVol <= 0) return null
+  const priceMoveBps =
+    previous && previous.mid > 0
+      ? ((current.mid - previous.mid) / previous.mid) * 10_000
+      : 0
+  return {
+    buyFlowPct: Number(flow.buyShare.toFixed(1)),
+    priceMoveBps: Number(priceMoveBps.toFixed(1)),
+  }
+}
+
+function withTape(
+  snapshot: OrderBookSnapshot | null,
+  event: OrderBookEvent,
+  tape: { buyFlowPct: number; priceMoveBps: number } | null
+): OrderBookRead {
+  // Stamp real OBI onto cold events so detectors still "see" the book
+  const stamped =
+    snapshot && (!event.ready || event.kind === 'NO_EVENT')
+      ? {
+          ...event,
+          obi: snapshot.obi,
+          flowSharePct: tape?.buyFlowPct ?? event.flowSharePct,
+          priceMoveBps: tape?.priceMoveBps ?? event.priceMoveBps,
+        }
+      : event
+  return { snapshot, event: stamped, tape }
 }
 
 function withLevels(
@@ -846,7 +953,7 @@ export async function readOrderBookEvent(opts: {
 }): Promise<OrderBookRead> {
   let current = await fetchSnapshot(opts)
   if (!current) {
-    return { snapshot: null, event: emptyEvent('Стакан: нет depth данных') }
+    return withTape(null, emptyEvent('Стакан: нет depth данных'), null)
   }
   let older = opts.older ?? null
   let previous = opts.previous ?? null
@@ -860,10 +967,11 @@ export async function readOrderBookEvent(opts: {
     await new Promise((resolve) => setTimeout(resolve, 800))
     previous = await fetchSnapshot(opts)
     if (!previous) {
-      return {
-        snapshot: current,
-        event: emptyEvent('Стакан: второй live-снимок недоступен'),
-      }
+      return withTape(
+        current,
+        emptyEvent('Стакан: второй live-снимок недоступен'),
+        null
+      )
     }
     await new Promise((resolve) => setTimeout(resolve, 800))
     const latest = await fetchSnapshot(opts)
@@ -871,10 +979,11 @@ export async function readOrderBookEvent(opts: {
   }
 
   if (!previous) {
-    return {
-      snapshot: current,
-      event: emptyEvent('Стакан: первый снимок, жду подтверждение'),
-    }
+    return withTape(
+      current,
+      emptyEvent('Стакан: первый снимок, жду подтверждение'),
+      null
+    )
   }
 
   // Tape always loaded — absorption / wash need deals even without wall event.
@@ -882,6 +991,7 @@ export async function readOrderBookEvent(opts: {
     `/api/v1/contract/deals/${opts.symbol}?limit=100`
   )
   const deals = dealsJson?.data ?? []
+  const tape = computeTape(deals, current, previous)
   const asks = current.asks.map(([price, vol]) => ({ price, vol }))
   const bids = current.bids.map(([price, vol]) => ({ price, vol }))
 
@@ -894,14 +1004,11 @@ export async function readOrderBookEvent(opts: {
     oiChangePct: opts.oiChangePct ?? null,
   })
   if (mm.wash.wash) {
-    return {
-      snapshot: current,
-      event: {
-        ...emptyEvent(mm.wash.reason),
-        kind: 'WASH_SKIP',
-        notes: [mm.wash.reason, 'Монета пропущена — нет реального дисбаланса'],
-      },
-    }
+    return withTape(current, {
+      ...emptyEvent(mm.wash.reason),
+      kind: 'WASH_SKIP',
+      notes: [mm.wash.reason, 'Монета пропущена — нет реального дисбаланса'],
+    }, tape)
   }
   // Spoof/liq are journal-dead (0% WR) but were ranked FIRST and blocked
   // classic wall-release on the same tick → silent cron for hours.
@@ -912,32 +1019,31 @@ export async function readOrderBookEvent(opts: {
       ? mm.signal
       : null
   if (mmUsable) {
-    return {
-      snapshot: current,
-      event: mmToEvent(mmUsable, current.mid, asks, bids),
-    }
+    return withTape(
+      current,
+      mmToEvent(mmUsable, current.mid, asks, bids),
+      tape
+    )
   }
   if (mm.oiBlock && !mm.signal) {
-    return {
-      snapshot: current,
-      event: emptyEvent(mm.oiBlock),
-    }
+    return withTape(current, emptyEvent(mm.oiBlock), tape)
   }
 
   // Fallback: classic vacuum / pressure (still LIMIT_CHASE levels).
   const classic = analyzeEvent(older, previous, current, deals)
   if (!classic.ready || !classic.side) {
-    return { snapshot: current, event: classic }
+    return withTape(current, classic, tape)
   }
   // Trap flip toxic in journal — skip trap, but if this is a real release
   // (persisted wall gone) keep it; trap-only ticks fall through empty.
   if (classic.trap) {
-    return {
-      snapshot: current,
-      event: emptyEvent(
+    return withTape(
+      current,
+      emptyEvent(
         'Trap flip отключён — жду wall-release / absorption (не spoof)'
       ),
-    }
+      tape
+    )
   }
   const limit =
     classic.side === 'LONG'
@@ -949,18 +1055,15 @@ export async function readOrderBookEvent(opts: {
     classic.side === 'LONG' ? limit * 1.02 : limit * 0.98
   const tp1 =
     classic.side === 'LONG' ? limit * 1.015 : limit * 0.985
-  return {
-    snapshot: current,
-    event: {
-      ...classic,
-      entryMode: 'LIMIT_CHASE',
-      wallPrice: limit,
-      slPrice: sl,
-      tpPrice: tp,
-      tp1Price: tp1,
-      notes: [...classic.notes, `Limit-chase @ ${limit}`],
-    },
-  }
+  return withTape(current, {
+    ...classic,
+    entryMode: 'LIMIT_CHASE',
+    wallPrice: limit,
+    slPrice: sl,
+    tpPrice: tp,
+    tp1Price: tp1,
+    notes: [...classic.notes, `Limit-chase @ ${limit}`],
+  }, tape)
 }
 
 /** Live exit helper for open meme paper trades. */

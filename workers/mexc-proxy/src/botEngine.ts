@@ -1,21 +1,19 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-peak-fuel-v28.6',
-  label: 'MEME: PEAK SHORT managed',
+  id: 'meme-peak-fuel-v29.0',
+  label: 'MEME: PEAK SHORT hardened',
   deployedNote:
-    'v28.6: 1 PEAK за раз · TG только с paper · BE/trail чинит · сопровождение в чат.',
+    'v29: A только fail/wick+follow · chg≥12% · без fake tape · 1 PEAK · journal v290.',
 } as const
 
 /**
- * Enterpriseelite_bot — market assistant + Mini App Signals (alts) lab.
- * Hourly TOP-8+BTC brief · daily close · zones · F&G · news · liq map.
- * Watches from Mini App «Сигналы» → READY → journal SNIPER WR.
+ * Enterpriseelite_bot — assistant + meme DUMP LONG reclaim + Mini App alts.
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-signals-lab-v1',
-  label: 'ELITE: Assistant + Signals Lab',
+  id: 'elite-meme-long-v1',
+  label: 'ELITE: meme LONG + Signals Lab',
   deployedNote:
-    'v1: hourly/daily brief · Mini App Сигналы (альты) → Elite + журнал WR при READY.',
+    'v1: DUMP_FUEL_FAIL LONG A (reclaim+2m confirm) · hourly brief · Mini App альты · journal v290.',
 } as const
 
 /** Alias for clarity in Elite-facing code */

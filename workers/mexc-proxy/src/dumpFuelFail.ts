@@ -7,6 +7,16 @@
  */
 
 import type { Candle } from './peakFuelFail'
+import {
+  atrStopDistance,
+  memeRiskStop,
+  microStructureLevel,
+} from './marketRegime'
+import {
+  bullishTriggerCandle,
+  chartConfirmLong2m,
+  longCandleEntryOk,
+} from './candleConfirm'
 
 export interface DumpFuelFailInput {
   symbol: string
@@ -26,6 +36,7 @@ export interface DumpFuelFailInput {
   obiChange?: number | null
   shortBaitAsks?: boolean
   crowdAskLevels?: number | null
+  phase?: 'structure' | 'final'
 }
 
 export type DumpQuality = 'A' | 'B'
@@ -46,16 +57,17 @@ export interface DumpFuelFailSignal {
   reasons: string[]
 }
 
-const SL_PCT = 0.01
-const TP_PCT = 0.018
-const TP1_PCT = 0.011
-const FLOOR_DIST_PCT = 2.8
-const A_MAX_DIST = 1.8
+const FLOOR_DIST_PCT = 3.2
+const STRUCTURE_FLOOR_DIST_PCT = 4.2
+const A_MAX_DIST = 1.6
+const MAX_RISK_PCT = 0.011
 const MIN_DUMP_24H = -4
 const A_MIN_DUMP_24H = -5
 const A_MIN_CONF = 76
 const A_MIN_FUEL = 2
 const MEGA_DUMP_CHG = -25
+const FINAL_MIN_CONF = 70
+const STRUCTURE_MIN_CONF = 55
 
 const EXT_BARS = 150
 const LOC_BARS = 35
@@ -199,18 +211,6 @@ function stallAtLow(candles: Candle[], price: number, lo: number): boolean {
   return chopPct <= 0.85 && minClose >= lo * 0.9988
 }
 
-function bullishTrigger(candles: Candle[]): boolean {
-  const c = candles[candles.length - 2]
-  if (!c) return false
-  const [, o, h, l, cl] = c
-  const range = h - l
-  if (!(range > 0)) return false
-  const closePos = (cl - l) / range
-  const bullishBody = cl > o * 1.0005
-  const closeUpperHalf = closePos >= 0.55
-  return bullishBody && closeUpperHalf
-}
-
 function stillDumpingImpulse(candles: Candle[], lo: number): boolean {
   if (candles.length < 6 || !(lo > 0)) return false
   const closed = candles.slice(0, -1).slice(-5)
@@ -250,6 +250,9 @@ export function detectDumpFuelFail(
 ): DumpFuelFailSignal | null {
   const price = input.price
   if (!(price > 0) || input.candles1m.length < 40) return null
+  const structurePhase = input.phase === 'structure'
+  const minConf = structurePhase ? STRUCTURE_MIN_CONF : FINAL_MIN_CONF
+  const maxDist = structurePhase ? STRUCTURE_FLOOR_DIST_PCT : FLOOR_DIST_PCT
 
   const dumpDay = input.dayBias === 'DUMP' || input.chg24hPct <= MIN_DUMP_24H
   if (!dumpDay) return null
@@ -260,7 +263,7 @@ export function detectDumpFuelFail(
   if (!(lo > 0) || !(ctx.trough > 0)) return null
 
   const distPct = ctx.distLocalPct
-  if (distPct > FLOOR_DIST_PCT || distPct < -0.15) return null
+  if (distPct > maxDist || distPct < -0.15) return null
   if (ctx.freshTip) return null
   if (stillDumpingImpulse(input.candles1m, lo)) return null
 
@@ -268,8 +271,10 @@ export function detectDumpFuelFail(
   const wick = hammerWick(input.candles1m)
   const hl = higherLowStructure(input.candles1m)
   const stall = stallAtLow(input.candles1m, price, lo)
-  const bullish = bullishTrigger(input.candles1m)
+  const bullish = bullishTriggerCandle(input.candles1m)
   const volFade = downVolumeFade(input.candles1m)
+  const chartOk = chartConfirmLong2m(input.candles1m)
+  const candleEntry = longCandleEntryOk(input.candles1m)
   const technicalFloor = failed || wick || hl || stall
   if (!technicalFloor) return null
 
@@ -358,12 +363,13 @@ export function detectDumpFuelFail(
       input.cvdBullish ||
       (bidHeavyStrong && (obi >= 20 || obiChange >= 7 || bookConfidence >= 80))
   )
-  // Hard: no LONG without buy-side pressure
+  // Final: need buy-side pressure. Structure: candle reclaim is enough to queue book.
   const pressureOk = Boolean(
     input.absorptionLong ||
       input.cvdBullish ||
       (tapeUpHard && buyFlow != null && buyFlow >= 55) ||
-      (bidHeavyStrong && (tapeStall || tapeUpHard || bullish))
+      (bidHeavyStrong && (tapeStall || tapeUpHard || bullish)) ||
+      (structurePhase && bullish && (wick || failed || ctx.postBounce))
   )
   if (input.absorptionLong) {
     fuelScore += 2
@@ -411,6 +417,15 @@ export function detectDumpFuelFail(
     notes.push('Бычья закрытая свеча — триггер лонга')
     reasons.push('bullish_trigger')
   }
+  if (chartOk) {
+    fuelScore += 2
+    notes.push('2м свечи LONG подтвердили')
+    reasons.push('chart_confirm_2m', 'chart_ok', 'score:+2:chart2m')
+  } else {
+    reasons.push('chart_wait_2m', 'candle_confirm_missing')
+  }
+  if (candleEntry) reasons.push('candle_entry_ok')
+  else reasons.push('candle_entry_wait')
   if (volFade) {
     fuelScore += 1
     notes.push('Объём продаж затухает')
@@ -461,24 +476,34 @@ export function detectDumpFuelFail(
   if (oiRising) confidence -= 4
   if (!ctx.postBounce && ctx.bouncePct < 4) confidence -= 8
   if (!bullish && !bookConfirm) confidence -= 4
-  if (!pressureOk) confidence -= 12
+  if (!pressureOk && !structurePhase) confidence -= 12
+  if (structurePhase && !bookConfirm) confidence += 8
   confidence = Math.min(94, Math.max(0, Math.round(confidence)))
+  reasons.push(structurePhase ? 'phase:structure' : 'phase:final')
 
-  if (confidence < 70) return null
+  if (confidence < minConf) return null
 
   const stallOnly = stall && !failed && !wick && !hl && !bullish
   const megaDump = input.chg24hPct <= MEGA_DUMP_CHG
   const bounceOkForMega = !megaDump || ctx.bouncePct >= 8 || ctx.postBounce
 
-  const aTier =
+  const bounceStructure =
+    ctx.postBounce ||
+    (ctx.bouncePct >= 4 && ctx.troughAgeBars >= 12 && ctx.higherLowPct >= 1)
+  // Book path (preferred) OR candle reclaim path for Elite when book not scanned
+  const aBook =
     pressureOk &&
     bookConfirm &&
-    strongBookConfirm &&
-    ctx.postBounce &&
+    candleEntry &&
+    chartOk &&
+    bullish &&
+    (strongBookConfirm ||
+      (bullish && (wick || failed) && fuelScore >= A_MIN_FUEL + 1)) &&
+    bounceStructure &&
     bounceOkForMega &&
     exhaustConfirm &&
     technicalEntry &&
-    upConfirm &&
+    (upConfirm || strongBookConfirm || (bullish && tapeUpHard)) &&
     !stallOnly &&
     !ctx.freshTip &&
     confidence >= A_MIN_CONF &&
@@ -486,8 +511,31 @@ export function detectDumpFuelFail(
     distPct <= A_MAX_DIST &&
     input.chg24hPct <= A_MIN_DUMP_24H &&
     (wick || failed) &&
-    (bullish || (wick && failed)) &&
-    ctx.higherLowPct >= A_MIN_HIGHER_LOW_PCT
+    ctx.higherLowPct >= A_MIN_HIGHER_LOW_PCT * 0.7
+
+  const aCandle =
+    !bookConfirm &&
+    candleEntry &&
+    chartOk &&
+    bullish &&
+    ctx.postBounce &&
+    bounceStructure &&
+    bounceOkForMega &&
+    exhaustConfirm &&
+    technicalEntry &&
+    !stallOnly &&
+    !ctx.freshTip &&
+    (wick || failed) &&
+    ctx.higherLowPct >= A_MIN_HIGHER_LOW_PCT &&
+    ctx.bouncePct >= A_MIN_BOUNCE_PCT &&
+    ctx.troughAgeBars >= A_MIN_TROUGH_AGE &&
+    confidence >= 78 &&
+    fuelScore >= A_MIN_FUEL &&
+    distPct <= A_MAX_DIST &&
+    input.chg24hPct <= A_MIN_DUMP_24H
+
+  const aTier = aBook || aCandle
+  if (aCandle) reasons.push('a_candle_reclaim')
 
   const quality: DumpQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)
@@ -498,9 +546,40 @@ export function detectDumpFuelFail(
   reasons.push(pressureOk ? 'pressure_ok' : 'pressure_missing')
   reasons.push(bookConfirm ? 'book_ok' : 'book_missing')
   reasons.push(upConfirm ? 'up_confirmed' : 'up_unconfirmed')
+  reasons.push(chartOk ? 'chart_ok' : 'chart_early')
+  reasons.push(candleEntry ? 'candle_entry_ok' : 'candle_entry_wait')
+  if (!structurePhase && !candleEntry) reasons.push('final_needs_candle')
 
   const entry = price
-  const sl = Math.min(lo * 0.9975, entry * (1 - SL_PCT))
+  const atrDist = atrStopDistance(
+    input.candles1m,
+    entry,
+    1.15,
+    0.0045,
+    MAX_RISK_PCT
+  )
+  const microLo = microStructureLevel(input.candles1m, 'LONG')
+  const stop = memeRiskStop(entry, 'LONG', atrDist, microLo, {
+    minPct: 0.0045,
+    maxPct: MAX_RISK_PCT,
+  })
+  if (!stop) {
+    reasons.push('sl_structure_too_wide')
+    return null
+  }
+  // Local dump low only if still inside max risk (tighter = higher SL)
+  let sl = stop.sl
+  const loSl = lo > 0 ? lo * 0.9975 : 0
+  if (loSl > 0 && loSl < entry && (entry - loSl) / entry <= MAX_RISK_PCT) {
+    sl = Math.max(sl, loSl)
+    if ((entry - sl) / entry < 0.0045) sl = entry * (1 - 0.0045)
+    reasons.push('sl:local_low')
+  }
+  reasons.push(...stop.reasons)
+  const risk = Math.max(entry - sl, entry * 0.0045)
+  const tp1 = entry + risk * 1.15
+  const tp = entry + risk * 2.2
+
   return {
     ready: true,
     side: 'LONG',
@@ -511,14 +590,14 @@ export function detectDumpFuelFail(
     distToLowPct: distPct,
     limitPrice: entry,
     sl,
-    tp: entry * (1 + TP_PCT),
-    tp1: entry * (1 + TP1_PCT),
+    tp,
+    tp1,
     notes: [
       ctx.postBounce
         ? `Отбой после дампа · LONG`
         : `Лой без топлива продавцов · LONG`,
-      `24h ${input.chg24hPct.toFixed(1)}% · к лок.лою +${distPct.toFixed(2)}% · bounce +${ctx.bouncePct.toFixed(1)}% · conf ${confidence}`,
-      ...notes.slice(0, 4),
+      `Risk ${(stop.riskPct * 100).toFixed(2)}% · bounce +${ctx.bouncePct.toFixed(1)}% · conf ${confidence}`,
+      ...notes.slice(0, 3),
     ],
     reasons,
   }

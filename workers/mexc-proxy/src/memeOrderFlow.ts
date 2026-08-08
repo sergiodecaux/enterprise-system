@@ -1,8 +1,5 @@
 /**
- * MEME order-flow scanner v27.3 — PEAK_FUEL_FAIL A-tier only.
- *
- * Scan broad → log all peak decisions with reasons → TG/paper only quality A
- * (protect WR). B-tier and skips stay in peak decision log for autopsy.
+ * MEME scanner — PEAK SHORT A → Predator; DUMP LONG A → Elite.
  */
 
 import type { ScanAlert } from './scanner'
@@ -20,22 +17,21 @@ import {
   type BotAdaptiveGates,
 } from './botJournal'
 import { detectPeakFuelFail, type Candle } from './peakFuelFail'
+import { detectDumpFuelFail } from './dumpFuelFail'
 import { appendPeakDecision } from './peakDecisionLog'
 
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
-/**
- * CF Workers free ~50 subrequests/invocation.
- * Lean scan leaves headroom for TG (+ pending flush on paper cron).
- * Budget: 1 ticker + 10 klines ≲ 12 — book off (candles carry PEAK).
- */
-const MAX_SCAN = 8
-/** Book off — each book+deals pair ate ~2 subreq and caused silent TG */
-const BOOK_SCAN = 0
-/** One A-tier per tick — paper monitor must own the book */
+/** Pump batch for PEAK SHORT */
+const MAX_SCAN_PUMP = 7
+/** Dump batch for Elite LONG */
+const MAX_SCAN_DUMP = 4
+/** Lean book on top candidates (absorb/CVD) — stay under CF subreq */
+const BOOK_SCAN = 3
+/** One PEAK A per tick */
 const MAX_ALERTS = 1
-/** Only emit PEAK_FUEL_FAIL */
-const PEAK_ONLY = true
+/** One Elite dump LONG per tick */
+const MAX_ELITE_LONG = 1
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -122,15 +118,12 @@ async function saveBookState(kv: KvLike | undefined, state: BookState) {
   }
 }
 
-/**
- * Legacy CONT gate — PEAK_ONLY scan does not emit CONT alerts.
- */
+/** Legacy CONT gate — unused (PEAK + Elite DUMP only). */
 export function allowMemeFlowEvent(
   _event: OrderBookEvent,
   _dayBias: 'PUMP' | 'DUMP' | null
 ): { ok: boolean; reason: string } {
-  if (PEAK_ONLY) return { ok: false, reason: 'peak_only_mode' }
-  return { ok: false, reason: 'peak_only_mode' }
+  return { ok: false, reason: 'legacy_cont_disabled' }
 }
 
 function fmtPx(p: number): string {
@@ -175,7 +168,7 @@ function peakFailToAlert(
     ]
       .filter(Boolean)
       .join('\n'),
-    dedupeKey: `cron:mof272:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
+    dedupeKey: `cron:mof29:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
     score: sig.confidence,
     winPct: Math.min(78, Math.max(55, 50 + (sig.confidence - 78))),
     style: 'SCALP',
@@ -193,6 +186,56 @@ function peakFailToAlert(
       tp: sig.tp,
       target1: sig.tp1,
       target3: limit * (1 - 0.025),
+      entryReasons: sig.reasons,
+      entryNotes: sig.notes.join(' · '),
+      qualityTier: sig.quality,
+    },
+  }
+}
+
+function dumpFailToEliteAlert(
+  symbol: string,
+  sig: NonNullable<ReturnType<typeof detectDumpFuelFail>>,
+  chg24hPct: number
+): ScanAlert {
+  const name = symbol.replace('_USDT', '/USDT')
+  const limit = sig.limitPrice
+  const reasonLine = sig.reasons.slice(0, 8).join(' · ')
+  return {
+    type: 'SNIPER',
+    title: `🟢 ELITE LONG ${name} · DUMP A`,
+    text: [
+      `Мем LONG (dump reclaim) · Elite`,
+      `Открытие: ${fmtPx(limit)}`,
+      `Стоп (SL): ${fmtPx(sig.sl)} (${pctFrom(limit, sig.sl)})`,
+      `Тейк 1 (TP1): ${fmtPx(sig.tp1)} (${pctFrom(limit, sig.tp1)})`,
+      `Тейк 2 (TP): ${fmtPx(sig.tp)} (${pctFrom(limit, sig.tp)})`,
+      '',
+      `24h ${chg24hPct.toFixed(1)}% · DUMP_FUEL_FAIL · класс A`,
+      'Нужен отбой от лоя + bullish 1m confirm (не tip-of-dump)',
+      ...sig.notes.filter((n) => !/^SL~/i.test(n)),
+      reasonLine ? `Причины: ${reasonLine}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    dedupeKey: `cron:elite:dump_fuel_fail:${symbol}:LONG:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
+    score: sig.confidence,
+    winPct: Math.min(76, Math.max(52, 48 + (sig.confidence - 76))),
+    style: 'SCALP',
+    align: 'COUNTER',
+    tradePlan: {
+      side: 'LONG',
+      symbol,
+      setup: 'DUMP_FUEL_FAIL',
+      signalPrice: limit,
+      entryIdeal: limit,
+      zoneLow: limit * 0.999,
+      zoneHigh: limit * 1.002,
+      invalidate: limit * 0.992,
+      sl: sig.sl,
+      tp: sig.tp,
+      target1: sig.tp1,
+      target3: limit * 1.028,
       entryReasons: sig.reasons,
       entryNotes: sig.notes.join(' · '),
       qualityTier: sig.quality,
@@ -236,6 +279,7 @@ export async function runMemeOrderFlowScan(opts: {
   gates?: BotAdaptiveGates | null
 }): Promise<{
   alerts: ScanAlert[]
+  eliteAlerts: ScanAlert[]
   watchlist: HotMemeWatchlist
   skipped: string
   scanned: number
@@ -266,6 +310,7 @@ export async function runMemeOrderFlowScan(opts: {
   if (!watchlist.entries.length) {
     return {
       alerts: [],
+      eliteAlerts: [],
       watchlist,
       skipped: watchlist.reason || 'empty_hotlist',
       scanned: 0,
@@ -273,26 +318,27 @@ export async function runMemeOrderFlowScan(opts: {
     }
   }
 
-  // Peak hunt: PUMP / strong green first
-  const ranked = [...watchlist.entries].sort((a, b) => {
-    const pumpA = a.dayBias === 'PUMP' || a.chg24hPct >= 8 ? 1 : 0
-    const pumpB = b.dayBias === 'PUMP' || b.chg24hPct >= 8 ? 1 : 0
-    const thinA =
-      a.quoteVolUsd >= 150_000 && a.quoteVolUsd <= 5_000_000 ? 1 : 0
-    const thinB =
-      b.quoteVolUsd >= 150_000 && b.quoteVolUsd <= 5_000_000 ? 1 : 0
-    return (
-      pumpB - pumpA ||
-      b.chg24hPct - a.chg24hPct ||
-      thinB - thinA ||
-      b.score - a.score
-    )
-  })
-  const batch = ranked.slice(0, MAX_SCAN)
-  const bookSet = new Set(batch.slice(0, BOOK_SCAN).map((c) => c.symbol))
+  const pumps = [...watchlist.entries]
+    .filter((e) => e.dayBias === 'PUMP' || e.chg24hPct >= 5)
+    .sort((a, b) => b.chg24hPct - a.chg24hPct || b.score - a.score)
+    .slice(0, MAX_SCAN_PUMP)
+  const dumps = [...watchlist.entries]
+    .filter((e) => e.dayBias === 'DUMP' || e.chg24hPct <= -4)
+    .sort((a, b) => a.chg24hPct - b.chg24hPct || b.score - a.score)
+    .slice(0, MAX_SCAN_DUMP)
+
+  const bySym = new Map<string, (typeof pumps)[0]>()
+  for (const c of [...pumps, ...dumps]) bySym.set(c.symbol, c)
+  const batch = [...bySym.values()]
+  const bookSet = new Set(
+    [...pumps.slice(0, 2), ...dumps.slice(0, 1)]
+      .map((c) => c.symbol)
+      .slice(0, BOOK_SCAN)
+  )
   const state = await loadBookState(opts.kv)
   const rejects: Array<{ symbol: string; reason: string }> = []
   const candidates: ScanAlert[] = []
+  const eliteCandidates: ScanAlert[] = []
   const gates = opts.gates ?? null
 
   for (const coin of batch) {
@@ -303,14 +349,9 @@ export async function runMemeOrderFlowScan(opts: {
     const holdVol =
       tickerRow?.holdVol != null ? Number(tickerRow.holdVol) : null
     const price = Number(tickerRow?.lastPrice ?? 0)
+    const isPump = coin.dayBias === 'PUMP' || coin.chg24hPct >= 5
+    const isDump = coin.dayBias === 'DUMP' || coin.chg24hPct <= -4
 
-    const isPump = coin.dayBias === 'PUMP' || coin.chg24hPct >= 4
-    if (!isPump) {
-      rejects.push({ symbol: coin.symbol, reason: 'not_pump_skip' })
-      continue
-    }
-
-    // Book only for top BOOK_SCAN — stay under CF subrequest cap
     let evSide: 'LONG' | 'SHORT' | null = null
     let evKind = ''
     let evFlow = 50
@@ -367,162 +408,132 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
 
-    const candles = await fetchMin1Candles(coin.symbol, 60)
-    const peak = detectPeakFuelFail({
-      symbol: coin.symbol,
-      price,
-      chg24hPct: coin.chg24hPct,
-      dayBias: coin.dayBias,
-      holdVol,
-      prevHoldVol: prevHold,
-      candles1m: candles,
-      buyFlowPct:
-        evSide === 'SHORT'
-          ? evFlow
-          : evSide === 'LONG'
-            ? Math.max(0, 100 - evFlow)
-            : evReady
-              ? 55
-              : 58,
-      priceMoveBps: evReady ? evMove : 0,
-      absorptionShort:
-        evKind === 'ABSORPTION_SHORT' ||
-        (evMm === 'ABSORPTION' && evSide === 'SHORT') ||
-        (evReady && evSide === 'SHORT' && Math.abs(evMove) <= 16),
-      cvdBearish: evKind === 'CVD_DIVERGENCE' && evSide === 'SHORT',
-    })
+    const candles = await fetchMin1Candles(coin.symbol, 80)
 
-    if (!peak?.ready) {
-      rejects.push({
+    if (isPump) {
+      const peak = detectPeakFuelFail({
         symbol: coin.symbol,
-        reason: evReady
-          ? `no_peak_or_weakness:${evKind}`
-          : 'no_weakness_confirm',
-      })
-      await appendPeakDecision(opts.kv, {
-        at: Date.now(),
-        symbol: coin.symbol,
-        action: 'SKIP_STRUCTURE',
-        confidence: 0,
-        quality: 'NONE',
-        reasons: ['no_weakness_confirm', evReady ? evKind : 'no_book'],
+        price,
         chg24hPct: coin.chg24hPct,
+        dayBias: coin.dayBias,
+        holdVol,
+        prevHoldVol: prevHold,
+        candles1m: candles,
+        buyFlowPct: evReady
+          ? evSide === 'SHORT'
+            ? evFlow
+            : Math.max(0, 100 - evFlow)
+          : null,
+        priceMoveBps: evReady ? evMove : null,
+        tapeFromBook: evReady,
+        absorptionShort:
+          evKind === 'ABSORPTION_SHORT' ||
+          (evMm === 'ABSORPTION' && evSide === 'SHORT'),
+        cvdBearish: evKind === 'CVD_DIVERGENCE' && evSide === 'SHORT',
       })
-      continue
-    }
 
-    if (gates) {
-      const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
-      if (hist.n >= 8 && hist.wr < 28) {
+      if (!peak?.ready) {
         rejects.push({
           symbol: coin.symbol,
-          reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
+          reason: 'no_weakness_confirm',
+        })
+      } else if (peak.quality !== 'A') {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: `peak_B:${peak.confidence}`,
         })
         await appendPeakDecision(opts.kv, {
           at: Date.now(),
           symbol: coin.symbol,
-          action: 'SKIP_GATES',
+          action: 'SKIP_QUALITY',
           confidence: peak.confidence,
-          quality: peak.quality,
-          reasons: [
-            ...peak.reasons,
-            `hist_wr:${hist.wr.toFixed(0)}`,
-            `hist_n:${hist.n}`,
-          ],
+          quality: 'B',
+          reasons: peak.reasons,
           chg24hPct: coin.chg24hPct,
           distToHighPct: peak.distToHighPct,
         })
-        continue
+      } else {
+        const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
+        if (hist.n >= 8 && hist.wr < 28) {
+          rejects.push({
+            symbol: coin.symbol,
+            reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
+          })
+        } else {
+          const alert = peakFailToAlert(
+            coin.symbol,
+            peak,
+            coin.dayBias,
+            coin.chg24hPct
+          )
+          await appendPeakDecision(opts.kv, {
+            at: Date.now(),
+            symbol: coin.symbol,
+            action: 'ALERT',
+            confidence: peak.confidence,
+            quality: 'A',
+            reasons: peak.reasons,
+            chg24hPct: coin.chg24hPct,
+            distToHighPct: peak.distToHighPct,
+          })
+          candidates.push(alert)
+        }
       }
     }
 
-    // B-tier: log only — do not dilute WR with weak stalls
-    if (peak.quality !== 'A') {
-      rejects.push({
+    if (isDump && eliteCandidates.length < MAX_ELITE_LONG) {
+      const dump = detectDumpFuelFail({
         symbol: coin.symbol,
-        reason: `peak_B:${peak.confidence}`,
-      })
-      await appendPeakDecision(opts.kv, {
-        at: Date.now(),
-        symbol: coin.symbol,
-        action: 'SKIP_QUALITY',
-        confidence: peak.confidence,
-        quality: 'B',
-        reasons: peak.reasons,
+        price,
         chg24hPct: coin.chg24hPct,
-        distToHighPct: peak.distToHighPct,
+        dayBias: coin.dayBias,
+        holdVol,
+        prevHoldVol: prevHold,
+        candles1m: candles,
+        buyFlowPct: evReady
+          ? evSide === 'LONG'
+            ? evFlow
+            : Math.max(0, 100 - evFlow)
+          : null,
+        priceMoveBps: evReady ? evMove : null,
+        absorptionLong:
+          evKind === 'ABSORPTION_LONG' ||
+          (evMm === 'ABSORPTION' && evSide === 'LONG'),
+        cvdBullish: evKind === 'CVD_DIVERGENCE' && evSide === 'LONG',
+        bidHeavy: evReady && evSide === 'LONG' && evFlow >= 55,
+        bookConfidence: evReady ? 0.7 : null,
+        phase: 'final',
       })
-      continue
-    }
-
-    // Learn from closed PEAK: skip reason tags that lose live
-    const avoid = gates?.peakAvoidReasons ?? []
-    if (avoid.length) {
-      const hit = peak.reasons.find((r) => {
-        const tag = r.includes(':') ? r.split(':')[0]! : r
-        return avoid.includes(tag)
-      })
-      if (hit) {
+      if (!dump?.ready || dump.quality !== 'A') {
         rejects.push({
           symbol: coin.symbol,
-          reason: `peak_learn_avoid:${hit}`,
+          reason: dump ? `dump_B:${dump.confidence}` : 'no_dump_reclaim',
         })
-        await appendPeakDecision(opts.kv, {
-          at: Date.now(),
-          symbol: coin.symbol,
-          action: 'SKIP_GATES',
-          confidence: peak.confidence,
-          quality: 'A',
-          reasons: [...peak.reasons, `avoid:${hit}`],
-          chg24hPct: coin.chg24hPct,
-          distToHighPct: peak.distToHighPct,
-        })
-        continue
+      } else {
+        eliteCandidates.push(
+          dumpFailToEliteAlert(coin.symbol, dump, coin.chg24hPct)
+        )
       }
     }
-
-    // Prefer learned winning tags — slight score bump for ranking
-    const prefer = gates?.peakPreferReasons ?? []
-    if (prefer.length) {
-      const prefHit = peak.reasons.some((r) => {
-        const tag = r.includes(':') ? r.split(':')[0]! : r
-        return prefer.includes(tag)
-      })
-      if (prefHit) peak.confidence = Math.min(94, peak.confidence + 3)
-    }
-
-    const alert = peakFailToAlert(
-      coin.symbol,
-      peak,
-      coin.dayBias,
-      coin.chg24hPct
-    )
-    await appendPeakDecision(opts.kv, {
-      at: Date.now(),
-      symbol: coin.symbol,
-      action: 'ALERT',
-      confidence: peak.confidence,
-      quality: 'A',
-      reasons: peak.reasons,
-      chg24hPct: coin.chg24hPct,
-      distToHighPct: peak.distToHighPct,
-    })
-    candidates.push(alert)
   }
 
   await saveBookState(opts.kv, state)
 
   candidates.sort((a, b) => b.score - a.score)
+  eliteCandidates.sort((a, b) => b.score - a.score)
   const top = candidates.slice(0, MAX_ALERTS)
+  const eliteTop = eliteCandidates.slice(0, MAX_ELITE_LONG)
 
   return {
     alerts: top,
+    eliteAlerts: eliteTop,
     watchlist,
-    skipped: top.length
-      ? ''
-      : rejects[0]?.reason
-        ? `no_peak · e.g. ${rejects[0].symbol}:${rejects[0].reason}`
-        : 'no_peak_fuel_fail',
+    skipped:
+      top.length || eliteTop.length
+        ? ''
+        : rejects[0]?.reason
+          ? `no_signal · e.g. ${rejects[0].symbol}:${rejects[0].reason}`
+          : 'no_peak_or_dump',
     scanned: batch.length,
     rejects: rejects.slice(0, 18),
   }

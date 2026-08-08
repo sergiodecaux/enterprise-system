@@ -6,6 +6,17 @@
  */
 
 import type { Candle } from './peakFuelFail'
+import {
+  atrStopDistance,
+  memeRiskStop,
+  microStructureLevel,
+  type MarketRegime,
+} from './marketRegime'
+import {
+  bullishTriggerCandle,
+  chartConfirmLong2m,
+  longCandleEntryOk,
+} from './candleConfirm'
 
 export interface PumpContinueInput {
   symbol: string
@@ -27,6 +38,12 @@ export interface PumpContinueInput {
   shortBaitAsks?: boolean
   crowdAskLevels?: number | null
   bidSupportUsd?: number | null
+  /** Large ask wall likely spoof (<3s life) — ignore as resistance */
+  spoofAskWall?: boolean
+  /** Persistent large ask above — real supply */
+  largeAskWall?: boolean
+  regime?: MarketRegime | null
+  phase?: 'structure' | 'final'
 }
 
 export type PumpContinueQuality = 'A' | 'B'
@@ -38,6 +55,8 @@ export interface PumpContinueSignal {
   confidence: number
   quality: PumpContinueQuality
   fuelScore: number
+  /** Explicit optimizable score card */
+  score: number
   distToHighPct: number
   /** Former PEAK short SL — now the take target */
   formerSlAsTp: number
@@ -49,15 +68,19 @@ export interface PumpContinueSignal {
   reasons: string[]
 }
 
-const A_MIN_CONF = 72
-const A_MIN_FUEL = 2
+/** Entry threshold — tune this, not gut feel */
+const MIN_SCORE = 5
+const STRUCTURE_MIN_SCORE = 3
+const A_MIN_SCORE = 7
 const A_MIN_CHG = 6
 const A_MAX_DIST = 1.8
 const MIN_CHG = 4
-const NEAR_HIGH_PCT = 2.5
-/** Same formula PEAK short used for SL */
+const NEAR_HIGH_PCT = 3.2
+const STRUCTURE_NEAR_HIGH_PCT = 4.2
 const FORMER_SL_BUF = 0.0025
 const FORMER_SL_MIN = 0.01
+/** Max risk vs entry — beyond this liq hits first on typical meme leverage */
+const MAX_RISK_PCT = 0.011
 
 function recentHigh(candles: Candle[], bars = 40): number {
   let hi = 0
@@ -95,15 +118,6 @@ function stillFueledImpulse(candles: Candle[], hi: number): boolean {
   return nearHigh && ((green >= 3 && netPct >= 0.7) || (strongGreen && netPct >= 0.35))
 }
 
-function bullishTrigger(candles: Candle[]): boolean {
-  const c = candles[candles.length - 2]
-  if (!c) return false
-  const [, o, h, l, cl] = c
-  const range = h - l
-  if (!(range > 0)) return false
-  return cl > o * 1.0005 && (cl - l) / range >= 0.55
-}
-
 function higherHighBreak(candles: Candle[]): boolean {
   if (candles.length < 8) return false
   const closed = candles.slice(0, -1)
@@ -132,25 +146,14 @@ function fakeFadeReclaim(candles: Candle[], hi: number): boolean {
   return wickReject && reclaim
 }
 
-function chartConfirmLong2m(candles: Candle[]): boolean {
-  // Need 2 closed 1m bars agreeing — don't chase the first tick of a spike
-  const closed = candles.slice(0, -1).slice(-2)
-  if (closed.length < 2) return false
-  const [a, b] = closed
-  if (!a || !b) return false
-  const green = (c: Candle) => c[4] > c[1]
-  const higherClose = b[4] >= a[4] * 0.9995
-  const higherLow = b[3] >= a[3] * 0.998
-  const notDumpBar =
-    b[4] >= b[1] * 0.997 || (b[4] - b[3]) / Math.max(b[2] - b[3], 1e-12) >= 0.45
-  return (green(a) || green(b)) && higherClose && higherLow && notDumpBar
-}
-
 export function detectPumpContinue(
   input: PumpContinueInput
 ): PumpContinueSignal | null {
   const price = input.price
   if (!(price > 0) || input.candles1m.length < 20) return null
+  const structurePhase = input.phase === 'structure'
+  const minScore = structurePhase ? STRUCTURE_MIN_SCORE : MIN_SCORE
+  const maxDist = structurePhase ? STRUCTURE_NEAR_HIGH_PCT : NEAR_HIGH_PCT
 
   const pumpDay = input.dayBias === 'PUMP' || input.chg24hPct >= MIN_CHG
   if (!pumpDay) return null
@@ -162,41 +165,39 @@ export function detectPumpContinue(
 
   const distPct = ((hi - price) / hi) * 100
   // Same window where PEAK shorts entered and got squeezed
-  if (distPct > NEAR_HIGH_PCT || distPct < -0.35) return null
+  if (distPct > maxDist || distPct < -0.35) return null
 
   const impulse = stillFueledImpulse(input.candles1m, hi)
   const hh = higherHighBreak(input.candles1m)
   const reclaim = fakeFadeReclaim(input.candles1m, hi)
-  const bullish = bullishTrigger(input.candles1m)
+  const bullish = bullishTriggerCandle(input.candles1m)
   if (!(impulse || hh || reclaim || bullish)) return null
 
-  let fuelScore = 0
+  // ── Score card (optimizable) ──────────────────────────────────────
+  let score = 0
   const notes: string[] = []
   const reasons: string[] = []
-
-  // Former PEAK short SL — now TP
   const formerSl = Math.max(hi * (1 + FORMER_SL_BUF), price * (1 + FORMER_SL_MIN))
   reasons.push(`former_sl_tp:${formerSl.toPrecision(6)}`)
 
-  if (impulse) {
-    fuelScore += 2
-    notes.push('Импульс вверх у хая — бывший SL-шорт')
-    reasons.push('fueled_impulse')
-  }
   if (hh) {
-    fuelScore += 2
-    notes.push('Пробой локального хая (сквиз)')
-    reasons.push('higher_high_break')
+    score += 2
+    notes.push('HH break +2')
+    reasons.push('higher_high_break', 'score:+2:hh')
   }
   if (reclaim) {
-    fuelScore += 2
-    notes.push('Ложный fade → reclaim (dead short → long)')
-    reasons.push('fake_fade_reclaim')
+    score += 2
+    notes.push('Reclaim +2')
+    reasons.push('fake_fade_reclaim', 'score:+2:reclaim')
+  }
+  if (impulse) {
+    score += 2
+    notes.push('Impulse +2')
+    reasons.push('fueled_impulse', 'score:+2:impulse')
   }
   if (bullish) {
-    fuelScore += 1
-    notes.push('Бычья закрытая свеча')
-    reasons.push('bullish_trigger')
+    score += 1
+    reasons.push('bullish_trigger', 'score:+1:bullish')
   }
 
   let oiRising = false
@@ -204,18 +205,18 @@ export function detectPumpContinue(
   const prev = input.prevHoldVol
   if (hv != null && prev != null && prev > 0) {
     const oiChg = ((hv - prev) / prev) * 100
-    if (Math.abs(oiChg) > 25) {
+    if (Math.abs(oiChg) > 12) {
       reasons.push(`oi_glitch:${oiChg.toFixed(1)}`)
     } else if (oiChg >= 0.5) {
-      fuelScore += 2
+      score += 1
       oiRising = true
-      notes.push(`OI растёт +${oiChg.toFixed(2)}% — топливо живое`)
-      reasons.push(`oi_rising:${oiChg.toFixed(2)}`)
-    } else if (oiChg >= 0) {
-      fuelScore += 1
-      reasons.push(`oi_flat:${oiChg.toFixed(2)}`)
+      notes.push(`OI +${oiChg.toFixed(2)}% +1`)
+      reasons.push(`oi_rising:${oiChg.toFixed(2)}`, 'score:+1:oi')
+    } else if (oiChg < -0.4) {
+      score -= 1
+      reasons.push(`oi_falling:${oiChg.toFixed(2)}`, 'score:-1:oi')
     } else {
-      reasons.push(`oi_falling:${oiChg.toFixed(2)}`)
+      reasons.push(`oi_flat:${oiChg.toFixed(2)}`)
     }
   } else {
     reasons.push('oi_unknown')
@@ -225,16 +226,25 @@ export function detectPumpContinue(
   const moveBps = input.priceMoveBps
   let tapeUp = false
   if (buyFlow != null && moveBps != null && buyFlow >= 55 && moveBps >= 4) {
-    fuelScore += 2
+    score += 1
     tapeUp = true
-    notes.push(
-      `Покупки ${buyFlow.toFixed(0)}% двигают цену (+${moveBps.toFixed(0)}bps)`
+    notes.push(`Delta/tape up +1`)
+    reasons.push(
+      `tape_up:buy${buyFlow.toFixed(0)}_bps${moveBps.toFixed(0)}`,
+      'score:+1:delta'
     )
-    reasons.push(`tape_up:buy${buyFlow.toFixed(0)}_bps${moveBps.toFixed(0)}`)
-  } else if (moveBps != null && moveBps >= 8) {
-    fuelScore += 1
+  } else if (moveBps != null && moveBps >= 10) {
+    score += 1
     tapeUp = true
-    reasons.push(`tape_up:${moveBps.toFixed(0)}bps`)
+    reasons.push(`tape_up:${moveBps.toFixed(0)}bps`, 'score:+1:delta')
+  } else if (
+    buyFlow != null &&
+    buyFlow <= 40 &&
+    moveBps != null &&
+    moveBps <= -6
+  ) {
+    score -= 2
+    reasons.push('score:-2:sell_tape')
   }
 
   const bookConfidence = input.bookConfidence ?? 0
@@ -247,129 +257,150 @@ export function detectPumpContinue(
     Boolean(input.bidHeavy) &&
     (obi >= 12 || obiChange >= 3) &&
     bookConfidence >= 62
+
+  // 2m candle confirm — required for A / live entry
   const chartOk = chartConfirmLong2m(input.candles1m)
+  const candleEntry = longCandleEntryOk(input.candles1m)
   if (chartOk) {
-    fuelScore += 1
-    notes.push('2м график подтвердил LONG (закрытые свечи)')
-    reasons.push('chart_confirm_2m')
+    score += 2
+    notes.push('2m свечи LONG +2')
+    reasons.push('chart_confirm_2m', 'chart_ok', 'score:+2:chart2m')
   } else {
-    reasons.push('chart_wait_2m')
+    reasons.push('chart_wait_2m', 'candle_confirm_missing')
+  }
+  if (candleEntry) {
+    reasons.push('candle_entry_ok')
   }
 
-  // Real book pressure — crowd bait alone is only a hint, not A-tier
+  if (input.cvdBullish) {
+    score += 1
+    notes.push('CVD bull +1')
+    reasons.push('cvd_bullish', 'score:+1:cvd')
+  }
+  if (input.absorptionLong) {
+    score += 1
+    notes.push('Bid absorption +1')
+    reasons.push('bid_absorption', 'score:+1:abs')
+  }
+  if (bidHeavyStrong || (Boolean(input.bidHeavy) && obi >= 14)) {
+    score += 1
+    notes.push('Bid imbalance +1')
+    reasons.push(
+      bidHeavyStrong ? 'bid_heavy_strong' : 'bid_heavy',
+      'score:+1:obi'
+    )
+  }
+  if (shortBait) {
+    score += 1
+    notes.push(`Crowd asks bait n${crowdN} +1`)
+    reasons.push(`crowd_asks_bait:n${crowdN}`, 'score:+1:bait')
+  }
+  if (bidSupport >= 200) {
+    score += 1
+    reasons.push(`bid_support:${bidSupport.toFixed(0)}`, 'score:+1:bid_sup')
+  }
+
+  // Penalties
+  if (input.largeAskWall && !input.spoofAskWall) {
+    score -= 2
+    notes.push('Large ask wall −2')
+    reasons.push('large_ask_wall', 'score:-2:ask_wall')
+  }
+  if (input.spoofAskWall) {
+    reasons.push('spoof_ask_ignored')
+  }
+  if (obi <= -18) {
+    score -= 1
+    reasons.push('score:-1:ask_obi')
+  }
+
+  reasons.push(`dist_high:${distPct.toFixed(2)}`)
+  reasons.push(`chg24:${input.chg24hPct.toFixed(1)}`)
+  reasons.push(`score:${score}`)
+  reasons.push(structurePhase ? 'phase:structure' : 'phase:final')
+
+  if (score < minScore) {
+    reasons.push(`score_fail:${score}<${minScore}`)
+    return null
+  }
+
   const realBook = Boolean(
     input.absorptionLong || input.cvdBullish || bidHeavyStrong
   )
   const pressureOk = Boolean(
     realBook ||
-      (tapeUp && buyFlow != null && buyFlow >= 58 && (moveBps ?? 0) >= 5) ||
-      (Boolean(input.bidHeavy) && obi >= 12 && (tapeUp || oiRising) && shortBait)
+      (tapeUp && buyFlow != null && buyFlow >= 55) ||
+      (Boolean(input.bidHeavy) && obi >= 12 && (tapeUp || oiRising)) ||
+      (structurePhase && (impulse || hh || reclaim) && bullish)
   )
   const bookConfirm = Boolean(
     realBook ||
-      (shortBait && Boolean(input.bidHeavy) && (tapeUp || oiRising) && obi >= 10)
+      (shortBait && Boolean(input.bidHeavy) && (tapeUp || oiRising)) ||
+      (tapeUp && oiRising)
   )
   const strongBook = Boolean(
     input.absorptionLong ||
       input.cvdBullish ||
       (bidHeavyStrong && (obi >= 16 || bookConfidence >= 72))
   )
-  if (input.absorptionLong) {
-    fuelScore += 2
-    notes.push('Bid поглощает продажи')
-    reasons.push('bid_absorption')
-  }
-  if (input.cvdBullish) {
-    fuelScore += 1
-    notes.push('CVD бычий')
-    reasons.push('cvd_bullish')
-  }
-  if (input.bidHeavy) {
-    fuelScore += 1
-    notes.push('Стакан в bids')
-    reasons.push(bidHeavyStrong ? 'bid_heavy_strong' : 'bid_heavy')
-  }
-  if (shortBait) {
-    fuelScore += 2
-    notes.push(
-      `Толпа в asks: ${crowdN} мелких заявок $1–10 — приманка для шортов`
-    )
-    reasons.push(`crowd_asks_bait:n${crowdN}`)
-  } else if (crowdN >= 2) {
-    reasons.push(`crowd_asks_weak:n${crowdN}`)
-  }
-  if (bidSupport >= 200) {
-    fuelScore += 1
-    reasons.push(`bid_support:${bidSupport.toFixed(0)}`)
-  }
 
-  reasons.push(`dist_high:${distPct.toFixed(2)}`)
-  reasons.push(`chg24:${input.chg24hPct.toFixed(1)}`)
-
-  // Flip thesis: fueled impulse / HH / reclaim near high = former short SL zone
-  const shortTrap =
-    shortBait || reclaim || hh || impulse || (bullish && (oiRising || tapeUp))
-
-  const continueOk =
-    shortTrap &&
-    (impulse ||
-      hh ||
-      reclaim ||
-      shortBait ||
-      (bullish && (oiRising || tapeUp || bookConfirm)))
-
-  if (!continueOk) return null
-
-  let confidence = 64 + fuelScore * 3
-  if (impulse) confidence += 4
-  if (hh) confidence += 5
-  if (reclaim) confidence += 4
-  if (shortBait) confidence += 6
-  if (pressureOk) confidence += 5
-  if (bookConfirm) confidence += 4
+  let confidence = 60 + score * 4
+  if (pressureOk) confidence += 4
+  if (bookConfirm) confidence += 3
   if (strongBook) confidence += 3
-  if (tapeUp) confidence += 3
-  if (oiRising) confidence += 3
   if (distPct <= 0.6) confidence += 2
   if (input.chg24hPct >= 15) confidence += 2
-  if (!pressureOk) confidence -= 8
-  if (!shortTrap) confidence -= 8
+  if (!pressureOk && !structurePhase) confidence -= 6
   confidence = Math.min(94, Math.max(0, Math.round(confidence)))
-  if (confidence < 68) return null
 
-  // A only after chart 2m + real book/tape — never first-tick chase
+  // A = score + book + candle confirm (no naked book entries)
   const aTier =
-    continueOk &&
-    chartOk &&
-    pressureOk &&
-    shortTrap &&
+    score >= A_MIN_SCORE &&
     bookConfirm &&
-    (strongBook || realBook) &&
+    pressureOk &&
+    candleEntry &&
+    chartOk &&
     (impulse || hh || reclaim) &&
-    (bullish || tapeUp || oiRising || input.absorptionLong) &&
-    confidence >= A_MIN_CONF &&
-    fuelScore >= A_MIN_FUEL &&
+    (bullish || hh) &&
     distPct <= A_MAX_DIST &&
-    input.chg24hPct >= A_MIN_CHG
+    input.chg24hPct >= A_MIN_CHG &&
+    confidence >= 70
 
   const quality: PumpContinueQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)
-  reasons.push(`fuel:${fuelScore}`)
+  reasons.push(`fuel:${score}`)
   reasons.push(`conf:${confidence}`)
-  reasons.push(continueOk ? 'continue_ok' : 'continue_weak')
   reasons.push(pressureOk ? 'pressure_ok' : 'pressure_missing')
-  reasons.push(shortTrap ? 'short_trap' : 'no_short_trap')
   reasons.push(bookConfirm ? 'book_ok' : 'book_missing')
   reasons.push(strongBook ? 'squeeze_confirmed' : 'squeeze_unconfirmed')
   reasons.push(chartOk ? 'chart_ok' : 'chart_early')
+  reasons.push(candleEntry ? 'candle_entry_ok' : 'candle_entry_wait')
+  reasons.push('continue_ok')
+
+  // Final phase without candle confirm stays B-only candidate (pending next bars)
+  if (!structurePhase && !candleEntry) {
+    reasons.push('final_needs_candle')
+  }
 
   const entry = price
-  const tp = formerSl
-  const tp1 = entry + (tp - entry) * 0.65
-  const sl = Math.min(
-    lo > 0 ? lo * 0.997 : entry * 0.99,
-    entry * (1 - FORMER_SL_MIN)
-  )
+  // Tight ATR/micro stop only — deep 18-bar low was putting SL at −5%+ (liq first)
+  const atrDist = atrStopDistance(input.candles1m, entry, 1.15, 0.0045, MAX_RISK_PCT)
+  const microLo = microStructureLevel(input.candles1m, 'LONG')
+  const stop = memeRiskStop(entry, 'LONG', atrDist, microLo, {
+    minPct: 0.0045,
+    maxPct: MAX_RISK_PCT,
+  })
+  if (!stop) {
+    reasons.push('sl_structure_too_wide')
+    return null
+  }
+  reasons.push(...stop.reasons)
+  const sl = stop.sl
+  const risk = Math.max(entry - sl, entry * 0.0045)
+  // Pure R-based targets from CURRENT entry — never former short-SL absolute
+  const tp1 = entry + risk * 1.15
+  const tp = entry + risk * 2.2
+  if (tp1 <= entry) return null
 
   return {
     ready: true,
@@ -377,7 +408,8 @@ export function detectPumpContinue(
     setup: 'PUMP_CONTINUE',
     confidence,
     quality,
-    fuelScore,
+    fuelScore: score,
+    score,
     distToHighPct: distPct,
     formerSlAsTp: formerSl,
     limitPrice: entry,
@@ -385,9 +417,10 @@ export function detectPumpContinue(
     tp,
     tp1,
     notes: [
-      `Сквиз пампа · LONG (бывший SL шорта = TP)`,
+      `PUMP_CONTINUE LONG · score ${score}/${MIN_SCORE}`,
       `24h +${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}% · conf ${confidence}`,
-      ...notes.slice(0, 4),
+      `Risk ${(stop.riskPct * 100).toFixed(2)}% · TP1 +${((tp1 / entry - 1) * 100).toFixed(2)}% · TP +${((tp / entry - 1) * 100).toFixed(2)}%`,
+      ...notes.slice(0, 3),
     ],
     reasons,
   }
