@@ -385,7 +385,7 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
-  // Predator: PEAK SHORT only. Elite: DUMP LONG memes as SNIPER.
+  // Predator: PEAK SHORT only. Elite: PUMP_CONTINUE / DUMP LONG as SNIPER.
   if (input.alertType === 'MEME') {
     if (
       input.plan.setup !== 'PEAK_FUEL_FAIL' ||
@@ -394,9 +394,12 @@ export async function recordBotAlert(
       return null
     }
   }
+  const eliteMemeLongSetup =
+    input.plan.setup === 'DUMP_FUEL_FAIL' ||
+    input.plan.setup === 'PUMP_CONTINUE'
   if (
     input.alertType === 'SNIPER' &&
-    input.plan.setup === 'DUMP_FUEL_FAIL' &&
+    eliteMemeLongSetup &&
     input.plan.side !== 'LONG'
   ) {
     return null
@@ -429,15 +432,12 @@ export async function recordBotAlert(
       return null
     }
   }
-  if (
-    input.alertType === 'SNIPER' &&
-    input.plan.setup === 'DUMP_FUEL_FAIL'
-  ) {
+  if (input.alertType === 'SNIPER' && eliteMemeLongSetup) {
     if (
       list.some(
         (e) =>
           e.alertType === 'SNIPER' &&
-          e.setup === 'DUMP_FUEL_FAIL' &&
+          (e.setup === 'DUMP_FUEL_FAIL' || e.setup === 'PUMP_CONTINUE') &&
           e.status === 'OPEN'
       )
     ) {
@@ -449,7 +449,7 @@ export async function recordBotAlert(
   const memeImpulse =
     input.alertType === 'MEME' ||
     (input.alertType === 'SNIPER' &&
-      input.plan.setup === 'DUMP_FUEL_FAIL' &&
+      eliteMemeLongSetup &&
       input.plan.side === 'LONG')
   const reasons = input.plan.entryReasons ?? null
   let entry: BotJournalEntry = {

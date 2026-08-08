@@ -10,10 +10,10 @@ export const BOT_ENGINE = {
  * Enterpriseelite_bot — assistant + meme DUMP LONG reclaim + Mini App alts.
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-meme-long-v1',
-  label: 'ELITE: meme LONG + Signals Lab',
+  id: 'elite-meme-long-v2',
+  label: 'ELITE: pump LONG + Signals Lab',
   deployedNote:
-    'v1: DUMP_FUEL_FAIL LONG A (reclaim+2m confirm) · hourly brief · Mini App альты · journal v290.',
+    'v2: PUMP_CONTINUE A (impulse/HH+OI/absorb+2m) · DUMP reclaim · journal v290.',
 } as const
 
 /** Alias for clarity in Elite-facing code */

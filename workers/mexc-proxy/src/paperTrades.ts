@@ -51,7 +51,7 @@ const PEAK_TRAIL_EARLY = 0.009
 const PEAK_BE_R = 0.55
 /** Elite meme LONGs — separate slot from PEAK SHORT */
 const MAX_ACTIVE_ELITE_MEME = 1
-const ELITE_MEME_SETUPS = new Set(['DUMP_FUEL_FAIL'])
+const ELITE_MEME_SETUPS = new Set(['DUMP_FUEL_FAIL', 'PUMP_CONTINUE'])
 /** Partial lock at ~1R (TP1) then trail remainder */
 const MEME_PARTIAL_R = 1.0
 const WAITING_TTL_MS = 90 * 60_000

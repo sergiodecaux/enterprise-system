@@ -1,5 +1,5 @@
 /**
- * MEME scanner — PEAK SHORT A → Predator; DUMP LONG A → Elite.
+ * MEME scanner — PEAK SHORT A → Predator; PUMP_CONTINUE / DUMP LONG A → Elite.
  */
 
 import type { ScanAlert } from './scanner'
@@ -18,6 +18,7 @@ import {
 } from './botJournal'
 import { detectPeakFuelFail, type Candle } from './peakFuelFail'
 import { detectDumpFuelFail } from './dumpFuelFail'
+import { detectPumpContinue } from './pumpContinue'
 import { appendPeakDecision } from './peakDecisionLog'
 
 const MEXC = 'https://contract.mexc.com'
@@ -30,7 +31,7 @@ const MAX_SCAN_DUMP = 4
 const BOOK_SCAN = 3
 /** One PEAK A per tick */
 const MAX_ALERTS = 1
-/** One Elite dump LONG per tick */
+/** One Elite meme LONG per tick (pump continue preferred over dump reclaim) */
 const MAX_ELITE_LONG = 1
 
 const BLUE_CHIPS = new Set([
@@ -243,6 +244,56 @@ function dumpFailToEliteAlert(
   }
 }
 
+function pumpContinueToEliteAlert(
+  symbol: string,
+  sig: NonNullable<ReturnType<typeof detectPumpContinue>>,
+  chg24hPct: number
+): ScanAlert {
+  const name = symbol.replace('_USDT', '/USDT')
+  const limit = sig.limitPrice
+  const reasonLine = sig.reasons.slice(0, 8).join(' · ')
+  return {
+    type: 'SNIPER',
+    title: `🟢 ELITE LONG ${name} · PUMP A`,
+    text: [
+      `Мем LONG (pump continue / squeeze) · Elite`,
+      `Открытие: ${fmtPx(limit)}`,
+      `Стоп (SL): ${fmtPx(sig.sl)} (${pctFrom(limit, sig.sl)})`,
+      `Тейк 1 (TP1): ${fmtPx(sig.tp1)} (${pctFrom(limit, sig.tp1)})`,
+      `Тейк 2 (TP): ${fmtPx(sig.tp)} (${pctFrom(limit, sig.tp)})`,
+      '',
+      `24h +${chg24hPct.toFixed(1)}% · PUMP_CONTINUE · класс A · score ${sig.score}`,
+      'Нужны impulse/HH + OI↑ или bid absorb + 2m confirm (не TRAP tip)',
+      ...sig.notes.filter((n) => !/^SL~/i.test(n)),
+      reasonLine ? `Причины: ${reasonLine}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    dedupeKey: `cron:elite:pump_continue:${symbol}:LONG:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
+    score: sig.confidence + 2,
+    winPct: Math.min(78, Math.max(55, 52 + (sig.confidence - 74))),
+    style: 'SCALP',
+    align: 'WITH_TREND',
+    tradePlan: {
+      side: 'LONG',
+      symbol,
+      setup: 'PUMP_CONTINUE',
+      signalPrice: limit,
+      entryIdeal: limit,
+      zoneLow: limit * 0.998,
+      zoneHigh: limit * 1.002,
+      invalidate: limit * 0.991,
+      sl: sig.sl,
+      tp: sig.tp,
+      target1: sig.tp1,
+      target3: limit * 1.03,
+      entryReasons: sig.reasons,
+      entryNotes: sig.notes.join(' · '),
+      qualityTier: sig.quality,
+    },
+  }
+}
+
 async function fetchMin1Candles(
   symbol: string,
   limit = 50
@@ -334,7 +385,7 @@ export async function runMemeOrderFlowScan(opts: {
     [...pumps.slice(0, 2), ...dumps.slice(0, 1)]
       .map((c) => c.symbol)
       .slice(0, BOOK_SCAN)
-  )
+  ) // top pumps get book for Elite PUMP_CONTINUE fuel
   const state = await loadBookState(opts.kv)
   const rejects: Array<{ symbol: string; reason: string }> = []
   const candidates: ScanAlert[] = []
@@ -411,6 +462,45 @@ export async function runMemeOrderFlowScan(opts: {
     const candles = await fetchMin1Candles(coin.symbol, 80)
 
     if (isPump) {
+      // Elite: PUMP_CONTINUE LONG A (catch fueled pumps) — before PEAK short
+      if (eliteCandidates.length < MAX_ELITE_LONG) {
+        const pumpLong = detectPumpContinue({
+          symbol: coin.symbol,
+          price,
+          chg24hPct: coin.chg24hPct,
+          dayBias: coin.dayBias,
+          holdVol,
+          prevHoldVol: prevHold,
+          candles1m: candles,
+          buyFlowPct: evReady
+            ? evSide === 'LONG'
+              ? evFlow
+              : Math.max(0, 100 - evFlow)
+            : null,
+          priceMoveBps: evReady ? evMove : null,
+          tapeFromBook: evReady,
+          absorptionLong:
+            evKind === 'ABSORPTION_LONG' ||
+            (evMm === 'ABSORPTION' && evSide === 'LONG'),
+          cvdBullish: evKind === 'CVD_DIVERGENCE' && evSide === 'LONG',
+          bidHeavy: evReady && evSide === 'LONG' && evFlow >= 55,
+          bookConfidence: evReady ? 0.7 : null,
+          phase: 'final',
+        })
+        if (pumpLong?.ready && pumpLong.quality === 'A') {
+          eliteCandidates.push(
+            pumpContinueToEliteAlert(coin.symbol, pumpLong, coin.chg24hPct)
+          )
+        } else {
+          rejects.push({
+            symbol: coin.symbol,
+            reason: pumpLong
+              ? `pump_B:${pumpLong.score}/${pumpLong.confidence}`
+              : 'no_pump_continue',
+          })
+        }
+      }
+
       const peak = detectPeakFuelFail({
         symbol: coin.symbol,
         price,
@@ -520,7 +610,13 @@ export async function runMemeOrderFlowScan(opts: {
   await saveBookState(opts.kv, state)
 
   candidates.sort((a, b) => b.score - a.score)
-  eliteCandidates.sort((a, b) => b.score - a.score)
+  // Prefer PUMP_CONTINUE over DUMP when both A fire
+  eliteCandidates.sort((a, b) => {
+    const ap = a.tradePlan?.setup === 'PUMP_CONTINUE' ? 1 : 0
+    const bp = b.tradePlan?.setup === 'PUMP_CONTINUE' ? 1 : 0
+    if (bp !== ap) return bp - ap
+    return b.score - a.score
+  })
   const top = candidates.slice(0, MAX_ALERTS)
   const eliteTop = eliteCandidates.slice(0, MAX_ELITE_LONG)
 

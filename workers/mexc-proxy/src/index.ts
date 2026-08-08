@@ -1849,10 +1849,12 @@ async function runCronScan(
       return
     }
 
-    // Elite meme LONG: DUMP_FUEL_FAIL A — paper-first → Enterpriseelite_bot
+    // Elite meme LONG: PUMP_CONTINUE / DUMP_FUEL_FAIL A — paper-first
     if (
       a.type === 'SNIPER' &&
-      a.tradePlan?.setup === 'DUMP_FUEL_FAIL' &&
+      a.tradePlan &&
+      (a.tradePlan.setup === 'DUMP_FUEL_FAIL' ||
+        a.tradePlan.setup === 'PUMP_CONTINUE') &&
       a.tradePlan.side === 'LONG'
     ) {
       if (a.tradePlan.qualityTier !== 'A') {
@@ -1861,12 +1863,12 @@ async function runCronScan(
       }
       try {
         const paceRaw = await env.SUBSCRIBERS?.get(
-          'telegram:last_elite_dump_alert_at'
+          'telegram:last_elite_long_alert_at'
         )
         const lastAt = paceRaw ? Number(paceRaw) : 0
-        if (lastAt > 0 && Date.now() - lastAt < 15 * 60_000) {
+        if (lastAt > 0 && Date.now() - lastAt < 12 * 60_000) {
           skipped++
-          console.log('[cron] elite dump paced — too soon')
+          console.log('[cron] elite long paced — too soon')
           return
         }
       } catch {
@@ -1889,7 +1891,7 @@ async function runCronScan(
         if (!paper.created) {
           skipped++
           console.log(
-            '[cron] elite dump blocked — no paper',
+            '[cron] elite long blocked — no paper',
             paper.skipReason ?? 'unknown',
             a.dedupeKey
           )
@@ -1900,7 +1902,7 @@ async function runCronScan(
           paper.comment?.dedupeKey?.replace(/^paper:fill:/, '') || undefined
       } catch (err) {
         skipped++
-        console.error('[cron] elite dump paper failed', err)
+        console.error('[cron] elite long paper failed', err)
         return
       }
 
@@ -1917,7 +1919,7 @@ async function runCronScan(
       if (cr.sent > 0) {
         try {
           await env.SUBSCRIBERS?.put(
-            'telegram:last_elite_dump_alert_at',
+            'telegram:last_elite_long_alert_at',
             String(Date.now())
           )
         } catch {
@@ -2172,10 +2174,12 @@ async function runCronScan(
           (t) =>
             (t.status === 'OPEN' || t.status === 'WAITING') &&
             (t.alertType === 'MEME' ||
-              (t.alertType === 'SNIPER' && t.setup === 'DUMP_FUEL_FAIL'))
+              (t.alertType === 'SNIPER' &&
+                (t.setup === 'DUMP_FUEL_FAIL' ||
+                  t.setup === 'PUMP_CONTINUE')))
         )
         .map((t) => t.symbol)
-      // PEAK SHORT → Predator; DUMP LONG A → Elite
+      // PEAK SHORT → Predator; PUMP/DUMP LONG A → Elite
       const gates = await getAdaptiveGates(env)
       const flow = await runMemeOrderFlowScan({
         kv,
@@ -2609,7 +2613,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> — meme LONG + Signals Lab\n\nМемы: <b>DUMP_FUEL_FAIL LONG A</b> (reclaim после дампа, не tip)\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны\nMini App → <b>Сигналы</b> (альты) → READY → журнал WR\n\nКоманды:\n/brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> — meme LONG + Signals Lab\n\nМемы LONG A: <b>PUMP_CONTINUE</b> (памп + fuel) · <b>DUMP reclaim</b>\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны\nMini App → <b>Сигналы</b> (альты) → READY → журнал WR\n\nКоманды:\n/brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · PEAK SHORT A · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
