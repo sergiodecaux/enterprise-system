@@ -405,8 +405,22 @@ async function handleTelegram(
     let lastScan: unknown = null
     let lastDelivery: unknown = null
     try {
-      const raw = lastScanCache ?? lastScanKv ?? lastScanPredKv
-      lastScan = raw ? JSON.parse(raw) : null
+      // Prefer freshest snapshot — Cache can retain days-old paper ticks
+      const scanCandidates = [lastScanCache, lastScanKv, lastScanPredKv]
+        .filter((x): x is string => Boolean(x))
+        .map((raw) => {
+          try {
+            return JSON.parse(raw) as { completedAt?: number; at?: number }
+          } catch {
+            return null
+          }
+        })
+        .filter((x): x is { completedAt?: number; at?: number } => x != null)
+      scanCandidates.sort(
+        (a, b) =>
+          (b.completedAt ?? b.at ?? 0) - (a.completedAt ?? a.at ?? 0)
+      )
+      lastScan = scanCandidates[0] ?? null
       const delRaw = lastDeliveryCache ?? lastDeliveryKv
       lastDelivery = delRaw ? JSON.parse(delRaw) : null
     } catch {
