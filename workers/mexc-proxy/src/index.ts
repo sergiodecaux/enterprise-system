@@ -648,26 +648,34 @@ async function handleTelegram(
       }
       await saveSubscribers(env, [...byId.values()], 'sniper')
     }
-    const r = await activateThisWorker(env, reason)
+    // Never 500 on activate — peer handoff treats non-2xx as failure and dual-active sticks
     try {
-      await broadcastAlert(env, {
-        type: 'SYSTEM',
-        channel: 'meme',
-        title: '🔀 Failover ACTIVE',
-        text: [
-          `Этот Worker взял ботов (${env.FAILOVER_ROLE ?? 'primary'}).`,
-          `Причина: ${reason}`,
-          `Подписчики: meme+${memeSubs.length} sniper+${sniperSubs.length}`,
-          r.webhooks
-            ? `Webhook meme=${r.webhooks.meme} sniper=${r.webhooks.sniper}`
-            : 'PUBLIC_BASE_URL не задан — webhook не переключал',
-        ].join('\n'),
-        dedupeKey: `failover:active:${Date.now()}`,
-      })
-    } catch {
-      // ignore
+      const r = await activateThisWorker(env, reason)
+      try {
+        await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'meme',
+          title: '🔀 Failover ACTIVE',
+          text: [
+            `Этот Worker взял ботов (${env.FAILOVER_ROLE ?? 'primary'}).`,
+            `Причина: ${reason}`,
+            `Подписчики: meme+${memeSubs.length} sniper+${sniperSubs.length}`,
+            r.webhooks
+              ? `Webhook meme=${r.webhooks.meme} sniper=${r.webhooks.sniper}`
+              : 'PUBLIC_BASE_URL не задан — webhook не переключал',
+            `peerStandby=${r.peerStandby ?? false}`,
+          ].join('\n'),
+          dedupeKey: `failover:active:${Math.floor(Date.now() / 60_000)}`,
+        })
+      } catch {
+        // TG notify is best-effort
+      }
+      return json({ ok: true, ...r })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[failover] activate failed', msg)
+      return json({ ok: false, error: msg.slice(0, 200) }, 200)
     }
-    return json({ ok: true, ...r })
   }
 
   if (path === '/telegram/failover/standby' && request.method === 'POST') {

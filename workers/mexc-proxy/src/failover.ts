@@ -38,6 +38,7 @@ export interface FailoverEnv {
   SUBSCRIBERS?: KVNamespace
   TELEGRAM_BOT_TOKEN?: string
   TELEGRAM_SNIPER_BOT_TOKEN?: string
+  ALERT_SECRET?: string
   FAILOVER_ROLE?: string
   FAILOVER_PEER_URL?: string
   FAILOVER_SECRET?: string
@@ -178,6 +179,46 @@ export function failoverConfigured(env: FailoverEnv): boolean {
   return Boolean(env.FAILOVER_PEER_URL && env.FAILOVER_SECRET)
 }
 
+/** Ask peer to go idle (best-effort). Prevents dual-active after reclaim. */
+async function requestPeerStandby(
+  env: FailoverEnv,
+  reason: string
+): Promise<boolean> {
+  const peer = env.FAILOVER_PEER_URL?.replace(/\/$/, '')
+  const secret = env.FAILOVER_SECRET || env.ALERT_SECRET
+  if (!peer || !secret) return false
+  try {
+    const r = await fetch(`${peer}/telegram/failover/standby`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Failover-Secret': secret,
+        'X-Alert-Secret': secret,
+      },
+      body: JSON.stringify({ reason, from: roleOf(env), at: Date.now() }),
+    })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
+async function peerFailoverSnapshot(
+  env: FailoverEnv
+): Promise<{ active?: boolean; role?: string } | null> {
+  const peer = env.FAILOVER_PEER_URL?.replace(/\/$/, '')
+  if (!peer) return null
+  try {
+    const r = await fetch(`${peer}/telegram/failover/status`, {
+      method: 'GET',
+    })
+    if (!r.ok) return null
+    return (await r.json()) as { active?: boolean; role?: string }
+  } catch {
+    return null
+  }
+}
+
 export async function shouldRunCronWork(
   env: FailoverEnv
 ): Promise<{ run: boolean; state: FailoverState; reason?: string }> {
@@ -185,15 +226,60 @@ export async function shouldRunCronWork(
   if (!failoverConfigured(env)) {
     return { run: true, state, reason: 'failover_disabled' }
   }
+
+  // Dual-active guard: standby ALWAYS yields if primary reports active
+  if (state.active && roleOf(env) === 'standby') {
+    const peer = await peerFailoverSnapshot(env)
+    if (peer?.role === 'primary' && peer.active === true) {
+      state = await standbyThisWorker(env, 'yield_to_active_primary')
+      return { run: false, state, reason: 'yield_to_primary' }
+    }
+  }
+
+  // Primary is preferred owner: clear sticky pending + idle peer if dual
+  if (state.active && roleOf(env) === 'primary') {
+    if (state.pendingHandoff || state.subrequestFails >= SUBREQUEST_FAIL_HANDOFF) {
+      const peer = await peerFailoverSnapshot(env)
+      if (peer?.active === true) {
+        // Prefer primary — push peer idle, keep scanning here
+        await requestPeerStandby(env, 'primary_keeps_ownership')
+      }
+      state.pendingHandoff = false
+      state.pendingReason = null
+      state.subrequestFails = 0
+      state.lastReason = 'primary_clear_stuck_handoff'
+      await saveFailoverState(env, state)
+    }
+  }
+
   if (!state.active) {
-    // Primary must not stay mute forever if peer died / both went idle
+    // Primary reclaim only when peer is NOT actively owning
     if (roleOf(env) === 'primary') {
       const age = Date.now() - (state.lastHandoffAt ?? 0)
-      const stale = !state.lastHandoffAt || age >= PRIMARY_IDLE_RECLAIM_MS
+      const badIdle =
+        /pending_handoff_peer_already_active|yield_to_active|dual/i.test(
+          state.lastReason ?? ''
+        )
+      const stale =
+        badIdle || !state.lastHandoffAt || age >= PRIMARY_IDLE_RECLAIM_MS
       if (stale) {
+        const peer = await peerFailoverSnapshot(env)
+        // Real failover: standby owns and primary idled via successful handoff
+        const cleanHandoff = /handoff→peer|manual_handoff/i.test(
+          state.lastReason ?? ''
+        )
+        if (
+          !badIdle &&
+          cleanHandoff &&
+          peer?.role === 'standby' &&
+          peer.active === true &&
+          age < PRIMARY_IDLE_RECLAIM_MS * 3
+        ) {
+          return { run: false, state, reason: 'peer_active_wait' }
+        }
         const healed = await activateThisWorker(
           env,
-          'self_heal_primary_reclaim'
+          badIdle ? 'self_heal_undo_dual_idle' : 'self_heal_primary_reclaim'
         )
         state = healed.state
       } else {
@@ -362,6 +448,7 @@ export async function activateThisWorker(
   ok: boolean
   state: FailoverState
   webhooks?: { meme: boolean; sniper: boolean }
+  peerStandby?: boolean
 }> {
   const state = await loadFailoverState(env)
   state.active = true
@@ -372,12 +459,15 @@ export async function activateThisWorker(
   state.lastReason = reason
   await saveFailoverState(env, state)
 
+  // Only one owner — idle peer whenever we take the baton
+  const peerStandby = await requestPeerStandby(env, `peer_idle_for:${reason}`)
+
   const base = env.PUBLIC_BASE_URL
   let webhooks: { meme: boolean; sniper: boolean } | undefined
   if (base) {
     webhooks = await setTelegramWebhooks(env, base)
   }
-  return { ok: true, state, webhooks }
+  return { ok: true, state, webhooks, peerStandby }
 }
 
 export async function standbyThisWorker(
