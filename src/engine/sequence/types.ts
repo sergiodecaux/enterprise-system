@@ -15,6 +15,8 @@ export type FrameKind =
   | 'LIQ'
   /** Spot vs perp health sample */
   | 'SPOT_PERP'
+  /** Cross-venue lead (Binance) */
+  | 'VENUE'
 
 export interface MarketFrame {
   at: number
@@ -61,6 +63,12 @@ export interface SequenceHit {
     deltaPct: number
     reason: string
   } | null
+  /** Spot vs perp health at detection time */
+  spotPerpStatus?: string | null
+  /** Inferred liq burst USD in window */
+  liqUsd?: number | null
+  /** Binance lead tag at detection */
+  venueLeadKind?: string | null
 }
 
 export interface SequenceEvalContext {
@@ -100,4 +108,8 @@ export interface SequenceEvalContext {
   /** Recent inferred liquidation cascade USD */
   liqUsd?: number | null
   liqSide?: 'LONG_LIQ' | 'SHORT_LIQ' | null
+  /** Binance lead vs local walls */
+  venueLeadKind?: 'NONE' | 'ARB_WALL_RISK' | 'LEAD_CONFIRM' | null
+  venueLeadSide?: 'LONG' | 'SHORT' | null
+  venueLeadMul?: number | null
 }

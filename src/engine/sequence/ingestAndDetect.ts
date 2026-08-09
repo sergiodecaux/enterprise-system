@@ -13,14 +13,22 @@ import { applySequenceHistWr } from './sequenceJournal'
 import { inferLiquidationBurst, liqToFrame } from './liqInfer'
 import {
   getHitZScore,
+  getSigmaZScore,
   recordHitSample,
+  recordSigmaSample,
+  blendSigmaMuls,
   passesAnomalyGate,
-} from './hitBaseline'
+} from './sigmaBaseline'
 import {
   deltaFromTrades,
   getCachedSpotPerpHealth,
   spotPerpToFrame,
 } from './spotPerpHealth'
+import {
+  evaluateVenueLead,
+  getVenueLeadCache,
+  venueLeadToFrame,
+} from './venueLead'
 import {
   announceSequenceSound,
   playProcessSound,
@@ -40,6 +48,8 @@ export interface IngestOrderFlowInput {
   /** Open interest (contracts) from ticker.holdVol */
   openInterest?: number | null
   now?: number
+  /** When false, skip Binance lead (already applied via cache) */
+  useVenueLead?: boolean
 }
 
 /**
@@ -68,7 +78,7 @@ export function ingestAndDetectSequence(
   const frames = buildFrames(input, now, oi, liq)
   if (frames.length) pushFrames(input.symbol, frames)
 
-  // Hit baseline + z-score
+  // Sigma baselines: HIT + DELTA + WALL (anomaly-only confidence)
   const hitFrames = frames.filter((f) => f.kind === 'HIT')
   let hitUsdWindow = 0
   for (const f of hitFrames) {
@@ -82,7 +92,6 @@ export function ingestAndDetectSequence(
       )
     }
   }
-  // Prefer 5m aggregated hits for z-score
   const recentHits = getFrames(input.symbol, 5 * 60_000, now).filter(
     (f) => f.kind === 'HIT'
   )
@@ -90,6 +99,23 @@ export function ingestAndDetectSequence(
   const zInfo = getHitZScore(input.symbol, hit5m || hitUsdWindow, now)
 
   const perpDelta = deltaFromTrades(input.trades, 5 * 60_000, now)
+  const deltaAbsUsd = Math.abs(perpDelta)
+  if (deltaAbsUsd > 0) {
+    recordSigmaSample(input.symbol, 'DELTA', deltaAbsUsd, now)
+  }
+  const deltaZ = getSigmaZScore(input.symbol, 'DELTA', deltaAbsUsd || 1, now)
+
+  const wallUsd = Math.max(
+    input.whale?.strongestSupport?.volumeUsd ?? 0,
+    input.whale?.strongestResistance?.volumeUsd ?? 0,
+    ...(input.walls ?? []).map((w) => w.volume * w.price)
+  )
+  if (wallUsd > 0) {
+    recordSigmaSample(input.symbol, 'WALL', wallUsd, now)
+  }
+  const wallZ = getSigmaZScore(input.symbol, 'WALL', wallUsd || 1, now)
+  const sigmaBlend = blendSigmaMuls([zInfo, deltaZ, wallZ])
+
   const spotPerp = getCachedSpotPerpHealth(input.symbol, perpDelta, now)
   if (spotPerp.status !== 'UNKNOWN') {
     pushFrames(input.symbol, [spotPerpToFrame(spotPerp, now)])
@@ -117,6 +143,23 @@ export function ingestAndDetectSequence(
   const askWallAlive =
     Boolean(resist) ||
     walls.some((w) => w.side === 'ASK' && w.volume * w.price >= 400_000)
+
+  const venueLead =
+    input.useVenueLead === false
+      ? null
+      : getVenueLeadCache(input.symbol)
+  const venueEval = evaluateVenueLead({
+    localPrice: input.price,
+    bidWallAlive,
+    askWallAlive,
+    lead: venueLead,
+  })
+  if (venueLead && venueEval.kind !== 'NONE') {
+    pushFrames(input.symbol, [venueLeadToFrame(venueEval, venueLead, now)])
+    if (venueEval.kind === 'ARB_WALL_RISK') {
+      playProcessSound('WALL_RELEASE', 0.55)
+    }
+  }
 
   const cvd = input.cvd
   const ctx: SequenceEvalContext = {
@@ -148,6 +191,9 @@ export function ingestAndDetectSequence(
     spotPerpStatus: spotPerp.status,
     liqUsd: liq?.usd ?? null,
     liqSide: liq?.side ?? null,
+    venueLeadKind: venueEval.kind,
+    venueLeadSide: venueEval.side,
+    venueLeadMul: venueEval.confidenceMul,
   }
 
   const candidates = [
@@ -158,21 +204,50 @@ export function ingestAndDetectSequence(
     detectOiDeltaConfirm(ctx),
   ].filter((h): h is SequenceHit => h != null && h.expiresAt >= now)
 
-  // Z-score soft demote for HIT-driven kinds when not anomalous
+  // Sigma soft demote when HIT/DELTA/WALL are all "normal noise"
   const adjusted = candidates.map((h) => {
     let conf = h.confidence
     const hitDriven =
       h.kind === 'WALL_ABSORPTION_EXHAUSTION' ||
       h.kind === 'TRAPPED_TRADERS' ||
       h.kind === 'WALL_RELEASE'
-    if (hitDriven && zInfo.ready && !passesAnomalyGate(zInfo, { soft: true })) {
+    if (hitDriven && sigmaBlend.anyReady && !sigmaBlend.anyAnomaly) {
+      conf = Math.round(conf * 0.52)
+    } else if (hitDriven && sigmaBlend.anyReady) {
+      conf = Math.round(Math.min(92, conf * sigmaBlend.mul))
+    } else if (hitDriven && zInfo.ready && !passesAnomalyGate(zInfo, { soft: true })) {
       conf = Math.round(conf * 0.55)
-    } else if (hitDriven && zInfo.ready) {
-      conf = Math.round(Math.min(92, conf * zInfo.confidenceMul))
     }
-    // Spot/perp health
+    // Spot/perp health — dirty growth cuts hard
     if (spotPerp.status !== 'UNKNOWN') {
       conf = Math.round(Math.min(92, Math.max(30, conf * spotPerp.confidenceMul)))
+    }
+    // Fuel: trapped / liq exhaustion / spot-led get a bump
+    if (h.kind === 'TRAPPED_TRADERS') conf = Math.min(92, conf + 3)
+    if (liq && liq.usd >= 80_000) conf = Math.min(92, conf + 2)
+    if (spotPerp.status === 'SPOT_LED') conf = Math.min(92, conf + 2)
+    if (spotPerp.status === 'DIVERGED' || spotPerp.status === 'PERP_LED') {
+      conf = Math.max(30, conf - 4)
+    }
+    // Binance lead: demote local wall bounce when arb risk; boost release with lead
+    if (venueEval.kind === 'ARB_WALL_RISK') {
+      if (
+        h.kind === 'WALL_ABSORPTION_EXHAUSTION' &&
+        venueEval.side &&
+        h.side !== venueEval.side
+      ) {
+        conf = Math.round(conf * 0.55)
+      }
+      if (
+        h.kind === 'WALL_RELEASE' &&
+        venueEval.side &&
+        h.side === venueEval.side
+      ) {
+        conf = Math.min(92, Math.round(conf * 1.12))
+      }
+      conf = Math.round(conf * venueEval.confidenceMul)
+    } else if (venueEval.kind === 'LEAD_CONFIRM' && venueEval.side === h.side) {
+      conf = Math.min(92, Math.round(conf * venueEval.confidenceMul))
     }
     return { ...h, confidence: conf }
   }).filter((h) => h.confidence >= 48)
@@ -193,10 +268,16 @@ export function ingestAndDetectSequence(
   })
 
   const best = applySequenceHistWr(adjusted[0]!, input.symbol)
-  if (best.confidence >= 55 && best.allowedInRegime) {
-    announceSequenceSound(best.kind, best.id, best.confidence)
+  const stamped: SequenceHit = {
+    ...best,
+    spotPerpStatus: spotPerp.status,
+    liqUsd: liq?.usd ?? null,
+    venueLeadKind: venueEval.kind !== 'NONE' ? venueEval.kind : null,
   }
-  return best
+  if (stamped.confidence >= 55 && stamped.allowedInRegime) {
+    announceSequenceSound(stamped.kind, stamped.id, stamped.confidence)
+  }
+  return stamped
 }
 
 function buildFrames(

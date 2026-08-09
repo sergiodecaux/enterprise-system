@@ -286,16 +286,29 @@ export function findLiveSignal(input: {
 
   // Remizov sequence limit — process, not a chart pattern
   if (seq && seq.confidence >= 55) {
+    const fuelBonus =
+      (seq.kind === 'TRAPPED_TRADERS' ? 4 : 0) +
+      (seq.kind === 'WALL_RELEASE' ? 3 : 0) +
+      (seq.spotPerpStatus === 'SPOT_LED' ? 3 : 0) +
+      ((seq.liqUsd ?? 0) >= 80_000 ? 2 : 0) -
+      (seq.spotPerpStatus === 'DIVERGED' || seq.spotPerpStatus === 'PERP_LED'
+        ? 5
+        : 0)
+    const baseWin = seq.allowedInRegime
+      ? seq.confidence
+      : Math.max(40, Math.round(seq.confidence * 0.55))
     scenarios.push({
       id: `sc_seq_${seq.kind}`,
       kind: 'SEQUENCE_LIMIT',
       side: seq.side,
       title: seq.title,
-      winPct: seq.allowedInRegime
-        ? seq.confidence
-        : Math.max(40, Math.round(seq.confidence * 0.55)),
+      winPct: Math.min(88, Math.max(35, Math.round(baseWin + fuelBonus))),
       summary: seq.allowedInRegime
-        ? seq.summary
+        ? `${seq.summary}${
+            seq.spotPerpStatus && seq.spotPerpStatus !== 'UNKNOWN'
+              ? ` · ${seq.spotPerpStatus}`
+              : ''
+          }`
         : `${seq.summary} · режим ${regime} — только контекст`,
       steps: seq.steps,
       invalidation: seq.wallPrice
@@ -439,14 +452,19 @@ export function findLiveSignal(input: {
   uniq.sort((a, b) => b.winPct - a.winPct)
 
   let primary = uniq.find((s) => s.id === 'sc_htf_bounce') ?? uniq[0]
-  // Prefer active sequence limit when allowed and strong
+  // Prefer fuel sequences (trap / release / spot-led) when allowed
   const seqSc = uniq.find((s) => s.kind === 'SEQUENCE_LIMIT')
+  const fuelKind =
+    seq?.kind === 'TRAPPED_TRADERS' ||
+    seq?.kind === 'WALL_RELEASE' ||
+    seq?.kind === 'WALL_ABSORPTION_EXHAUSTION' ||
+    seq?.spotPerpStatus === 'SPOT_LED'
   if (
     seqSc &&
     seq &&
     seq.allowedInRegime &&
-    seq.confidence >= 62 &&
-    seqSc.winPct >= (primary?.winPct ?? 0) - 4
+    seq.confidence >= (fuelKind ? 56 : 62) &&
+    seqSc.winPct >= (primary?.winPct ?? 0) - (fuelKind ? 8 : 4)
   ) {
     primary = seqSc
   }

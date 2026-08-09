@@ -301,18 +301,20 @@ export function detectPeakFuelFail(
   if (confidence < 74) return null
 
   const megaPump = input.chg24hPct >= MEGA_PUMP_CHG
-  // A: hard structure (fail/wick) + follow-through — no soft-only A
+  // A: hard structure + follow; prefer book absorb. Tip-glue (<0.3%) = dead shorts.
   const hardStructure = failed || wick
   const aTier =
     hardStructure &&
     follow &&
+    (bookWeak || (failed && wick)) &&
     confidence >= A_MIN_CONF &&
     fuelScore >= A_MIN_FUEL &&
+    distPct >= 0.35 &&
     distPct <= A_MAX_DIST &&
     input.chg24hPct >= A_MIN_CHG &&
     !oiRising &&
     !pumping &&
-    (!megaPump || bookWeak || (failed && wick)) &&
+    (!megaPump || bookWeak || (failed && wick && input.tapeFromBook === true)) &&
     !(stall && !failed && !wick)
 
   const quality: PeakQuality = aTier ? 'A' : 'B'

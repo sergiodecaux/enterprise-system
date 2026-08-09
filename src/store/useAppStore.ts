@@ -21,6 +21,7 @@ import type {
   IcebergAlertSnapshot,
   ObDeltaStoreSnapshot,
 } from '../engine/types'
+import type { EnhancedCvdSnapshot } from '../engine/orderflow/enhancedCvd'
 import type { WatchedSetup } from '../engine/setups'
 import type { ChartPreferences } from '../engine/indicators/types'
 import { DEFAULT_CHART_PREFERENCES } from '../engine/indicators/types'
@@ -207,6 +208,7 @@ export const useAppStore = create<AppState>()(
     spoofAlerts: {},
     icebergAlerts: {},
     obDelta: {},
+    liveTapeCvd: {},
     watchedSetups: loadWatchedSetups(),
 
     selectedCoin: null,
@@ -370,6 +372,11 @@ export const useAppStore = create<AppState>()(
           sequenceHits: { ...state.sequenceHits, [symbol]: hit },
         }
       }),
+
+    setLiveTapeCvd: (symbol: string, cvd: EnhancedCvdSnapshot) =>
+      set((state) => ({
+        liveTapeCvd: { ...state.liveTapeCvd, [symbol]: cvd },
+      })),
 
     setSessionDNA: (internalSymbol: string, dna: SessionDNA) =>
       set((state) => ({

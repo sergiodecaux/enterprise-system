@@ -39,6 +39,13 @@ export {
   type HitZScore,
 } from './hitBaseline'
 export {
+  getSigmaZScore,
+  recordSigmaSample,
+  blendSigmaMuls,
+  type SigmaMetric,
+  type SigmaZScore,
+} from './sigmaBaseline'
+export {
   inferLiquidationBurst,
   sumRecentLiq,
   type InferredLiq,
@@ -59,3 +66,11 @@ export {
   setProcessAudioEnabled,
   type ProcessSound,
 } from './processAudio'
+export {
+  setVenueLeadCache,
+  getVenueLeadCache,
+  evaluateVenueLead,
+  venueLeadToFrame,
+  type VenueLeadSnapshot,
+  type VenueLeadEval,
+} from './venueLead'

@@ -6,6 +6,7 @@ import type { MarketRegime } from '../regime/marketRegime'
 import type { SessionQuality } from '../sessions/sessionQuality'
 import type { EnhancedCvdSnapshot } from '../orderflow/enhancedCvd'
 import type { ObDeltaSnapshot } from '../orderbook/obDelta'
+import type { SequenceHit } from '../sequence/types'
 import type { SpoofAlert } from '../mm/spoofing'
 import type { IcebergResult } from '../mm/iceberg'
 import {
@@ -74,6 +75,8 @@ export interface ScoreCardInput {
   takeProfit: number
   /** Override OB age ms (default from obDelta.updatedAt) */
   obMetricsAge?: number
+  /** Live Remizov process hit — fuel / spot-perp / trap boost */
+  sequence?: SequenceHit | null
 }
 
 const THRESHOLDS: Record<
@@ -264,6 +267,45 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
     } else if (dataQuality.cvd.quality === 'FAIR' && ofScore > 1) {
       ofScore = Math.max(1, ofScore - 0.5)
       ofReason += ' [CVD OHLCV proxy]'
+    }
+    if (cvd.source === 'TRADES' && ofScore > 0 && ofScore < 2) {
+      ofScore = Math.min(2, ofScore + 0.5)
+      ofReason += ' · tape'
+    }
+  }
+
+  // Process fuel from Remizov sequence (trap / release / spot-led)
+  const seq = input.sequence
+  if (
+    seq &&
+    seq.expiresAt > Date.now() &&
+    seq.allowedInRegime &&
+    seq.confidence >= 58 &&
+    seq.side === dir
+  ) {
+    const fuelKind =
+      seq.kind === 'TRAPPED_TRADERS' ||
+      seq.kind === 'WALL_RELEASE' ||
+      seq.kind === 'WALL_ABSORPTION_EXHAUSTION' ||
+      seq.kind === 'OI_DELTA_CONFIRM'
+    if (fuelKind && ofScore < 2) {
+      ofScore = Math.min(2, ofScore + 1)
+      ofReason += ` · ${seq.kind}`
+    }
+    if (
+      seq.spotPerpStatus === 'SPOT_LED' &&
+      ofScore < 2
+    ) {
+      ofScore = Math.min(2, ofScore + 0.5)
+      ofReason += ' · spot-led'
+    }
+    if (
+      (seq.spotPerpStatus === 'DIVERGED' ||
+        seq.spotPerpStatus === 'PERP_LED') &&
+      ofScore > 0
+    ) {
+      ofScore = Math.max(0, ofScore - 0.5)
+      ofReason += ' · dirty fuel'
     }
   }
 

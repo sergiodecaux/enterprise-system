@@ -48,6 +48,8 @@ curl "https://mexc-proxy-b.mexc-standby.workers.dev/telegram/failover/status"
 ```
 
 ## Notes
-- Journals/KV are **per account** (not shared). After handoff, paper/journal start fresh on B unless you copy KV.
+- Journals/KV are **per account**. Handoff now **copies subscribers** in the activate payload so standby can TG.
 - Standby must have the **same** bot tokens or webhook switch is useless.
-- Free plan still has **50 subrequests/invocation** on each account — failover helps **daily** exhaustion and gives a second full day budget, not infinite per-tick fan-out.
+- Free plan still has **50 subrequests/invocation** on each account.
+- Handoff after subrequest errors is **deferred to the next cron** (same tick is already out of subrequests — that caused `peer_unreachable_rollback` silence).
+- Fail counter is sticky (2 hits → pending handoff); peer is activated **before** primary goes idle.

@@ -63,14 +63,14 @@ export interface PumpContinueSignal {
 const MIN_SCORE = 5
 const A_MIN_SCORE = 8
 const A_MIN_CHG = 8
-const A_MAX_CHG = 55
-const A_MAX_DIST = 1.15
+const A_MAX_CHG = 70
+const A_MAX_DIST = 1.35
 const MIN_CHG = 5
-const NEAR_HIGH_PCT = 2.4
+const NEAR_HIGH_PCT = 2.8
 const FORMER_SL_BUF = 0.0025
 const FORMER_SL_MIN = 0.01
 const MAX_RISK_PCT = 0.011
-const A_MIN_CONF = 74
+const A_MIN_CONF = 72
 
 function recentHigh(candles: Candle[], bars = 40): number {
   let hi = 0
@@ -304,21 +304,34 @@ export function detectPumpContinue(
   if (!chartOk) confidence -= 6
   confidence = Math.min(94, Math.max(0, Math.round(confidence)))
 
-  // A: continuation structure + live fuel + candles — kills dead TRAP entries
+  // Autopsy v291: 7/11 PUMP = DEAD tip-chase. strongTape-alone still died (BEAT/XAN).
+  // A = real bid absorb/OBI + OI↑ + not glued to tip + mid-range chg.
+  const strongTape = Boolean(
+    input.tapeFromBook &&
+      buyFlow != null &&
+      buyFlow >= 58 &&
+      moveBps != null &&
+      moveBps >= 5
+  )
+  const bookFuel = realBook || strongTape
   const aTier =
     structureOk &&
     fuelAlive &&
     pressureOk &&
+    realBook &&
+    oiRising &&
+    input.tapeFromBook === true &&
     candleEntry &&
     chartOk &&
     bullish &&
-    (impulse || hh || (dipReclaim && oiRising)) &&
+    (impulse || hh) &&
     score >= A_MIN_SCORE &&
     confidence >= A_MIN_CONF &&
+    distPct >= 0.28 &&
     distPct <= A_MAX_DIST &&
-    input.chg24hPct >= A_MIN_CHG &&
-    input.chg24hPct <= A_MAX_CHG &&
-    !(input.chg24hPct >= 40 && !hh && !oiRising)
+    input.chg24hPct >= 10 &&
+    input.chg24hPct <= 40 &&
+    !(dipReclaim && !hh && !impulse)
 
   const quality: PumpContinueQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)
@@ -326,7 +339,15 @@ export function detectPumpContinue(
   reasons.push(`conf:${confidence}`)
   reasons.push(pressureOk ? 'pressure_ok' : 'pressure_missing')
   reasons.push(fuelAlive ? 'fuel_alive' : 'fuel_dead')
-  reasons.push(realBook ? 'book_ok' : 'book_missing')
+  reasons.push(
+    bookFuel
+      ? realBook
+        ? 'book_ok'
+        : 'book_ok:strong_tape'
+      : input.tapeFromBook
+        ? 'book_weak'
+        : 'book_missing'
+  )
   reasons.push(structureOk ? 'structure_ok' : 'structure_weak')
   reasons.push(chartOk ? 'chart_ok' : 'chart_early')
   reasons.push(candleEntry ? 'candle_entry_ok' : 'candle_entry_wait')

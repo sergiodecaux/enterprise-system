@@ -3,6 +3,8 @@ import {
   getFrames,
   getOiSnapshot,
   getCachedSpotPerpHealth,
+  getVenueLeadCache,
+  evaluateVenueLead,
   type SequenceHit,
 } from '../../engine/sequence'
 import type { MarketRegime } from '../../engine/regime/marketRegime'
@@ -32,11 +34,16 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
   const [healthLabel, setHealthLabel] = useState<string>('Спот …')
   const [healthTip, setHealthTip] = useState<string>('')
   const [healthTone, setHealthTone] = useState<string>('text-white/35')
+  const [venueLabel, setVenueLabel] = useState<string>('BN …')
+  const [venueTip, setVenueTip] = useState<string>('')
+  const [venueTone, setVenueTone] = useState<string>('text-white/35')
 
   useEffect(() => {
     const frames = getFrames(symbol, 5 * 60_000)
     const interesting = frames.filter((f) =>
-      ['HIT', 'WALL', 'DELTA', 'OI', 'BOOK', 'LIQ', 'SPOT_PERP'].includes(f.kind)
+      ['HIT', 'WALL', 'DELTA', 'OI', 'BOOK', 'LIQ', 'SPOT_PERP', 'VENUE'].includes(
+        f.kind
+      )
     )
     const recent = interesting.slice(-18).map((f) => ({
       kind: f.kind,
@@ -72,6 +79,32 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
           ? 'text-amber-300/80'
           : 'text-white/35'
     )
+
+    const lead = getVenueLeadCache(symbol)
+    const wallPx = [...frames]
+      .reverse()
+      .find((f) => f.kind === 'WALL' && f.price != null)?.price
+    const venue = evaluateVenueLead({
+      localPrice: wallPx ?? lead?.mid ?? 0,
+      bidWallAlive: frames.some(
+        (f) => f.kind === 'WALL' && f.side === 'BID' && (f.strength ?? 0) >= 0.4
+      ),
+      askWallAlive: frames.some(
+        (f) => f.kind === 'WALL' && f.side === 'ASK' && (f.strength ?? 0) >= 0.4
+      ),
+      lead,
+    })
+    setVenueLabel(venue.label)
+    setVenueTip(venue.reason || 'Binance futures lead')
+    setVenueTone(
+      venue.kind === 'ARB_WALL_RISK'
+        ? 'text-rose-300/90'
+        : venue.kind === 'LEAD_CONFIRM'
+          ? 'text-sky-300/85'
+          : lead?.connected
+            ? 'text-white/45'
+            : 'text-white/25'
+    )
   }, [symbol, refreshKey, sequence?.detectedAt])
 
   const seqLive =
@@ -94,6 +127,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
     if (kind === 'OI') return 'bg-amber-300'
     if (kind === 'LIQ') return 'bg-fuchsia-400'
     if (kind === 'SPOT_PERP') return 'bg-teal-300'
+    if (kind === 'VENUE') return 'bg-sky-300'
     return 'bg-white/35'
   }
 
@@ -117,6 +151,12 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
           title={healthTip || 'Здоровье: спот vs перпы'}
         >
           {healthLabel}
+        </span>
+        <span
+          className={`font-mono text-[9px] font-semibold ${venueTone}`}
+          title={venueTip}
+        >
+          {venueLabel}
         </span>
         {seqLive ? (
           <span
@@ -185,6 +225,7 @@ function frameTip(kind: string, side?: string): string {
   if (kind === 'LIQ' && side === 'LONG_LIQ') return 'Ликвидации лонгов (forced sell)'
   if (kind === 'LIQ') return 'Волна ликвидаций'
   if (kind === 'SPOT_PERP') return 'Спот vs перпы'
+  if (kind === 'VENUE') return 'Binance lead / arb риск стены'
   return kind
 }
 

@@ -25,6 +25,7 @@ import type {
   VolatilityGaugeResult,
 } from './meme'
 import type { SequenceHit } from './sequence/types'
+import type { EnhancedCvdSnapshot } from './orderflow/enhancedCvd'
 
 /** @deprecated Kept for backward-compat imports; unused in SMC path */
 export interface IndicatorBucket {
@@ -309,6 +310,12 @@ export interface AppState {
   whaleWatcher: Record<string, WhaleWatcherState>
   /** Remizov sequence hits (process limit) — client tactical only */
   sequenceHits: Record<string, SequenceHit>
+  /**
+   * Live tape CVD from OrderBookPanel WS — PE/scanner prefer this over OHLCV proxy
+   * when fresh (<45s) and source=TRADES.
+   */
+  liveTapeCvd: Record<string, EnhancedCvdSnapshot>
+  setLiveTapeCvd: (symbol: string, cvd: EnhancedCvdSnapshot) => void
   /** Session DNA профили по символу (internalSymbol → SessionDNA) */
   sessionDNA: Record<string, SessionDNA>
   /** Tape Momentum по символу */

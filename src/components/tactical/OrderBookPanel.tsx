@@ -36,6 +36,7 @@ import {
 import { useOrderBookHistory } from '../../hooks/useOrderBookHistory'
 import { useMLPredictor } from '../../hooks/useMLPredictor'
 import { useMexcDepthStream } from '../../hooks/useMexcDepthStream'
+import { useBinanceLeadStream } from '../../hooks/useBinanceLeadStream'
 import { buildEnhancedCvd } from '../../engine/orderflow/enhancedCvd'
 import { ingestAndDetectSequence, setSpotDeltaCache, deltaFromTrades } from '../../engine/sequence'
 import type {
@@ -121,6 +122,9 @@ const OrderBookPanel = ({ symbol }: Props) => {
     ingestRestTrades,
     error: wsError,
   } = useMexcDepthStream(symbol, depthLimit, true)
+
+  // Binance USDT-M lead → venueLead cache → ingestAndDetect (arb wall risk)
+  useBinanceLeadStream(symbol)
 
   const { history, stats, resetHistory } = useOrderBookHistory(state.metrics)
 
@@ -277,6 +281,10 @@ const OrderBookPanel = ({ symbol }: Props) => {
           const cvd = buildEnhancedCvd({
             trades: tradesForIceberg.length ? tradesForIceberg : null,
           })
+          // Feed PE/scanner the same tape CVD Remizov uses (not OHLCV proxy)
+          if (cvd.source === 'TRADES' && cvd.tradeCount >= 8) {
+            useAppStore.getState().setLiveTapeCvd(symbol, cvd)
+          }
           const sig = useAppStore
             .getState()
             .signals.find((s) => s.internalSymbol === symbol)

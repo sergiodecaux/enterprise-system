@@ -3,7 +3,7 @@
  * Sticky soft-refresh keeps continuity but list is wide enough to cover the top.
  */
 
-const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v5_liq'
+const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v6_liq'
 /** Rebuild order more often so new hot names enter the top */
 const REFRESH_MS = 10 * 60_000
 /**
@@ -261,13 +261,21 @@ export function buildHotMemeWatchlist(
         (e): e is HotMemeEntry =>
           Boolean(e) && Math.abs(e!.chg24hPct) >= 4
       )
-    // Collapsed sticky (e.g. 1 coin) → full rebuild, don't lock forever
+    // Collapsed sticky → full rebuild. Never return empty if candidates exist.
     if (keep.length < MIN_HEALTHY_LIST) {
+      if (!entries.length && candidates.length) {
+        // Fall through thresholds were too tight this tick — take top candidates raw
+        entries = [...candidates]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, MAX_TOTAL)
+      }
       return {
         updatedAt: now,
         dayKey: key,
         entries,
-        reason: `rebuild-unhealthy-sticky keep=${keep.length}`,
+        reason: entries.length
+          ? `rebuild-unhealthy-sticky keep=${keep.length} n=${entries.length}`
+          : `rebuild-empty keep=${keep.length} candidates=${candidates.length}`,
       }
     }
     const extras = entries.filter(

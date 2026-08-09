@@ -94,23 +94,24 @@ export function playProcessSound(
       break
     }
     case 'WALL_RELEASE':
-      tone(880, 40, 'square', 0.06)
-      tone(1320, 80, 'sawtooth', 0.04, 0.03)
-      tone(440, 120, 'triangle', 0.05, 0.06)
+      // Louder "glass" when intensity high (big wall eaten)
+      tone(880, 40 + i * 30, 'square', 0.05 + i * 0.06)
+      tone(1320, 70 + i * 40, 'sawtooth', 0.03 + i * 0.05, 0.03)
+      tone(440, 100 + i * 50, 'triangle', 0.04 + i * 0.05, 0.06)
       break
     case 'OI_RISE':
-      tone(90 + i * 30, 280, 'sine', 0.03 + i * 0.03)
-      tone(120 + i * 20, 320, 'sine', 0.02, 0.05)
+      tone(90 + i * 30, 280 + i * 80, 'sine', 0.03 + i * 0.05)
+      tone(120 + i * 20, 320 + i * 60, 'sine', 0.02 + i * 0.03, 0.05)
       break
     case 'LIQ':
-      tone(60, 50, 'square', 0.07)
-      tone(90, 90, 'sawtooth', 0.05, 0.04)
+      tone(60, 45 + i * 40, 'square', 0.05 + i * 0.07)
+      tone(90, 80 + i * 50, 'sawtooth', 0.04 + i * 0.05, 0.04)
       break
     case 'TRAP':
     case 'MOMENT':
-      tone(523, 80, 'sine', 0.07) // C
-      tone(659, 100, 'sine', 0.06, 0.07) // E
-      tone(784, 140, 'sine', 0.05, 0.14) // G
+      tone(523, 70 + i * 40, 'sine', 0.05 + i * 0.05) // C
+      tone(659, 90 + i * 40, 'sine', 0.04 + i * 0.05, 0.07) // E
+      tone(784, 120 + i * 50, 'sine', 0.04 + i * 0.04, 0.14) // G
       break
   }
 }

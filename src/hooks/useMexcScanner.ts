@@ -321,6 +321,15 @@ export const useMexcScanner = () => {
               trades,
               candles1m: ohlcv1m,
             })
+            // Prefer fresh WS tape CVD from open OrderBookPanel (same as sequence)
+            const liveTape = useAppStore.getState().liveTapeCvd[symbol]
+            if (
+              liveTape?.source === 'TRADES' &&
+              Date.now() - liveTape.updatedAt < 45_000 &&
+              liveTape.tradeCount >= 8
+            ) {
+              enhancedCvd = liveTape
+            }
 
             const storeSpoof =
               useAppStore.getState().spoofAlerts[symbol] ?? []
@@ -417,6 +426,8 @@ export const useMexcScanner = () => {
             spoofAlerts,
             icebergAlerts,
             obDelta,
+            sequence:
+              useAppStore.getState().sequenceHits[symbol] ?? null,
           })
 
           if (signal.surgicalEntry) {

@@ -125,6 +125,8 @@ export interface AnalyzeSymbolInput {
   spoofAlerts?: SpoofAlert[] | null
   icebergAlerts?: IcebergResult[] | null
   obDelta?: ObDeltaSnapshot | null
+  /** Live Remizov sequence from OrderBookPanel */
+  sequence?: import('./sequence/types').SequenceHit | null
 }
 
 export interface AnalyzeSymbolResult {
@@ -263,6 +265,7 @@ function enrichSignal(
     spoofAlerts?: SpoofAlert[] | null
     icebergAlerts?: IcebergResult[] | null
     obDelta?: ObDeltaSnapshot | null
+    sequence?: import('./sequence/types').SequenceHit | null
   }
 ): CoinSignal {
   if (!signal.direction) return signal
@@ -559,6 +562,7 @@ function enrichSignal(
     entry: entryPx,
     stopLoss: slPx,
     takeProfit: tpPx,
+    sequence: ctx.sequence ?? null,
   })
 
   if (hasActiveSetup && !card.ready) {
@@ -640,6 +644,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     spoofAlerts,
     icebergAlerts,
     obDelta,
+    sequence,
   } = input
 
   // Resolve / compute MM intent early for side selection
@@ -1327,6 +1332,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       spoofAlerts,
       icebergAlerts,
       obDelta,
+      sequence,
     })
 
     // Still return the plan when waiting — radar shows it, sniper waits READY
@@ -1596,6 +1602,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
           spoofAlerts,
           icebergAlerts,
           obDelta,
+          sequence,
         })
       : softSignal
 

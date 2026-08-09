@@ -27,8 +27,12 @@ const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 const MAX_SCAN_PUMP = 7
 /** Dump batch for Elite LONG */
 const MAX_SCAN_DUMP = 4
-/** Lean book on top candidates (absorb/CVD) — stay under CF subreq */
-const BOOK_SCAN = 3
+/**
+ * Book reads for Elite LONG fuel. Was 2 pumps → almost all LONGs book_missing.
+ * Top-5 pumps + 1 dump; live 3-snap only when KV stale.
+ */
+const BOOK_SCAN_PUMP = 5
+const BOOK_SCAN_DUMP = 1
 /** One PEAK A per tick */
 const MAX_ALERTS = 1
 /** One Elite meme LONG per tick (pump continue preferred over dump reclaim) */
@@ -381,11 +385,23 @@ export async function runMemeOrderFlowScan(opts: {
   const bySym = new Map<string, (typeof pumps)[0]>()
   for (const c of [...pumps, ...dumps]) bySym.set(c.symbol, c)
   const batch = [...bySym.values()]
+  // Prefer mid-rocket pumps for book (8–60%): tip monsters (+100%) often already late
+  const pumpsForBook = [...pumps].sort((a, b) => {
+    const rank = (e: (typeof a)) => {
+      const chg = e.chg24hPct
+      if (chg >= 10 && chg <= 55) return 3
+      if (chg > 55 && chg <= 90) return 2
+      if (chg >= 8) return 1
+      return 0
+    }
+    return rank(b) - rank(a) || b.score - a.score
+  })
   const bookSet = new Set(
-    [...pumps.slice(0, 2), ...dumps.slice(0, 1)]
-      .map((c) => c.symbol)
-      .slice(0, BOOK_SCAN)
-  ) // top pumps get book for Elite PUMP_CONTINUE fuel
+    [
+      ...pumpsForBook.slice(0, BOOK_SCAN_PUMP).map((c) => c.symbol),
+      ...dumps.slice(0, BOOK_SCAN_DUMP).map((c) => c.symbol),
+    ].filter(Boolean)
+  )
   const state = await loadBookState(opts.kv)
   const rejects: Array<{ symbol: string; reason: string }> = []
   const candidates: ScanAlert[] = []
@@ -409,6 +425,10 @@ export async function runMemeOrderFlowScan(opts: {
     let evMove = 0
     let evMm: string | null = null
     let evReady = false
+    let bookSeen = false
+    let bookObi: number | null = null
+    let tapeBuy: number | null = null
+    let tapeMove: number | null = null
     if (bookSet.has(coin.symbol)) {
       try {
         const read = await readOrderBookEvent({
@@ -421,6 +441,8 @@ export async function runMemeOrderFlowScan(opts: {
           mexcJson,
         })
         if (read.snapshot) {
+          bookSeen = true
+          bookObi = read.snapshot.obi
           state[coin.symbol] = {
             older: prev,
             previous: read.snapshot,
@@ -439,6 +461,19 @@ export async function runMemeOrderFlowScan(opts: {
         evFlow = ev.flowSharePct
         evMove = ev.priceMoveBps
         evMm = ev.mmPattern ?? null
+        // Raw tape/OBI even without rare MM "ready" event — was thrown away before
+        if (read.tape) {
+          tapeBuy = read.tape.buyFlowPct
+          tapeMove = read.tape.priceMoveBps
+          if (!evReady) {
+            evFlow = tapeBuy
+            evMove = tapeMove
+          }
+        } else if (!evReady && bookObi != null) {
+          // OBI-only fallback: positive OBI ≈ bid-heavy
+          evFlow = Math.min(85, Math.max(15, 50 + bookObi * 0.4))
+          evMove = 0
+        }
       } catch {
         if (holdVol != null) {
           state[coin.symbol] = {
@@ -464,6 +499,22 @@ export async function runMemeOrderFlowScan(opts: {
     if (isPump) {
       // Elite: PUMP_CONTINUE LONG A (catch fueled pumps) — before PEAK short
       if (eliteCandidates.length < MAX_ELITE_LONG) {
+        const longFlow =
+          evReady && evSide === 'SHORT'
+            ? Math.max(0, 100 - evFlow)
+            : tapeBuy != null
+              ? tapeBuy
+              : evReady || bookSeen
+                ? evFlow
+                : null
+        const longMove =
+          tapeMove != null ? tapeMove : evReady || bookSeen ? evMove : null
+        const bidHeavy =
+          bookSeen &&
+          ((bookObi != null && bookObi >= 12) ||
+            (longFlow != null &&
+              longFlow >= 56 &&
+              (longMove == null || longMove >= -2)))
         const pumpLong = detectPumpContinue({
           symbol: coin.symbol,
           price,
@@ -472,35 +523,62 @@ export async function runMemeOrderFlowScan(opts: {
           holdVol,
           prevHoldVol: prevHold,
           candles1m: candles,
-          buyFlowPct: evReady
-            ? evSide === 'LONG'
-              ? evFlow
-              : Math.max(0, 100 - evFlow)
-            : null,
-          priceMoveBps: evReady ? evMove : null,
-          tapeFromBook: evReady,
+          buyFlowPct: longFlow,
+          priceMoveBps: longMove,
+          tapeFromBook: bookSeen && (tapeBuy != null || evReady || bookObi != null),
           absorptionLong:
             evKind === 'ABSORPTION_LONG' ||
             (evMm === 'ABSORPTION' && evSide === 'LONG'),
           cvdBullish: evKind === 'CVD_DIVERGENCE' && evSide === 'LONG',
-          bidHeavy: evReady && evSide === 'LONG' && evFlow >= 55,
-          bookConfidence: evReady ? 0.7 : null,
+          bidHeavy,
+          bookConfidence: !bookSeen
+            ? null
+            : evReady
+              ? 0.78
+              : bookObi != null && bookObi >= 12
+                ? 0.66
+                : longFlow != null && longFlow >= 58
+                  ? 0.62
+                  : 0.5,
           phase: 'final',
         })
         if (pumpLong?.ready && pumpLong.quality === 'A') {
-          eliteCandidates.push(
-            pumpContinueToEliteAlert(coin.symbol, pumpLong, coin.chg24hPct)
-          )
+          const hist = setupHistoricalWr(gates, 'PUMP_CONTINUE')
+          if (hist.n >= 8 && hist.wr < 32) {
+            rejects.push({
+              symbol: coin.symbol,
+              reason: `pump_hist_dead:${hist.wr.toFixed(0)}%`,
+            })
+          } else {
+            eliteCandidates.push(
+              pumpContinueToEliteAlert(coin.symbol, pumpLong, coin.chg24hPct)
+            )
+          }
         } else {
           rejects.push({
             symbol: coin.symbol,
-            reason: pumpLong
-              ? `pump_B:${pumpLong.score}/${pumpLong.confidence}`
-              : 'no_pump_continue',
+            reason: !bookSet.has(coin.symbol)
+              ? 'no_pump_continue:book_skipped'
+              : !bookSeen
+                ? 'no_pump_continue:book_fetch_fail'
+                : pumpLong
+                  ? `pump_B:${pumpLong.score}/${pumpLong.confidence}`
+                  : 'no_pump_continue:structure',
           })
         }
       }
 
+      // Peak tapeStall expects BUY share stuck (buys not lifting) — use raw tapeBuy
+      const shortFlow =
+        bookSeen || evReady
+          ? evReady
+            ? evSide === 'SHORT'
+              ? evFlow
+              : Math.max(0, 100 - evFlow)
+            : tapeBuy
+          : null
+      const shortMove =
+        tapeMove != null ? tapeMove : evReady || bookSeen ? evMove : null
       const peak = detectPeakFuelFail({
         symbol: coin.symbol,
         price,
@@ -509,13 +587,9 @@ export async function runMemeOrderFlowScan(opts: {
         holdVol,
         prevHoldVol: prevHold,
         candles1m: candles,
-        buyFlowPct: evReady
-          ? evSide === 'SHORT'
-            ? evFlow
-            : Math.max(0, 100 - evFlow)
-          : null,
-        priceMoveBps: evReady ? evMove : null,
-        tapeFromBook: evReady,
+        buyFlowPct: shortFlow,
+        priceMoveBps: shortMove,
+        tapeFromBook: bookSeen && (tapeBuy != null || evReady || bookObi != null),
         absorptionShort:
           evKind === 'ABSORPTION_SHORT' ||
           (evMm === 'ABSORPTION' && evSide === 'SHORT'),
@@ -571,7 +645,8 @@ export async function runMemeOrderFlowScan(opts: {
       }
     }
 
-    if (isDump && eliteCandidates.length < MAX_ELITE_LONG) {
+    // DUMP reclaim muted (0% WR) — keep scan rejects for lab, no elite push
+    if (false && isDump && eliteCandidates.length < MAX_ELITE_LONG) {
       const dump = detectDumpFuelFail({
         symbol: coin.symbol,
         price,

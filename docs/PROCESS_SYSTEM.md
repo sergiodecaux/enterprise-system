@@ -306,4 +306,29 @@ MEXC WS / REST
 
 ---
 
+---
+
+## 16. Апгрейд A+B (sigma · tape→PE · TG moments)
+
+| Кусок | Где | Что делает |
+|-------|-----|------------|
+| **Sigma HIT/DELTA/WALL** | `sigmaBaseline.ts` + `ingestAndDetect` | Z-score anomaly; шум режет confidence |
+| **Tape CVD → PE** | `liveTapeCvd` store · OrderBookPanel · scanner | ScoreCard/PE берут WS-ленту, не OHLCV proxy |
+| **Fuel в live signal** | `findLiveSignal` · `scoreCard.sequence` | TRAPPED / WALL_RELEASE / SPOT_LED поднимают primary |
+| **Audio ∝ intensity** | `processAudio.ts` | Громче glass/liq/moment при сильном кадре |
+| **TG process moment** | `workers/.../processMoment.ts` на paper cron | Watched symbols → Elite «⚡ МОМЕНТ» (absorb/CVD/release) |
+
+## 17. Фаза C — Binance lead venue
+
+| Кусок | Где | Что делает |
+|-------|-----|------------|
+| **Binance WS** | `useBinanceLeadStream` · `fstream` aggTrade+depth5 | Lead delta / move / OBI |
+| **VenueLead** | `venueLead.ts` · кадр `VENUE` | `ARB_WALL_RISK` если BN двигается, а локальная стена ещё стоит |
+| **Ingest** | `ingestAndDetect` | Режет bounce против lead; бустит WALL_RELEASE по lead |
+| **ProcessStrip** | бейдж `BN ↑/↓` / `Arb стена` | Видно без открытия стакана Binance |
+
+OKX/Bybit — опционально позже; Binance = закон ликвидности для мажоров.
+
+---
+
 *Документ отражает код клиента на момент введения Remizov process layer. При смене порогов или детекторов правь этот файл вместе с `src/engine/sequence/`.*

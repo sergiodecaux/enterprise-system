@@ -45,15 +45,21 @@ import {
   monitorPaperTrades,
 } from './paperTrades'
 import {
+  isSymbolSideBlocked,
+  markSymbolSideLock,
+} from './symbolSideLock'
+import {
   createWatch,
   createWatchesBatch,
   deleteWatch,
+  listWatches,
   listWatchesForChat,
   countActiveWatches,
   monitorWatchedSetups,
   type ConditionalSetupPayload,
   type WatchedSetupRecord,
 } from './watchedSetups'
+import { scanProcessMoments } from './processMoment'
 import {
   getBotJournalPayload,
   getAdaptiveGates,
@@ -1754,6 +1760,21 @@ async function runCronScan(
         /* ignore */
       }
 
+      const conflict = await isSymbolSideBlocked(
+        env.SUBSCRIBERS,
+        a.tradePlan.symbol,
+        'SHORT'
+      )
+      if (conflict.blocked) {
+        skipped++
+        console.log(
+          '[cron] meme blocked — opposite Elite lock',
+          a.tradePlan.symbol,
+          conflict.reason
+        )
+        return
+      }
+
       // PAPER FIRST — never TG a signal we won't manage
       let paperId: string | undefined
       let paperComment: Awaited<
@@ -1820,6 +1841,12 @@ async function runCronScan(
         } catch {
           /* ignore */
         }
+        await markSymbolSideLock(
+          env.SUBSCRIBERS,
+          a.tradePlan.symbol,
+          'SHORT',
+          a.tradePlan.setup
+        )
       }
 
       // Optional fill companion (levels) — only if entry TG already went
@@ -1861,6 +1888,12 @@ async function runCronScan(
         skipped++
         return
       }
+      // DUMP reclaim 0% WR on v291 — mute until rewrite
+      if (a.tradePlan.setup === 'DUMP_FUEL_FAIL') {
+        skipped++
+        console.log('[cron] elite DUMP muted (0% WR)')
+        return
+      }
       try {
         const paceRaw = await env.SUBSCRIBERS?.get(
           'telegram:last_elite_long_alert_at'
@@ -1873,6 +1906,21 @@ async function runCronScan(
         }
       } catch {
         /* ignore */
+      }
+
+      const conflict = await isSymbolSideBlocked(
+        env.SUBSCRIBERS,
+        a.tradePlan.symbol,
+        'LONG'
+      )
+      if (conflict.blocked) {
+        skipped++
+        console.log(
+          '[cron] elite blocked — opposite Predator lock',
+          a.tradePlan.symbol,
+          conflict.reason
+        )
+        return
       }
 
       let paperId: string | undefined
@@ -1925,6 +1973,12 @@ async function runCronScan(
         } catch {
           /* ignore */
         }
+        await markSymbolSideLock(
+          env.SUBSCRIBERS,
+          a.tradePlan.symbol,
+          'LONG',
+          a.tradePlan.setup
+        )
       }
 
       if (paperComment && cr.sent > 0) {
@@ -2400,6 +2454,52 @@ async function runCronScan(
     await runJournal()
     await runPaper()
     await runSignalWatches()
+    // Remizov-lite moments for watched alts (absorption / CVD / wall-release)
+    try {
+      const watches = await listWatches(env)
+      const now = Date.now()
+      const bySym = new Map<string, number>()
+      for (const w of watches) {
+        if (w.expiresAt <= now) continue
+        const sym = (w.internalSymbol || w.symbol || '').toUpperCase()
+        if (!sym || sym.includes('MEME')) continue
+        if (!bySym.has(sym)) bySym.set(sym, w.chatId)
+      }
+      const moments = await scanProcessMoments({
+        kv: env.SUBSCRIBERS,
+        targets: [...bySym.entries()].map(([symbol, chatId]) => ({
+          symbol,
+          chatId,
+        })),
+      })
+      let momentBudget = 2
+      for (const m of moments) {
+        if (momentBudget <= 0) break
+        const r = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'sniper',
+          chatId: m.chatId,
+          title: m.title,
+          text: m.text,
+          dedupeKey: m.dedupeKey,
+        })
+        if (r.sent > 0) {
+          watchAlerts += r.sent
+          sent += r.sent
+          momentBudget--
+        } else {
+          failed += r.failed
+        }
+      }
+      if (moments.length) {
+        console.log(
+          '[cron] process moments',
+          moments.map((x) => `${x.symbol}:${x.kind}`).slice(0, 6)
+        )
+      }
+    } catch (err) {
+      console.error('[cron] processMoment failed', err)
+    }
   }
 
   if (role === 'predator' || role === 'all') {
@@ -2606,8 +2706,9 @@ async function dispatchCommand(
         chatId,
         username,
         subscribedAt: Date.now(),
-        sniper: true,
-        meme: true,
+        // Channel-scoped lists — never cross-enable both alert families
+        sniper: channel === 'sniper',
+        meme: channel === 'meme',
       },
       channel
     )
