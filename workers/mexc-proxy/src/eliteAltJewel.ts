@@ -275,6 +275,7 @@ export async function runEliteAltJewelScan(opts: {
         eventKind: evKind,
         eventReady: evReady,
         eventSide: evSide,
+        market: 'alt',
       })
       if (fc.toxic) {
         bestReject = `toxic:${fc.reasons.slice(0, 2).join('+')}`

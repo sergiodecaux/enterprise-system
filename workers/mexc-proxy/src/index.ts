@@ -70,6 +70,10 @@ import {
 } from './botJournal'
 import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
+import {
+  formatMemePipelineDebug,
+  loadMemePipelineDebug,
+} from './memePipelineDebug'
 import { runEliteAltJewelScan, ALT_JEWEL_SETUP } from './eliteAltJewel'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 import { kvPutThrottled } from './kvWrite'
@@ -736,6 +740,22 @@ async function handleTelegram(
       })),
     })
     return json(r)
+  }
+
+  // Pipeline funnel snapshot (hotlist → ageGate → rejects)
+  if (
+    (path === '/telegram/pipeline-debug' ||
+      path === '/telegram/pipeline-debug/') &&
+    request.method === 'GET'
+  ) {
+    const secret =
+      request.headers.get('X-Alert-Secret') ||
+      new URL(request.url).searchParams.get('secret')
+    if (env.ALERT_SECRET && secret !== env.ALERT_SECRET) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    const snap = await loadMemePipelineDebug(env.SUBSCRIBERS)
+    return json({ ok: true, snap, text: formatMemePipelineDebug(snap) })
   }
 
   // Manual scan trigger (cron test)
@@ -3073,6 +3093,12 @@ async function dispatchCommand(
       channel
     )
     await sendDemoSignal(env, chatId, channel)
+    return
+  }
+
+  if (cmd === 'debug' || cmd === 'pipeline') {
+    const snap = await loadMemePipelineDebug(env.SUBSCRIBERS)
+    await tgSend(env, chatId, formatMemePipelineDebug(snap), channel)
     return
   }
 

@@ -89,8 +89,9 @@ const FORMER_SL_MIN = 0.01
 const MAX_RISK_PCT = 0.011
 /** Avoid STAR-style noise stops — micro 0.45% dies before dead-cut */
 const MIN_RISK_PCT = 0.0075
-const A_MIN_CONF = 68
-const A_BOOK_MIN_SCORE = 62
+const A_MIN_CONF = 64
+const A_BOOK_MIN_SCORE = 55
+const A_MAX_EXHAUSTION = 48
 
 function recentHigh(candles: Candle[], bars = 40): number {
   let hi = 0
@@ -362,8 +363,8 @@ export function detectPumpContinue(
   const regimeOk =
     regime === 'LAUNCH' ||
     regime === 'RELAUNCH' ||
-    (regime === 'FOMO_PEAK' && exhaustion <= 35)
-  const exhOk = exhaustion <= 35
+    (regime === 'FOMO_PEAK' && exhaustion <= A_MAX_EXHAUSTION)
+  const exhOk = exhaustion <= A_MAX_EXHAUSTION
   if (regime) reasons.push(`regime:${regime}`)
   reasons.push(`age_m:${ageMin}`)
   reasons.push(`exh:${exhaustion}`)

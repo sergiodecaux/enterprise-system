@@ -23,6 +23,12 @@ export interface CoherenceCheck {
   tapeFlips?: number | null
 }
 
+/** Memes: walls live seconds. Alts: longer persist. */
+export const COHERENCE_THRESHOLDS = {
+  meme: { wallAge: 20, maxTapeFlips: 3, priceVsTape: 20, flashSpoofAge: 8 },
+  alt: { wallAge: 60, maxTapeFlips: 2, priceVsTape: 15, flashSpoofAge: 30 },
+} as const
+
 export interface MemeBookForecastInput {
   side: MemeBookSide
   bookSeen: boolean
@@ -35,8 +41,10 @@ export interface MemeBookForecastInput {
   eventKind?: string
   eventReady?: boolean
   eventSide?: MemeBookSide | null
-  /** Temporal coherence — wall / tape / price tell one story ≥60s */
+  /** Temporal coherence — meme vs alt thresholds differ */
   coherence?: CoherenceCheck | null
+  /** Default meme — alt path can pass 'alt' */
+  market?: 'meme' | 'alt'
 }
 
 export interface MemeBookForecast {
@@ -116,33 +124,56 @@ export function memeBookForecast(
     reasons.push('toxic:wall_yank')
   }
 
-  // Temporal coherence: wall age / tape wash / price vs tape
+  // Temporal coherence — memes: don't kill on 5–20s walls (normal); only flash spoof
   const coh = input.coherence
+  const th =
+    COHERENCE_THRESHOLDS[input.market === 'alt' ? 'alt' : 'meme']
+  let wallTooYoung = false
   if (coh) {
     const wallAge = coh.wallAgeSec
-    if (wallAge != null && wallAge > 0 && wallAge < 30 && wallPersist) {
+    // Flash spoof only (<8s meme / <30s alt). Mid-age walls: soft penalty, not toxic.
+    if (
+      wallAge != null &&
+      wallAge > 0 &&
+      wallAge < th.flashSpoofAge &&
+      wallPersist
+    ) {
       toxic = true
-      reasons.push('toxic:wall_young')
+      reasons.push('toxic:wall_flash_spoof')
+    } else if (
+      wallAge != null &&
+      wallAge > 0 &&
+      wallAge < th.wallAge &&
+      wallPersist
+    ) {
+      wallTooYoung = true
+      reasons.push(`wall_young_soft:${wallAge.toFixed(0)}<${th.wallAge}`)
     }
     const flips = coh.tapeFlips ?? 0
-    if (flips > 2) {
+    if (flips > th.maxTapeFlips) {
       toxic = true
       reasons.push(`toxic:tape_wash_flips:${flips}`)
     }
-    if (coh.tapeDirectionConsistent === false) {
+    if (coh.tapeDirectionConsistent === false && flips > th.maxTapeFlips) {
       toxic = true
       reasons.push('toxic:tape_incoherent')
     }
     if (coh.priceResponseLogical === false) {
-      toxic = true
-      reasons.push('toxic:price_vs_tape')
+      // Soft on memes — often chop; only hard-toxic via bps check below
+      if (input.market === 'alt') {
+        toxic = true
+        reasons.push('toxic:price_vs_tape')
+      } else {
+        reasons.push('price_vs_tape_soft')
+      }
     }
     const buy = input.tapeBuy
     const move = input.tapeMoveBps
+    const vs = th.priceVsTape
     if (
       buy != null &&
       move != null &&
-      ((buy >= 58 && move <= -15) || (buy <= 42 && move >= 15))
+      ((buy >= 58 && move <= -vs) || (buy <= 42 && move >= vs))
     ) {
       toxic = true
       reasons.push('toxic:manip_price_against_tape')
@@ -178,20 +209,24 @@ export function memeBookForecast(
       ? tapeBuy >= 55 && tapeMove >= 3
       : tapeBuy <= 45 && tapeMove <= -3)
 
+  // Young meme walls can support absorb/CVD, but not wall-only realBook
   const realBook =
     !toxic &&
     ((side === 'LONG' && (absLong || cvdLong)) ||
       (side === 'SHORT' && (absShort || cvdShort)) ||
-      (obiBuilding && wallPersist) ||
-      (obiAligned && (absLong || absShort || cvdLong || cvdShort || wallSupport)) ||
       (obiBuilding && strongTape) ||
-      (wallSupport && wallPersist && obiAligned))
+      (obiAligned && (absLong || absShort || cvdLong || cvdShort)) ||
+      (!wallTooYoung &&
+        ((obiBuilding && wallPersist) ||
+          (obiAligned && wallSupport) ||
+          (wallSupport && wallPersist && obiAligned))))
 
   let score = 40
   if (realBook) {
     score += 28
     reasons.push('real_book')
   }
+  if (wallTooYoung) score -= 8
   if (obiAligned) {
     score += 12
     reasons.push(side === 'LONG' ? `obi_bid:${obi!.toFixed(0)}` : `obi_ask:${obi!.toFixed(0)}`)

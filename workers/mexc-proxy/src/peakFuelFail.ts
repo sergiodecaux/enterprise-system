@@ -69,9 +69,10 @@ const PEAK_DIST_PCT = 1.8
 const MIN_CHG_24H = 5
 const A_MIN_CHG = 7
 const A_MAX_DIST = 1.45
-const A_MIN_CONF = 72
+const A_MIN_CONF = 68
 const A_MIN_FUEL = 1
-const A_MIN_EXHAUSTION = 62
+/** Autopsy: live memes often score 40–55 — 62 starved PEAK */
+const A_MIN_EXHAUSTION = 52
 const A_MIN_AGE_MIN = 12
 const A_WICK_RATIO = 0.3
 const MEGA_PUMP_CHG = 30

@@ -33,6 +33,11 @@ import {
 } from './memeRegimeDetector'
 import { calcExhaustion, tapeBuyExhausting } from './exhaustionScore'
 import { ageAllows, memeAgeGate } from './memeAgeGate'
+import {
+  bucketRejectReason,
+  saveMemePipelineDebug,
+  type MemePipelineSample,
+} from './memePipelineDebug'
 
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v31'
@@ -424,6 +429,18 @@ export async function runMemeOrderFlowScan(opts: {
   })
 
   if (!watchlist.entries.length) {
+    await saveMemePipelineDebug(opts.kv, {
+      at: Date.now(),
+      hotlist: 0,
+      scanned: 0,
+      age_gate_pass: 0,
+      age_gate_block: 0,
+      alerts_peak: 0,
+      alerts_pump: 0,
+      rejectStats: { empty_hotlist: 1 },
+      samples: [],
+      topRejects: [],
+    })
     return {
       alerts: [],
       eliteAlerts: [],
@@ -432,6 +449,15 @@ export async function runMemeOrderFlowScan(opts: {
       scanned: 0,
       rejects: [],
     }
+  }
+
+  let ageGatePass = 0
+  let ageGateBlock = 0
+  const samples: MemePipelineSample[] = []
+  const rejectStats: Record<string, number> = {}
+  const bumpReject = (reason: string) => {
+    const k = bucketRejectReason(reason)
+    rejectStats[k] = (rejectStats[k] ?? 0) + 1
   }
 
   // Prefer mild/early pumps (pre-move lane) over tip monsters — 24h heat last
@@ -575,15 +601,18 @@ export async function runMemeOrderFlowScan(opts: {
     const wallSeenAt = state[coin.symbol]?.wallSeenAt ?? null
     let wallAgeSec = 0
     if (wallPersisted) {
-      const started = wallSeenAt ?? nowTs
       if (!wallSeenAt) {
         state[coin.symbol] = {
           ...(state[coin.symbol] ?? {}),
           wallSeenAt: nowTs,
         }
+        // First sight — unknown age (do NOT treat as 0 → flash spoof toxic)
+        wallAgeSec = 0
+      } else {
+        wallAgeSec = Math.max(1, (nowTs - wallSeenAt) / 1000)
+        // Cron ~2m: older+prev ≈ wall survived ≥1 tick (~90–120s)
+        if (prev && older) wallAgeSec = Math.max(wallAgeSec, 45)
       }
-      wallAgeSec = Math.max(0, (nowTs - started) / 1000)
-      if (wallPersisted && prev && older) wallAgeSec = Math.max(wallAgeSec, 90)
     } else if (wallSeenAt) {
       state[coin.symbol] = {
         ...(state[coin.symbol] ?? {}),
@@ -648,14 +677,19 @@ export async function runMemeOrderFlowScan(opts: {
     }
 
     const coherence = {
-      wallAgeSec: wallPersisted ? Math.max(wallAgeSec, 45) : 0,
+      // 0 = unknown first sight — forecast must not treat as flash spoof
+      wallAgeSec: wallPersisted
+        ? wallAgeSec > 0
+          ? wallAgeSec
+          : null
+        : 0,
       tapeDirectionConsistent: true,
       tapeFlips: 0,
       priceResponseLogical: !(
         tapeBuy != null &&
         tapeMove != null &&
-        ((tapeBuy >= 58 && tapeMove <= -15) ||
-          (tapeBuy <= 42 && tapeMove >= 15))
+        ((tapeBuy >= 58 && tapeMove <= -20) ||
+          (tapeBuy <= 42 && tapeMove >= 20))
       ),
     }
 
@@ -672,6 +706,7 @@ export async function runMemeOrderFlowScan(opts: {
       eventReady: evReady,
       eventSide: evSide,
       coherence,
+      market: 'meme',
     })
     const shortForecast = memeBookForecast({
       side: 'SHORT',
@@ -686,15 +721,34 @@ export async function runMemeOrderFlowScan(opts: {
       eventReady: evReady,
       eventSide: evSide,
       coherence,
+      market: 'meme',
     })
 
+    if (ageGate.tradeable) ageGatePass++
+    else ageGateBlock++
+
+    const sampleBase: MemePipelineSample = {
+      symbol: coin.symbol,
+      age_minutes: regimeState.age_minutes,
+      spike_detected: volProfile.spike_detected,
+      regime: regimeState.regime,
+      exhaustion: exhaustion.total,
+      vol_ratio: volProfile.vol_ratio,
+      age_gate: ageGate.reason,
+      book_score_short: shortForecast.score,
+      book_real_short: shortForecast.realBook,
+      book_toxic_short: shortForecast.toxic,
+      book_bias_short: shortForecast.bias,
+      wall_age_sec: wallAgeSec,
+    }
+
     if (!ageGate.tradeable && !isDump) {
-      rejects.push({
-        symbol: coin.symbol,
-        reason: `age_gate:${ageGate.reason}`,
-      })
+      const reason = `age_gate:${ageGate.reason}`
+      rejects.push({ symbol: coin.symbol, reason })
+      if (samples.length < 8) samples.push({ ...sampleBase, reject: reason })
       continue
     }
+    if (samples.length < 6) samples.push(sampleBase)
 
     if (isPump) {
       // Elite: PUMP_CONTINUE LONG A (catch fueled pumps) — before PEAK short
@@ -954,6 +1008,42 @@ export async function runMemeOrderFlowScan(opts: {
   })
   const top = candidates.slice(0, MAX_ALERTS)
   const eliteTop = eliteCandidates.slice(0, MAX_ELITE_LONG)
+
+  // Rebuild reject funnel (covers all push paths)
+  for (const r of rejects) bumpReject(r.reason)
+  // Fill samples from leftover rejects if thin
+  for (const r of rejects) {
+    if (samples.length >= 8) break
+    if (samples.some((s) => s.symbol === r.symbol)) continue
+    samples.push({
+      symbol: r.symbol,
+      age_minutes: 0,
+      spike_detected: false,
+      regime: '?',
+      exhaustion: 0,
+      vol_ratio: 0,
+      age_gate: '?',
+      book_score_short: 0,
+      book_real_short: false,
+      book_toxic_short: false,
+      book_bias_short: '?',
+      wall_age_sec: 0,
+      reject: r.reason,
+    })
+  }
+
+  await saveMemePipelineDebug(opts.kv, {
+    at: Date.now(),
+    hotlist: watchlist.entries.length,
+    scanned: batch.length,
+    age_gate_pass: ageGatePass,
+    age_gate_block: ageGateBlock,
+    alerts_peak: top.length,
+    alerts_pump: eliteTop.length,
+    rejectStats,
+    samples,
+    topRejects: rejects.slice(0, 10),
+  })
 
   return {
     alerts: top,
