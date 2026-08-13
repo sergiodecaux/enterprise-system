@@ -1,5 +1,6 @@
 /**
- * MEME scanner — PEAK SHORT A → Predator; PUMP_CONTINUE / DUMP LONG A → Elite.
+ * MEME scanner — PEAK SHORT A → Predator; PUMP_CONTINUE → Elite.
+ * v31: memeRegime + exhaustion + ageGate (alts keep MM phases elsewhere).
  */
 
 import type { ScanAlert } from './scanner'
@@ -18,20 +19,32 @@ import {
 } from './botJournal'
 import { detectPeakFuelFail, type Candle } from './peakFuelFail'
 import { detectDumpFuelFail } from './dumpFuelFail'
+import { detectDumpContinuation } from './dumpContinuation'
 import { detectPumpContinue } from './pumpContinue'
 import { appendPeakDecision } from './peakDecisionLog'
+import { memeBookForecast } from './memeBookForecast'
+import {
+  measureMemeVolumeProfile,
+  memeVolRankScore,
+} from './memeVolumeProfile'
+import {
+  detectMemeRegime,
+  type MemeRegime,
+} from './memeRegimeDetector'
+import { calcExhaustion, tapeBuyExhausting } from './exhaustionScore'
+import { ageAllows, memeAgeGate } from './memeAgeGate'
 
 const MEXC = 'https://contract.mexc.com'
-const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
-/** Pump batch for PEAK SHORT */
-const MAX_SCAN_PUMP = 7
-/** Dump batch for Elite LONG */
+const BOOK_STATE_KEY = 'scanner:meme_order_flow_v31'
+/** Pump batch for PEAK SHORT / Elite LONG */
+const MAX_SCAN_PUMP = 10
+/** Dump batch (DUMP reclaim muted — still for hotlist balance) */
 const MAX_SCAN_DUMP = 4
 /**
- * Book reads for Elite LONG fuel. Was 2 pumps → almost all LONGs book_missing.
- * Top-5 pumps + 1 dump; live 3-snap only when KV stale.
+ * Book reads for meme fuel + manipulation forecast.
+ * Cover almost full pump batch — memes lie on tape without depth.
  */
-const BOOK_SCAN_PUMP = 5
+const BOOK_SCAN_PUMP = 10
 const BOOK_SCAN_DUMP = 1
 /** One PEAK A per tick */
 const MAX_ALERTS = 1
@@ -81,6 +94,10 @@ type BookState = Record<
     previous?: OrderBookSnapshot | null
     older?: OrderBookSnapshot | null
     holdVol?: number | null
+    regime?: MemeRegime | null
+    wallSeenAt?: number | null
+    tapeBuy?: number | null
+    tapeActivity?: number | null
   }
 >
 
@@ -161,19 +178,19 @@ function peakFailToAlert(
       `Уровни (SHORT):`,
       `Открытие: ${fmtPx(limit)}`,
       `Стоп (SL): ${fmtPx(sig.sl)} (${pctFrom(limit, sig.sl)})`,
-      `Тейк 1 (TP1): ${fmtPx(sig.tp1)} (${pctFrom(limit, sig.tp1)})`,
+      `Тейк 1 (TP1): ${fmtPx(sig.tp1)} (${pctFrom(limit, sig.tp1)}) · 40% · BE`,
       `Тейк 2 (TP): ${fmtPx(sig.tp)} (${pctFrom(limit, sig.tp)})`,
       '',
       `дневной памп ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · PEAK_FUEL_FAIL · класс A`,
       dayBias === 'PUMP'
-        ? 'PUMP day · fade без топлива'
-        : 'сильный зелёный ход · fade',
+        ? 'PUMP day · fade без топлива · MM phase/intention'
+        : 'сильный зелёный ход · fade · MM phase/intention',
       ...sig.notes.filter((n) => !/^SL~/i.test(n)),
       reasonLine ? `Причины: ${reasonLine}` : '',
     ]
       .filter(Boolean)
       .join('\n'),
-    dedupeKey: `cron:mof29:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
+    dedupeKey: `cron:mof30:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 1_200_000)}`,
     score: sig.confidence,
     winPct: Math.min(78, Math.max(55, 50 + (sig.confidence - 78))),
     style: 'SCALP',
@@ -191,6 +208,50 @@ function peakFailToAlert(
       tp: sig.tp,
       target1: sig.tp1,
       target3: limit * (1 - 0.025),
+      entryReasons: sig.reasons,
+      entryNotes: sig.notes.join(' · '),
+      qualityTier: sig.quality,
+    },
+  }
+}
+
+function dumpContToAlert(
+  symbol: string,
+  sig: NonNullable<ReturnType<typeof detectDumpContinuation>>,
+  chg24hPct: number
+): ScanAlert {
+  const name = symbol.replace('_USDT', '/USDT')
+  const limit = sig.limitPrice
+  return {
+    type: 'MEME',
+    title: `🦈 MEME SHORT ${name} · DUMP CONT A`,
+    text: [
+      `DUMP CONTINUATION SHORT (не reclaim)`,
+      `Открытие: ${fmtPx(limit)}`,
+      `Стоп (SL): ${fmtPx(sig.sl)} (${pctFrom(limit, sig.sl)})`,
+      `Тейк 1: ${fmtPx(sig.tp1)} · Тейк 2: ${fmtPx(sig.tp)}`,
+      `24h ${chg24hPct.toFixed(1)}% · bounce +${sig.bouncePct.toFixed(1)}% без bid support`,
+      ...sig.notes,
+      sig.reasons.slice(0, 8).join(' · '),
+    ].join('\n'),
+    dedupeKey: `cron:mof30:dump_cont:${symbol}:SHORT:${Math.floor(Date.now() / 1_200_000)}`,
+    score: sig.confidence,
+    winPct: Math.min(76, Math.max(52, sig.confidence - 10)),
+    style: 'SCALP',
+    align: 'WITH',
+    tradePlan: {
+      side: 'SHORT',
+      symbol,
+      setup: 'DUMP_CONTINUATION',
+      signalPrice: limit,
+      entryIdeal: limit,
+      zoneLow: limit * 0.999,
+      zoneHigh: limit * 1.001,
+      invalidate: limit * 1.008,
+      sl: sig.sl,
+      tp: sig.tp,
+      target1: sig.tp1,
+      target3: sig.tp,
       entryReasons: sig.reasons,
       entryNotes: sig.notes.join(' · '),
       qualityTier: sig.quality,
@@ -373,9 +434,14 @@ export async function runMemeOrderFlowScan(opts: {
     }
   }
 
+  // Prefer mild/early pumps (pre-move lane) over tip monsters — 24h heat last
   const pumps = [...watchlist.entries]
-    .filter((e) => e.dayBias === 'PUMP' || e.chg24hPct >= 5)
-    .sort((a, b) => b.chg24hPct - a.chg24hPct || b.score - a.score)
+    .filter((e) => e.dayBias === 'PUMP' || e.chg24hPct >= 2)
+    .sort((a, b) => {
+      const early = (e: (typeof a)) =>
+        e.chg24hPct >= 2 && e.chg24hPct <= 14 ? 3 : e.chg24hPct <= 35 ? 2 : 0
+      return early(b) - early(a) || b.score - a.score || b.chg24hPct - a.chg24hPct
+    })
     .slice(0, MAX_SCAN_PUMP)
   const dumps = [...watchlist.entries]
     .filter((e) => e.dayBias === 'DUMP' || e.chg24hPct <= -4)
@@ -385,10 +451,11 @@ export async function runMemeOrderFlowScan(opts: {
   const bySym = new Map<string, (typeof pumps)[0]>()
   for (const c of [...pumps, ...dumps]) bySym.set(c.symbol, c)
   const batch = [...bySym.values()]
-  // Prefer mid-rocket pumps for book (8–60%): tip monsters (+100%) often already late
+  // Book budget: early/mild first, then mid rockets — avoid +100% tips
   const pumpsForBook = [...pumps].sort((a, b) => {
     const rank = (e: (typeof a)) => {
       const chg = e.chg24hPct
+      if (chg >= 2 && chg <= 14) return 4
       if (chg >= 10 && chg <= 55) return 3
       if (chg > 55 && chg <= 90) return 2
       if (chg >= 8) return 1
@@ -429,7 +496,13 @@ export async function runMemeOrderFlowScan(opts: {
     let bookObi: number | null = null
     let tapeBuy: number | null = null
     let tapeMove: number | null = null
-    if (bookSet.has(coin.symbol)) {
+    let lastEvent: import('./orderBookReader').OrderBookEvent | null = null
+    let lastSnap: import('./orderBookReader').OrderBookSnapshot | null = null
+    const needBook =
+      bookSet.has(coin.symbol) ||
+      (isPump && coin.chg24hPct >= 7) ||
+      (isDump && Math.abs(coin.chg24hPct) >= 8)
+    if (needBook) {
       try {
         const read = await readOrderBookEvent({
           symbol: coin.symbol,
@@ -443,6 +516,7 @@ export async function runMemeOrderFlowScan(opts: {
         if (read.snapshot) {
           bookSeen = true
           bookObi = read.snapshot.obi
+          lastSnap = read.snapshot
           state[coin.symbol] = {
             older: prev,
             previous: read.snapshot,
@@ -455,6 +529,7 @@ export async function runMemeOrderFlowScan(opts: {
           }
         }
         const ev = read.event
+        lastEvent = ev
         evReady = ev.ready
         evSide = ev.side
         evKind = ev.kind
@@ -495,10 +570,141 @@ export async function runMemeOrderFlowScan(opts: {
     }
 
     const candles = await fetchMin1Candles(coin.symbol, 80)
+    const nowTs = Date.now()
+    const wallPersisted = Boolean(lastEvent?.wallPersisted)
+    const wallSeenAt = state[coin.symbol]?.wallSeenAt ?? null
+    let wallAgeSec = 0
+    if (wallPersisted) {
+      const started = wallSeenAt ?? nowTs
+      if (!wallSeenAt) {
+        state[coin.symbol] = {
+          ...(state[coin.symbol] ?? {}),
+          wallSeenAt: nowTs,
+        }
+      }
+      wallAgeSec = Math.max(0, (nowTs - started) / 1000)
+      if (wallPersisted && prev && older) wallAgeSec = Math.max(wallAgeSec, 90)
+    } else if (wallSeenAt) {
+      state[coin.symbol] = {
+        ...(state[coin.symbol] ?? {}),
+        wallSeenAt: null,
+      }
+    }
+
+    const absLong =
+      evKind === 'ABSORPTION_LONG' ||
+      (evMm === 'ABSORPTION' && evSide === 'LONG')
+    const absShort =
+      evKind === 'ABSORPTION_SHORT' ||
+      (evMm === 'ABSORPTION' && evSide === 'SHORT')
+
+    const volProfile = measureMemeVolumeProfile(candles, price)
+    const closed = candles.length >= 2 ? candles.slice(0, -1) : candles
+    let chg5mPct: number | null = null
+    if (closed.length >= 5) {
+      const a = closed[closed.length - 5]![1]
+      const b = closed[closed.length - 1]![4]
+      if (a > 0) chg5mPct = ((b - a) / a) * 100
+    }
+
+    const regimeState = detectMemeRegime({
+      profile: volProfile,
+      price,
+      obi: bookObi,
+      chg5mPct,
+      prevRegime: state[coin.symbol]?.regime ?? null,
+      flushProxy: chg5mPct != null && chg5mPct <= -4,
+    })
+    const prevTapeBuy = state[coin.symbol]?.tapeBuy ?? null
+    const tapeActivity =
+      tapeMove != null ? Math.abs(tapeMove) + (tapeBuy != null ? 10 : 0) : null
+    const exhaustion = calcExhaustion({
+      candles1m: candles,
+      profile: volProfile,
+      buyFlowPct: tapeBuy,
+      priceMoveBps: tapeMove,
+      tapeActivity,
+      prevTapeActivity: state[coin.symbol]?.tapeActivity ?? null,
+      spreadBps: lastEvent?.spreadBps ?? null,
+      baselineSpreadBps: null,
+    })
+    const ageGate = memeAgeGate({
+      age_minutes: regimeState.age_minutes,
+      vol_ratio: volProfile.vol_ratio,
+      profile: volProfile,
+      regime: regimeState.regime,
+      vol_decay_was_low:
+        (state[coin.symbol]?.regime === 'ZOMBIE' ||
+          state[coin.symbol]?.regime === 'DISTRIBUTION') &&
+        volProfile.vol_ratio > 0.55,
+    })
+
+    state[coin.symbol] = {
+      ...(state[coin.symbol] ?? {}),
+      regime: regimeState.regime,
+      holdVol: holdVol ?? prevHold ?? state[coin.symbol]?.holdVol ?? null,
+      tapeBuy: tapeBuy ?? state[coin.symbol]?.tapeBuy ?? null,
+      tapeActivity: tapeActivity ?? state[coin.symbol]?.tapeActivity ?? null,
+    }
+
+    const coherence = {
+      wallAgeSec: wallPersisted ? Math.max(wallAgeSec, 45) : 0,
+      tapeDirectionConsistent: true,
+      tapeFlips: 0,
+      priceResponseLogical: !(
+        tapeBuy != null &&
+        tapeMove != null &&
+        ((tapeBuy >= 58 && tapeMove <= -15) ||
+          (tapeBuy <= 42 && tapeMove >= 15))
+      ),
+    }
+
+    const longForecast = memeBookForecast({
+      side: 'LONG',
+      bookSeen,
+      snapshot: lastSnap,
+      previous: prev,
+      event: lastEvent,
+      tapeBuy,
+      tapeMoveBps: tapeMove,
+      mmPattern: evMm,
+      eventKind: evKind,
+      eventReady: evReady,
+      eventSide: evSide,
+      coherence,
+    })
+    const shortForecast = memeBookForecast({
+      side: 'SHORT',
+      bookSeen,
+      snapshot: lastSnap,
+      previous: prev,
+      event: lastEvent,
+      tapeBuy,
+      tapeMoveBps: tapeMove,
+      mmPattern: evMm,
+      eventKind: evKind,
+      eventReady: evReady,
+      eventSide: evSide,
+      coherence,
+    })
+
+    if (!ageGate.tradeable && !isDump) {
+      rejects.push({
+        symbol: coin.symbol,
+        reason: `age_gate:${ageGate.reason}`,
+      })
+      continue
+    }
 
     if (isPump) {
       // Elite: PUMP_CONTINUE LONG A (catch fueled pumps) — before PEAK short
       if (eliteCandidates.length < MAX_ELITE_LONG) {
+        if (longForecast.toxic) {
+          rejects.push({
+            symbol: coin.symbol,
+            reason: `pump_book_toxic:${longForecast.reasons.slice(0, 2).join('+')}`,
+          })
+        } else {
         const longFlow =
           evReady && evSide === 'SHORT'
             ? Math.max(0, 100 - evFlow)
@@ -515,6 +721,12 @@ export async function runMemeOrderFlowScan(opts: {
             (longFlow != null &&
               longFlow >= 56 &&
               (longMove == null || longMove >= -2)))
+        if (!ageAllows(ageGate, 'PUMP_CONTINUE')) {
+          rejects.push({
+            symbol: coin.symbol,
+            reason: `pump_age_block:${ageGate.reason}`,
+          })
+        } else {
         const pumpLong = detectPumpContinue({
           symbol: coin.symbol,
           price,
@@ -526,45 +738,61 @@ export async function runMemeOrderFlowScan(opts: {
           buyFlowPct: longFlow,
           priceMoveBps: longMove,
           tapeFromBook: bookSeen && (tapeBuy != null || evReady || bookObi != null),
-          absorptionLong:
-            evKind === 'ABSORPTION_LONG' ||
-            (evMm === 'ABSORPTION' && evSide === 'LONG'),
+          absorptionLong: absLong,
           cvdBullish: evKind === 'CVD_DIVERGENCE' && evSide === 'LONG',
           bidHeavy,
           bookConfidence: !bookSeen
             ? null
-            : evReady
-              ? 0.78
-              : bookObi != null && bookObi >= 12
-                ? 0.66
-                : longFlow != null && longFlow >= 58
-                  ? 0.62
-                  : 0.5,
+            : longForecast.realBook
+              ? 0.82
+              : evReady
+                ? 0.78
+                : bookObi != null && bookObi >= 12
+                  ? 0.66
+                  : longFlow != null && longFlow >= 58
+                    ? 0.62
+                    : 0.5,
+          bookForecast: longForecast,
           phase: 'final',
+          memeRegime: regimeState.regime,
+          memeAgeMinutes: regimeState.age_minutes,
+          exhaustion: exhaustion.total,
+          ageGateOk: true,
+          volRatio: volProfile.vol_ratio,
+          decayRate: volProfile.decay_rate,
         })
         if (pumpLong?.ready && pumpLong.quality === 'A') {
           const hist = setupHistoricalWr(gates, 'PUMP_CONTINUE')
-          if (hist.n >= 8 && hist.wr < 32) {
+          if (hist.n >= 14 && hist.wr < 28) {
             rejects.push({
               symbol: coin.symbol,
               reason: `pump_hist_dead:${hist.wr.toFixed(0)}%`,
             })
           } else {
-            eliteCandidates.push(
-              pumpContinueToEliteAlert(coin.symbol, pumpLong, coin.chg24hPct)
+            const alert = pumpContinueToEliteAlert(
+              coin.symbol,
+              pumpLong,
+              coin.chg24hPct
             )
+            alert.score = Math.min(
+              99,
+              alert.score + Math.round(memeVolRankScore(volProfile) / 20)
+            )
+            eliteCandidates.push(alert)
           }
         } else {
           rejects.push({
             symbol: coin.symbol,
-            reason: !bookSet.has(coin.symbol)
+            reason: !needBook
               ? 'no_pump_continue:book_skipped'
               : !bookSeen
                 ? 'no_pump_continue:book_fetch_fail'
                 : pumpLong
-                  ? `pump_B:${pumpLong.score}/${pumpLong.confidence}`
-                  : 'no_pump_continue:structure',
+                  ? `pump_B:${pumpLong.score}/${pumpLong.confidence}/bk${longForecast.score}/exh${exhaustion.total}/${regimeState.regime}`
+                  : `no_pump_continue:structure/bk${longForecast.score}/${regimeState.regime}`,
           })
+        }
+        }
         }
       }
 
@@ -579,6 +807,21 @@ export async function runMemeOrderFlowScan(opts: {
           : null
       const shortMove =
         tapeMove != null ? tapeMove : evReady || bookSeen ? evMove : null
+      const askHeavy =
+        bookSeen &&
+        ((bookObi != null && bookObi <= -12) ||
+          (shortFlow != null && shortFlow <= 42))
+      if (!ageAllows(ageGate, 'PEAK_SHORT')) {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: `peak_age_block:${ageGate.reason}`,
+        })
+      } else if (shortForecast.toxic) {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: `peak_book_toxic:${shortForecast.reasons.slice(0, 2).join('+')}`,
+        })
+      } else {
       const peak = detectPeakFuelFail({
         symbol: coin.symbol,
         price,
@@ -590,10 +833,17 @@ export async function runMemeOrderFlowScan(opts: {
         buyFlowPct: shortFlow,
         priceMoveBps: shortMove,
         tapeFromBook: bookSeen && (tapeBuy != null || evReady || bookObi != null),
-        absorptionShort:
-          evKind === 'ABSORPTION_SHORT' ||
-          (evMm === 'ABSORPTION' && evSide === 'SHORT'),
+        absorptionShort: absShort,
         cvdBearish: evKind === 'CVD_DIVERGENCE' && evSide === 'SHORT',
+        bookObi,
+        askHeavy,
+        bookForecast: shortForecast,
+        memeRegime: regimeState.regime,
+        memeAgeMinutes: regimeState.age_minutes,
+        exhaustion: exhaustion.total,
+        ageGateOk: true,
+        tapeBuyExhausting: tapeBuyExhausting(tapeBuy, tapeMove, prevTapeBuy),
+        decayRate: volProfile.decay_rate,
       })
 
       if (!peak?.ready) {
@@ -604,7 +854,7 @@ export async function runMemeOrderFlowScan(opts: {
       } else if (peak.quality !== 'A') {
         rejects.push({
           symbol: coin.symbol,
-          reason: `peak_B:${peak.confidence}`,
+          reason: `peak_B:${peak.confidence}/bk${shortForecast.score}`,
         })
         await appendPeakDecision(opts.kv, {
           at: Date.now(),
@@ -618,7 +868,7 @@ export async function runMemeOrderFlowScan(opts: {
         })
       } else {
         const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
-        if (hist.n >= 8 && hist.wr < 28) {
+        if (hist.n >= 14 && hist.wr < 25) {
           rejects.push({
             symbol: coin.symbol,
             reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
@@ -643,11 +893,18 @@ export async function runMemeOrderFlowScan(opts: {
           candidates.push(alert)
         }
       }
+      }
     }
 
-    // DUMP reclaim muted (0% WR) — keep scan rejects for lab, no elite push
-    if (false && isDump && eliteCandidates.length < MAX_ELITE_LONG) {
-      const dump = detectDumpFuelFail({
+    // DUMP reclaim LONG muted. DUMP_CONTINUATION SHORT → Predator.
+    if (isDump && candidates.length < MAX_ALERTS) {
+      const bidHeavyDump =
+        bookSeen &&
+        ((bookObi != null && bookObi >= 12) ||
+          (tapeBuy != null &&
+            tapeBuy >= 56 &&
+            (tapeMove == null || tapeMove >= -2)))
+      const dumpCont = detectDumpContinuation({
         symbol: coin.symbol,
         price,
         chg24hPct: coin.chg24hPct,
@@ -655,30 +912,33 @@ export async function runMemeOrderFlowScan(opts: {
         holdVol,
         prevHoldVol: prevHold,
         candles1m: candles,
-        buyFlowPct: evReady
-          ? evSide === 'LONG'
-            ? evFlow
-            : Math.max(0, 100 - evFlow)
-          : null,
-        priceMoveBps: evReady ? evMove : null,
-        absorptionLong:
-          evKind === 'ABSORPTION_LONG' ||
-          (evMm === 'ABSORPTION' && evSide === 'LONG'),
-        cvdBullish: evKind === 'CVD_DIVERGENCE' && evSide === 'LONG',
-        bidHeavy: evReady && evSide === 'LONG' && evFlow >= 55,
-        bookConfidence: evReady ? 0.7 : null,
-        phase: 'final',
+        bookForecast: shortForecast,
+        bidHeavy: bidHeavyDump,
       })
-      if (!dump?.ready || dump.quality !== 'A') {
+      if (dumpCont?.ready && dumpCont.quality === 'A') {
+        candidates.push(dumpContToAlert(coin.symbol, dumpCont, coin.chg24hPct))
+      } else {
         rejects.push({
           symbol: coin.symbol,
-          reason: dump ? `dump_B:${dump.confidence}` : 'no_dump_reclaim',
+          reason: dumpCont
+            ? `dump_cont_B:${dumpCont.confidence}`
+            : 'no_dump_continuation',
         })
-      } else {
-        eliteCandidates.push(
-          dumpFailToEliteAlert(coin.symbol, dump, coin.chg24hPct)
-        )
       }
+    }
+
+    // Legacy DUMP reclaim kept for type/import stability — never alerts
+    if (false && isDump) {
+      detectDumpFuelFail({
+        symbol: coin.symbol,
+        price,
+        chg24hPct: coin.chg24hPct,
+        dayBias: coin.dayBias,
+        holdVol,
+        prevHoldVol: prevHold,
+        candles1m: candles,
+        phase: 'final',
+      })
     }
   }
 

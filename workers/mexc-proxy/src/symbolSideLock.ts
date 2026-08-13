@@ -5,7 +5,7 @@
  */
 
 const LOCK_PREFIX = 'telegram:symbol_side_lock_v1:'
-const LOCK_MS = 75 * 60_000
+const LOCK_MS = 45 * 60_000
 
 export type LockSide = 'LONG' | 'SHORT'
 

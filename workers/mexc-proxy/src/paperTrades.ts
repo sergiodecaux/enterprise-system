@@ -30,18 +30,24 @@ import {
   MACRO_TRAIL_PCT,
 } from './vane/macroStrategy'
 import { rememberMacroOutcome } from './vane/macroMemory'
+import {
+  ALT_JEWEL_LEVERAGE,
+  ALT_JEWEL_SL_PCT,
+  ALT_JEWEL_TARGET_ROE_PCT,
+  ALT_JEWEL_TP_PCT,
+} from './eliteAltJewel'
 
-const PAPER_KEY = 'telegram:paper_trades_v291'
+const PAPER_KEY = 'telegram:paper_trades_v292'
 const MAX_ACTIVE = 6
 /** One live PEAK at a time — manage it, don't spam */
 const MAX_ACTIVE_MEME = 1
 /** Same symbol cooldown after open/close */
 const MEME_SYMBOL_COOLDOWN_MS = 60 * 60_000
-/** Trail width once MFE is real (was 1.2% → отдавали почти весь импульс) */
+/** Trail width — used only for non-binary (legacy vane) paths */
 const MEME_TRAIL_TIGHT = 0.006
 const MEME_TRAIL_RUNNER = 0.0045
 const MEME_TRAIL_EARLY = 0.01
-/** Arm trail / BE after this favorable move */
+/** Arm trail / BE after this favorable move (disabled for binary meme exits) */
 const MEME_ARM_PCT = 0.0035
 /** PEAK: arm only after real MFE — autopsy: early arm → noise exits */
 const PEAK_ARM_PCT = 0.007
@@ -52,14 +58,45 @@ const PEAK_BE_R = 0.55
 /** Elite meme LONGs — separate slot from PEAK SHORT */
 const MAX_ACTIVE_ELITE_MEME = 1
 const ELITE_MEME_SETUPS = new Set(['DUMP_FUEL_FAIL', 'PUMP_CONTINUE'])
+/** Elite liquid-alt jewelry scalps (independent of Mini App) */
+const MAX_ACTIVE_ALT_JEWEL = 1
+const ALT_JEWEL_SETUP = 'ALT_JEWEL'
+const ALT_JEWEL_COOLDOWN_MS = 45 * 60_000
 /** Partial lock at ~1R (TP1) then trail remainder */
 const MEME_PARTIAL_R = 1.0
+/**
+ * Meme structural exit: TP1 0.8% (lock BE) → TP2 2.0% (40% ROE @ ×20).
+ * Soft floors only after proven MFE / TP1.
+ */
+export const MEME_TARGET_ROE_PCT = 40
+export const MEME_ASSUMED_LEVERAGE = 20
+export const MEME_TP_PRICE_PCT =
+  MEME_TARGET_ROE_PCT / MEME_ASSUMED_LEVERAGE / 100
+/** Partial take — then BE, hunt TP2 */
+export const MEME_TP1_PRICE_PCT = 0.008
+const MEME_TP1_BE_BUF = 0.001
+/** Don't time-stop open meme if already this much in profit (need room for +2% TP) */
+const MEME_TIMEOUT_SKIP_PNL_PCT = 0.8
+/** PEAK: after this MFE, floor SL to BE±0.2% (no trail, just stop give-back) */
+const PEAK_FLOOR_MFE_PCT = 1.0
+const PEAK_FLOOR_BE_BUF = 0.002
+const PREDATOR_SHORT_SETUPS = new Set([
+  'PEAK_FUEL_FAIL',
+  'DUMP_CONTINUATION',
+])
+/** PUMP: flat dead cut — earlier than SL race on tight stops */
+const PUMP_DEAD_AFTER_MS = 6 * 60_000
+const PUMP_DEAD_MFE_PCT = 0.25
 const WAITING_TTL_MS = 90 * 60_000
 /** Vane HOLD can wait for zone reclaim longer (v4 scalp+wait) */
 const WAITING_TTL_VANE_MS = 240 * 60_000
 const OPEN_TTL_MS = 6 * 60 * 60_000
-/** Memes are short impulse trades — don't hold for hours */
-const OPEN_TTL_MEME_MS = 75 * 60_000
+/** Hold for +2% TP; extend further if already green (see timeout skip) */
+const OPEN_TTL_MEME_MS = 6 * 60 * 60_000
+const OPEN_TTL_MEME_EXTEND_MS = 3 * 60 * 60_000
+/** Alt jewel SHORT scalp @×50 — room for +0.8% without overnight */
+const OPEN_TTL_ALT_JEWEL_MS = 90 * 60_000
+const OPEN_TTL_ALT_JEWEL_EXTEND_MS = 45 * 60_000
 /** MICRO scalp — small TP, don't overnight */
 const OPEN_TTL_MICRO_MS = 55 * 60_000
 /** MACRO move — ride body of the move */
@@ -139,6 +176,8 @@ export interface PaperTrade {
   tpSent: boolean
   /** Partial TP1 hit — BE locked, runner continues */
   tp1Sent?: boolean
+  /** Peak favorable OBI while open (for structural OBI-flip exit) */
+  peakObi?: number | null
   trailMovedSent: boolean
   waitingAnnounced: boolean
   /** Last published success probability 0–100 */
@@ -195,7 +234,7 @@ interface MarketBrief {
 const memoryPapers: PaperTrade[] = []
 
 function paperCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v291')
+  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v292')
 }
 
 async function readPaperCache(): Promise<PaperTrade[] | null> {
@@ -255,7 +294,7 @@ function riskUnit(t: PaperTrade): number {
 }
 
 const MEME_MAX_RISK = 0.011
-const MEME_MIN_RISK = 0.0045
+const MEME_MIN_RISK = 0.0075
 
 /**
  * Always rebuild SL/TP from CURRENT entry using risk%.
@@ -316,6 +355,27 @@ function isMemeTrade(t: PaperTrade): boolean {
     t.alertType === 'MEME' ||
     (t.alertType === 'SNIPER' && ELITE_MEME_SETUPS.has(t.setup))
   )
+}
+
+function isAltJewel(t: PaperTrade | { setup?: string }): boolean {
+  return t.setup === ALT_JEWEL_SETUP
+}
+
+/** PEAK / Elite meme: only initial SL or +2% TP (40% @ ×20). */
+function isBinaryRoeExit(t: PaperTrade): boolean {
+  return isMemeTrade(t) || isAltJewel(t)
+}
+
+function binaryTpPct(t: PaperTrade): number {
+  return isAltJewel(t) ? ALT_JEWEL_TP_PCT : MEME_TP_PRICE_PCT
+}
+
+function binaryTargetRoe(t: PaperTrade): number {
+  return isAltJewel(t) ? ALT_JEWEL_TARGET_ROE_PCT : MEME_TARGET_ROE_PCT
+}
+
+function binaryLeverage(t: PaperTrade): number {
+  return isAltJewel(t) ? ALT_JEWEL_LEVERAGE : MEME_ASSUMED_LEVERAGE
 }
 
 async function mexcJson<T>(path: string): Promise<T | null> {
@@ -802,7 +862,7 @@ export async function closeNonPeakMemePapers(env: PaperEnv): Promise<number> {
   for (const t of list) {
     if (t.alertType !== 'MEME') continue
     if (t.status !== 'WAITING' && t.status !== 'OPEN') continue
-    if (t.setup === 'PEAK_FUEL_FAIL' && t.side === 'SHORT') continue
+    if (PREDATOR_SHORT_SETUPS.has(t.setup) && t.side === 'SHORT') continue
     t.status = 'CLOSED'
     t.closedAt = now
     t.closeReason = 'non_peak_purged'
@@ -871,14 +931,16 @@ export async function createPaperTradeFromPlan(
   comment: PaperComment | null
   skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped' | 'setup'
 }> {
-  // Predator meme: PEAK SHORT only. Elite meme LONGs: DUMP/PUMP as SNIPER.
+  // Predator meme: PEAK / DUMP_CONTINUATION SHORT. Elite: PUMP LONG + ALT_JEWEL.
   const eliteMemeLong =
     plan.alertType === 'SNIPER' &&
     plan.side === 'LONG' &&
     ELITE_MEME_SETUPS.has(plan.setup)
+  const eliteAltJewel =
+    plan.alertType === 'SNIPER' && plan.setup === ALT_JEWEL_SETUP
   if (
     plan.alertType === 'MEME' &&
-    (plan.setup !== 'PEAK_FUEL_FAIL' || plan.side !== 'SHORT')
+    (!PREDATOR_SHORT_SETUPS.has(plan.setup) || plan.side !== 'SHORT')
   ) {
     return { created: false, comment: null, skipReason: 'setup' }
   }
@@ -887,6 +949,18 @@ export async function createPaperTradeFromPlan(
     ELITE_MEME_SETUPS.has(plan.setup) &&
     !eliteMemeLong
   ) {
+    return { created: false, comment: null, skipReason: 'setup' }
+  }
+  // Elite SNIPER paper: meme LONGs, ALT_JEWEL both sides, or VANE_* only
+  if (
+    plan.alertType === 'SNIPER' &&
+    !eliteMemeLong &&
+    !eliteAltJewel &&
+    !plan.setup.startsWith('VANE_')
+  ) {
+    return { created: false, comment: null, skipReason: 'setup' }
+  }
+  if (eliteAltJewel && plan.side !== 'SHORT' && plan.side !== 'LONG') {
     return { created: false, comment: null, skipReason: 'setup' }
   }
   const list = await listPaperTrades(env)
@@ -905,7 +979,8 @@ export async function createPaperTradeFromPlan(
 
   const isMeme = plan.alertType === 'MEME'
   const isEliteMeme = eliteMemeLong
-  const isImpulse = isMeme || isEliteMeme
+  const isAltJewelPlan = eliteAltJewel
+  const isImpulse = isMeme || isEliteMeme || isAltJewelPlan
   if (isMeme) {
     const activeMemes = pruned.filter(
       (t) =>
@@ -949,6 +1024,24 @@ export async function createPaperTradeFromPlan(
       return { created: false, comment: null, skipReason: 'cooldown' }
     }
   }
+  if (isAltJewelPlan) {
+    const activeJewel = pruned.filter(
+      (t) =>
+        t.setup === ALT_JEWEL_SETUP &&
+        (t.status === 'WAITING' || t.status === 'OPEN')
+    )
+    if (activeJewel.length >= MAX_ACTIVE_ALT_JEWEL) {
+      return { created: false, comment: null, skipReason: 'caps' }
+    }
+    const recentSame = pruned.find((t) => {
+      if (t.setup !== ALT_JEWEL_SETUP) return false
+      const last = Math.max(t.createdAt, t.closedAt ?? 0)
+      return now - last < ALT_JEWEL_COOLDOWN_MS
+    })
+    if (recentSame) {
+      return { created: false, comment: null, skipReason: 'cooldown' }
+    }
+  }
 
   const dup = pruned.find(
     (t) =>
@@ -967,7 +1060,7 @@ export async function createPaperTradeFromPlan(
   let zoneLow = plan.zoneLow
   let zoneHigh = plan.zoneHigh
   if (isImpulse) {
-    const isPeak = plan.setup === 'PEAK_FUEL_FAIL'
+    const isPeak = PREDATOR_SHORT_SETUPS.has(plan.setup)
     let mark =
       plan.markPrice && plan.markPrice > 0
         ? plan.markPrice
@@ -975,7 +1068,7 @@ export async function createPaperTradeFromPlan(
           ? fill
           : null
     let snap: TickerSnap | null = null
-    if (!isPeak || !(mark && mark > 0)) {
+    if (!isPeak || !(mark && mark > 0) || isAltJewelPlan) {
       snap = await fetchTickerSnap(plan.symbol)
       mark = snap?.last && snap.last > 0 ? snap.last : mark
     }
@@ -984,37 +1077,63 @@ export async function createPaperTradeFromPlan(
     }
     fill = mark
     entryIdeal = mark
-    const minSlPct = isPeak ? 0 : 0.01
-    if (plan.side === 'LONG') {
-      sl = Math.min(plan.sl, mark * (1 - Math.max(minSlPct, 0.0045)))
-      if (!(sl < mark * 0.997)) sl = mark * 0.99
-      if (snap && (snap.last <= sl || snap.low <= sl)) {
-        return { created: false, comment: null, skipReason: 'pre_stopped' }
+    if (isAltJewelPlan) {
+      // Scalp both sides: TP 0.80% / SL 0.40% @ ×50
+      if (plan.side === 'LONG') {
+        sl = mark * (1 - ALT_JEWEL_SL_PCT)
+        tp = mark * (1 + ALT_JEWEL_TP_PCT)
+        zoneLow = Math.min(zoneLow, mark * 0.999)
+        zoneHigh = Math.max(zoneHigh, mark)
+        if (snap && (snap.last <= sl || snap.low <= sl)) {
+          return { created: false, comment: null, skipReason: 'pre_stopped' }
+        }
+      } else {
+        sl = mark * (1 + ALT_JEWEL_SL_PCT)
+        tp = mark * (1 - ALT_JEWEL_TP_PCT)
+        zoneLow = Math.min(zoneLow, mark)
+        zoneHigh = Math.max(zoneHigh, mark * 1.001)
+        if (snap && (snap.last >= sl || snap.high >= sl)) {
+          return { created: false, comment: null, skipReason: 'pre_stopped' }
+        }
       }
-      zoneLow = Math.min(zoneLow, mark * 0.999)
-      zoneHigh = Math.max(zoneHigh, mark)
-      if (!(tp > mark)) tp = mark * 1.018
-      if (!(target1 != null && target1 > mark)) target1 = mark * 1.011
-      if (!(target3 != null && target3 > mark)) target3 = mark * 1.028
+      target1 = tp
+      target3 = tp
     } else {
-      sl = Math.max(plan.sl, mark * (1 + (isPeak ? 0.01 : minSlPct || 0.01)))
-      if (!(sl > mark * 1.003)) sl = mark * 1.01
-      if (snap && (snap.last >= sl || snap.high >= sl)) {
-        return { created: false, comment: null, skipReason: 'pre_stopped' }
+      const minSlPct = isPeak ? 0 : 0.01
+      if (plan.side === 'LONG') {
+        sl = Math.min(plan.sl, mark * (1 - Math.max(minSlPct, 0.0045)))
+        if (!(sl < mark * 0.997)) sl = mark * 0.99
+        if (snap && (snap.last <= sl || snap.low <= sl)) {
+          return { created: false, comment: null, skipReason: 'pre_stopped' }
+        }
+        zoneLow = Math.min(zoneLow, mark * 0.999)
+        zoneHigh = Math.max(zoneHigh, mark)
+      } else {
+        sl = Math.max(plan.sl, mark * (1 + (isPeak ? 0.01 : minSlPct || 0.01)))
+        if (!(sl > mark * 1.003)) sl = mark * 1.01
+        if (snap && (snap.last >= sl || snap.high >= sl)) {
+          return { created: false, comment: null, skipReason: 'pre_stopped' }
+        }
+        zoneLow = Math.min(zoneLow, mark)
+        zoneHigh = Math.max(zoneHigh, mark * 1.001)
+        if (isPeak) sl = mark * 1.01
       }
-      zoneLow = Math.min(zoneLow, mark)
-      zoneHigh = Math.max(zoneHigh, mark * 1.001)
-      if (!(tp < mark)) tp = mark * (isPeak ? 0.982 : 0.972)
-      if (!(target1 != null && target1 < mark))
-        target1 = mark * (isPeak ? 0.989 : 0.982)
-      if (!(target3 != null && target3 < mark))
-        target3 = mark * (isPeak ? 0.975 : 0.96)
-      if (isPeak) {
-        sl = mark * 1.01
-        tp = mark * 0.982
-        target1 = mark * 0.989
-        target3 = mark * 0.975
+      const rebased = rebaseMemeLevels({
+        entry: mark,
+        side: plan.side,
+        refEntry: mark,
+        refSl: sl,
+      })
+      sl = rebased.sl
+      // Structural meme exits: TP1 0.8% → TP2 2.0%
+      if (plan.side === 'LONG') {
+        tp = mark * (1 + MEME_TP_PRICE_PCT)
+        target1 = mark * (1 + MEME_TP1_PRICE_PCT)
+      } else {
+        tp = mark * (1 - MEME_TP_PRICE_PCT)
+        target1 = mark * (1 - MEME_TP1_PRICE_PCT)
       }
+      target3 = tp
     }
   }
   const trade: PaperTrade = {
@@ -1037,28 +1156,34 @@ export async function createPaperTradeFromPlan(
     zoneTouchedAt: isImpulse ? now : null,
     zoneTouchPrice: fill,
     peak: fill,
-    trailingStop: fill
-      ? plan.side === 'LONG'
-        ? fill * (isImpulse ? 1 - MEME_TRAIL_EARLY : 0.982)
-        : fill * (isImpulse ? 1 + MEME_TRAIL_EARLY : 1.018)
-      : null,
+    // Binary meme: no trail shadow — only initial SL or hard TP
+    trailingStop:
+      isImpulse || isMeme
+        ? null
+        : fill
+          ? plan.side === 'LONG'
+            ? fill * 0.982
+            : fill * 1.018
+          : null,
     createdAt: now,
     openedAt: isImpulse ? now : null,
     expiresAt:
       now +
       (plan.setup === 'LIQUIDATION_ECHO'
         ? OPEN_TTL_ECHO_MS
-        : isImpulse
-          ? OPEN_TTL_MEME_MS
-          : plan.setup.startsWith('VANE_')
-            ? isMacroSetup(plan.setup)
-              ? 90 * 60_000
-              : isMicroSetup(plan.setup)
-              ? 45 * 60_000
-              : plan.vanePath === 'FLIP'
-                ? 75 * 60_000
-                : WAITING_TTL_VANE_MS
-            : WAITING_TTL_MS),
+        : isAltJewelPlan
+          ? OPEN_TTL_ALT_JEWEL_MS
+          : isImpulse
+            ? OPEN_TTL_MEME_MS
+            : plan.setup.startsWith('VANE_')
+              ? isMacroSetup(plan.setup)
+                ? 90 * 60_000
+                : isMicroSetup(plan.setup)
+                ? 45 * 60_000
+                : plan.vanePath === 'FLIP'
+                  ? 75 * 60_000
+                  : WAITING_TTL_VANE_MS
+              : WAITING_TTL_MS),
     closedAt: null,
     lastPulseAt: now,
     closeReason: null,
@@ -1103,22 +1228,29 @@ export async function createPaperTradeFromPlan(
           : [
               `🎯 ВХОД ${fmt(fill!)}`,
               `🛑 SL ${fmt(sl)} (${pctFromEntry(fill!, sl)})`,
-              `🟢 TP1 ${
-                target1 != null ? fmt(target1) : '—'
-              }${target1 != null ? ` (${pctFromEntry(fill!, target1)})` : ''} · 💎 TP ${fmt(tp)} (${pctFromEntry(fill!, tp)})`,
+              `💎 TP ${fmt(tp)} (${pctFromEntry(fill!, tp)}) ≈ +${
+                isAltJewelPlan ? ALT_JEWEL_TARGET_ROE_PCT : MEME_TARGET_ROE_PCT
+              }% @ ×${isAltJewelPlan ? ALT_JEWEL_LEVERAGE : MEME_ASSUMED_LEVERAGE}`,
               `📌 Сетап ${plan.setup} · класс ${plan.qualityTier ?? 'A'}`,
               plan.entryReasons?.length
                 ? `⚡ Почему: ${plan.entryReasons
                     .filter(
                       (r) =>
-                        !/^(quality|fuel|conf|dist_high|chg24|promote|oi_unknown)/.test(
+                        !/^(quality|fuel|conf|dist_high|chg24|promote|oi_unknown|lev|roe_target|tp:|sl:)/.test(
                           r
                         )
                     )
                     .slice(0, 6)
                     .join(' · ')}`
                 : null,
-              `🛡 BE @ +0.5R · trail после MFE · cooldown 35м`,
+              isAltJewelPlan
+                ? `⚖ ALT JEWEL: SL или TP +${(ALT_JEWEL_TP_PCT * 100).toFixed(2)}% (+${ALT_JEWEL_TARGET_ROE_PCT}% @ ×${ALT_JEWEL_LEVERAGE}). Автономно, без Mini App.`
+                : `⚖ Структурный выход: TP1 +${(MEME_TP1_PRICE_PCT * 100).toFixed(1)}% → BE · TP2 +${(MEME_TP_PRICE_PCT * 100).toFixed(1)}% (40% @ ×20). TTL 6ч.`,
+              isAltJewelPlan
+                ? `📡 Топ‑3 ликвидных альта · короткий скальп.`
+                : PREDATOR_SHORT_SETUPS.has(plan.setup)
+                  ? `🛡 SHORT: TP1 → BE; после MFE≥1% floor BE±0.2%.`
+                  : `✂ PUMP: 10м без MFE≥0.25% → cut dead.`,
               `📡 Сопровождение ${cadence}.`,
             ]
               .filter(Boolean)
@@ -1373,7 +1505,21 @@ function memeFavorPct(t: PaperTrade, price: number): number {
 }
 
 function isPeakSetup(t: PaperTrade): boolean {
-  return t.setup === 'PEAK_FUEL_FAIL' && t.side === 'SHORT'
+  return PREDATOR_SHORT_SETUPS.has(t.setup) && t.side === 'SHORT'
+}
+
+function memeTp1Price(t: PaperTrade): number | null {
+  if (!isMemeTrade(t) || isAltJewel(t) || t.fillPrice == null) return null
+  const fill = t.fillPrice
+  return t.side === 'LONG'
+    ? fill * (1 + MEME_TP1_PRICE_PCT)
+    : fill * (1 - MEME_TP1_PRICE_PCT)
+}
+
+function hitMemeTp1(t: PaperTrade, snap: TickerSnap): boolean {
+  const tp1 = memeTp1Price(t)
+  if (tp1 == null) return false
+  return t.side === 'LONG' ? snap.high >= tp1 : snap.low <= tp1
 }
 
 function memeTrailPct(t: PaperTrade, peakFavorPct: number): number {
@@ -1516,22 +1662,76 @@ export async function monitorPaperTrades(
 
     if (now > t.expiresAt) {
       const wasWaiting = t.status === 'WAITING' || !t.fillPrice
-      t.status = 'CLOSED'
-      t.closedAt = now
-      t.closeReason = wasWaiting ? 'timeout_waiting' : 'timeout_open'
-      dirty = true
-      await updateVaneRiskOnClose(env, t, t.fillPrice)
-      pushComment(t, {
-        alertType: 'SYSTEM',
-        title: wasWaiting
-          ? `⏱ Пример закрыт: нет входа ${nameOf(t.symbol)}`
-          : `⏱ Пример закрыт по времени ${nameOf(t.symbol)}`,
-        text: wasWaiting
-          ? `Зона не дали — учебная сделка отменена. Жду следующий сетап.`
-          : `Держал пример слишком долго — закрываю бумажную позицию.`,
-        dedupeKey: `paper:expire:${t.id}`,
-      })
-      continue
+      // Binary open + already green: don't kill — extend and keep hunting TP
+      if (
+        !wasWaiting &&
+        isBinaryRoeExit(t) &&
+        t.fillPrice != null &&
+        t.status === 'OPEN'
+      ) {
+        const snapEarly = await fetchTickerSnap(t.symbol)
+        if (snapEarly) {
+          const u = pnlPct(t.side, t.fillPrice, snapEarly.last)
+          const skipPnl = isAltJewel(t)
+            ? MEME_TIMEOUT_SKIP_PNL_PCT * 0.4
+            : MEME_TIMEOUT_SKIP_PNL_PCT
+          const extendMs = isAltJewel(t)
+            ? OPEN_TTL_ALT_JEWEL_EXTEND_MS
+            : OPEN_TTL_MEME_EXTEND_MS
+          if (u >= skipPnl) {
+            t.expiresAt = now + extendMs
+            dirty = true
+            pushComment(t, {
+              alertType: 'SYSTEM',
+              title: `⏳ Продлил hold ${nameOf(t.symbol)}`,
+              text: [
+                `uPnL +${u.toFixed(2)}% ≥ ${skipPnl}% — не режу по TTL.`,
+                `Жду SL или TP +${(binaryTpPct(t) * 100).toFixed(2)}% (${binaryTargetRoe(t)}% @ ×${binaryLeverage(t)}).`,
+              ].join('\n'),
+              dedupeKey: `paper:ttl-extend:${t.id}:${Math.floor(now / extendMs)}`,
+            })
+            // fall through into normal OPEN handling with this snap below
+          } else {
+            t.status = 'CLOSED'
+            t.closedAt = now
+            t.closeReason = 'timeout_open'
+            dirty = true
+            await updateVaneRiskOnClose(env, t, snapEarly.last)
+            pushComment(t, {
+              alertType: 'SYSTEM',
+              title: `⏱ Пример закрыт по времени ${nameOf(t.symbol)}`,
+              text: [
+                `TTL без цели +${(binaryTpPct(t) * 100).toFixed(2)}% · uPnL ${u.toFixed(2)}%.`,
+                `Вход ${fmt(t.fillPrice)} → ${fmt(snapEarly.last)}.`,
+              ].join('\n'),
+              dedupeKey: `paper:expire:${t.id}`,
+            })
+            continue
+          }
+        } else {
+          // no ticker — soft-extend once rather than blind-close a green unknown
+          t.expiresAt = now + 30 * 60_000
+          dirty = true
+          continue
+        }
+      } else {
+        t.status = 'CLOSED'
+        t.closedAt = now
+        t.closeReason = wasWaiting ? 'timeout_waiting' : 'timeout_open'
+        dirty = true
+        await updateVaneRiskOnClose(env, t, t.fillPrice)
+        pushComment(t, {
+          alertType: 'SYSTEM',
+          title: wasWaiting
+            ? `⏱ Пример закрыт: нет входа ${nameOf(t.symbol)}`
+            : `⏱ Пример закрыт по времени ${nameOf(t.symbol)}`,
+          text: wasWaiting
+            ? `Зона не дали — учебная сделка отменена. Жду следующий сетап.`
+            : `Держал пример слишком долго — закрываю бумажную позицию.`,
+          dedupeKey: `paper:expire:${t.id}`,
+        })
+        continue
+      }
     }
 
     const snap = await fetchTickerSnap(t.symbol)
@@ -1674,9 +1874,151 @@ export async function monitorPaperTrades(
     // OPEN milestones + commentary
     let fill = t.fillPrice!
     const ageMs = t.openedAt != null ? now - t.openedAt : now - t.createdAt
+    const binaryRoe = isBinaryRoeExit(t)
+
+    // Live-migrate open binary papers to TP2 + structural TP1 + TTL floor
+    if (binaryRoe && t.fillPrice != null) {
+      const tpPct = binaryTpPct(t)
+      const wantTp =
+        t.side === 'LONG'
+          ? t.fillPrice * (1 + tpPct)
+          : t.fillPrice * (1 - tpPct)
+      const wantTp1 = isAltJewel(t)
+        ? wantTp
+        : t.side === 'LONG'
+          ? t.fillPrice * (1 + MEME_TP1_PRICE_PCT)
+          : t.fillPrice * (1 - MEME_TP1_PRICE_PCT)
+      const tpDrift =
+        Math.abs(t.tp - wantTp) / Math.max(t.fillPrice, 1e-12) > 0.001
+      const opened = t.openedAt ?? t.createdAt
+      const wantExp =
+        opened + (isAltJewel(t) ? OPEN_TTL_ALT_JEWEL_MS : OPEN_TTL_MEME_MS)
+      if (
+        tpDrift ||
+        t.trailingStop != null ||
+        (t.target1 != null &&
+          Math.abs(t.target1 - wantTp1) / Math.max(t.fillPrice, 1e-12) > 0.001)
+      ) {
+        t.tp = wantTp
+        t.target1 = wantTp1
+        t.target3 = wantTp
+        t.trailingStop = null
+        dirty = true
+      }
+      if (t.expiresAt < wantExp) {
+        t.expiresAt = wantExp
+        dirty = true
+      }
+    }
+
+    // Track peak OBI (favorable) for structural flip exit after TP1
+    if (
+      binaryRoe &&
+      !isAltJewel(t) &&
+      brief.bookImb != null &&
+      Number.isFinite(brief.bookImb)
+    ) {
+      const fav =
+        t.side === 'LONG' ? brief.bookImb : -brief.bookImb
+      const prevPeak = t.peakObi
+      if (prevPeak == null || fav > prevPeak) {
+        t.peakObi = fav
+        dirty = true
+      }
+    }
+
+    // Structural TP1 (memes): lock BE, keep runner to TP2 — do not full-close
+    if (
+      binaryRoe &&
+      !isAltJewel(t) &&
+      !t.tp1Sent &&
+      hitMemeTp1(t, snap)
+    ) {
+      t.tp1Sent = true
+      const beSl =
+        t.side === 'LONG'
+          ? fill * (1 - MEME_TP1_BE_BUF)
+          : fill * (1 + MEME_TP1_BE_BUF)
+      const tightened = t.side === 'LONG' ? beSl > t.sl : beSl < t.sl
+      if (tightened) t.sl = beSl
+      t.beSent = true
+      dirty = true
+      pushComment(t, {
+        alertType: 'SYSTEM',
+        title: `① TP1 +${(MEME_TP1_PRICE_PCT * 100).toFixed(1)}% ${nameOf(t.symbol)}`,
+        text: [
+          `Частичный профит ~40% позиции · SL → BE (${fmt(t.sl)}).`,
+          `Держу runner до TP2 +${(binaryTpPct(t) * 100).toFixed(1)}% (≈ +${binaryTargetRoe(t)}% @ ×${binaryLeverage(t)}).`,
+        ].join('\n'),
+        dedupeKey: `paper:tp1:${t.id}`,
+      })
+      // continue managing same tick for TP2 / SL
+    }
+
+    // After TP1: OBI flipped ≥15 pts from peak favorable → exit runner
+    if (
+      binaryRoe &&
+      !isAltJewel(t) &&
+      t.tp1Sent &&
+      !t.tpSent &&
+      t.peakObi != null &&
+      brief.bookImb != null
+    ) {
+      const favNow = t.side === 'LONG' ? brief.bookImb : -brief.bookImb
+      if (t.peakObi - favNow >= 15) {
+        t.status = 'CLOSED'
+        t.closedAt = now
+        t.closeReason = 'obi_flip'
+        t.tpSent = true
+        dirty = true
+        await updatePredatorRiskOnClose(env, t, snap.last)
+        await updateVaneRiskOnClose(env, t, snap.last)
+        const uPnL = pnlPct(t.side, fill, snap.last)
+        pushComment(t, {
+          alertType: 'SYSTEM',
+          title: `↩ OBI flip выход ${nameOf(t.symbol)}`,
+          text: [
+            `После TP1 OBI развернулся ≥15 пт от пика (peak ${t.peakObi.toFixed(0)} → now ${favNow.toFixed(0)}).`,
+            `Закрыл runner · uPnL ${uPnL.toFixed(2)}%.`,
+          ].join('\n'),
+          dedupeKey: `paper:obi-flip:${t.id}`,
+        })
+        continue
+      }
+    }
+
+    // Binary: hard TP2 (full close)
+    if (binaryRoe && hitTp(t, snap) && !t.tpSent) {
+      t.tpSent = true
+      t.status = 'CLOSED'
+      t.closedAt = now
+      t.closeReason = 'tp'
+      dirty = true
+      const exit =
+        t.side === 'LONG' ? Math.max(snap.last, t.tp) : Math.min(snap.last, t.tp)
+      await updatePredatorRiskOnClose(env, t, exit)
+      await updateVaneRiskOnClose(env, t, exit)
+      const px = pnlPct(t.side, fill, exit)
+      const lev = binaryLeverage(t)
+      const roe = binaryTargetRoe(t)
+      const tpPct = binaryTpPct(t)
+      pushComment(t, {
+        alertType: 'SYSTEM',
+        title: `🎯 +${roe}% @ ×${lev} ${nameOf(t.symbol)}`,
+        text: [
+          isAltJewel(t)
+            ? `TP ${(tpPct * 100).toFixed(2)}% цены. Выход: цель.`
+            : `TP2 ${(tpPct * 100).toFixed(2)}% цены${t.tp1Sent ? ' после TP1/BE' : ''}. Структурный выход.`,
+          `Вход ${fmt(fill)} → ~${fmt(exit)} · ${px.toFixed(2)}% цены ≈ ${(px * lev).toFixed(0)}% @ ×${lev}`,
+        ].join('\n'),
+        dedupeKey: `paper:tp:${t.id}`,
+      })
+      continue
+    }
 
     // PEAK: invalidate late chase — never rebase fill/levels (that manufactured WINs).
     if (
+      !binaryRoe &&
       isPeakSetup(t) &&
       ageMs < 180_000 &&
       Math.abs(fill - t.signalPrice) / Math.max(fill, 1e-12) < 0.002
@@ -1704,7 +2046,16 @@ export async function monitorPaperTrades(
       }
     }
 
-    const trail = updateTrail(t, snap.last)
+    const trail = binaryRoe
+      ? {
+          peak:
+            t.side === 'LONG'
+              ? Math.max(t.peak ?? fill, snap.last)
+              : Math.min(t.peak ?? fill, snap.last),
+          trailingStop: null as number | null,
+          moved: false,
+        }
+      : updateTrail(t, snap.last)
     if (trail.peak !== t.peak || trail.trailingStop !== t.trailingStop) {
       t.peak = trail.peak
       t.trailingStop = trail.trailingStop
@@ -1716,9 +2067,70 @@ export async function monitorPaperTrades(
     const unreal = pnlPct(t.side, fill, snap.last)
     const favorR =
       r > 0 ? (Math.abs(snap.last - fill) / r) * (unreal >= 0 ? 1 : -1) : 0
+    const peakMfe =
+      t.peak != null ? Math.max(0, pnlPct(t.side, fill, t.peak)) : 0
+    const mfeNow = Math.max(peakMfe, Math.max(0, unreal))
 
-    // Journal: 93% LOSS never went green — cut dead meme entries early
+    // PEAK soft floor: after MFE≥1% lock SL to BE±0.2% (prevent CYS/BTR give-back)
     if (
+      binaryRoe &&
+      isPeakSetup(t) &&
+      mfeNow >= PEAK_FLOOR_MFE_PCT &&
+      !hitTp(t, snap)
+    ) {
+      const floorSl =
+        t.side === 'SHORT'
+          ? fill * (1 + PEAK_FLOOR_BE_BUF)
+          : fill * (1 - PEAK_FLOOR_BE_BUF)
+      const tightened =
+        t.side === 'SHORT' ? floorSl < t.sl : floorSl > t.sl
+      if (tightened) {
+        t.sl = floorSl
+        dirty = true
+        if (!t.beSent) {
+          t.beSent = true
+          pushComment(t, {
+            alertType: 'SYSTEM',
+            title: `🛡 PEAK floor BE ${nameOf(t.symbol)}`,
+            text: [
+              `MFE ${mfeNow.toFixed(2)}% ≥ ${PEAK_FLOOR_MFE_PCT}% — стоп в BE±${(PEAK_FLOOR_BE_BUF * 100).toFixed(1)}% (${fmt(floorSl)}).`,
+              `Цель всё ещё TP +${(binaryTpPct(t) * 100).toFixed(2)}% · без trail.`,
+            ].join('\n'),
+            dedupeKey: `paper:peak-floor:${t.id}`,
+          })
+        }
+      }
+    }
+
+    // PUMP dead-entry: 10м+ без MFE ≥0.25% — не держать до полного SL
+    if (
+      binaryRoe &&
+      t.setup === 'PUMP_CONTINUE' &&
+      ageMs >= PUMP_DEAD_AFTER_MS &&
+      mfeNow < PUMP_DEAD_MFE_PCT &&
+      !hitTp(t, snap) &&
+      !hitSl(t, snap)
+    ) {
+      t.status = 'CLOSED'
+      t.closedAt = now
+      t.closeReason = 'dead_entry'
+      dirty = true
+      await updateVaneRiskOnClose(env, t, snap.last)
+      pushComment(t, {
+        alertType: 'SYSTEM',
+        title: `✂ PUMP мёртвый вход ${nameOf(t.symbol)}`,
+        text: [
+          `${Math.round(PUMP_DEAD_AFTER_MS / 60_000)}+ мин · MFE ${mfeNow.toFixed(2)}% < ${PUMP_DEAD_MFE_PCT}% — режу (не binary-hold).`,
+          `Вход ${fmt(fill)} → ${fmt(snap.last)} · ${unreal.toFixed(2)}%`,
+        ].join('\n'),
+        dedupeKey: `paper:pump-dead:${t.id}`,
+      })
+      continue
+    }
+
+    // Dead-entry cut off in binary ROE mode — hold to SL or hard TP only
+    if (
+      !binaryRoe &&
       isMemeTrade(t) &&
       t.openedAt != null &&
       now - t.openedAt >= 4 * 60_000 &&
@@ -1746,7 +2158,7 @@ export async function monitorPaperTrades(
       continue
     }
 
-    if (trail.moved && !t.trailMovedSent) {
+    if (!binaryRoe && trail.moved && !t.trailMovedSent) {
       t.trailMovedSent = true
       dirty = true
       pushComment(t, {
@@ -1773,8 +2185,12 @@ export async function monitorPaperTrades(
             : 0.6
     const favorPct = memeFavorPct(t, snap.last)
     const peakEarlyBe =
-      isPeakSetup(t) && favorPct >= PEAK_ARM_PCT && favorR >= 0.28
+      !binaryRoe &&
+      isPeakSetup(t) &&
+      favorPct >= PEAK_ARM_PCT &&
+      favorR >= 0.28
     const memeEarlyBe =
+      !binaryRoe &&
       isMemeTrade(t) &&
       !isPeakSetup(t) &&
       favorPct >= MEME_ARM_PCT &&
@@ -1788,6 +2204,7 @@ export async function monitorPaperTrades(
       favorPct >= MACRO_BE_MFE_PCT &&
       favorR >= MACRO_BE_R * 0.85
     if (
+      !binaryRoe &&
       !t.beSent &&
       (favorR >= beR || peakEarlyBe || memeEarlyBe || microEarlyBe || macroEarlyBe)
     ) {
@@ -1827,8 +2244,9 @@ export async function monitorPaperTrades(
       })
     }
 
-    // TP1 ≈ R=1: lock BE + tighten trail (meme + MICRO + MACRO)
+    // TP1 ≈ R=1: lock BE + tighten trail (MICRO + MACRO; meme = binary ROE, skip)
     if (
+      !binaryRoe &&
       (isMemeTrade(t) || isMicroSetup(t.setup) || isMacroSetup(t.setup)) &&
       !t.tp1Sent &&
       hitTp1(t, snap) &&
@@ -1908,7 +2326,9 @@ export async function monitorPaperTrades(
       continue
     }
 
-    const bookFlip = memeBookExit(t, brief)
+    const bookFlip = binaryRoe
+      ? { exit: false, reason: '' }
+      : memeBookExit(t, brief)
     if (bookFlip.exit && t.setup !== 'LIQUIDATION_ECHO') {
       t.status = 'CLOSED'
       t.closedAt = now
@@ -1940,7 +2360,9 @@ export async function monitorPaperTrades(
         alertType: 'SYSTEM',
         title: `🛑 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : 'Пример'}: стоп ${nameOf(t.symbol)}`,
         text: [
-          `Стоп (Last Price). Без догона.`,
+          binaryRoe
+            ? `SL. Бинарный выход: либо стоп, либо +${binaryTargetRoe(t)}% @ ×${binaryLeverage(t)}. Без догона.`
+            : `Стоп (Last Price). Без догона.`,
           `Результат ${pnlPct(t.side, fill, t.sl).toFixed(2)}%`,
           brief.pressureLabel,
         ]
@@ -1962,20 +2384,31 @@ export async function monitorPaperTrades(
         t.side === 'LONG' ? Math.max(snap.last, t.tp) : Math.min(snap.last, t.tp)
       await updatePredatorRiskOnClose(env, t, exit)
       await updateVaneRiskOnClose(env, t, exit)
+      const px = pnlPct(t.side, fill, exit)
+      const lev = binaryLeverage(t)
+      const roe = binaryTargetRoe(t)
+      const tpPct = binaryTpPct(t)
       pushComment(t, {
         alertType: 'SYSTEM',
-        title: `🎯 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : t.setup.startsWith('VANE_') ? 'VANE' : 'Пример'}: цель ${nameOf(t.symbol)}`,
-        text: [
-          `Закрыто по TP (Last Price).`,
-          `Вход ${fmt(fill)} → ~${fmt(exit)} · ${pnlPct(t.side, fill, exit).toFixed(2)}%`,
-          brief.pressureLabel,
-        ].join('\n'),
+        title: binaryRoe
+          ? `🎯 +${roe}% @ ×${lev} ${nameOf(t.symbol)}`
+          : `🎯 ${t.setup === 'LIQUIDATION_ECHO' ? 'PREDATOR' : t.setup.startsWith('VANE_') ? 'VANE' : 'Пример'}: цель ${nameOf(t.symbol)}`,
+        text: binaryRoe
+          ? [
+              `TP ${(tpPct * 100).toFixed(2)}% цены. Без trail/BE/догона.`,
+              `Вход ${fmt(fill)} → ~${fmt(exit)} · ${px.toFixed(2)}% ≈ ${(px * lev).toFixed(0)}% @ ×${lev}`,
+            ].join('\n')
+          : [
+              `Закрыто по TP (Last Price).`,
+              `Вход ${fmt(fill)} → ~${fmt(exit)} · ${px.toFixed(2)}%`,
+              brief.pressureLabel,
+            ].join('\n'),
         dedupeKey: `paper:tp:${t.id}`,
       })
       continue
     }
 
-    if (trailHit(t, snap)) {
+    if (!binaryRoe && trailHit(t, snap)) {
       t.status = 'CLOSED'
       t.closedAt = now
       t.closeReason = 'trail'

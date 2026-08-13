@@ -576,9 +576,9 @@ export function detectDumpFuelFail(
     reasons.push('sl:local_low')
   }
   reasons.push(...stop.reasons)
-  const risk = Math.max(entry - sl, entry * 0.0045)
-  const tp1 = entry + risk * 1.15
-  const tp = entry + risk * 2.2
+  // Binary: SL or +2% price (40% ROE @ ×20)
+  const tp = entry * (1 + 0.02)
+  const tp1 = tp
 
   return {
     ready: true,
@@ -597,6 +597,7 @@ export function detectDumpFuelFail(
         ? `Отбой после дампа · LONG`
         : `Лой без топлива продавцов · LONG`,
       `Risk ${(stop.riskPct * 100).toFixed(2)}% · bounce +${ctx.bouncePct.toFixed(1)}% · conf ${confidence}`,
+      `TP +2.0% цены ≈ +40% @ ×20 · только SL или TP`,
       ...notes.slice(0, 3),
     ],
     reasons,

@@ -1,19 +1,19 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-peak-fuel-v29.1',
-  label: 'MEME: PEAK SHORT hardened',
+  id: 'meme-regime-v31.0',
+  label: 'MEME: regime · exhaustion · age',
   deployedNote:
-    'v29.1: anti-conflict vs Elite · A=fail/wick+book|both · dist≥0.35 · journal v291.',
+    'v31: memeRegime+exhaustion+ageGate · PEAK DIST/FOMO exh≥62 · PUMP LAUNCH exh≤35 · TP1→BE→TP2.',
 } as const
 
 /**
- * Enterpriseelite_bot — assistant + meme DUMP LONG reclaim + Mini App alts.
+ * Enterpriseelite_bot — PUMP LONG (meme path) + ALT JEWEL L/S (MM book).
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-meme-long-v2.3',
-  label: 'ELITE: pump LONG + Signals Lab',
+  id: 'elite-meme-regime-v3.1.0',
+  label: 'ELITE: PUMP regime + ALT JEWEL L/S',
   deployedNote:
-    'v2.3: process moments (absorb/CVD) on watches · anti-conflict · PUMP A realBook+OI · journal v291.',
+    'v3.1: meme ageGate/LAUNCH for PUMP · ALT JEWEL обе стороны (фазы MM для альтов).',
 } as const
 
 /** Alias for clarity in Elite-facing code */

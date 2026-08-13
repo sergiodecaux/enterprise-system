@@ -1,11 +1,10 @@
 /**
- * PEAK_FUEL_FAIL — SHORT only when a pump-day meme shows real weakness at the high.
- *
- * A-tier (TG): failed_break OR rejection_wick + bearish 1m confirm.
- * Soft rollover / stall / fake tape without book → B or skip.
+ * PEAK_FUEL_FAIL — meme SHORT at FOMO/DISTRIBUTION with high exhaustion.
+ * (Alt MM-phase logic lives elsewhere — not used here.)
  */
 
 import { bearishTriggerCandle } from './candleConfirm'
+import type { MemeRegime } from './memeRegimeDetector'
 
 export type Candle = [number, number, number, number, number, number]
 
@@ -23,6 +22,25 @@ export interface PeakFuelFailInput {
   tapeFromBook?: boolean
   absorptionShort?: boolean
   cvdBearish?: boolean
+  /** Live OBI from book read */
+  bookObi?: number | null
+  askHeavy?: boolean
+  bookForecast?: {
+    score: number
+    realBook: boolean
+    strongTape: boolean
+    toxic: boolean
+    obiAligned?: boolean
+    bias: string
+    reasons: string[]
+  } | null
+  /** Meme lifecycle */
+  memeRegime?: MemeRegime | null
+  memeAgeMinutes?: number | null
+  exhaustion?: number | null
+  ageGateOk?: boolean
+  tapeBuyExhausting?: boolean
+  decayRate?: 'FAST' | 'NORMAL' | 'SLOW' | null
 }
 
 export type PeakQuality = 'A' | 'B'
@@ -44,16 +62,31 @@ export interface PeakFuelFailSignal {
 }
 
 const SL_PCT = 0.01
-const TP_PCT = 0.018
-const TP1_PCT = 0.011
-const PEAK_DIST_PCT = 1.5
+/** Structural: TP1 0.8% partial → TP2 2.0% */
+const TP_PCT = 0.02
+const TP1_PCT = 0.008
+const PEAK_DIST_PCT = 1.8
 const MIN_CHG_24H = 5
-/** Mid-pumps 8–15% were the loss pocket — A starts higher */
-const A_MIN_CHG = 12
-const A_MAX_DIST = 1.1
-const A_MIN_CONF = 76
-const A_MIN_FUEL = 2
-const MEGA_PUMP_CHG = 25
+const A_MIN_CHG = 7
+const A_MAX_DIST = 1.45
+const A_MIN_CONF = 72
+const A_MIN_FUEL = 1
+const A_MIN_EXHAUSTION = 62
+const A_MIN_AGE_MIN = 12
+const A_WICK_RATIO = 0.3
+const MEGA_PUMP_CHG = 30
+
+function wickRatio(candles: Candle[]): number {
+  let best = 0
+  for (const c of [candles[candles.length - 1], candles[candles.length - 2]]) {
+    if (!c) continue
+    const [, o, h, l, cl] = c
+    const range = h - l
+    if (!(range > 0)) continue
+    best = Math.max(best, (h - Math.max(o, cl)) / range)
+  }
+  return best
+}
 
 function recentHigh(candles: Candle[], bars = 40): number {
   const w = candles.slice(-bars)
@@ -183,7 +216,8 @@ export function detectPeakFuelFail(
   if (distPct > PEAK_DIST_PCT) return null
 
   const failed = failedBreakHigher(input.candles1m)
-  const wick = rejectionWick(input.candles1m)
+  const wickR = wickRatio(input.candles1m)
+  const wick = rejectionWick(input.candles1m) || wickR >= A_WICK_RATIO
   const lh = lowerHighStructure(input.candles1m)
   const stall = stallAtHigh(input.candles1m, price, hi)
   const rollover = rolloverWeakness(input.candles1m, price, hi)
@@ -192,10 +226,21 @@ export function detectPeakFuelFail(
 
   const structureWeak = failed || wick || lh
   const bookWeak = Boolean(input.absorptionShort || input.cvdBearish)
-  const weaknessConfirm = structureWeak || bookWeak || rollover
+  const askHeavy = Boolean(input.askHeavy)
+  const forecast = input.bookForecast
+  const forecastReal = Boolean(forecast?.realBook)
+  const bookToxic = Boolean(forecast?.toxic)
+  const bookScore = forecast?.score ?? (bookWeak ? 72 : askHeavy ? 55 : 15)
+  const bookAligned =
+    bookWeak || askHeavy || forecastReal || (forecast?.obiAligned ?? false)
+  const weaknessConfirm = structureWeak || bookWeak || rollover || askHeavy
 
   if (!weaknessConfirm) return null
-  if (pumping && !(failed || wick || bookWeak)) return null
+  if (pumping && !(failed || wick || bookWeak || forecastReal)) return null
+  if (bookToxic) {
+    // Manipulation wall — do not SHORT into spoof/wash
+    return null
+  }
 
   let fuelScore = 0
   const notes: string[] = []
@@ -255,6 +300,15 @@ export function detectPeakFuelFail(
     notes.push('CVD медвежья дивергенция')
     reasons.push('cvd_bearish')
   }
+  if (askHeavy) {
+    fuelScore += 1
+    notes.push('Стакан ask-heavy (OBI против лонгов)')
+    reasons.push('ask_heavy')
+  }
+  if (forecastReal) {
+    fuelScore += 1
+    notes.push(`Book forecast SHORT score ${bookScore}`)
+  }
 
   if (failed) {
     notes.push('Failed break выше локального хая')
@@ -283,6 +337,21 @@ export function detectPeakFuelFail(
   reasons.push('weakness_ok')
   reasons.push(`dist_high:${distPct.toFixed(2)}`)
   reasons.push(`chg24:${input.chg24hPct.toFixed(1)}`)
+  reasons.push(`wick_r:${wickR.toFixed(2)}`)
+
+  const regime = input.memeRegime ?? null
+  const ageMin = input.memeAgeMinutes ?? 0
+  const exhaustion = input.exhaustion ?? 0
+  const ageGateOk = input.ageGateOk !== false
+  const regimeOk =
+    regime === 'DISTRIBUTION' || regime === 'FOMO_PEAK'
+  if (regime) reasons.push(`regime:${regime}`)
+  reasons.push(`age_m:${ageMin}`)
+  reasons.push(`exh:${exhaustion}`)
+  if (input.tapeBuyExhausting) reasons.push('tape_buy_exhausting')
+  if (input.decayRate) reasons.push(`decay:${input.decayRate}`)
+  if (!ageGateOk) reasons.push('age_gate_block')
+  if (!regimeOk) reasons.push('regime_block')
 
   if (fuelScore < 1 && (failed || wick)) fuelScore += 1
 
@@ -292,29 +361,57 @@ export function detectPeakFuelFail(
   if (follow) confidence += 4
   if (input.chg24hPct >= 15) confidence += 3
   if (distPct <= 0.55) confidence += 2
+  if (exhaustion >= A_MIN_EXHAUSTION) confidence += 4
+  if (regimeOk) confidence += 3
+  if (input.tapeBuyExhausting) confidence += 3
+  if (input.decayRate === 'FAST') confidence += 2
   if (oiRising) confidence -= 10
   if (pumping) confidence -= 8
   if (stall && !failed && !wick) confidence -= 6
   if (!follow) confidence -= 3
+  if (ageMin < A_MIN_AGE_MIN) confidence -= 8
   confidence = Math.min(94, Math.max(0, Math.round(confidence)))
 
-  if (confidence < 74) return null
+  if (confidence < 66) return null
 
   const megaPump = input.chg24hPct >= MEGA_PUMP_CHG
-  // A: hard structure + follow; prefer book absorb. Tip-glue (<0.3%) = dead shorts.
-  const hardStructure = failed || wick
+  const hardStructure =
+    failed || wickR >= A_WICK_RATIO || (wick && wickR >= 0.28)
+  const oiOk = !oiRising || (hardStructure && (bookWeak || (failed && wick)))
+  if (forecast?.reasons?.length) {
+    for (const r of forecast.reasons.slice(0, 5)) reasons.push(`bk:${r}`)
+  }
+  reasons.push(`book_score:${bookScore}`)
+  if (bookAligned) reasons.push('book_aligned')
+  else reasons.push('book_thin')
+  const obi = input.bookObi
+  const obiOk = obi == null || obi <= -8 || askHeavy || bookWeak
+  const bookAllowsA =
+    !bookToxic &&
+    bookAligned &&
+    bookScore >= 55 &&
+    (forecast?.bias === 'NEXT_DOWN' ||
+      bookWeak ||
+      (askHeavy && hardStructure) ||
+      bookScore >= 70)
   const aTier =
     hardStructure &&
     follow &&
-    (bookWeak || (failed && wick)) &&
+    bookAllowsA &&
+    (bookWeak || failed || wickR >= A_WICK_RATIO) &&
+    ageGateOk &&
+    regimeOk &&
+    ageMin >= A_MIN_AGE_MIN &&
+    exhaustion >= A_MIN_EXHAUSTION &&
+    obiOk &&
     confidence >= A_MIN_CONF &&
     fuelScore >= A_MIN_FUEL &&
-    distPct >= 0.35 &&
+    distPct >= 0.22 &&
     distPct <= A_MAX_DIST &&
     input.chg24hPct >= A_MIN_CHG &&
-    !oiRising &&
-    !pumping &&
-    (!megaPump || bookWeak || (failed && wick && input.tapeFromBook === true)) &&
+    oiOk &&
+    (!pumping || (failed && wick) || bookWeak) &&
+    (!megaPump || bookWeak || forecastReal || (failed && wick && askHeavy)) &&
     !(stall && !failed && !wick)
 
   const quality: PeakQuality = aTier ? 'A' : 'B'
@@ -339,6 +436,7 @@ export function detectPeakFuelFail(
     notes: [
       `Пик + слабость · SHORT · класс ${quality}`,
       `24h ${input.chg24hPct >= 0 ? '+' : ''}${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}% · conf ${confidence}`,
+      `Структурный выход: TP1 −0.8% → BE · TP2 −2.0% ≈ +40% @ ×20`,
       ...notes.slice(0, 4),
     ],
     reasons,

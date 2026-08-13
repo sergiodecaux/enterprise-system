@@ -1,23 +1,26 @@
 /**
- * Hot-meme watchlist: TOP liquid memes by 24h heat for Day Continue scanner.
- * Sticky soft-refresh keeps continuity but list is wide enough to cover the top.
+ * Hot-meme watchlist: liquid memes for deep-scan.
+ * v7: rockets/calm 24h heat + PREMOVE lane (liq, mild 24h — volume accel
+ * confirmed on 1m in memeOrderFlow, not from ticker alone).
  */
 
-const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v6_liq'
+const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v7_premove'
 /** Rebuild order more often so new hot names enter the top */
 const REFRESH_MS = 10 * 60_000
 /**
  * Dual lane: rockets (worked) + calmer mid-liq — both kept, not either/or.
  * Scan still caps how many we deep-scan per tick (CF budget).
  */
-const MAX_ROCKETS = 14
-const MAX_CALM = 12
-/** Dump lane for DUMP_FUEL_FAIL LONGs (mirror of pump shorts). */
+const MAX_ROCKETS = 12
+const MAX_CALM = 10
+/** Pre-move: liquid, mild |chg24| — candidates for vol-accel before price move */
+const MAX_PREMOVE = 10
+/** Dump lane for DUMP_CONTINUATION SHORT / balance */
 const MAX_DUMPS = 10
-const MAX_TOTAL = 28
+const MAX_TOTAL = 30
 /** Force full rebuild if sticky list collapses (was stuck at 1 coin → no signals) */
 const MIN_HEALTHY_LIST = 10
-const MIN_ABS_CHG_PCT = 3
+const MIN_ABS_CHG_PCT = 2
 /** Rockets: was 100k — thin names (LONGXIA…) SL'd; need tradeable depth */
 const MIN_QUOTE_VOL = 500_000
 /** Calm lane: more liquid, milder 24h — slower path to TP */
@@ -25,6 +28,10 @@ const CALM_VOL_MIN = 1_000_000
 const CALM_VOL_MAX = 25_000_000
 const CALM_CHG_MIN = 5
 const CALM_CHG_MAX = 28
+/** Pre-move lane: enough depth, price not already extended */
+const PREMOVE_VOL_MIN = 800_000
+const PREMOVE_CHG_MAX = 12
+const PREMOVE_CHG_MIN = 1.5
 
 export type DayBias = 'PUMP' | 'DUMP'
 
@@ -87,8 +94,22 @@ function calmScore(chgAbs: number, vol: number): number {
   return chgAbs * volFactor * 1.15
 }
 
+/** Prefer liquid + NOT extended — scan will confirm vol accel on 1m */
+function premoveScore(chgAbs: number, vol: number): number {
+  if (vol < PREMOVE_VOL_MIN) return 0
+  if (chgAbs < PREMOVE_CHG_MIN || chgAbs > PREMOVE_CHG_MAX) return 0
+  const volFactor = Math.log10(Math.max(vol, 10_000))
+  // Invert heat: quieter 24h + higher vol ranks higher
+  const quietBonus = 1 + (PREMOVE_CHG_MAX - chgAbs) / PREMOVE_CHG_MAX
+  return volFactor * quietBonus * 12
+}
+
 function heatScore(chgAbs: number, vol: number): number {
-  return Math.max(rocketScore(chgAbs, vol), calmScore(chgAbs, vol))
+  return Math.max(
+    rocketScore(chgAbs, vol),
+    calmScore(chgAbs, vol),
+    premoveScore(chgAbs, vol)
+  )
 }
 
 export async function loadHotMemeWatchlist(
@@ -193,9 +214,32 @@ export function buildHotMemeWatchlist(
         calmScore(Math.abs(a.chg24hPct), a.quoteVolUsd)
     )
     .slice(0, MAX_CALM)
-  // Rockets first (proven), then unique calm names — both lanes live together
+  const premoves = [...pumpsAll]
+    .filter(
+      (e) =>
+        e.quoteVolUsd >= PREMOVE_VOL_MIN &&
+        e.chg24hPct >= PREMOVE_CHG_MIN &&
+        e.chg24hPct <= PREMOVE_CHG_MAX
+    )
+    .sort(
+      (a, b) =>
+        premoveScore(Math.abs(b.chg24hPct), b.quoteVolUsd) -
+        premoveScore(Math.abs(a.chg24hPct), a.quoteVolUsd)
+    )
+    .slice(0, MAX_PREMOVE)
+    .map((e) => ({
+      ...e,
+      score: Number(
+        Math.max(e.score, premoveScore(Math.abs(e.chg24hPct), e.quoteVolUsd)).toFixed(2)
+      ),
+    }))
+
+  // Premoves first (early), then rockets/calm — avoid living only in 24h tails
   const bySym = new Map<string, HotMemeEntry>()
-  for (const e of rockets) bySym.set(e.symbol, e)
+  for (const e of premoves) bySym.set(e.symbol, e)
+  for (const e of rockets) {
+    if (!bySym.has(e.symbol)) bySym.set(e.symbol, e)
+  }
   for (const e of calm) {
     if (!bySym.has(e.symbol)) bySym.set(e.symbol, e)
   }

@@ -70,6 +70,7 @@ import {
 } from './botJournal'
 import { formatOutcomeAnalysisLines } from './tradeOutcomeAnalysis'
 import { runMemeOrderFlowScan } from './memeOrderFlow'
+import { runEliteAltJewelScan, ALT_JEWEL_SETUP } from './eliteAltJewel'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 import { kvPutThrottled } from './kvWrite'
 import {
@@ -636,37 +637,41 @@ async function handleTelegram(
       }
     }
     // Import subscribers from peer so standby isn't mute (separate KV)
-    if (memeSubs.length) {
-      const cur = await listSubscribers(env, 'meme')
-      const byId = new Map(cur.map((s) => [s.chatId, s]))
-      for (const s of memeSubs) {
-        if (!(s.chatId > 0)) continue
-        const prev = byId.get(s.chatId)
-        byId.set(s.chatId, {
-          chatId: s.chatId,
-          username: s.username ?? prev?.username,
-          subscribedAt: s.joinedAt ?? prev?.subscribedAt ?? Date.now(),
-          sniper: s.sniperAlerts ?? prev?.sniper ?? false,
-          meme: s.memeAlerts ?? prev?.meme ?? true,
-        })
+    try {
+      if (memeSubs.length) {
+        const cur = await listSubscribers(env, 'meme')
+        const byId = new Map(cur.map((s) => [s.chatId, s]))
+        for (const s of memeSubs) {
+          if (!(s.chatId > 0)) continue
+          const prev = byId.get(s.chatId)
+          byId.set(s.chatId, {
+            chatId: s.chatId,
+            username: s.username ?? prev?.username,
+            subscribedAt: s.joinedAt ?? prev?.subscribedAt ?? Date.now(),
+            sniper: s.sniperAlerts ?? prev?.sniper ?? false,
+            meme: s.memeAlerts ?? prev?.meme ?? true,
+          })
+        }
+        await saveSubscribers(env, [...byId.values()], 'meme')
       }
-      await saveSubscribers(env, [...byId.values()], 'meme')
-    }
-    if (sniperSubs.length) {
-      const cur = await listSubscribers(env, 'sniper')
-      const byId = new Map(cur.map((s) => [s.chatId, s]))
-      for (const s of sniperSubs) {
-        if (!(s.chatId > 0)) continue
-        const prev = byId.get(s.chatId)
-        byId.set(s.chatId, {
-          chatId: s.chatId,
-          username: s.username ?? prev?.username,
-          subscribedAt: s.joinedAt ?? prev?.subscribedAt ?? Date.now(),
-          sniper: s.sniperAlerts ?? prev?.sniper ?? true,
-          meme: s.memeAlerts ?? prev?.meme ?? false,
-        })
+      if (sniperSubs.length) {
+        const cur = await listSubscribers(env, 'sniper')
+        const byId = new Map(cur.map((s) => [s.chatId, s]))
+        for (const s of sniperSubs) {
+          if (!(s.chatId > 0)) continue
+          const prev = byId.get(s.chatId)
+          byId.set(s.chatId, {
+            chatId: s.chatId,
+            username: s.username ?? prev?.username,
+            subscribedAt: s.joinedAt ?? prev?.subscribedAt ?? Date.now(),
+            sniper: s.sniperAlerts ?? prev?.sniper ?? true,
+            meme: s.memeAlerts ?? prev?.meme ?? false,
+          })
+        }
+        await saveSubscribers(env, [...byId.values()], 'sniper')
       }
-      await saveSubscribers(env, [...byId.values()], 'sniper')
+    } catch (err) {
+      console.error('[failover] import subs failed', err)
     }
     // Never 500 on activate — peer handoff treats non-2xx as failure and dual-active sticks
     try {
@@ -998,7 +1003,75 @@ async function handleTelegram(
       clearedDecisions,
       closedPapers,
       engines: { meme: BOT_ENGINE.id, elite: SNIPER_ENGINE.id },
-      note: 'Full lab wipe v291 — clean slate all stats',
+      note: 'Full lab wipe v292 — clean slate + detailed calibration journal',
+    })
+  }
+
+  // Announce current engines / lab to both Telegram bots
+  if (
+    (path === '/telegram/strategy-status' ||
+      path === '/telegram/strategy-status/') &&
+    (request.method === 'GET' || request.method === 'POST')
+  ) {
+    const secret =
+      request.headers.get('X-Alert-Secret') ||
+      new URL(request.url).searchParams.get('secret')
+    if (env.ALERT_SECRET && secret !== env.ALERT_SECRET) {
+      return json({ error: 'Unauthorized' }, 401)
+    }
+    const targetBlock = [
+      `<b>🎯 РЕЖИМ (v29.6 / v2.8)</b>`,
+      `Стакан: <b>memeBookForecast</b> — absorb/CVD/OBI, toxic spoof/wash = skip.`,
+      `A только с <b>realBook</b> (не tape-only). Цель: SL или +40% @ ×20.`,
+      `PUMP min risk 0.75% · dead cut 6м · PEAK floor @ MFE≥1%.`,
+    ].join('\n')
+    const memeText = [
+      `🚀 <b>ENTERPRISE PREDATOR</b>`,
+      `Engine: <code>${BOT_ENGINE.id}</code>`,
+      '',
+      targetBlock,
+      '',
+      `<b>Стратегия:</b> только <b>PEAK_FUEL_FAIL SHORT A</b>`,
+      '• fail/wick + bearish follow · dist≥0.35%',
+      '• anti-conflict: нет LONG на том же тикере 75м',
+      '',
+      `Журнал lab <code>v292</code> — полный разбор для калибровки под эту цель.`,
+      new Date().toISOString(),
+    ].join('\n')
+    const eliteText = [
+      `🏛 <b>ENTERPRISE ELITE</b>`,
+      `Engine: <code>${SNIPER_ENGINE.id}</code>`,
+      '',
+      targetBlock,
+      '',
+      `<b>Стратегия:</b>`,
+      '• <b>PUMP_CONTINUE LONG A</b> — realBook + OI↑ + structure',
+      '• <b>⚡ МОМЕНТ</b> — absorb/CVD на watched',
+      '• DUMP reclaim выключен · anti-conflict vs Predator',
+      '',
+      `Журнал lab <code>v292</code> — калибровка под ROE 30–40% @ ×20.`,
+      new Date().toISOString(),
+    ].join('\n')
+    const meme = await broadcastAlert(env, {
+      type: 'SYSTEM',
+      channel: 'meme',
+      title: 'Predator · цель 30–40% @ ×20',
+      text: memeText,
+      dedupeKey: `strategy-status:meme:roe30:${Math.floor(Date.now() / 60_000)}`,
+    })
+    const sniper = await broadcastAlert(env, {
+      type: 'SYSTEM',
+      channel: 'sniper',
+      title: 'Elite · цель 30–40% @ ×20',
+      text: eliteText,
+      dedupeKey: `strategy-status:sniper:roe30:${Math.floor(Date.now() / 60_000)}`,
+    })
+    return json({
+      ok: true,
+      lab: 'v292',
+      engines: { meme: BOT_ENGINE.id, elite: SNIPER_ENGINE.id },
+      meme,
+      sniper,
     })
   }
 
@@ -1502,6 +1575,7 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
   ])
   await announceEngineToChannel(env, 'sniper', SNIPER_ENGINE, [
     'Hourly /brief · daily close · зоны · F&G · новости',
+    'ALT JEWEL: топ‑3 альта · SHORT ×50 · +40% ROE (0.8% цены) — без Mini App',
     'Mini App → Сигналы (альты): слежение + READY → журнал Lab WR',
   ])
 }
@@ -1664,6 +1738,7 @@ async function runCronScan(
   let journalResolved = 0
   let resultAlerts = 0
   let heartbeat = 0
+  let idlePulses = 0
   let predatorSkip = ''
   let predatorHotlist: string[] = []
   let memeScanned = 0
@@ -2007,6 +2082,109 @@ async function runCronScan(
       return
     }
 
+    // Elite ALT_JEWEL SHORT — top-3 liquid alts @×50 (independent of Mini App)
+    if (
+      a.type === 'SNIPER' &&
+      a.tradePlan &&
+      a.tradePlan.setup === ALT_JEWEL_SETUP &&
+      a.tradePlan.side === 'SHORT'
+    ) {
+      if (a.tradePlan.qualityTier !== 'A') {
+        skipped++
+        return
+      }
+      try {
+        const paceRaw = await env.SUBSCRIBERS?.get(
+          'telegram:last_elite_alt_jewel_at'
+        )
+        const lastAt = paceRaw ? Number(paceRaw) : 0
+        if (lastAt > 0 && Date.now() - lastAt < 20 * 60_000) {
+          skipped++
+          console.log('[cron] alt jewel paced — too soon')
+          return
+        }
+      } catch {
+        /* ignore */
+      }
+
+      let paperId: string | undefined
+      let paperComment: Awaited<
+        ReturnType<typeof createPaperTradeFromPlan>
+      >['comment'] = null
+      try {
+        const paper = await createPaperTradeFromPlan(env, {
+          ...a.tradePlan,
+          alertType: 'SNIPER',
+          target1: a.tradePlan.target1,
+          target3: a.tradePlan.target3,
+          markPrice:
+            a.tradePlan.signalPrice || a.tradePlan.entryIdeal || undefined,
+        })
+        if (!paper.created) {
+          skipped++
+          console.log(
+            '[cron] alt jewel blocked — no paper',
+            paper.skipReason ?? 'unknown',
+            a.dedupeKey
+          )
+          return
+        }
+        paperComment = paper.comment
+        paperId =
+          paper.comment?.dedupeKey?.replace(/^paper:fill:/, '') || undefined
+      } catch (err) {
+        skipped++
+        console.error('[cron] alt jewel paper failed', err)
+        return
+      }
+
+      const cr = await broadcastAlert(env, {
+        type: 'SNIPER',
+        channel: 'sniper',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+      })
+      sent += cr.sent
+      failed += cr.failed
+
+      if (cr.sent > 0) {
+        try {
+          await env.SUBSCRIBERS?.put(
+            'telegram:last_elite_alt_jewel_at',
+            String(Date.now())
+          )
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (paperComment && cr.sent > 0) {
+        const pr = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'sniper',
+          title: paperComment.title,
+          text: paperComment.text,
+          dedupeKey: paperComment.dedupeKey,
+        })
+        paperComments += pr.sent
+      }
+
+      const logged = await recordBotAlert(env, {
+        alertType: 'SNIPER',
+        score: a.score,
+        dedupeKey: a.dedupeKey,
+        plan: {
+          ...a.tradePlan,
+          engineId: SNIPER_ENGINE.id,
+          paperId,
+          tgEntrySent: cr.sent > 0,
+        },
+      })
+      if (logged) journalLogged++
+      return
+    }
+
     const alertChannel = channelForAlertType(a.type)
     let shouldCreateWatch = a.watchOnly
     if (!a.watchOnly) {
@@ -2137,7 +2315,7 @@ async function runCronScan(
 
   const runJournal = async () => {
     try {
-      // v291 keys are fresh empty — no wipe PUT needed (KV write quota)
+      // v292 keys are fresh empty — no wipe PUT needed (KV write quota)
       const resolution = await resolveBotJournal(env)
       journalResolved = resolution.changed
       let tgBudget = 5
@@ -2271,6 +2449,29 @@ async function runCronScan(
           'rejects',
           flow.rejects.slice(0, 6)
         )
+        // Do NOT TG here — predator tick already near CF 50-subrequest cap.
+        // Idle pulse runs on paper cron (fresh budget). Stamp intent only.
+        try {
+          const lastIdle = Number(
+            (await durableGet(env, IDLE_PULSE_KEY)) || 0
+          )
+          if (!lastIdle || Date.now() - lastIdle >= IDLE_PULSE_MS) {
+            await runtimePut(
+              IDLE_PULSE_PENDING_KEY,
+              JSON.stringify({
+                at: Date.now(),
+                scanned: memeScanned,
+                hot: predatorHotlist.slice(0, 6),
+                rejects: flow.rejects.slice(0, 4).map((r) => ({
+                  symbol: r.symbol,
+                  reason: r.reason,
+                })),
+              })
+            )
+          }
+        } catch (err) {
+          console.error('[cron] idle pulse stamp failed', err)
+        }
       } else {
         console.log(
           '[cron] peak alerts',
@@ -2454,7 +2655,111 @@ async function runCronScan(
     await runJournal()
     await runPaper()
     await runSignalWatches()
-    // Remizov-lite moments for watched alts (absorption / CVD / wall-release)
+    // Idle pulse on fresh paper budget (predator only stamps intent)
+    try {
+      const pendingRaw = await runtimeGet(IDLE_PULSE_PENDING_KEY)
+      const lastIdle = Number((await durableGet(env, IDLE_PULSE_KEY)) || 0)
+      if (
+        pendingRaw &&
+        (!lastIdle || Date.now() - lastIdle >= IDLE_PULSE_MS)
+      ) {
+        let pending: {
+          scanned?: number
+          hot?: string[]
+          rejects?: Array<{ symbol: string; reason: string }>
+        } = {}
+        try {
+          pending = JSON.parse(pendingRaw) as typeof pending
+        } catch {
+          pending = {}
+        }
+        const topRejects = (pending.rejects ?? [])
+          .slice(0, 4)
+          .map((r) => `${r.symbol.replace('_USDT', '')}:${r.reason}`)
+          .join('\n• ')
+        const nowIso = new Date()
+          .toISOString()
+          .replace('T', ' ')
+          .slice(0, 19)
+        const body = [
+          `Сканер жив · A-сетапа нет (~${pending.scanned ?? '?'} тикеров).`,
+          `Hot: ${(pending.hot ?? [])
+            .map((s) => s.replace('_USDT', ''))
+            .join(', ') || '—'}`,
+          topRejects ? `Почему:\n• ${topRejects}` : '',
+          `${nowIso} UTC · ${BOT_ENGINE.id}`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+        const tick = Date.now()
+        const m = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'meme',
+          title: '👁 Ищу сетап A',
+          text: body,
+          dedupeKey: `idle-pulse:meme:${tick}`,
+        })
+        const s = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'sniper',
+          title: '👁 Ищу сетап A',
+          text: body.replace(BOT_ENGINE.id, SNIPER_ENGINE.id),
+          dedupeKey: `idle-pulse:sniper:${tick}`,
+        })
+        if (m.sent + s.sent > 0) {
+          idlePulses += m.sent + s.sent
+          await durablePut(
+            env,
+            IDLE_PULSE_KEY,
+            String(Date.now()),
+            60 * 60 * 24
+          )
+          await runtimePut(IDLE_PULSE_PENDING_KEY, '')
+        }
+      }
+    } catch (err) {
+      console.error('[cron] idle pulse (paper) failed', err)
+    }
+    // Elite ALT_JEWEL — paced (~6m) so paper tick stays under CF subrequest cap
+    let jewelRan = false
+    try {
+      const lastJewel = Number(
+        (await runtimeGet(ALT_JEWEL_PACE_KEY)) ||
+          (await env.SUBSCRIBERS?.get(ALT_JEWEL_PACE_KEY)) ||
+          0
+      )
+      if (!lastJewel || Date.now() - lastJewel >= ALT_JEWEL_SCAN_MS) {
+        const jewel = await runEliteAltJewelScan({ kv })
+        jewelRan = true
+        await runtimePut(ALT_JEWEL_PACE_KEY, String(Date.now()))
+        console.log(
+          '[cron] alt jewel',
+          'scanned',
+          jewel.scanned.join(','),
+          'alerts',
+          jewel.alerts.length,
+          'rejects',
+          jewel.rejects
+            .map((r) => `${r.symbol.replace('_USDT', '')}:${r.reason}`)
+            .slice(0, 4)
+            .join('|')
+        )
+        for (const a of jewel.alerts) {
+          try {
+            await deliver(a)
+          } catch (err) {
+            failed++
+            console.error('[cron] alt jewel deliver failed', a.dedupeKey, err)
+          }
+        }
+      } else {
+        console.log('[cron] alt jewel paced')
+      }
+    } catch (err) {
+      console.error('[cron] alt jewel scan failed', err)
+    }
+    // Remizov-lite moments for watched alts (skip if jewel ate budget)
+    if (!jewelRan) {
     try {
       const watches = await listWatches(env)
       const now = Date.now()
@@ -2500,6 +2805,7 @@ async function runCronScan(
     } catch (err) {
       console.error('[cron] processMoment failed', err)
     }
+    }
   }
 
   if (role === 'predator' || role === 'all') {
@@ -2529,7 +2835,7 @@ async function runCronScan(
     heartbeat,
     paperComments,
     watchAlerts,
-    idlePulses: 0,
+    idlePulses,
     journalLogged,
     journalResolved,
     resultAlerts,
@@ -2614,6 +2920,13 @@ async function removeSubscriber(
 
 const HEARTBEAT_KEY = 'telegram:last_heartbeat'
 const HEARTBEAT_MS = 30 * 60_000 // every 30 min
+const IDLE_PULSE_KEY = 'telegram:last_idle_pulse'
+const IDLE_PULSE_PENDING_KEY = 'telegram:idle_pulse_pending'
+/** «Ищу сетап» — only on paper cron (fresh subrequest budget) */
+const IDLE_PULSE_MS = 90 * 60_000
+const ALT_JEWEL_PACE_KEY = 'telegram:last_elite_alt_jewel_scan_at'
+/** Top-3 alt jewel: every ~6m, not every paper tick */
+const ALT_JEWEL_SCAN_MS = 6 * 60_000
 /** If no TG delivery stamp for this long → Worker→TG self-check (not a signal) */
 const DELIVERY_PROBE_MS = 6 * 60 * 60_000
 
@@ -2714,7 +3027,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> — meme LONG + Signals Lab\n\nМемы LONG A: <b>PUMP_CONTINUE</b> (памп + fuel) · <b>DUMP reclaim</b>\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны\nMini App → <b>Сигналы</b> (альты) → READY → журнал WR\n\nКоманды:\n/brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> — meme LONG + ALT JEWEL SHORT\n\nМемы LONG A: <b>PUMP_CONTINUE</b>\nАльты: <b>ALT_JEWEL</b> SHORT топ‑3 @ ×50 · +40% ROE (без Mini App)\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны\nMini App → <b>Сигналы</b> (альты) → READY → журнал WR\n\nКоманды:\n/brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · PEAK SHORT A · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
@@ -3362,6 +3675,29 @@ async function proxyFetch(
   targetUrl: string,
   corsHeaders: Record<string, string>
 ): Promise<Response> {
+  // Cache hot market GETs — Mini App + bots share Free daily/request budget
+  const cacheable =
+    /\/api\/v1\/contract\/(ticker|kline|depth|deals|fair_price)/i.test(
+      targetUrl
+    ) || /\/api\/v3\//i.test(targetUrl)
+  const cacheKey = new Request(
+    `https://enterprise-system-runtime.invalid/proxy-cache/${encodeURIComponent(targetUrl)}`,
+    { method: 'GET' }
+  )
+  if (cacheable) {
+    try {
+      const hit = await caches.default.match(cacheKey)
+      if (hit) {
+        const headers = new Headers(hit.headers)
+        for (const [k, v] of Object.entries(corsHeaders)) headers.set(k, v)
+        headers.set('X-Proxy-Cache', 'HIT')
+        return new Response(hit.body, { status: hit.status, headers })
+      }
+    } catch {
+      /* miss */
+    }
+  }
+
   try {
     const upstream = await fetch(targetUrl, {
       method: 'GET',
@@ -3375,9 +3711,35 @@ async function proxyFetch(
     const headers = new Headers(corsHeaders)
     const ct = upstream.headers.get('Content-Type')
     if (ct) headers.set('Content-Type', ct)
-    headers.set('Cache-Control', 'public, max-age=5')
+    const maxAge = /\/ticker/i.test(targetUrl)
+      ? 8
+      : /\/(kline|depth|deals)/i.test(targetUrl)
+        ? 5
+        : 5
+    headers.set('Cache-Control', `public, max-age=${maxAge}`)
+    headers.set('X-Proxy-Cache', 'MISS')
 
-    return new Response(body, { status: upstream.status, headers })
+    const out = new Response(body, { status: upstream.status, headers })
+    if (cacheable && upstream.ok) {
+      try {
+        const toStore = out.clone()
+        const storeHeaders = new Headers(toStore.headers)
+        storeHeaders.set(
+          'Cache-Control',
+          `public, max-age=${Math.max(maxAge, 8)}`
+        )
+        await caches.default.put(
+          cacheKey,
+          new Response(toStore.body, {
+            status: toStore.status,
+            headers: storeHeaders,
+          })
+        )
+      } catch {
+        /* ignore cache write */
+      }
+    }
+    return out
   } catch (err) {
     return new Response(
       JSON.stringify({ error: 'Upstream failed', detail: String(err) }),

@@ -57,6 +57,8 @@ export type FailoverSubscriberPayload = {
 
 const STATE_KEY = 'telegram:failover_state'
 const REQ_COUNT_KEY = 'telegram:failover_reqcount'
+/** Sticky owner — cron must not fight KV races on `active` */
+const OWNER_KEY = 'telegram:failover_owner'
 const DEFAULT_DAILY_BUDGET = 80_000
 /** Handoff after this many subrequest-limit hits (sticky within the day) */
 const SUBREQUEST_FAIL_HANDOFF = 5
@@ -74,6 +76,26 @@ function roleOf(env: FailoverEnv): FailoverRole {
 function dailyBudget(env: FailoverEnv): number {
   const n = Number(env.FAILOVER_DAILY_BUDGET ?? DEFAULT_DAILY_BUDGET)
   return Number.isFinite(n) && n > 1000 ? n : DEFAULT_DAILY_BUDGET
+}
+
+async function readOwner(env: FailoverEnv): Promise<FailoverRole | null> {
+  try {
+    const raw = await env.SUBSCRIBERS?.get(OWNER_KEY)
+    if (raw === 'primary' || raw === 'standby') return raw
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+async function writeOwner(env: FailoverEnv, owner: FailoverRole): Promise<void> {
+  try {
+    await env.SUBSCRIBERS?.put(OWNER_KEY, owner, {
+      expirationTtl: 60 * 60 * 36,
+    })
+  } catch {
+    /* ignore */
+  }
 }
 
 function defaultState(env: FailoverEnv): FailoverState {
@@ -98,11 +120,15 @@ export async function loadFailoverState(
 ): Promise<FailoverState> {
   const base = defaultState(env)
   try {
-    const [raw, countRaw] = await Promise.all([
+    const [raw, countRaw, owner] = await Promise.all([
       env.SUBSCRIBERS?.get(STATE_KEY) ?? Promise.resolve(null),
       env.SUBSCRIBERS?.get(REQ_COUNT_KEY) ?? Promise.resolve(null),
+      readOwner(env),
     ])
-    if (!raw) return base
+    if (!raw) {
+      if (owner) base.active = owner === base.role
+      return base
+    }
     const parsed = JSON.parse(raw) as Partial<FailoverState>
     const day = dayKeyUtc()
     const sameDay = parsed.dayKey === day
@@ -116,6 +142,8 @@ export async function loadFailoverState(
       }
     }
     const reqFromState = sameDay ? Number(parsed.requestCount ?? 0) : 0
+    const activeFromState =
+      typeof parsed.active === 'boolean' ? parsed.active : base.active
     return {
       ...base,
       ...parsed,
@@ -125,8 +153,8 @@ export async function loadFailoverState(
       subrequestFails: sameDay ? Number(parsed.subrequestFails ?? 0) : 0,
       pendingHandoff: sameDay ? Boolean(parsed.pendingHandoff) : false,
       pendingReason: sameDay ? parsed.pendingReason ?? null : null,
-      active:
-        typeof parsed.active === 'boolean' ? parsed.active : base.active,
+      // OWNER key wins over stale `active` boolean
+      active: owner != null ? owner === base.role : activeFromState,
       peerUrl: env.FAILOVER_PEER_URL ?? parsed.peerUrl ?? null,
       updatedAt: Date.now(),
     }
@@ -227,8 +255,18 @@ export async function shouldRunCronWork(
     return { run: true, state, reason: 'failover_disabled' }
   }
 
-  // Dual-active guard: standby ALWAYS yields if primary reports active
+  // Dual-active guard: standby yields ONLY if primary truly owns (not a race after we activated)
   if (state.active && roleOf(env) === 'standby') {
+    const justTook =
+      Date.now() - (state.lastHandoffAt ?? 0) < 20 * 60_000 &&
+      /manual_relieve|manual_or_peer_activate|handoff|peer_activate|ACTIVE|standby_keeps/i.test(
+        state.lastReason ?? ''
+      )
+    if (justTook) {
+      // Keep baton — push primary idle again (KV race often leaves A.active=true)
+      await requestPeerStandby(env, 'standby_keeps_ownership')
+      return { run: true, state, reason: 'standby_owner' }
+    }
     const peer = await peerFailoverSnapshot(env)
     if (peer?.role === 'primary' && peer.active === true) {
       state = await standbyThisWorker(env, 'yield_to_active_primary')
@@ -236,14 +274,14 @@ export async function shouldRunCronWork(
     }
   }
 
-  // Primary is preferred owner: clear sticky pending + idle peer if dual
+  // Primary: if standby reports active, yield (KV can lag and keep A.active=true)
   if (state.active && roleOf(env) === 'primary') {
+    const peer = await peerFailoverSnapshot(env)
+    if (peer?.role === 'standby' && peer.active === true) {
+      state = await standbyThisWorker(env, 'yield_to_active_standby')
+      return { run: false, state, reason: 'yield_to_standby' }
+    }
     if (state.pendingHandoff || state.subrequestFails >= SUBREQUEST_FAIL_HANDOFF) {
-      const peer = await peerFailoverSnapshot(env)
-      if (peer?.active === true) {
-        // Prefer primary — push peer idle, keep scanning here
-        await requestPeerStandby(env, 'primary_keeps_ownership')
-      }
       state.pendingHandoff = false
       state.pendingReason = null
       state.subrequestFails = 0
@@ -255,7 +293,19 @@ export async function shouldRunCronWork(
   if (!state.active) {
     // Primary reclaim only when peer is NOT actively owning
     if (roleOf(env) === 'primary') {
+      const owner = await readOwner(env)
+      if (owner === 'standby') {
+        return { run: false, state, reason: 'standby_idle_owner_key' }
+      }
       const age = Date.now() - (state.lastHandoffAt ?? 0)
+      const peerAskedIdle =
+        /peer_idle_for|standby_keeps_ownership|manual_standby|manual_relieve|yield_to_active_standby/i.test(
+          state.lastReason ?? ''
+        )
+      // Honor peer ownership window — don't snatch back for ~1h after relieve
+      if (peerAskedIdle && age < 60 * 60_000) {
+        return { run: false, state, reason: 'standby_idle_peer_owns' }
+      }
       const badIdle =
         /pending_handoff_peer_already_active|yield_to_active|dual/i.test(
           state.lastReason ?? ''
@@ -457,6 +507,7 @@ export async function activateThisWorker(
   state.pendingReason = null
   state.lastHandoffAt = Date.now()
   state.lastReason = reason
+  await writeOwner(env, roleOf(env))
   await saveFailoverState(env, state)
 
   // Only one owner — idle peer whenever we take the baton
@@ -480,6 +531,10 @@ export async function standbyThisWorker(
   state.pendingReason = null
   state.lastHandoffAt = Date.now()
   state.lastReason = reason
+  // Always flip local OWNER away from us (separate KV per account)
+  const peerRole: FailoverRole =
+    roleOf(env) === 'primary' ? 'standby' : 'primary'
+  await writeOwner(env, peerRole)
   await saveFailoverState(env, state)
   return state
 }

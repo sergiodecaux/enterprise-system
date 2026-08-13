@@ -11,10 +11,11 @@ import { kvPutThrottled } from './kvWrite'
 import { attachPeakOutcome } from './peakDecisionLog'
 
 /** Bump key + cache URL when wiping lab — old Cache must not resurrect stats */
-const JOURNAL_KEY = 'telegram:bot_journal_v291'
+const JOURNAL_KEY = 'telegram:bot_journal_v292'
 /** Long-term closed trades for analysis (not pruned with live open book) */
-const ARCHIVE_KEY = 'telegram:bot_journal_archive_v291'
-const GATES_KEY = 'telegram:bot_gates_v291'
+const ARCHIVE_KEY = 'telegram:bot_journal_archive_v292'
+const GATES_KEY = 'telegram:bot_gates_v292'
+const LAB_VERSION = 'v292'
 const MAX_ENTRIES = 500
 const MAX_ARCHIVE = 1200
 const OPEN_TTL_MS = 4 * 60 * 60_000
@@ -89,13 +90,25 @@ export interface BotJournalEntry {
   /** Snapshot of planned risk at entry (before paper adjusts) */
   initialSl?: number | null
   initialTp?: number | null
-  /** Parsed helpers from entryReasons for filters */
+  /** Parsed helpers from entryReasons for filters / calibration */
   entryMeta?: {
     chg24hPct?: number | null
     distToHighPct?: number | null
     fuelScore?: number | null
     confidence?: number | null
+    bookOk?: boolean | null
+    pressureOk?: boolean | null
+    fuelAlive?: boolean | null
+    structureOk?: boolean | null
+    oiState?: 'rising' | 'falling' | 'flat' | 'unknown' | null
+    quality?: string | null
+    tapeUp?: boolean | null
+    riskPct?: number | null
   } | null
+  /** predator | elite — which TG bot owns the signal */
+  botChannel?: 'predator' | 'elite' | null
+  /** Lab wipe generation */
+  labVersion?: string | null
   /** Append-only timeline for analysis */
   events?: BotJournalEvent[]
 }
@@ -124,6 +137,17 @@ export interface BotJournalInsight {
   setup?: string
 }
 
+export interface BotJournalBucketStats {
+  key: string
+  n: number
+  wins: number
+  losses: number
+  wr: number
+  avgPnl: number
+  avgMfe: number
+  avgMae: number
+}
+
 export interface BotJournalAnalytics {
   total: number
   resolved: number
@@ -136,6 +160,13 @@ export interface BotJournalAnalytics {
   avgPnl: number
   bySetup: BotSetupStats[]
   byAlertType: BotSetupStats[]
+  /** Calibration slices */
+  bySide: BotJournalBucketStats[]
+  byCloseReason: BotJournalBucketStats[]
+  byOutcomeTag: BotJournalBucketStats[]
+  byBookFlag: BotJournalBucketStats[]
+  byOiState: BotJournalBucketStats[]
+  labVersion: string
   insights: BotJournalInsight[]
   updatedAt: number
 }
@@ -191,6 +222,11 @@ export interface TradePlanLike {
   tgEntrySent?: boolean
 }
 
+function entryPriceRiskPct(entry: number, sl: number): number | null {
+  if (!(entry > 0) || !(sl > 0)) return null
+  return Math.abs((entry - sl) / entry) * 100
+}
+
 function parseEntryMeta(reasons: string[] | null | undefined): BotJournalEntry['entryMeta'] {
   if (!reasons?.length) return null
   const num = (prefix: string) => {
@@ -199,11 +235,26 @@ function parseEntryMeta(reasons: string[] | null | undefined): BotJournalEntry['
     const n = Number(hit.slice(prefix.length))
     return Number.isFinite(n) ? n : null
   }
+  const has = (tag: string) => reasons.some((r) => r === tag || r.startsWith(tag))
+  let oiState: 'rising' | 'falling' | 'flat' | 'unknown' | null = 'unknown'
+  if (has('oi_rising:')) oiState = 'rising'
+  else if (has('oi_falling:')) oiState = 'falling'
+  else if (has('oi_flat:')) oiState = 'flat'
+  else if (has('oi_unknown')) oiState = 'unknown'
+  const q = reasons.find((r) => r.startsWith('quality:'))
   return {
     chg24hPct: num('chg24:'),
     distToHighPct: num('dist_high:'),
     fuelScore: num('fuel:'),
     confidence: num('conf:'),
+    bookOk: has('book_ok') ? true : has('book_missing') || has('book_weak') ? false : null,
+    pressureOk: has('pressure_ok') ? true : has('pressure_missing') ? false : null,
+    fuelAlive: has('fuel_alive') ? true : has('fuel_dead') ? false : null,
+    structureOk: has('structure_ok') ? true : has('structure_weak') ? false : null,
+    oiState,
+    quality: q ? q.slice('quality:'.length) : null,
+    tapeUp: has('tape_up:') || has('book_ok:strong_tape') ? true : null,
+    riskPct: null,
   }
 }
 
@@ -272,7 +323,7 @@ interface Env {
 const memoryJournal: BotJournalEntry[] = []
 
 function journalCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v291')
+  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v292')
 }
 
 async function readJournalCache(): Promise<BotJournalEntry[] | null> {
@@ -385,7 +436,7 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
-  // Predator: PEAK SHORT only. Elite: PUMP_CONTINUE / DUMP LONG as SNIPER.
+  // Predator: PEAK SHORT only. Elite: PUMP/DUMP LONG + ALT_JEWEL SHORT as SNIPER.
   if (input.alertType === 'MEME') {
     if (
       input.plan.setup !== 'PEAK_FUEL_FAIL' ||
@@ -397,12 +448,17 @@ export async function recordBotAlert(
   const eliteMemeLongSetup =
     input.plan.setup === 'DUMP_FUEL_FAIL' ||
     input.plan.setup === 'PUMP_CONTINUE'
+  const eliteAltJewel =
+    input.plan.setup === 'ALT_JEWEL' && input.plan.side === 'SHORT'
   if (
     input.alertType === 'SNIPER' &&
     eliteMemeLongSetup &&
     input.plan.side !== 'LONG'
   ) {
     return null
+  }
+  if (input.alertType === 'SNIPER' && input.plan.setup === 'ALT_JEWEL') {
+    if (input.plan.side !== 'SHORT') return null
   }
   const list = await listJournal(env)
   const nowGate = Date.now()
@@ -444,13 +500,26 @@ export async function recordBotAlert(
       return null
     }
   }
+  if (input.alertType === 'SNIPER' && eliteAltJewel) {
+    if (
+      list.some(
+        (e) =>
+          e.alertType === 'SNIPER' &&
+          e.setup === 'ALT_JEWEL' &&
+          e.status === 'OPEN'
+      )
+    ) {
+      return null
+    }
+  }
 
   const now = Date.now()
   const memeImpulse =
     input.alertType === 'MEME' ||
     (input.alertType === 'SNIPER' &&
       eliteMemeLongSetup &&
-      input.plan.side === 'LONG')
+      input.plan.side === 'LONG') ||
+    (input.alertType === 'SNIPER' && eliteAltJewel)
   const reasons = input.plan.entryReasons ?? null
   let entry: BotJournalEntry = {
     id: `bj_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
@@ -489,19 +558,48 @@ export async function recordBotAlert(
     holdMs: null,
     initialSl: input.plan.sl,
     initialTp: input.plan.tp,
-    entryMeta: parseEntryMeta(reasons),
+    entryMeta: (() => {
+      const meta = parseEntryMeta(reasons)
+      const risk =
+        entryPriceRiskPct(input.plan.signalPrice || input.plan.entryIdeal, input.plan.sl)
+      return meta ? { ...meta, riskPct: risk } : { riskPct: risk }
+    })(),
+    botChannel: input.alertType === 'MEME' ? 'predator' : 'elite',
+    labVersion: LAB_VERSION,
     events: [],
   }
   entry = pushEvent(
     entry,
     'OPEN',
     [
+      `bot ${entry.botChannel}`,
       `${entry.side} ${entry.setup}`,
       `entry ${entry.entryPrice}`,
       `SL ${entry.sl} TP ${entry.tp}`,
-      reasons?.length ? `reasons: ${reasons.slice(0, 10).join(' · ')}` : null,
+      entry.entryMeta?.riskPct != null
+        ? `risk ${entry.entryMeta.riskPct.toFixed(2)}%`
+        : null,
+      entry.entryMeta?.chg24hPct != null
+        ? `chg24 ${entry.entryMeta.chg24hPct}`
+        : null,
+      entry.entryMeta?.distToHighPct != null
+        ? `distHigh ${entry.entryMeta.distToHighPct}`
+        : null,
+      entry.entryMeta?.bookOk === true
+        ? 'book_ok'
+        : entry.entryMeta?.bookOk === false
+          ? 'book_missing'
+          : null,
+      entry.entryMeta?.oiState ? `oi ${entry.entryMeta.oiState}` : null,
+      entry.entryMeta?.pressureOk === true
+        ? 'pressure_ok'
+        : entry.entryMeta?.pressureOk === false
+          ? 'pressure_missing'
+          : null,
+      reasons?.length ? `reasons: ${reasons.slice(0, 14).join(' · ')}` : null,
       entry.qualityTier ? `Q${entry.qualityTier}` : null,
       entry.engineId ? `engine ${entry.engineId}` : null,
+      `lab ${LAB_VERSION}`,
     ]
       .filter(Boolean)
       .join(' · '),
@@ -1148,6 +1246,70 @@ export function computeBotAnalytics(
     })
   }
 
+  const decidedRows = entries.filter(
+    (e) => e.status === 'WIN' || e.status === 'LOSS'
+  )
+  const bucket = (
+    keyFn: (e: BotJournalEntry) => string | null | undefined
+  ): BotJournalBucketStats[] => {
+    const map = new Map<string, BotJournalEntry[]>()
+    for (const e of decidedRows) {
+      const k = keyFn(e) || 'unknown'
+      const arr = map.get(k) ?? []
+      arr.push(e)
+      map.set(k, arr)
+    }
+    return [...map.entries()]
+      .map(([key, rows]) => {
+        const w = rows.filter((e) => e.status === 'WIN').length
+        const l = rows.filter((e) => e.status === 'LOSS').length
+        const d = w + l
+        return {
+          key,
+          n: rows.length,
+          wins: w,
+          losses: l,
+          wr: d > 0 ? (w / d) * 100 : 0,
+          avgPnl: avg(
+            rows
+              .filter((e) => e.pnlPercent != null)
+              .map((e) => e.pnlPercent!)
+          ),
+          avgMfe: avg(rows.map((e) => e.mfePercent)),
+          avgMae: avg(rows.map((e) => e.maePercent)),
+        }
+      })
+      .sort((a, b) => b.n - a.n)
+  }
+
+  // Dead-entry insight when dominant
+  const dead = decidedRows.filter(
+    (e) =>
+      e.closeReason === 'dead_entry' || e.outcomePrimaryTag === 'DEAD_ENTRY'
+  )
+  if (dead.length >= 4 && dead.length / Math.max(1, decidedRows.length) >= 0.45) {
+    insights.push({
+      id: 'dead_entry_cluster',
+      severity: 'HIGH',
+      title: 'Много DEAD_ENTRY',
+      detail: `${dead.length}/${decidedRows.length} сделок без follow-through (MFE≈0). Резать tip-chase / требовать book+OI.`,
+    })
+  }
+  const bookMiss = decidedRows.filter((e) => e.entryMeta?.bookOk === false)
+  if (bookMiss.length >= 4) {
+    const w = bookMiss.filter((e) => e.status === 'WIN').length
+    const l = bookMiss.filter((e) => e.status === 'LOSS').length
+    const d = w + l
+    if (d >= 4 && w / d < 0.35) {
+      insights.push({
+        id: 'book_missing_toxic',
+        severity: 'HIGH',
+        title: 'book_missing токсичен',
+        detail: `WR ${((w / d) * 100).toFixed(0)}% без book (${w}W/${l}L). Не пускать A без realBook.`,
+      })
+    }
+  }
+
   return {
     total: entries.length,
     resolved: entries.length - open.length,
@@ -1164,6 +1326,18 @@ export function computeBotAnalytics(
     ),
     bySetup,
     byAlertType,
+    bySide: bucket((e) => e.side),
+    byCloseReason: bucket((e) => e.closeReason ?? 'none'),
+    byOutcomeTag: bucket((e) => e.outcomePrimaryTag ?? 'none'),
+    byBookFlag: bucket((e) =>
+      e.entryMeta?.bookOk === true
+        ? 'book_ok'
+        : e.entryMeta?.bookOk === false
+          ? 'book_missing'
+          : 'book_unknown'
+    ),
+    byOiState: bucket((e) => e.entryMeta?.oiState ?? 'unknown'),
+    labVersion: LAB_VERSION,
     insights,
     updatedAt: Date.now(),
   }
@@ -1641,9 +1815,21 @@ export function journalToCsv(rows: BotJournalEntry[]): string {
     'entryNotes',
     'engineId',
     'paperId',
+    'botChannel',
+    'labVersion',
     'chg24',
     'distHigh',
     'fuel',
+    'conf',
+    'bookOk',
+    'pressureOk',
+    'fuelAlive',
+    'structureOk',
+    'oiState',
+    'quality',
+    'tapeUp',
+    'riskPct',
+    'events',
   ]
   const esc = (v: unknown) => {
     const s = v == null ? '' : String(v)
@@ -1679,9 +1865,23 @@ export function journalToCsv(rows: BotJournalEntry[]): string {
         e.entryNotes ?? '',
         e.engineId ?? '',
         e.paperId ?? '',
+        e.botChannel ?? '',
+        e.labVersion ?? '',
         e.entryMeta?.chg24hPct ?? '',
         e.entryMeta?.distToHighPct ?? '',
         e.entryMeta?.fuelScore ?? '',
+        e.entryMeta?.confidence ?? '',
+        e.entryMeta?.bookOk ?? '',
+        e.entryMeta?.pressureOk ?? '',
+        e.entryMeta?.fuelAlive ?? '',
+        e.entryMeta?.structureOk ?? '',
+        e.entryMeta?.oiState ?? '',
+        e.entryMeta?.quality ?? '',
+        e.entryMeta?.tapeUp ?? '',
+        e.entryMeta?.riskPct ?? '',
+        (e.events ?? [])
+          .map((ev) => `${ev.kind}:${ev.detail}`)
+          .join(' || '),
       ]
         .map(esc)
         .join(',')

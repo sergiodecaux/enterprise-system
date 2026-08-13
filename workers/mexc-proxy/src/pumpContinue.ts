@@ -37,7 +37,24 @@ export interface PumpContinueInput {
   cvdBullish?: boolean
   bidHeavy?: boolean
   bookConfidence?: number | null
+  /** Precomputed book forecast (manipulation-aware) */
+  bookForecast?: {
+    score: number
+    realBook: boolean
+    strongTape: boolean
+    toxic: boolean
+    obiAligned?: boolean
+    bias: string
+    reasons: string[]
+  } | null
   phase?: 'structure' | 'final'
+  /** Meme lifecycle gates */
+  memeRegime?: import('./memeRegimeDetector').MemeRegime | null
+  memeAgeMinutes?: number | null
+  exhaustion?: number | null
+  ageGateOk?: boolean
+  volRatio?: number | null
+  decayRate?: 'FAST' | 'NORMAL' | 'SLOW' | null
 }
 
 export type PumpContinueQuality = 'A' | 'B'
@@ -60,17 +77,20 @@ export interface PumpContinueSignal {
   reasons: string[]
 }
 
-const MIN_SCORE = 5
-const A_MIN_SCORE = 8
-const A_MIN_CHG = 8
-const A_MAX_CHG = 70
-const A_MAX_DIST = 1.35
-const MIN_CHG = 5
-const NEAR_HIGH_PCT = 2.8
+const MIN_SCORE = 4
+const A_MIN_SCORE = 6
+const A_MIN_CHG = 7
+const A_MAX_CHG = 80
+const A_MAX_DIST = 1.85
+const MIN_CHG = 4
+const NEAR_HIGH_PCT = 3.5
 const FORMER_SL_BUF = 0.0025
 const FORMER_SL_MIN = 0.01
 const MAX_RISK_PCT = 0.011
-const A_MIN_CONF = 72
+/** Avoid STAR-style noise stops — micro 0.45% dies before dead-cut */
+const MIN_RISK_PCT = 0.0075
+const A_MIN_CONF = 68
+const A_BOOK_MIN_SCORE = 62
 
 function recentHigh(candles: Candle[], bars = 40): number {
   let hi = 0
@@ -160,8 +180,8 @@ export function detectPumpContinue(
   const chartOk = chartConfirmLong2m(input.candles1m)
   const candleEntry = longCandleEntryOk(input.candles1m)
 
-  // Need real continuation structure — reclaim-alone = TRAP_FLIP territory
-  if (!(impulse || hh || (dipReclaim && bullish))) return null
+  // v2.6: allow dip-reclaim or bullish alone (was reclaim∧bullish only)
+  if (!(impulse || hh || dipReclaim || bullish)) return null
 
   let score = 0
   const notes: string[] = []
@@ -304,34 +324,82 @@ export function detectPumpContinue(
   if (!chartOk) confidence -= 6
   confidence = Math.min(94, Math.max(0, Math.round(confidence)))
 
-  // Autopsy v291: 7/11 PUMP = DEAD tip-chase. strongTape-alone still died (BEAT/XAN).
-  // A = real bid absorb/OBI + OI↑ + not glued to tip + mid-range chg.
+  // v2.8: A requires real book forecast (absorb/CVD/OBI build) — not tape-only.
+  // STAR autopsy: strong_tape + OI↑ + MFE0 → SL; memes manipulate tape without depth.
+  const forecast = input.bookForecast
   const strongTape = Boolean(
-    input.tapeFromBook &&
-      buyFlow != null &&
-      buyFlow >= 58 &&
-      moveBps != null &&
-      moveBps >= 5
+    forecast?.strongTape ||
+      (input.tapeFromBook &&
+        buyFlow != null &&
+        buyFlow >= 55 &&
+        moveBps != null &&
+        moveBps >= 3)
   )
-  const bookFuel = realBook || strongTape
+  const forecastReal = Boolean(forecast?.realBook)
+  const realBookGate = realBook || forecastReal
+  const bookToxic = Boolean(forecast?.toxic)
+  const bookScore = forecast?.score ?? (realBook ? 70 : strongTape ? 45 : 20)
+  const bookBias = forecast?.bias ?? 'CHOP'
+  if (forecast?.reasons?.length) {
+    for (const r of forecast.reasons.slice(0, 6)) reasons.push(`bk:${r}`)
+  }
+  if (bookToxic) {
+    confidence -= 18
+    reasons.push('book_toxic')
+  } else if (realBookGate) {
+    confidence += 6
+  } else if (strongTape) {
+    confidence -= 4
+    reasons.push('tape_only_no_depth')
+  }
+  confidence = Math.min(94, Math.max(0, Math.round(confidence)))
+
+  const regime = input.memeRegime ?? null
+  const ageMin = input.memeAgeMinutes ?? 0
+  const exhaustion = input.exhaustion ?? 50
+  const ageGateOk = input.ageGateOk !== false
+  const volRatio = input.volRatio ?? 1
+  const regimeOk =
+    regime === 'LAUNCH' ||
+    regime === 'RELAUNCH' ||
+    (regime === 'FOMO_PEAK' && exhaustion <= 35)
+  const exhOk = exhaustion <= 35
+  if (regime) reasons.push(`regime:${regime}`)
+  reasons.push(`age_m:${ageMin}`)
+  reasons.push(`exh:${exhaustion}`)
+  if (input.decayRate) reasons.push(`decay:${input.decayRate}`)
+  if (!ageGateOk) reasons.push('age_gate_block')
+  if (!regimeOk) reasons.push('regime_block')
+  if (!exhOk) reasons.push('exh_high_for_long')
+
+  if (regimeOk && exhOk) confidence = Math.min(94, confidence + 5)
+  if (input.decayRate === 'SLOW') confidence = Math.min(94, confidence + 3)
+  if (volRatio >= 0.5) confidence = Math.min(94, confidence + 2)
+
+  const confirmA = (candleEntry || chartOk) && (bullish || impulse || hh)
+  const bookAllowsA =
+    !bookToxic &&
+    realBookGate &&
+    bookScore >= A_BOOK_MIN_SCORE &&
+    (bookBias === 'NEXT_UP' || (realBookGate && bookScore >= 70))
+  const chgOk = input.chg24hPct >= A_MIN_CHG || (regime === 'LAUNCH' && input.chg24hPct >= 4)
   const aTier =
     structureOk &&
     fuelAlive &&
     pressureOk &&
-    realBook &&
-    oiRising &&
-    input.tapeFromBook === true &&
-    candleEntry &&
-    chartOk &&
-    bullish &&
-    (impulse || hh) &&
+    bookAllowsA &&
+    confirmA &&
+    ageGateOk &&
+    regimeOk &&
+    exhOk &&
+    volRatio >= 0.45 &&
+    (impulse || hh || (dipReclaim && realBookGate)) &&
     score >= A_MIN_SCORE &&
     confidence >= A_MIN_CONF &&
-    distPct >= 0.28 &&
+    distPct >= 0.18 &&
     distPct <= A_MAX_DIST &&
-    input.chg24hPct >= 10 &&
-    input.chg24hPct <= 40 &&
-    !(dipReclaim && !hh && !impulse)
+    chgOk &&
+    input.chg24hPct <= 55
 
   const quality: PumpContinueQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)
@@ -340,14 +408,16 @@ export function detectPumpContinue(
   reasons.push(pressureOk ? 'pressure_ok' : 'pressure_missing')
   reasons.push(fuelAlive ? 'fuel_alive' : 'fuel_dead')
   reasons.push(
-    bookFuel
-      ? realBook
-        ? 'book_ok'
-        : 'book_ok:strong_tape'
-      : input.tapeFromBook
-        ? 'book_weak'
-        : 'book_missing'
+    realBookGate
+      ? 'book_ok'
+      : strongTape
+        ? 'book_weak:strong_tape'
+        : input.tapeFromBook
+          ? 'book_weak'
+          : 'book_missing'
   )
+  reasons.push(`book_score:${bookScore}`)
+  reasons.push(`book_bias:${bookBias}`)
   reasons.push(structureOk ? 'structure_ok' : 'structure_weak')
   reasons.push(chartOk ? 'chart_ok' : 'chart_early')
   reasons.push(candleEntry ? 'candle_entry_ok' : 'candle_entry_wait')
@@ -358,12 +428,12 @@ export function detectPumpContinue(
     input.candles1m,
     entry,
     1.15,
-    0.0045,
+    MIN_RISK_PCT,
     MAX_RISK_PCT
   )
   const microLo = microStructureLevel(input.candles1m, 'LONG')
   const stop = memeRiskStop(entry, 'LONG', atrDist, microLo, {
-    minPct: 0.0045,
+    minPct: MIN_RISK_PCT,
     maxPct: MAX_RISK_PCT,
   })
   if (!stop) {
@@ -372,10 +442,11 @@ export function detectPumpContinue(
   }
   reasons.push(...stop.reasons)
   const sl = stop.sl
-  const risk = Math.max(entry - sl, entry * 0.0045)
-  const tp1 = entry + risk * 1.15
-  const tp = entry + risk * 2.2
-  if (tp1 <= entry) return null
+  // Binary: SL or +2% price (40% ROE @ ×20) — no partial TP1
+  const TP_PRICE_PCT = 0.02
+  const tp = entry * (1 + TP_PRICE_PCT)
+  const tp1 = tp
+  if (!(tp > entry)) return null
 
   return {
     ready: true,
@@ -394,7 +465,7 @@ export function detectPumpContinue(
     notes: [
       `PUMP LONG · squeeze/continue · класс ${quality}`,
       `24h +${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}% · score ${score} · conf ${confidence}`,
-      `Risk ${(stop.riskPct * 100).toFixed(2)}% · TP1 +${((tp1 / entry - 1) * 100).toFixed(2)}%`,
+      `Стакан score ${bookScore} · ${bookBias} · ${realBookGate ? 'realBook' : 'no realBook'} · Risk ${(stop.riskPct * 100).toFixed(2)}% · TP +2.0% ≈ +40% @ ×20`,
       ...notes.slice(0, 3),
     ],
     reasons,

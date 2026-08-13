@@ -3,7 +3,7 @@
  * Survives in KV for later autopsy (/journal peak or HTTP).
  */
 
-const PEAK_LOG_KEY = 'telegram:peak_decision_log_v291'
+const PEAK_LOG_KEY = 'telegram:peak_decision_log_v292'
 const MAX_ROWS = 400
 
 export type PeakDecisionAction =
