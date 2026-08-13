@@ -93,6 +93,24 @@ export function memeAgeGate(opts: {
     }
   }
 
+  // Late but not zombie — still allow PEAK if volume not dead
+  if (age > 50 && age <= 90 && vol_ratio >= 0.12) {
+    return {
+      tradeable: true,
+      allowed_signals: ['PEAK_SHORT', 'PUMP_CONTINUE'],
+      reason: 'LATE_WINDOW: decaying but alive',
+    }
+  }
+
+  // Hotlist pumps without clean spike age — don't mute entirely
+  if (age >= 8 && vol_ratio >= 0.2) {
+    return {
+      tradeable: true,
+      allowed_signals: ['PEAK_SHORT', 'PUMP_CONTINUE'],
+      reason: 'FALLBACK_WINDOW',
+    }
+  }
+
   return {
     tradeable: false,
     allowed_signals: [],

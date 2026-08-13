@@ -295,7 +295,17 @@ export async function shouldRunCronWork(
     if (roleOf(env) === 'primary') {
       const owner = await readOwner(env)
       if (owner === 'standby') {
-        return { run: false, state, reason: 'standby_idle_owner_key' }
+        // OWNER=standby but peer dead/unreachable → dual-idle silence. Reclaim.
+        const peer = await peerFailoverSnapshot(env)
+        if (!(peer?.role === 'standby' && peer.active === true)) {
+          const healed = await activateThisWorker(
+            env,
+            'self_heal_standby_unreachable'
+          )
+          state = healed.state
+        } else {
+          return { run: false, state, reason: 'standby_idle_owner_key' }
+        }
       }
       const age = Date.now() - (state.lastHandoffAt ?? 0)
       const peerAskedIdle =

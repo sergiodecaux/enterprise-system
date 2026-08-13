@@ -1020,10 +1020,10 @@ async function handleTelegram(
       return json({ error: 'Unauthorized' }, 401)
     }
     const targetBlock = [
-      `<b>🎯 РЕЖИМ (v29.6 / v2.8)</b>`,
-      `Стакан: <b>memeBookForecast</b> — absorb/CVD/OBI, toxic spoof/wash = skip.`,
-      `A только с <b>realBook</b> (не tape-only). Цель: SL или +40% @ ×20.`,
-      `PUMP min risk 0.75% · dead cut 6м · PEAK floor @ MFE≥1%.`,
+      `<b>🎯 РЕЖИМ (v31 meme / ALT JEWEL)</b>`,
+      `Мемы: <b>regime + exhaustion + ageGate</b> (не MM-фазы).`,
+      `Стакан: memeBookForecast + toxic/coherence. Выход: TP1→BE→TP2.`,
+      `Альты: ALT_JEWEL L/S @ ×50 · +40% ROE.`,
     ].join('\n')
     const memeText = [
       `🚀 <b>ENTERPRISE PREDATOR</b>`,
@@ -1031,11 +1031,11 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Стратегия:</b> только <b>PEAK_FUEL_FAIL SHORT A</b>`,
-      '• fail/wick + bearish follow · dist≥0.35%',
-      '• anti-conflict: нет LONG на том же тикере 75м',
+      `<b>Стратегия:</b> <b>PEAK SHORT</b> · DISTRIBUTION/FOMO · exh≥62 · age≥12м`,
+      '• + DUMP_CONTINUATION SHORT после bounce',
+      '• ageGate: &lt;8м chaos skip',
       '',
-      `Журнал lab <code>v292</code> — полный разбор для калибровки под эту цель.`,
+      `Журнал lab <code>v292</code>.`,
       new Date().toISOString(),
     ].join('\n')
     const eliteText = [
@@ -1045,11 +1045,11 @@ async function handleTelegram(
       targetBlock,
       '',
       `<b>Стратегия:</b>`,
-      '• <b>PUMP_CONTINUE LONG A</b> — realBook + OI↑ + structure',
-      '• <b>⚡ МОМЕНТ</b> — absorb/CVD на watched',
-      '• DUMP reclaim выключен · anti-conflict vs Predator',
+      '• <b>PUMP_CONTINUE LONG</b> — LAUNCH/RELAUNCH · exh≤35',
+      '• <b>ALT_JEWEL</b> SHORT|LONG топ‑3 (без Mini App)',
+      '• DUMP reclaim выключен',
       '',
-      `Журнал lab <code>v292</code> — калибровка под ROE 30–40% @ ×20.`,
+      `Журнал lab <code>v292</code>.`,
       new Date().toISOString(),
     ].join('\n')
     const meme = await broadcastAlert(env, {
