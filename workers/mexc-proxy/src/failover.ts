@@ -207,6 +207,30 @@ export function failoverConfigured(env: FailoverEnv): boolean {
   return Boolean(env.FAILOVER_PEER_URL && env.FAILOVER_SECRET)
 }
 
+const PEER_FETCH_MS = 2500
+/** Skip peer HTTP after failure — dead standby was stalling every cron */
+const PEER_DEAD_COOLDOWN_MS = 30 * 60_000
+let peerDeadUntil = 0
+
+function peerLikelyDead(): boolean {
+  return Date.now() < peerDeadUntil
+}
+
+function markPeerDead(): void {
+  peerDeadUntil = Date.now() + PEER_DEAD_COOLDOWN_MS
+}
+
+function peerAbortSignal(): AbortSignal | undefined {
+  try {
+    if (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal) {
+      return AbortSignal.timeout(PEER_FETCH_MS)
+    }
+  } catch {
+    /* ignore */
+  }
+  return undefined
+}
+
 /** Ask peer to go idle (best-effort). Prevents dual-active after reclaim. */
 async function requestPeerStandby(
   env: FailoverEnv,
@@ -214,7 +238,7 @@ async function requestPeerStandby(
 ): Promise<boolean> {
   const peer = env.FAILOVER_PEER_URL?.replace(/\/$/, '')
   const secret = env.FAILOVER_SECRET || env.ALERT_SECRET
-  if (!peer || !secret) return false
+  if (!peer || !secret || peerLikelyDead()) return false
   try {
     const r = await fetch(`${peer}/telegram/failover/standby`, {
       method: 'POST',
@@ -224,9 +248,12 @@ async function requestPeerStandby(
         'X-Alert-Secret': secret,
       },
       body: JSON.stringify({ reason, from: roleOf(env), at: Date.now() }),
+      signal: peerAbortSignal(),
     })
+    if (!r.ok) markPeerDead()
     return r.ok
   } catch {
+    markPeerDead()
     return false
   }
 }
@@ -235,14 +262,19 @@ async function peerFailoverSnapshot(
   env: FailoverEnv
 ): Promise<{ active?: boolean; role?: string } | null> {
   const peer = env.FAILOVER_PEER_URL?.replace(/\/$/, '')
-  if (!peer) return null
+  if (!peer || peerLikelyDead()) return null
   try {
     const r = await fetch(`${peer}/telegram/failover/status`, {
       method: 'GET',
+      signal: peerAbortSignal(),
     })
-    if (!r.ok) return null
+    if (!r.ok) {
+      markPeerDead()
+      return null
+    }
     return (await r.json()) as { active?: boolean; role?: string }
   } catch {
+    markPeerDead()
     return null
   }
 }
@@ -581,6 +613,7 @@ export async function handoffToPeer(
         memeSubs: payload?.memeSubs ?? [],
         sniperSubs: payload?.sniperSubs ?? [],
       }),
+      signal: peerAbortSignal(),
     })
     const body = await r.json().catch(() => ({}))
     if (!r.ok) {

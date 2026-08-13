@@ -69,12 +69,12 @@ const PEAK_DIST_PCT = 1.8
 const MIN_CHG_24H = 5
 const A_MIN_CHG = 7
 const A_MAX_DIST = 1.45
-const A_MIN_CONF = 68
+const A_MIN_CONF = 66
 const A_MIN_FUEL = 1
 /** Autopsy: live memes often score 40–55 — 62 starved PEAK */
-const A_MIN_EXHAUSTION = 52
-const A_MIN_AGE_MIN = 12
-const A_WICK_RATIO = 0.3
+const A_MIN_EXHAUSTION = 48
+const A_MIN_AGE_MIN = 10
+const A_WICK_RATIO = 0.24
 const MEGA_PUMP_CHG = 30
 
 function wickRatio(candles: Candle[]): number {
@@ -344,8 +344,15 @@ export function detectPeakFuelFail(
   const ageMin = input.memeAgeMinutes ?? 0
   const exhaustion = input.exhaustion ?? 0
   const ageGateOk = input.ageGateOk !== false
+  const forecastStrongDown =
+    Boolean(input.bookForecast?.realBook) &&
+    (input.bookForecast?.score ?? 0) >= 75 &&
+    input.bookForecast?.bias === 'NEXT_DOWN'
+  // Strong book fade can short even if regime label lagged to ZOMBIE
   const regimeOk =
-    regime === 'DISTRIBUTION' || regime === 'FOMO_PEAK'
+    regime === 'DISTRIBUTION' ||
+    regime === 'FOMO_PEAK' ||
+    (forecastStrongDown && exhaustion >= A_MIN_EXHAUSTION)
   if (regime) reasons.push(`regime:${regime}`)
   reasons.push(`age_m:${ageMin}`)
   reasons.push(`exh:${exhaustion}`)
@@ -354,7 +361,9 @@ export function detectPeakFuelFail(
   if (!ageGateOk) reasons.push('age_gate_block')
   if (!regimeOk) reasons.push('regime_block')
 
-  if (fuelScore < 1 && (failed || wick)) fuelScore += 1
+  if (fuelScore < 1 && (failed || wick || forecastReal || askHeavy)) {
+    fuelScore += 1
+  }
 
   let confidence = 70 + fuelScore * 4
   if (failed || wick) confidence += 5
@@ -377,8 +386,20 @@ export function detectPeakFuelFail(
 
   const megaPump = input.chg24hPct >= MEGA_PUMP_CHG
   const hardStructure =
-    failed || wickR >= A_WICK_RATIO || (wick && wickR >= 0.28)
-  const oiOk = !oiRising || (hardStructure && (bookWeak || (failed && wick)))
+    failed || wickR >= A_WICK_RATIO || (wick && wickR >= 0.24)
+  // Book-distribution path: realBook NEXT_DOWN + exh — wick optional (HYPE autopsy)
+  const bookDistPath =
+    forecastReal &&
+    bookScore >= 68 &&
+    (forecast?.bias === 'NEXT_DOWN' || askHeavy || bookWeak) &&
+    exhaustion >= A_MIN_EXHAUSTION &&
+    regimeOk &&
+    distPct <= A_MAX_DIST
+  const softStructure = hardStructure || bookDistPath || (lh && forecastReal)
+  if (bookDistPath) reasons.push('structure:book_dist')
+  const oiOk =
+    !oiRising ||
+    (softStructure && (bookWeak || forecastReal || (failed && wick)))
   if (forecast?.reasons?.length) {
     for (const r of forecast.reasons.slice(0, 5)) reasons.push(`bk:${r}`)
   }
@@ -386,20 +407,23 @@ export function detectPeakFuelFail(
   if (bookAligned) reasons.push('book_aligned')
   else reasons.push('book_thin')
   const obi = input.bookObi
-  const obiOk = obi == null || obi <= -8 || askHeavy || bookWeak
+  const obiOk = obi == null || obi <= -6 || askHeavy || bookWeak || forecastReal
   const bookAllowsA =
     !bookToxic &&
     bookAligned &&
-    bookScore >= 55 &&
+    bookScore >= 52 &&
     (forecast?.bias === 'NEXT_DOWN' ||
       bookWeak ||
-      (askHeavy && hardStructure) ||
-      bookScore >= 70)
+      (askHeavy && softStructure) ||
+      bookScore >= 68)
+  // Book-dist does not require bearish follow (memes chop at tip)
+  const followOk =
+    follow || bookDistPath || (rollover && forecastReal) || (askHeavy && forecastReal)
   const aTier =
-    hardStructure &&
-    follow &&
+    softStructure &&
+    followOk &&
     bookAllowsA &&
-    (bookWeak || failed || wickR >= A_WICK_RATIO) &&
+    (bookWeak || failed || wickR >= A_WICK_RATIO || bookDistPath) &&
     ageGateOk &&
     regimeOk &&
     ageMin >= A_MIN_AGE_MIN &&
@@ -407,13 +431,13 @@ export function detectPeakFuelFail(
     obiOk &&
     confidence >= A_MIN_CONF &&
     fuelScore >= A_MIN_FUEL &&
-    distPct >= 0.22 &&
+    distPct >= 0.12 &&
     distPct <= A_MAX_DIST &&
-    input.chg24hPct >= A_MIN_CHG &&
+    input.chg24hPct >= Math.min(A_MIN_CHG, 5) &&
     oiOk &&
-    (!pumping || (failed && wick) || bookWeak) &&
-    (!megaPump || bookWeak || forecastReal || (failed && wick && askHeavy)) &&
-    !(stall && !failed && !wick)
+    (!pumping || hardStructure || bookWeak || bookDistPath) &&
+    (!megaPump || bookWeak || forecastReal || hardStructure) &&
+    !(stall && !softStructure && !bookDistPath)
 
   const quality: PeakQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)

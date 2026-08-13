@@ -89,9 +89,9 @@ const FORMER_SL_MIN = 0.01
 const MAX_RISK_PCT = 0.011
 /** Avoid STAR-style noise stops — micro 0.45% dies before dead-cut */
 const MIN_RISK_PCT = 0.0075
-const A_MIN_CONF = 64
-const A_BOOK_MIN_SCORE = 55
-const A_MAX_EXHAUSTION = 48
+const A_MIN_CONF = 62
+const A_BOOK_MIN_SCORE = 52
+const A_MAX_EXHAUSTION = 55
 
 function recentHigh(candles: Candle[], bars = 40): number {
   let hi = 0
@@ -360,10 +360,12 @@ export function detectPumpContinue(
   const exhaustion = input.exhaustion ?? 50
   const ageGateOk = input.ageGateOk !== false
   const volRatio = input.volRatio ?? 1
+  // FOMO with slow decay / SLOW vol = pump still alive even mid-age
   const regimeOk =
     regime === 'LAUNCH' ||
     regime === 'RELAUNCH' ||
-    (regime === 'FOMO_PEAK' && exhaustion <= A_MAX_EXHAUSTION)
+    regime === 'FOMO_PEAK' ||
+    (regime == null && exhaustion <= A_MAX_EXHAUSTION)
   const exhOk = exhaustion <= A_MAX_EXHAUSTION
   if (regime) reasons.push(`regime:${regime}`)
   reasons.push(`age_m:${ageMin}`)
@@ -377,13 +379,17 @@ export function detectPumpContinue(
   if (input.decayRate === 'SLOW') confidence = Math.min(94, confidence + 3)
   if (volRatio >= 0.5) confidence = Math.min(94, confidence + 2)
 
-  const confirmA = (candleEntry || chartOk) && (bullish || impulse || hh)
+  const confirmA =
+    (candleEntry || chartOk || bullish) && (bullish || impulse || hh || dipReclaim)
   const bookAllowsA =
     !bookToxic &&
     realBookGate &&
     bookScore >= A_BOOK_MIN_SCORE &&
-    (bookBias === 'NEXT_UP' || (realBookGate && bookScore >= 70))
-  const chgOk = input.chg24hPct >= A_MIN_CHG || (regime === 'LAUNCH' && input.chg24hPct >= 4)
+    (bookBias === 'NEXT_UP' || (realBookGate && bookScore >= 62))
+  const chgOk =
+    input.chg24hPct >= A_MIN_CHG ||
+    (regime === 'LAUNCH' && input.chg24hPct >= 4) ||
+    (regime === 'FOMO_PEAK' && input.chg24hPct >= 5)
   const aTier =
     structureOk &&
     fuelAlive &&
@@ -393,14 +399,14 @@ export function detectPumpContinue(
     ageGateOk &&
     regimeOk &&
     exhOk &&
-    volRatio >= 0.45 &&
-    (impulse || hh || (dipReclaim && realBookGate)) &&
+    volRatio >= 0.35 &&
+    (impulse || hh || dipReclaim || (bullish && realBookGate)) &&
     score >= A_MIN_SCORE &&
     confidence >= A_MIN_CONF &&
-    distPct >= 0.18 &&
+    distPct >= 0.12 &&
     distPct <= A_MAX_DIST &&
     chgOk &&
-    input.chg24hPct <= 55
+    input.chg24hPct <= 60
 
   const quality: PumpContinueQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)

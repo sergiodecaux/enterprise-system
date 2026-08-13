@@ -25,8 +25,8 @@ export function memeAgeGate(opts: {
   const vol_decay = 1 - Math.min(1, Math.max(0, opts.vol_ratio))
   const vol_ratio = opts.vol_ratio
 
-  // First 8 minutes — chaos
-  if (age < 8) {
+  // First 5 minutes — chaos (was 8 — starved LAUNCH entries)
+  if (age < 5) {
     return {
       tradeable: false,
       allowed_signals: [],
@@ -48,8 +48,8 @@ export function memeAgeGate(opts: {
     }
   }
 
-  // Zombie — old + dead volume
-  if (age > 60 && vol_ratio < 0.12) {
+  // Zombie — old + dead volume (was 0.12 — too aggressive on slow memes)
+  if (age > 75 && vol_ratio < 0.08) {
     return {
       tradeable: false,
       allowed_signals: [],
@@ -57,8 +57,8 @@ export function memeAgeGate(opts: {
     }
   }
 
-  // 8–20m + volume still strong — LONG only
-  if (age < 20 && vol_ratio > 0.5) {
+  // 5–18m + volume still strong — LONG only
+  if (age < 18 && vol_ratio > 0.5) {
     return {
       tradeable: true,
       allowed_signals: ['PUMP_CONTINUE'],

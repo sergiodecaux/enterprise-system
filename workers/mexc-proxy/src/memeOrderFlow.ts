@@ -908,7 +908,7 @@ export async function runMemeOrderFlowScan(opts: {
       } else if (peak.quality !== 'A') {
         rejects.push({
           symbol: coin.symbol,
-          reason: `peak_B:${peak.confidence}/bk${shortForecast.score}`,
+          reason: `peak_B:${peak.confidence}/bk${shortForecast.score}/${peak.reasons.filter((r) => /structure|follow|regime|exh|quality|dist|wick|failed|book_dist|phase|age/.test(r)).slice(0, 4).join('+') || 'no_flags'}`,
         })
         await appendPeakDecision(opts.kv, {
           at: Date.now(),
