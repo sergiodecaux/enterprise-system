@@ -325,7 +325,7 @@ export async function shouldRunCronWork(
     const healed = await activateThisWorker(env, 'self_heal_primary_must_run')
     state = healed.state
   } else if (
-    /handoff→peer|yield_to_active_standby|subrequest_fails/i.test(
+    /handoff→peer|yield_to_active_standby|subrequest_fails|primary_clear_stuck_handoff/i.test(
       state.lastReason ?? ''
     )
   ) {
