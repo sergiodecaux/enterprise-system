@@ -25,7 +25,9 @@ import { detectPeakFuelFail, type Candle } from './peakFuelFail'
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 /** Cover full hotlist — peak hunt needs breadth */
-const MAX_SCAN = 18
+const MAX_SCAN = 12
+/** Live 3-snap book is 4 subrequests/coin — cap or cron hits Too many subrequests and goes mute */
+const BOOK_SCAN = 2
 /** More alerts per tick — was missing live peaks */
 const MAX_ALERTS = 5
 /** Only emit PEAK_FUEL_FAIL */
@@ -296,6 +298,7 @@ export async function runMemeOrderFlowScan(opts: {
     })
   const batch = ranked.slice(0, MAX_SCAN)
   const state = await loadBookState(opts.kv)
+  let bookReads = 0
 
   for (const coin of batch) {
     const prev = state[coin.symbol]?.previous ?? null
@@ -312,48 +315,58 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
 
-    // Book optional — peak structure from candles is enough
+    // Book optional — peak structure from candles is enough.
+    // Live 3-snap burns ~4 subrequests/coin; cap or cron hits the CF limit and goes silent.
     let evSide: 'LONG' | 'SHORT' | null = null
     let evKind = ''
     let evFlow = 50
     let evMove = 0
     let evMm: string | null = null
     let evReady = false
-    try {
-      const read = await readOrderBookEvent({
-        symbol: coin.symbol,
-        previous: prev,
-        older,
-        allowLiveSequence: true,
-        dayBias: coin.dayBias,
-        chg24hPct: coin.chg24hPct,
-        mexcJson,
-      })
-      if (read.snapshot) {
-        state[coin.symbol] = {
-          older: prev,
-          previous: read.snapshot,
-          holdVol: holdVol ?? prevHold,
+    const wantBook = bookReads < BOOK_SCAN
+    if (wantBook) {
+      bookReads++
+      try {
+        const read = await readOrderBookEvent({
+          symbol: coin.symbol,
+          previous: prev,
+          older,
+          allowLiveSequence: false,
+          dayBias: coin.dayBias,
+          chg24hPct: coin.chg24hPct,
+          mexcJson,
+        })
+        if (read.snapshot) {
+          state[coin.symbol] = {
+            older: prev,
+            previous: read.snapshot,
+            holdVol: holdVol ?? prevHold,
+          }
+        } else if (holdVol != null) {
+          state[coin.symbol] = {
+            ...(state[coin.symbol] ?? {}),
+            holdVol,
+          }
         }
-      } else if (holdVol != null) {
-        state[coin.symbol] = {
-          ...(state[coin.symbol] ?? {}),
-          holdVol,
+        const ev = read.event
+        evReady = ev.ready
+        evSide = ev.side
+        evKind = ev.kind
+        evFlow = ev.flowSharePct
+        evMove = ev.priceMoveBps
+        evMm = ev.mmPattern ?? null
+      } catch {
+        if (holdVol != null) {
+          state[coin.symbol] = {
+            ...(state[coin.symbol] ?? {}),
+            holdVol,
+          }
         }
       }
-      const ev = read.event
-      evReady = ev.ready
-      evSide = ev.side
-      evKind = ev.kind
-      evFlow = ev.flowSharePct
-      evMove = ev.priceMoveBps
-      evMm = ev.mmPattern ?? null
-    } catch {
-      if (holdVol != null) {
-        state[coin.symbol] = {
-          ...(state[coin.symbol] ?? {}),
-          holdVol,
-        }
+    } else if (holdVol != null) {
+      state[coin.symbol] = {
+        ...(state[coin.symbol] ?? {}),
+        holdVol,
       }
     }
 

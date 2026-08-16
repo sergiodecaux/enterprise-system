@@ -287,101 +287,65 @@ export async function shouldRunCronWork(
     return { run: true, state, reason: 'failover_disabled' }
   }
 
-  // Dual-active guard: standby yields ONLY if primary truly owns (not a race after we activated)
-  if (state.active && roleOf(env) === 'standby') {
-    const justTook =
-      Date.now() - (state.lastHandoffAt ?? 0) < 20 * 60_000 &&
-      /manual_relieve|manual_or_peer_activate|handoff|peer_activate|ACTIVE|standby_keeps/i.test(
-        state.lastReason ?? ''
-      )
-    if (justTook) {
-      // Keep baton — push primary idle again (KV race often leaves A.active=true)
-      await requestPeerStandby(env, 'standby_keeps_ownership')
-      return { run: true, state, reason: 'standby_owner' }
-    }
+  const role = roleOf(env)
+  const budget = dailyBudget(env)
+
+  // Standby yields whenever primary is actually running. Never fight a live primary.
+  if (role === 'standby') {
     const peer = await peerFailoverSnapshot(env)
     if (peer?.role === 'primary' && peer.active === true) {
-      state = await standbyThisWorker(env, 'yield_to_active_primary')
+      if (state.active) {
+        state = await standbyThisWorker(env, 'yield_to_active_primary')
+      }
       return { run: false, state, reason: 'yield_to_primary' }
     }
-  }
-
-  // Primary: if standby reports active, yield (KV can lag and keep A.active=true)
-  if (state.active && roleOf(env) === 'primary') {
-    const peer = await peerFailoverSnapshot(env)
-    if (peer?.role === 'standby' && peer.active === true) {
-      state = await standbyThisWorker(env, 'yield_to_active_standby')
-      return { run: false, state, reason: 'yield_to_standby' }
-    }
-    if (state.pendingHandoff || state.subrequestFails >= SUBREQUEST_FAIL_HANDOFF) {
-      state.pendingHandoff = false
-      state.pendingReason = null
-      state.subrequestFails = 0
-      state.lastReason = 'primary_clear_stuck_handoff'
-      await saveFailoverState(env, state)
-    }
-  }
-
-  if (!state.active) {
-    // Primary reclaim only when peer is NOT actively owning
-    if (roleOf(env) === 'primary') {
-      const owner = await readOwner(env)
-      if (owner === 'standby') {
-        // OWNER=standby but peer dead/unreachable → dual-idle silence. Reclaim.
-        const peer = await peerFailoverSnapshot(env)
-        if (!(peer?.role === 'standby' && peer.active === true)) {
-          const healed = await activateThisWorker(
-            env,
-            'self_heal_standby_unreachable'
-          )
-          state = healed.state
-        } else {
-          return { run: false, state, reason: 'standby_idle_owner_key' }
-        }
-      }
-      const age = Date.now() - (state.lastHandoffAt ?? 0)
-      const peerAskedIdle =
-        /peer_idle_for|standby_keeps_ownership|manual_standby|manual_relieve|yield_to_active_standby/i.test(
-          state.lastReason ?? ''
-        )
-      // Honor peer ownership window — don't snatch back for ~1h after relieve
-      if (peerAskedIdle && age < 60 * 60_000) {
-        return { run: false, state, reason: 'standby_idle_peer_owns' }
-      }
-      const badIdle =
-        /pending_handoff_peer_already_active|yield_to_active|dual/i.test(
-          state.lastReason ?? ''
-        )
-      const stale =
-        badIdle || !state.lastHandoffAt || age >= PRIMARY_IDLE_RECLAIM_MS
-      if (stale) {
-        const peer = await peerFailoverSnapshot(env)
-        // Real failover: standby owns and primary idled via successful handoff
-        const cleanHandoff = /handoff→peer|manual_handoff/i.test(
-          state.lastReason ?? ''
-        )
-        if (
-          !badIdle &&
-          cleanHandoff &&
-          peer?.role === 'standby' &&
-          peer.active === true &&
-          age < PRIMARY_IDLE_RECLAIM_MS * 3
-        ) {
-          return { run: false, state, reason: 'peer_active_wait' }
-        }
-        const healed = await activateThisWorker(
-          env,
-          badIdle ? 'self_heal_undo_dual_idle' : 'self_heal_primary_reclaim'
-        )
-        state = healed.state
-      } else {
-        return { run: false, state, reason: 'standby_idle' }
-      }
-    } else {
+    if (!state.active) {
       return { run: false, state, reason: 'standby_idle' }
     }
+    if (state.requestCount >= budget) {
+      return { run: false, state, reason: 'daily_budget' }
+    }
+    return { run: true, state, reason: 'standby_owner' }
   }
-  const budget = dailyBudget(env)
+
+  // PRIMARY must not sit idle. Handoff to standby after subrequest fails left
+  // the bot silent for hours: peer stayed active:true on old code, reclaim
+  // treated that as "peer owns" and never took the baton back.
+  if (!state.active) {
+    const age = Date.now() - (state.lastHandoffAt ?? 0)
+    const budgetHandoff =
+      /daily_budget/i.test(state.lastReason ?? '') &&
+      age < PRIMARY_IDLE_RECLAIM_MS * 3
+    if (budgetHandoff) {
+      const peer = await peerFailoverSnapshot(env)
+      if (peer?.role === 'standby' && peer.active === true) {
+        return { run: false, state, reason: 'budget_peer_owns' }
+      }
+    }
+    const healed = await activateThisWorker(env, 'self_heal_primary_must_run')
+    state = healed.state
+  } else if (
+    /handoff→peer|yield_to_active_standby|subrequest_fails/i.test(
+      state.lastReason ?? ''
+    )
+  ) {
+    // OWNER already primary but webhooks may still point at standby
+    const healed = await activateThisWorker(
+      env,
+      'self_heal_restore_after_handoff'
+    )
+    state = healed.state
+  }
+
+  // Drop queued subrequest handoffs — they caused dual-idle / wrong-owner silence
+  if (state.pendingHandoff || state.subrequestFails >= SUBREQUEST_FAIL_HANDOFF) {
+    state.pendingHandoff = false
+    state.pendingReason = null
+    state.subrequestFails = 0
+    state.lastReason = 'primary_clear_stuck_handoff'
+    await saveFailoverState(env, state)
+  }
+
   if (state.requestCount >= budget) {
     return { run: false, state, reason: 'daily_budget' }
   }
@@ -406,8 +370,8 @@ async function markPendingHandoff(
 
 /**
  * Record delivery/scan failure.
- * Do NOT hand off inside the same broken tick — queue for next cron.
- * Fail counter is sticky (no reset on next OK) so 2 hits in a day switch.
+ * Subrequest-limit hits used to queue a handoff — standby then sat active:true
+ * on old code and primary never reclaimed. Stay on primary; next cron is fresh.
  */
 export async function noteFailoverFailure(
   env: FailoverEnv,
@@ -422,15 +386,7 @@ export async function noteFailoverFailure(
   }
   state.subrequestFails += 1
   await saveFailoverState(env, state)
-  if (state.subrequestFails < SUBREQUEST_FAIL_HANDOFF) {
-    return { handedOff: false, pending: false, state }
-  }
-  // Queue — peer fetch from this invocation usually also hits the cap
-  const pending = await markPendingHandoff(
-    env,
-    `subrequest_fails×${state.subrequestFails}`
-  )
-  return { handedOff: false, pending: true, state: pending }
+  return { handedOff: false, pending: false, state }
 }
 
 export async function maybeHandoffOnBudget(
@@ -471,7 +427,21 @@ export async function processPendingHandoff(
   }
 ): Promise<{ handedOff: boolean; state: FailoverState }> {
   const state = await loadFailoverState(env)
-  if (!failoverConfigured(env) || !state.active || !state.pendingHandoff) {
+  if (!failoverConfigured(env) || !state.pendingHandoff) {
+    return { handedOff: false, state }
+  }
+  // Primary: cancel queued subrequest handoff instead of going idle
+  if (roleOf(env) === 'primary') {
+    state.pendingHandoff = false
+    state.pendingReason = null
+    state.subrequestFails = 0
+    state.active = true
+    state.lastReason = 'primary_cancel_pending_handoff'
+    await writeOwner(env, 'primary')
+    await saveFailoverState(env, state)
+    return { handedOff: false, state }
+  }
+  if (!state.active) {
     return { handedOff: false, state }
   }
   const reason = state.pendingReason ?? 'pending_handoff'

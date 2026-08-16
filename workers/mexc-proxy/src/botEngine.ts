@@ -3,7 +3,7 @@ export const BOT_ENGINE = {
   id: 'meme-peak-fuel-v27.2',
   label: 'MEME: PEAK + coin WR',
   deployedNote:
-    'v27.2: peak-only · оставляем монеты с высоким WR · режем STOCK и дамперы журнала.',
+    'v27.2: peak-only · coin WR prefer/ban · primary не уходит в idle из‑за dead/old standby.',
 } as const
 
 /**
