@@ -36,6 +36,7 @@ import {
   ALT_JEWEL_TARGET_ROE_PCT,
   ALT_JEWEL_TP_PCT,
 } from './eliteAltJewel'
+import { kvPutThrottled } from './kvWrite'
 
 const PAPER_KEY = 'telegram:paper_trades_v292'
 const MAX_ACTIVE = 6
@@ -857,16 +858,31 @@ function buildCommentary(opts: {
   }
 }
 
+function expireStalePapers(list: PaperTrade[], now = Date.now()): PaperTrade[] {
+  return list.map((t) => {
+    if (t.status !== 'OPEN' && t.status !== 'WAITING') return t
+    const exp = Number(t.expiresAt ?? 0)
+    if (!(exp > 0) || now <= exp) return t
+    return {
+      ...t,
+      status: 'CLOSED' as const,
+      closedAt: now,
+      closeReason:
+        t.status === 'WAITING' ? 'timeout_wait' : 'timeout_open',
+    }
+  })
+}
+
 export async function listPaperTrades(env: PaperEnv): Promise<PaperTrade[]> {
   const cached = await readPaperCache()
-  if (cached) return cached
-  if (!env.SUBSCRIBERS) return [...memoryPapers]
+  if (cached?.length) return expireStalePapers(cached)
+  if (!env.SUBSCRIBERS) return expireStalePapers([...memoryPapers])
   const raw = await env.SUBSCRIBERS.get(PAPER_KEY)
-  if (!raw) return [...memoryPapers]
+  if (!raw) return expireStalePapers([...memoryPapers])
   try {
-    return JSON.parse(raw) as PaperTrade[]
+    return expireStalePapers(JSON.parse(raw) as PaperTrade[])
   } catch {
-    return [...memoryPapers]
+    return expireStalePapers([...memoryPapers])
   }
 }
 
@@ -929,7 +945,12 @@ async function savePaperTrades(
   memoryPapers.push(...list)
   await writePaperCache(list)
   try {
-    await env.SUBSCRIBERS?.put(PAPER_KEY, JSON.stringify(list))
+    await kvPutThrottled(
+      env.SUBSCRIBERS,
+      PAPER_KEY,
+      JSON.stringify(list),
+      10 * 60_000
+    )
   } catch {
     /* quota */
   }

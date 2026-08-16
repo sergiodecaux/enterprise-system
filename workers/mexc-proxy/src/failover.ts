@@ -15,6 +15,8 @@
  *   FAILOVER_DAILY_BUDGET=80000
  */
 
+import { kvPutThrottled } from './kvWrite'
+
 export type FailoverRole = 'primary' | 'standby'
 
 export interface FailoverState {
@@ -193,9 +195,11 @@ export async function bumpFailoverRequest(
   const next = state.requestCount + n
   state.requestCount = next
   try {
-    await env.SUBSCRIBERS?.put(
+    await kvPutThrottled(
+      env.SUBSCRIBERS,
       REQ_COUNT_KEY,
-      JSON.stringify({ dayKey: state.dayKey, n: next })
+      JSON.stringify({ dayKey: state.dayKey, n: next }),
+      15 * 60_000
     )
   } catch {
     /* ignore */

@@ -1806,13 +1806,7 @@ async function runCronScan(
             key.includes('last_scan_status') ||
             key.includes('pending_meme')
           if (critical) {
-            try {
-              await env.SUBSCRIBERS!.put(key, value)
-            } catch {
-              await kvPutThrottled(env.SUBSCRIBERS, key, value, 60_000, {
-                force: true,
-              })
-            }
+            await kvPutThrottled(env.SUBSCRIBERS, key, value, 10 * 60_000)
             return
           }
           await kvPutThrottled(env.SUBSCRIBERS, key, value, 20 * 60_000)
@@ -2875,13 +2869,12 @@ async function runCronScan(
     ...result,
   })
   await runtimePut(LAST_SCAN_KEY, scanDone)
-  // Always persist per-role snapshot so silence is diagnosable (was 60m throttle)
   await kvPutThrottled(
     env.SUBSCRIBERS,
     `${LAST_SCAN_KEY}:${role}`,
     scanDone,
-    90_000,
-    { force: true, expirationTtl: 60 * 60 * 24 * 3 }
+    10 * 60_000,
+    { expirationTtl: 60 * 60 * 24 * 3 }
   )
   return result
 }
