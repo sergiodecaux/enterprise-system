@@ -58,6 +58,22 @@ const PEAK_BE_R = 0.55
 /** Elite meme LONGs — separate slot from PEAK SHORT */
 const MAX_ACTIVE_ELITE_MEME = 1
 const ELITE_MEME_SETUPS = new Set(['DUMP_FUEL_FAIL', 'PUMP_CONTINUE'])
+function isContSetup(setup?: string | null): boolean {
+  return Boolean(setup?.startsWith('CONT_'))
+}
+function isPredatorShortSetup(setup: string, side?: string): boolean {
+  return (
+    setup === 'PEAK_FUEL_FAIL' ||
+    setup === 'DUMP_CONTINUATION' ||
+    (isContSetup(setup) && (!side || side === 'SHORT'))
+  )
+}
+function isEliteMemeLongSetup(setup: string, side?: string): boolean {
+  return (
+    ELITE_MEME_SETUPS.has(setup) ||
+    (isContSetup(setup) && (!side || side === 'LONG'))
+  )
+}
 /** Elite liquid-alt jewelry scalps (independent of Mini App) */
 const MAX_ACTIVE_ALT_JEWEL = 1
 const ALT_JEWEL_SETUP = 'ALT_JEWEL'
@@ -353,7 +369,7 @@ function pulseMs(t: PaperTrade): number {
 function isMemeTrade(t: PaperTrade): boolean {
   return (
     t.alertType === 'MEME' ||
-    (t.alertType === 'SNIPER' && ELITE_MEME_SETUPS.has(t.setup))
+    (t.alertType === 'SNIPER' && isEliteMemeLongSetup(t.setup, t.side))
   )
 }
 
@@ -862,7 +878,7 @@ export async function closeNonPeakMemePapers(env: PaperEnv): Promise<number> {
   for (const t of list) {
     if (t.alertType !== 'MEME') continue
     if (t.status !== 'WAITING' && t.status !== 'OPEN') continue
-    if (PREDATOR_SHORT_SETUPS.has(t.setup) && t.side === 'SHORT') continue
+    if (isPredatorShortSetup(t.setup, t.side) && t.side === 'SHORT') continue
     t.status = 'CLOSED'
     t.closedAt = now
     t.closeReason = 'non_peak_purged'
@@ -931,22 +947,22 @@ export async function createPaperTradeFromPlan(
   comment: PaperComment | null
   skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped' | 'setup'
 }> {
-  // Predator meme: PEAK / DUMP_CONTINUATION SHORT. Elite: PUMP LONG + ALT_JEWEL.
+  // Predator: PEAK / DUMP_CONT / CONT_* SHORT. Elite: PUMP / CONT_* LONG + ALT_JEWEL.
   const eliteMemeLong =
     plan.alertType === 'SNIPER' &&
     plan.side === 'LONG' &&
-    ELITE_MEME_SETUPS.has(plan.setup)
+    isEliteMemeLongSetup(plan.setup, plan.side)
   const eliteAltJewel =
     plan.alertType === 'SNIPER' && plan.setup === ALT_JEWEL_SETUP
   if (
     plan.alertType === 'MEME' &&
-    (!PREDATOR_SHORT_SETUPS.has(plan.setup) || plan.side !== 'SHORT')
+    (!isPredatorShortSetup(plan.setup, plan.side) || plan.side !== 'SHORT')
   ) {
     return { created: false, comment: null, skipReason: 'setup' }
   }
   if (
     plan.alertType === 'SNIPER' &&
-    ELITE_MEME_SETUPS.has(plan.setup) &&
+    (ELITE_MEME_SETUPS.has(plan.setup) || isContSetup(plan.setup)) &&
     !eliteMemeLong
   ) {
     return { created: false, comment: null, skipReason: 'setup' }
@@ -1004,7 +1020,7 @@ export async function createPaperTradeFromPlan(
     const activeElite = pruned.filter(
       (t) =>
         t.alertType === 'SNIPER' &&
-        ELITE_MEME_SETUPS.has(t.setup) &&
+        isEliteMemeLongSetup(t.setup, t.side) &&
         (t.status === 'WAITING' || t.status === 'OPEN')
     )
     if (activeElite.length >= MAX_ACTIVE_ELITE_MEME) {
@@ -1014,7 +1030,7 @@ export async function createPaperTradeFromPlan(
       if (t.symbol !== plan.symbol) return false
       if (
         t.alertType !== 'SNIPER' ||
-        !ELITE_MEME_SETUPS.has(t.setup || '')
+        !isEliteMemeLongSetup(t.setup || '', t.side)
       )
         return false
       const last = Math.max(t.createdAt, t.closedAt ?? 0)
@@ -1060,7 +1076,7 @@ export async function createPaperTradeFromPlan(
   let zoneLow = plan.zoneLow
   let zoneHigh = plan.zoneHigh
   if (isImpulse) {
-    const isPeak = PREDATOR_SHORT_SETUPS.has(plan.setup)
+    const isPeak = isPredatorShortSetup(plan.setup, plan.side)
     let mark =
       plan.markPrice && plan.markPrice > 0
         ? plan.markPrice
@@ -1248,9 +1264,9 @@ export async function createPaperTradeFromPlan(
                 : `⚖ Структурный выход: TP1 +${(MEME_TP1_PRICE_PCT * 100).toFixed(1)}% → BE · TP2 +${(MEME_TP_PRICE_PCT * 100).toFixed(1)}% (40% @ ×20). TTL 6ч.`,
               isAltJewelPlan
                 ? `📡 Топ‑3 ликвидных альта · короткий скальп.`
-                : PREDATOR_SHORT_SETUPS.has(plan.setup)
+                : isPredatorShortSetup(plan.setup, plan.side)
                   ? `🛡 SHORT: TP1 → BE; после MFE≥1% floor BE±0.2%.`
-                  : `✂ PUMP: 10м без MFE≥0.25% → cut dead.`,
+                  : `✂ PUMP/CONT LONG: 10м без MFE≥0.25% → cut dead.`,
               `📡 Сопровождение ${cadence}.`,
             ]
               .filter(Boolean)
@@ -1505,7 +1521,7 @@ function memeFavorPct(t: PaperTrade, price: number): number {
 }
 
 function isPeakSetup(t: PaperTrade): boolean {
-  return PREDATOR_SHORT_SETUPS.has(t.setup) && t.side === 'SHORT'
+  return isPredatorShortSetup(t.setup, t.side) && t.side === 'SHORT'
 }
 
 function memeTp1Price(t: PaperTrade): number | null {

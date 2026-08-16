@@ -1040,8 +1040,8 @@ async function handleTelegram(
       return json({ error: 'Unauthorized' }, 401)
     }
     const targetBlock = [
-      `<b>🎯 РЕЖИМ (v31 meme / ALT JEWEL)</b>`,
-      `Мемы: <b>regime + exhaustion + ageGate</b> (не MM-фазы).`,
+      `<b>🎯 РЕЖИМ (v27.2 PEAK + coin WR)</b>`,
+      `Мемы: <b>peak-only</b> · оставляем монеты с высоким WR · режем STOCK/дамперы.`,
       `Стакан: memeBookForecast + toxic/coherence. Выход: TP1→BE→TP2.`,
       `Альты: ALT_JEWEL L/S @ ×50 · +40% ROE.`,
     ].join('\n')
@@ -1675,6 +1675,13 @@ async function runCronScan(
     }
   }
 
+  // Announce before failover gate — otherwise idle primary never announces a deploy
+  try {
+    await maybeAnnounceEngine(env)
+  } catch (err) {
+    console.error('[cron] engine announce failed', err)
+  }
+
   const gate = await shouldRunCronWork(env)
   if (!gate.run) {
     if (gate.reason === 'daily_budget') {
@@ -1846,7 +1853,7 @@ async function runCronScan(
       try {
         const paceRaw = await env.SUBSCRIBERS?.get('telegram:last_peak_alert_at')
         const lastAt = paceRaw ? Number(paceRaw) : 0
-        if (lastAt > 0 && Date.now() - lastAt < 12 * 60_000) {
+        if (lastAt > 0 && Date.now() - lastAt < 8 * 60_000) {
           skipped++
           console.log('[cron] meme paced — too soon after last PEAK')
           return
@@ -1971,12 +1978,13 @@ async function runCronScan(
       return
     }
 
-    // Elite meme LONG: PUMP_CONTINUE / DUMP_FUEL_FAIL A — paper-first
+    // Elite meme LONG: CONT_* / PUMP_CONTINUE / DUMP_FUEL_FAIL A — paper-first
     if (
       a.type === 'SNIPER' &&
       a.tradePlan &&
       (a.tradePlan.setup === 'DUMP_FUEL_FAIL' ||
-        a.tradePlan.setup === 'PUMP_CONTINUE') &&
+        a.tradePlan.setup === 'PUMP_CONTINUE' ||
+        a.tradePlan.setup.startsWith('CONT_')) &&
       a.tradePlan.side === 'LONG'
     ) {
       if (a.tradePlan.qualityTier !== 'A') {
@@ -2428,10 +2436,11 @@ async function runCronScan(
             (t.alertType === 'MEME' ||
               (t.alertType === 'SNIPER' &&
                 (t.setup === 'DUMP_FUEL_FAIL' ||
-                  t.setup === 'PUMP_CONTINUE')))
+                  t.setup === 'PUMP_CONTINUE' ||
+                  t.setup.startsWith('CONT_'))))
         )
         .map((t) => t.symbol)
-      // PEAK SHORT → Predator; PUMP/DUMP LONG A → Elite
+      // CONT/PEAK SHORT → Predator; CONT/PUMP LONG A → Elite
       const gates = await getAdaptiveGates(env)
       const flow = await runMemeOrderFlowScan({
         kv,
@@ -2656,11 +2665,6 @@ async function runCronScan(
 
   // Lightweight housekeeping only on paper ticks (or full manual scan)
   if (role === 'paper' || role === 'all') {
-    try {
-      await maybeAnnounceEngine(env)
-    } catch (err) {
-      console.error('[cron] engine announce failed', err)
-    }
     try {
       heartbeat = await maybeHeartbeat(env)
     } catch (err) {

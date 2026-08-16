@@ -5,6 +5,7 @@
  */
 
 import {
+  allowPeakSymbol,
   calibrateWinPct,
   isSetupBlocked,
   isSetupBoosted,
@@ -45,6 +46,7 @@ import {
 } from './orderBookReader'
 import {
   biasForSymbol,
+  isEquityTokenSymbol,
   resolveHotMemeWatchlist,
   type HotMemeWatchlist,
 } from './hotMemeWatchlist'
@@ -1255,6 +1257,7 @@ function isMemeCandidate(t: TickerRow, tradable: Set<string>): boolean {
   if (!tradable.has(t.symbol)) return false
   if (!t.symbol.endsWith('_USDT')) return false
   if (BLUE_CHIPS.has(t.symbol)) return false
+  if (isEquityTokenSymbol(t.symbol)) return false
   const price = Number(t.lastPrice)
   const vol = quoteVol(t)
   // Memes / micro-caps — price ceiling was killing many liquid pumps
@@ -1332,6 +1335,8 @@ export async function runMarketScan(
       blueChips: BLUE_CHIPS,
       tradable,
       pinSymbols: opts.pinSymbols,
+      blockedSymbols: gates?.blockedSymbols,
+      preferSymbols: gates?.preferSymbols,
     })
     const bySym = new Map(tickers.map((t) => [t.symbol, t]))
     memes = hotWatchlist.entries
@@ -1345,6 +1350,7 @@ export async function runMarketScan(
           if (!t.symbol.endsWith('_USDT')) return false
           if (t.symbol.includes('USDC')) return false
           if (BLUE_CHIPS.has(t.symbol)) return false
+          if (isEquityTokenSymbol(t.symbol)) return false
           const price = Number(t.lastPrice)
           const vol = quoteVol(t)
           const chgAbs = Math.abs(Number(t.riseFallRate) * 100)
@@ -2137,6 +2143,7 @@ export async function runMarketScan(
         return
       }
       if (side === 'LONG') return
+      if (!allowPeakSymbol(gates, t.symbol).ok) return
       const setup = 'PEAK_FUEL_FAIL'
       const dayTag =
         dayBias === 'PUMP'

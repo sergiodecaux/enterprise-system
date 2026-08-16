@@ -3,6 +3,7 @@
  * Persisted in Cloudflare KV, exposed to Mini App via HTTP.
  */
 import { listPaperTrades, type PaperTrade } from './paperTrades'
+import { isEquityTokenSymbol } from './hotMemeWatchlist'
 import {
   analyzeTradeOutcome,
   type TradeOutcomeAnalysis,
@@ -196,8 +197,22 @@ export interface BotAdaptiveGates {
   peakAvoidReasons?: string[]
   /** PEAK reason tags that win more often */
   peakPreferReasons?: string[]
+  /** PEAK symbols with toxic live WR (plus *STOCK* class at emit) */
+  blockedSymbols?: string[]
+  /** PEAK symbols the bot already reads well — keep scanning them */
+  preferSymbols?: string[]
+  /** Compact per-symbol PEAK WR for /status */
+  symbolWr?: SymbolWrRow[]
   updatedAt: number
   sampleSize: number
+}
+
+export interface SymbolWrRow {
+  symbol: string
+  n: number
+  wins: number
+  losses: number
+  wr: number
 }
 
 
@@ -1423,6 +1438,7 @@ export function deriveAdaptiveGates(
 
   const { avoid: peakAvoidReasons, prefer: peakPreferReasons } =
     learnPeakReasonTags(entries)
+  const symbolGates = learnPeakSymbolWr(entries)
 
   return {
     minMemeScore,
@@ -1433,9 +1449,72 @@ export function deriveAdaptiveGates(
     winPctBySetup: buildWinPctCalibration(analytics),
     peakAvoidReasons,
     peakPreferReasons,
+    blockedSymbols: symbolGates.blocked,
+    preferSymbols: symbolGates.prefer,
+    symbolWr: symbolGates.rows,
     updatedAt: Date.now(),
     sampleSize: analytics.resolved,
   }
+}
+
+/** Learn PEAK SHORT winrate per coin — keep winners, block dumpers. */
+export function learnPeakSymbolWr(entries: BotJournalEntry[]): {
+  blocked: string[]
+  prefer: string[]
+  rows: SymbolWrRow[]
+} {
+  const peak = entries.filter(
+    (e) => e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT'
+  )
+  const map = new Map<string, { w: number; l: number }>()
+  for (const e of peak) {
+    if (e.status !== 'WIN' && e.status !== 'LOSS') continue
+    const row = map.get(e.symbol) ?? { w: 0, l: 0 }
+    if (e.status === 'WIN') row.w++
+    else row.l++
+    map.set(e.symbol, row)
+  }
+  const blocked: string[] = []
+  const prefer: string[] = []
+  const rows: SymbolWrRow[] = []
+  for (const [symbol, s] of map) {
+    const n = s.w + s.l
+    const wr = n > 0 ? (100 * s.w) / n : 0
+    rows.push({ symbol, n, wins: s.w, losses: s.l, wr })
+    if (
+      isEquityTokenSymbol(symbol) ||
+      (n >= 2 && wr < 40) ||
+      (s.l >= 2 && s.w === 0)
+    ) {
+      blocked.push(symbol)
+      continue
+    }
+    // Coins the detector already reads: unbeaten, or n≥2 WR≥60
+    if ((s.w >= 1 && s.l === 0) || (n >= 2 && wr >= 60)) {
+      prefer.push(symbol)
+    }
+  }
+  rows.sort((a, b) => b.n - a.n || b.wr - a.wr)
+  return { blocked, prefer, rows: rows.slice(0, 40) }
+}
+
+export type PeakSymbolAction = 'block' | 'prefer' | 'neutral'
+
+/** Emit/scan gate: *STOCK* always off; journal dumpers off; winners preferred. */
+export function allowPeakSymbol(
+  gates: BotAdaptiveGates | null | undefined,
+  symbol: string
+): { ok: boolean; action: PeakSymbolAction; reason?: string } {
+  if (isEquityTokenSymbol(symbol)) {
+    return { ok: false, action: 'block', reason: 'equity_token' }
+  }
+  if (gates?.blockedSymbols?.includes(symbol)) {
+    return { ok: false, action: 'block', reason: 'symbol_wr_block' }
+  }
+  if (gates?.preferSymbols?.includes(symbol)) {
+    return { ok: true, action: 'prefer' }
+  }
+  return { ok: true, action: 'neutral' }
 }
 
 /** Learn which PEAK entry reason tags lose / win in live journal. */
@@ -1612,13 +1691,22 @@ async function recomputeAndSaveGates(env: Env): Promise<BotAdaptiveGates> {
 }
 
 export async function getAdaptiveGates(env: Env): Promise<BotAdaptiveGates> {
-  if (memoryGates?.winPctBySetup) return memoryGates
+  if (
+    memoryGates?.winPctBySetup &&
+    memoryGates.preferSymbols &&
+    memoryGates.blockedSymbols
+  ) {
+    return memoryGates
+  }
   if (env.SUBSCRIBERS) {
     const raw = await env.SUBSCRIBERS.get(GATES_KEY)
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as BotAdaptiveGates
         if (parsed.winPctBySetup) {
+          if (!parsed.preferSymbols || !parsed.blockedSymbols) {
+            return recomputeAndSaveGates(env)
+          }
           memoryGates = parsed
           return memoryGates
         }
@@ -2043,6 +2131,17 @@ export function formatPeakShortStatsReport(
       : `Закрытых пока нет — копим с нуля (open ${open.length})`,
     `Открыто: ${open.length} · порог score ≥${gates.minMemeScore}`,
   ]
+  const nick = (s: string) => s.replace(/_USDT$/i, '')
+  if (gates.preferSymbols?.length) {
+    lines.push(
+      `Монеты + : ${gates.preferSymbols.slice(0, 8).map(nick).join(', ')}`
+    )
+  }
+  if (gates.blockedSymbols?.length) {
+    lines.push(
+      `Монеты − : ${gates.blockedSymbols.slice(0, 8).map(nick).join(', ')}`
+    )
+  }
   if (gates.peakPreferReasons?.length) {
     lines.push(
       `Учит + : ${gates.peakPreferReasons.slice(0, 4).join(', ')}`

@@ -22,16 +22,24 @@ const MAX_TOTAL = 30
 const MIN_HEALTHY_LIST = 10
 const MIN_ABS_CHG_PCT = 2
 /** Rockets: was 100k — thin names (LONGXIA…) SL'd; need tradeable depth */
-const MIN_QUOTE_VOL = 500_000
+const MIN_QUOTE_VOL = 100_000
 /** Calm lane: more liquid, milder 24h — slower path to TP */
-const CALM_VOL_MIN = 1_000_000
+const CALM_VOL_MIN = 400_000
 const CALM_VOL_MAX = 25_000_000
-const CALM_CHG_MIN = 5
-const CALM_CHG_MAX = 28
+const CALM_CHG_MIN = 4
+const CALM_CHG_MAX = 35
 /** Pre-move lane: enough depth, price not already extended */
-const PREMOVE_VOL_MIN = 800_000
-const PREMOVE_CHG_MAX = 12
+const PREMOVE_VOL_MIN = 200_000
+const PREMOVE_CHG_MAX = 14
 const PREMOVE_CHG_MIN = 1.5
+
+/**
+ * Equity-token perps (CRWVSTOCK, WDAYSTOCK, BSPSTOCK…).
+ * PEAK journal: 0% WR — never scan them as memes.
+ */
+export function isEquityTokenSymbol(symbol: string): boolean {
+  return /STOCK/i.test(symbol)
+}
 
 export type DayBias = 'PUMP' | 'DUMP'
 
@@ -149,6 +157,10 @@ export function buildHotMemeWatchlist(
     blueChips: Set<string>
     tradable: Set<string>
     pinSymbols?: string[]
+    /** Journal dumpers — drop unless an open paper pins them */
+    blockedSymbols?: string[]
+    /** Journal winners — keep on the list even if they cool a bit */
+    preferSymbols?: string[]
     now?: number
     previous?: HotMemeWatchlist | null
   }
@@ -164,12 +176,18 @@ export function buildHotMemeWatchlist(
     now - prev.updatedAt < REFRESH_MS &&
     prev.entries.length > 0
 
+  const blocked = new Set(
+    (opts.blockedSymbols ?? []).filter((s) => !(opts.pinSymbols ?? []).includes(s))
+  )
+  const prefer = new Set(opts.preferSymbols ?? [])
   const candidates = tickers
     .filter((t) => {
       if (!opts.tradable.has(t.symbol)) return false
       if (!t.symbol.endsWith('_USDT')) return false
       if (t.symbol.includes('USDC')) return false
       if (opts.blueChips.has(t.symbol)) return false
+      if (isEquityTokenSymbol(t.symbol)) return false
+      if (blocked.has(t.symbol)) return false
       const price = Number(t.lastPrice ?? 0)
       const vol = quoteVol(t)
       const chg = Number(t.riseFallRate ?? 0) * 100
@@ -253,6 +271,7 @@ export function buildHotMemeWatchlist(
   if (prev?.dayKey === key) {
     for (const old of prev.entries) {
       if (bySym.has(old.symbol)) continue
+      if (isEquityTokenSymbol(old.symbol) || blocked.has(old.symbol)) continue
       const t = tickers.find((x) => x.symbol === old.symbol)
       if (!t) continue
       const chg = Number(t.riseFallRate ?? 0) * 100
@@ -287,13 +306,42 @@ export function buildHotMemeWatchlist(
     })
   }
 
+  // Keep coins the bot already reads well — don't let heat ranking drop them.
+  for (const sym of prefer) {
+    if (bySym.has(sym) || blocked.has(sym) || isEquityTokenSymbol(sym)) continue
+    if (!opts.tradable.has(sym) || opts.blueChips.has(sym)) continue
+    const t = tickers.find((x) => x.symbol === sym)
+    if (!t) continue
+    const chg = Number(t.riseFallRate ?? 0) * 100
+    const vol = quoteVol(t)
+    const price = Number(t.lastPrice ?? 0)
+    if (!(price > 0) || price > 250) continue
+    if (vol < MIN_QUOTE_VOL * 0.5) continue
+    if (Math.abs(chg) < 1.5) continue
+    bySym.set(sym, {
+      symbol: sym,
+      displayName: sym.replace('_USDT', '/USDT'),
+      dayBias: chg >= 0 ? 'PUMP' : 'DUMP',
+      chg24hPct: Number(chg.toFixed(2)),
+      quoteVolUsd: Math.round(vol),
+      score: Number(
+        (heatScore(Math.max(Math.abs(chg), 4), Math.max(vol, MIN_QUOTE_VOL)) + 40).toFixed(2)
+      ),
+      addedAt: now,
+    })
+  }
+
   let entries = [...bySym.values()]
-    .filter((e) => Math.abs(e.chg24hPct) >= MIN_ABS_CHG_PCT)
+    .filter((e) => Math.abs(e.chg24hPct) >= MIN_ABS_CHG_PCT || prefer.has(e.symbol))
+    .map((e) =>
+      prefer.has(e.symbol) ? { ...e, score: Number((e.score + 40).toFixed(2)) } : e
+    )
     .sort((a, b) => {
-      // Keep both lanes; mild pump bias only for tie-breaks
+      const prefA = prefer.has(a.symbol) ? 1 : 0
+      const prefB = prefer.has(b.symbol) ? 1 : 0
       const pumpA = a.dayBias === 'PUMP' ? 1 : 0
       const pumpB = b.dayBias === 'PUMP' ? 1 : 0
-      return b.score - a.score || pumpB - pumpA
+      return prefB - prefA || b.score - a.score || pumpB - pumpA
     })
     .slice(0, MAX_TOTAL)
 
@@ -325,7 +373,11 @@ export function buildHotMemeWatchlist(
     const extras = entries.filter(
       (e) => !keep.some((k) => k.symbol === e.symbol)
     )
-    entries = [...keep, ...extras].slice(0, MAX_TOTAL)
+    const merged = [...keep, ...extras].slice(0, MAX_TOTAL)
+    entries = [
+      ...merged.filter((e) => prefer.has(e.symbol)),
+      ...merged.filter((e) => !prefer.has(e.symbol)),
+    ]
     return {
       updatedAt: now,
       dayKey: key,
@@ -351,6 +403,8 @@ export async function resolveHotMemeWatchlist(
     blueChips: Set<string>
     tradable: Set<string>
     pinSymbols?: string[]
+    blockedSymbols?: string[]
+    preferSymbols?: string[]
   }
 ): Promise<HotMemeWatchlist> {
   const previous = await loadHotMemeWatchlist(kv)

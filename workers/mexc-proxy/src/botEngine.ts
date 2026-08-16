@@ -1,19 +1,19 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-regime-v31.3.2',
-  label: 'MEME: regime · exhaustion · age',
+  id: 'meme-peak-fuel-v27.2',
+  label: 'MEME: PEAK + coin WR',
   deployedNote:
-    'v31.3.2: book-dist A без wick/follow · peer fetch 2.5s timeout (standby hang убивал cron).',
+    'v27.2: peak-only · оставляем монеты с высоким WR · режем STOCK и дамперы журнала.',
 } as const
 
 /**
- * Enterpriseelite_bot — PUMP LONG (meme path) + ALT JEWEL L/S (MM book).
+ * Enterpriseelite_bot — ALT JEWEL + assistant (meme LONGs off in peak-only era).
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-meme-regime-v3.1.3',
-  label: 'ELITE: PUMP regime + ALT JEWEL L/S',
+  id: 'elite-alt-jewel-v27.1r',
+  label: 'ELITE: ALT JEWEL L/S + assistant',
   deployedNote:
-    'v3.1.3: FOMO_PEAK LONG ок · exh≤55 · book≥52 · меньше structure starve.',
+    'Peak-only memes на Predator. Elite: ALT JEWEL топ‑3 · brief · Mini App.',
 } as const
 
 /** Alias for clarity in Elite-facing code */

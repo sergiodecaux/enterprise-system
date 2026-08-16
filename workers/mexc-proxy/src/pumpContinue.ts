@@ -90,8 +90,9 @@ const MAX_RISK_PCT = 0.011
 /** Avoid STAR-style noise stops — micro 0.45% dies before dead-cut */
 const MIN_RISK_PCT = 0.0075
 const A_MIN_CONF = 62
-const A_BOOK_MIN_SCORE = 52
-const A_MAX_EXHAUSTION = 55
+const A_BOOK_MIN_SCORE = 48
+/** Debug only — not a hard A gate (classic restore) */
+const A_MAX_EXHAUSTION = 70
 
 function recentHigh(candles: Candle[], bars = 40): number {
   let hi = 0
@@ -358,55 +359,42 @@ export function detectPumpContinue(
   const regime = input.memeRegime ?? null
   const ageMin = input.memeAgeMinutes ?? 0
   const exhaustion = input.exhaustion ?? 50
-  const ageGateOk = input.ageGateOk !== false
   const volRatio = input.volRatio ?? 1
-  // FOMO with slow decay / SLOW vol = pump still alive even mid-age
-  const regimeOk =
-    regime === 'LAUNCH' ||
-    regime === 'RELAUNCH' ||
-    regime === 'FOMO_PEAK' ||
-    (regime == null && exhaustion <= A_MAX_EXHAUSTION)
-  const exhOk = exhaustion <= A_MAX_EXHAUSTION
+  // Debug tags only — classic path does not hard-block on regime/age/exh
   if (regime) reasons.push(`regime:${regime}`)
   reasons.push(`age_m:${ageMin}`)
   reasons.push(`exh:${exhaustion}`)
   if (input.decayRate) reasons.push(`decay:${input.decayRate}`)
-  if (!ageGateOk) reasons.push('age_gate_block')
-  if (!regimeOk) reasons.push('regime_block')
-  if (!exhOk) reasons.push('exh_high_for_long')
 
-  if (regimeOk && exhOk) confidence = Math.min(94, confidence + 5)
+  if (exhaustion <= A_MAX_EXHAUSTION) confidence = Math.min(94, confidence + 3)
   if (input.decayRate === 'SLOW') confidence = Math.min(94, confidence + 3)
-  if (volRatio >= 0.5) confidence = Math.min(94, confidence + 2)
+  if (volRatio >= 0.45) confidence = Math.min(94, confidence + 2)
+  if (input.absorptionLong) confidence = Math.min(94, confidence + 4)
 
   const confirmA =
     (candleEntry || chartOk || bullish) && (bullish || impulse || hh || dipReclaim)
   const bookAllowsA =
     !bookToxic &&
-    realBookGate &&
+    (realBookGate || Boolean(input.absorptionLong) || Boolean(input.bidHeavy)) &&
     bookScore >= A_BOOK_MIN_SCORE &&
-    (bookBias === 'NEXT_UP' || (realBookGate && bookScore >= 62))
-  const chgOk =
-    input.chg24hPct >= A_MIN_CHG ||
-    (regime === 'LAUNCH' && input.chg24hPct >= 4) ||
-    (regime === 'FOMO_PEAK' && input.chg24hPct >= 5)
+    (bookBias === 'NEXT_UP' ||
+      Boolean(input.absorptionLong) ||
+      (realBookGate && bookScore >= 55) ||
+      Boolean(input.bidHeavy && bookScore >= 48))
+  const chgOk = input.chg24hPct >= Math.min(A_MIN_CHG, 5) || input.chg24hPct >= 4
   const aTier =
     structureOk &&
     fuelAlive &&
     pressureOk &&
     bookAllowsA &&
     confirmA &&
-    ageGateOk &&
-    regimeOk &&
-    exhOk &&
-    volRatio >= 0.35 &&
-    (impulse || hh || dipReclaim || (bullish && realBookGate)) &&
+    (impulse || hh || dipReclaim || (bullish && realBookGate) || input.absorptionLong) &&
     score >= A_MIN_SCORE &&
     confidence >= A_MIN_CONF &&
-    distPct >= 0.12 &&
+    distPct >= 0.08 &&
     distPct <= A_MAX_DIST &&
     chgOk &&
-    input.chg24hPct <= 60
+    input.chg24hPct <= A_MAX_CHG
 
   const quality: PumpContinueQuality = aTier ? 'A' : 'B'
   reasons.push(`quality:${quality}`)
