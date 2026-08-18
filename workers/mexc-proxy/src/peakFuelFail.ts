@@ -19,6 +19,13 @@ export interface PeakFuelFailInput {
   priceMoveBps?: number | null
   absorptionShort?: boolean
   cvdBearish?: boolean
+  /** Book was actually read this tick — never invent tape */
+  bookSeen?: boolean
+  /** Soft crowd/magnet score −2…+2 (not a skip) */
+  crowdSoft?: number
+  crowdNote?: string | null
+  /** Wash/spoof/trap — skip this tick only */
+  toxicBook?: boolean
 }
 
 export interface PeakFuelFailSignal {
@@ -156,8 +163,10 @@ export function detectPeakFuelFail(
     fuelScore += 1
   }
 
-  const buyFlow = input.buyFlowPct
-  const moveBps = input.priceMoveBps
+  if (input.toxicBook) return null
+
+  const buyFlow = input.bookSeen === false ? null : input.buyFlowPct
+  const moveBps = input.bookSeen === false ? null : input.priceMoveBps
   if (
     buyFlow != null &&
     moveBps != null &&
@@ -193,12 +202,16 @@ export function detectPeakFuelFail(
     if (!(strongPump && (failed || wick || stall))) return null
   }
 
+  const crowdSoft = Math.max(-2, Math.min(2, input.crowdSoft ?? 0))
+  if (input.crowdNote) notes.push(input.crowdNote)
+
   let confidence = 68 + fuelScore * 4
   if (failed || wick) confidence += 4
   if (input.absorptionShort || fuelScore >= 3) confidence += 5
   if (input.chg24hPct >= 12) confidence += 3
   if (distPct <= 0.5) confidence += 3
   if (stall && fuelScore >= 2) confidence += 2
+  confidence += crowdSoft * 3
   confidence = Math.min(94, Math.round(confidence))
 
   if (confidence < 70) return null

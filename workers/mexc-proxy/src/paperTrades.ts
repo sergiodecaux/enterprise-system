@@ -195,6 +195,9 @@ export interface PaperTrade {
   tp1Sent?: boolean
   /** Peak favorable OBI while open (for structural OBI-flip exit) */
   peakObi?: number | null
+  /** Consecutive paper ticks OBI is ≥15pts off peak after TP1 */
+  obiAgainstStreak?: number
+
   trailMovedSent: boolean
   waitingAnnounced: boolean
   /** Last published success probability 0–100 */
@@ -1992,7 +1995,7 @@ export async function monitorPaperTrades(
       // continue managing same tick for TP2 / SL
     }
 
-    // After TP1: OBI flipped ≥15 pts from peak favorable → exit runner
+    // After TP1: OBI against for 2 ticks, but not while MFE is still making highs
     if (
       binaryRoe &&
       !isAltJewel(t) &&
@@ -2002,7 +2005,24 @@ export async function monitorPaperTrades(
       brief.bookImb != null
     ) {
       const favNow = t.side === 'LONG' ? brief.bookImb : -brief.bookImb
-      if (t.peakObi - favNow >= 15) {
+      const mfePeak =
+        t.side === 'LONG'
+          ? Math.max(t.peak ?? fill, snap.last)
+          : Math.min(t.peak ?? fill, snap.last)
+      const newMfe =
+        t.peak == null ||
+        (t.side === 'LONG' ? mfePeak > t.peak : mfePeak < t.peak)
+      if (newMfe) {
+        t.obiAgainstStreak = 0
+        dirty = true
+      } else if (t.peakObi - favNow >= 15) {
+        t.obiAgainstStreak = (t.obiAgainstStreak ?? 0) + 1
+        dirty = true
+      } else if ((t.obiAgainstStreak ?? 0) > 0) {
+        t.obiAgainstStreak = 0
+        dirty = true
+      }
+      if ((t.obiAgainstStreak ?? 0) >= 2) {
         t.status = 'CLOSED'
         t.closedAt = now
         t.closeReason = 'obi_flip'
@@ -2015,7 +2035,7 @@ export async function monitorPaperTrades(
           alertType: 'SYSTEM',
           title: `↩ OBI flip выход ${nameOf(t.symbol)}`,
           text: [
-            `После TP1 OBI развернулся ≥15 пт от пика (peak ${t.peakObi.toFixed(0)} → now ${favNow.toFixed(0)}).`,
+            `После TP1 OBI против ≥15 пт два тика (peak ${t.peakObi.toFixed(0)} → now ${favNow.toFixed(0)}).`,
             `Закрыл runner · uPnL ${uPnL.toFixed(2)}%.`,
           ].join('\n'),
           dedupeKey: `paper:obi-flip:${t.id}`,

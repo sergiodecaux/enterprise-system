@@ -11,10 +11,12 @@ import {
   type HotMemeWatchlist,
 } from './hotMemeWatchlist'
 import {
+  analyzeCrowdBook,
   readOrderBookEvent,
   type OrderBookEvent,
   type OrderBookSnapshot,
 } from './orderBookReader'
+import { memeBookForecast } from './memeBookForecast'
 import {
   allowPeakSymbol,
   setupHistoricalWr,
@@ -26,8 +28,8 @@ const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 /** Cover full hotlist — peak hunt needs breadth */
 const MAX_SCAN = 12
-/** Live 3-snap book is 4 subrequests/coin — cap or cron hits Too many subrequests and goes mute */
-const BOOK_SCAN = 2
+/** Live 3-snap (~4 subrequests) only on a few prefer+PUMP names */
+const LIVE_BOOK = 3
 /** More alerts per tick — was missing live peaks */
 const MAX_ALERTS = 5
 /** Only emit PEAK_FUEL_FAIL */
@@ -164,9 +166,9 @@ function peakFailToAlert(
         ? 'PUMP day · fade без топлива'
         : 'сильный зелёный ход · fade',
       ...sig.notes.filter((n) => !/^SL~/i.test(n)),
-      'v27.2: peak-only · coin WR prefer/ban',
+      'v27.3: peak · live book prefer+PUMP · crowd score',
     ].join('\n'),
-    dedupeKey: `cron:mof272:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
+    dedupeKey: `cron:mof273:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
     score: sig.confidence,
     winPct: Math.min(74, Math.max(48, 45 + (sig.confidence - 70))),
     style: 'SCALP',
@@ -297,8 +299,21 @@ export async function runMemeOrderFlowScan(opts: {
       )
     })
   const batch = ranked.slice(0, MAX_SCAN)
+  const liveBook = new Set<string>()
+  const pumpBatch = batch.filter(
+    (c) => c.dayBias === 'PUMP' || c.chg24hPct >= 4
+  )
+  const preferPumps = pumpBatch.filter(
+    (c) => allowPeakSymbol(gates, c.symbol).action === 'prefer'
+  )
+  const otherPumps = pumpBatch.filter(
+    (c) => allowPeakSymbol(gates, c.symbol).action !== 'prefer'
+  )
+  for (const c of [...preferPumps, ...otherPumps]) {
+    if (liveBook.size >= LIVE_BOOK) break
+    liveBook.add(c.symbol)
+  }
   const state = await loadBookState(opts.kv)
-  let bookReads = 0
 
   for (const coin of batch) {
     const prev = state[coin.symbol]?.previous ?? null
@@ -315,28 +330,30 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
 
-    // Book optional — peak structure from candles is enough.
-    // Live 3-snap burns ~4 subrequests/coin; cap or cron hits the CF limit and goes silent.
     let evSide: 'LONG' | 'SHORT' | null = null
     let evKind = ''
-    let evFlow = 50
-    let evMove = 0
+    let evFlow: number | null = null
+    let evMove: number | null = null
     let evMm: string | null = null
     let evReady = false
-    const wantBook = bookReads < BOOK_SCAN
-    if (wantBook) {
-      bookReads++
+    let bookSeen = false
+    let crowdSoft = 0
+    let crowdNote: string | null = null
+    let toxicBook = false
+    const wantLive = liveBook.has(coin.symbol)
+    if (wantLive) {
       try {
         const read = await readOrderBookEvent({
           symbol: coin.symbol,
           previous: prev,
           older,
-          allowLiveSequence: false,
+          allowLiveSequence: true,
           dayBias: coin.dayBias,
           chg24hPct: coin.chg24hPct,
           mexcJson,
         })
         if (read.snapshot) {
+          bookSeen = true
           state[coin.symbol] = {
             older: prev,
             previous: read.snapshot,
@@ -352,9 +369,51 @@ export async function runMemeOrderFlowScan(opts: {
         evReady = ev.ready
         evSide = ev.side
         evKind = ev.kind
-        evFlow = ev.flowSharePct
-        evMove = ev.priceMoveBps
+        evFlow = ev.ready ? ev.flowSharePct : null
+        evMove = ev.ready ? ev.priceMoveBps : null
         evMm = ev.mmPattern ?? null
+
+        const crowd = analyzeCrowdBook(
+          read.snapshot,
+          read.prior ?? prev
+        )
+        if (crowd.shortBaitAsks) {
+          crowdSoft -= 1
+          crowdNote = `мелкие asks толпы ×${crowd.crowdAskLevels} — приманка шортов`
+        }
+        if (crowd.spoofAskWall && crowd.largeBidWall) {
+          crowdSoft -= 2
+          crowdNote = 'yank ask + живые биды — магнит вверх'
+        } else if (crowd.spoofAskWall) {
+          crowdSoft -= 1
+          crowdNote = crowdNote ?? 'ask-стена сорвана без прохода (spoof)'
+        } else if (
+          crowd.largeAskWall &&
+          evReady &&
+          evMove != null &&
+          Math.abs(evMove) <= 16 &&
+          (evFlow ?? 0) >= 52
+        ) {
+          crowdSoft += 2
+          crowdNote = 'живая ask-стена · покупки не едут — толпа заперта'
+        }
+        crowdSoft = Math.max(-2, Math.min(2, crowdSoft))
+
+        const fc = memeBookForecast({
+          side: 'SHORT',
+          bookSeen: true,
+          snapshot: read.snapshot,
+          previous: prev,
+          event: ev,
+          tapeBuy: evFlow,
+          tapeMoveBps: evMove,
+          mmPattern: evMm,
+          eventKind: evKind,
+          eventReady: evReady,
+          eventSide: evSide,
+          market: 'meme',
+        })
+        if (fc.toxic) toxicBook = true
       } catch {
         if (holdVol != null) {
           state[coin.symbol] = {
@@ -385,25 +444,35 @@ export async function runMemeOrderFlowScan(opts: {
       prevHoldVol: prevHold,
       candles1m: candles,
       buyFlowPct:
-        evSide === 'SHORT'
+        evReady && evSide === 'SHORT'
           ? evFlow
-          : evSide === 'LONG'
-            ? Math.max(0, 100 - evFlow)
+          : evReady && evSide === 'LONG'
+            ? evFlow != null
+              ? Math.max(0, 100 - evFlow)
+              : null
             : evReady
               ? 55
-              : 58,
-      priceMoveBps: evReady ? evMove : 0,
+              : null,
+      priceMoveBps: evReady ? evMove : null,
       absorptionShort:
         evKind === 'ABSORPTION_SHORT' ||
         (evMm === 'ABSORPTION' && evSide === 'SHORT') ||
-        (evReady && evSide === 'SHORT' && Math.abs(evMove) <= 16),
+        (evReady && evSide === 'SHORT' && evMove != null && Math.abs(evMove) <= 16),
       cvdBearish: evKind === 'CVD_DIVERGENCE' && evSide === 'SHORT',
+      bookSeen,
+      crowdSoft,
+      crowdNote,
+      toxicBook,
     })
 
     if (!peak?.ready) {
       rejects.push({
         symbol: coin.symbol,
-        reason: evReady ? `no_peak:${evKind}` : 'no_peak_structure',
+        reason: toxicBook
+          ? `peak_book_toxic:${evKind || 'forecast'}`
+          : evReady
+            ? `no_peak:${evKind}`
+            : 'no_peak_structure',
       })
       continue
     }

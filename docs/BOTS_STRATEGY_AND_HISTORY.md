@@ -9,42 +9,35 @@
 
 | | |
 |---|---|
-| **Раньше** | Событие стакана / зоны → вход «с потоком» (absorption, wall release, CONT_*, VANE touch) |
-| **v29** | Структура 1m + realBook forecast + conf/fuel → класс A |
-| **Сейчас мемы (v31)** | **Режим мема** + истощение участников + ageGate (не MM-фазы) |
-| **Альты** | ALT_JEWEL book forecast L/S (MM-логика стакана ок для альтов) |
+| **Раньше (высокий WR)** | PEAK_FUEL_FAIL v27.1 — peak-only, мягкие пороги, до 5 алертов/тик |
+| **v29–v31 / v32** | CONT / regime / ageGate — то молчание, то не то ядро |
+| **Сейчас мемы (v27.3)** | **PEAK_FUEL_FAIL** + live book на 2–3 prefer+PUMP · crowd score · без фейковой ленты |
+| **Альты** | ALT_JEWEL book forecast L/S |
 
-Мемы ≠ альты: у мема жизненный цикл LAUNCH→FOMO→DISTRIBUTION→FLUSH/ZOMBIE.
+Мемы: весь Predator на fade без топлива у хая. CONT/PUMP на мем-пути выкл.
 
 ---
 
-## 1. Конвейер мемов (v31)
+## 1. Конвейер мемов (v27.3 PEAK + crowd book)
 
 ```
-Hotlist (premove + early)                   hotMemeWatchlist.ts
+Hotlist (pumps + prefer coins)              hotMemeWatchlist.ts
     ↓
-memeVolumeProfile (spike + decay)           memeVolumeProfile.ts
+скан до 12 имён по 1m свечам
     ↓
-memeAgeGate → TOO_EARLY / LAUNCH / DIST     memeAgeGate.ts
-    ↓
-memeRegimeDetector                          memeRegimeDetector.ts
-    ↓
-exhaustionScore 0–100                       exhaustionScore.ts
-    ↓
-memeBookForecast + temporal coherence
-    ↓
-┌─────────────────────┬──────────────────────┐
-│ PEAK SHORT          │ PUMP CONTINUE        │
-│ DIST / FOMO_PEAK    │ LAUNCH / RELAUNCH    │
-│ exhaustion ≥ 62     │ exhaustion ≤ 35      │
-│ age ≥ 12m           │ vol_ratio ≥ 0.45     │
-└─────────────────────┴──────────────────────┘
-    ↓
-A → TP1 +0.8% → BE → TP2 +2.0%
+live 3-snap стакан только на 2–3 prefer+PUMP  orderBookReader.ts
+    ↓ crowd bait / spoof magnet / trapped asks   analyzeCrowdBook
+    ↓ toxic (wash/spoof) → skip this tick
+detectPeakFuelFail — stall / wick / failed_break + real fuel
+    (без выдуманного buyFlow=58, если стакана не было)
+    ↓ conf ≥ 70 · chg24 ≥ 4 · dist ≤ 1.8% · crowd ± к score
+PEAK_FUEL_FAIL SHORT → Predator (до 5 / тик)
+выход: TP1→BE→TP2; OBI-flip только 2 тика подряд и не пока MFE растёт
 ```
 
-Альты: `eliteAltJewel.ts` SHORT|LONG (chg24 > −5% для LONG).  
-`phaseDetector` / `intentionReader` — не на мем-пути.
+CONT / PUMP / ageGate / regime — не в бою.  
+Альты: `eliteAltJewel.ts` на Elite.
+WR монеты: prefer по последним 3 WIN/LOSS; STOCK и дамперы по-прежнему block.
 
 ---
 
@@ -79,7 +72,7 @@ A → TP1 +0.8% → BE → TP2 +2.0%
 - TRAP_FLIP ~10% WR → токсик
 - много DEAD: MFE &lt; 0.35% — вход без follow-through
 
-**Сейчас:** `allowMemeFlowEvent()` всегда `legacy_cont_disabled`. CONT_* в бой не эмитятся. События стакана остались как **входные кадры** для forecast, не как прямой триггер ордера.
+**Сейчас (v32):** `allowMemeFlowEvent()` снова в бою — CONT_* WITH day (absorption / wall / flow). TRAP/LIQ/SPOOF kill. PEAK/PUMP — fallback если CONT не сработал.
 
 ### 2.2. Зоны ликвидности (scanner / HTF SSL-BSL)
 
@@ -138,26 +131,23 @@ Tape alone → B или skip.
 
 ### 3.2. PEAK_FUEL_FAIL — SHORT у хая (`peakFuelFail.ts`)
 
-**Идея:** MM выходит / не защищает → SHORT у хая (не любой wick).
+**Идея:** памп stall у хая без топлива → SHORT. Стакан нужен, чтобы видеть, куда робот гонит толпу, не чтобы закрыть вход новыми гейтами.
 
-#### Класс A (v30)
+#### Сейчас (v27.3)
 
-| Условие | Порог |
+| | |
 |---|---|
-| Vol / universe | preMove accel **или** chg24 ≥ 9 (preMove: chg24 ≥ 4) |
-| Phase | DISTRIBUTION steps ≥2 / transition → MARKDOWN |
-| Intention | mustExit ∨ FLAT ∨ SHORT · **не** mustDefend LONG |
-| Hard structure | failed_break **или** rejection_wick ≥ 28% |
-| Follow | bearish 1m |
-| Book | !toxic (+ temporal), aligned, NEXT_DOWN / force |
-| conf | ≥ **72** |
-| dist | **0.22–1.45%** |
-| chg15m | flat / weakly negative (не mid-ramp) |
+| Свечи | failed_break / rejection_wick / lower high / stall · dist ≤ 1.8% · chg24 ≥ 4 |
+| Книга | live 3-snap на **2–3** prefer+PUMP; остальные — только свечи, **без** фейкового buyFlow=58 |
+| Толпа | `analyzeCrowdBook`: мелкие asks / yank+bid magnet → мягкий минус; живая ask-стена + покупки не едут → плюс |
+| Toxic | wash/spoof/trap → skip **этот тик**, не бан монеты |
+| conf | ≥ 70 (crowd ±3 за пункт) |
+| Prefer | последние 3 WIN/LOSS; STOCK и wr<40 / 2L0W — block |
 
 #### Уровни / выход
 
-- SL **+1.0%**  
-- **TP1 −0.8%** → BE · **TP2 −2.0%** (≈ +40% @ ×20)
+- SL **+1.0%** · TP1 **−1.1%** → BE · TP2 **−1.8%**
+- OBI-flip runner: ≥15 пт против **два тика** и не пока MFE обновляет экстремум
 
 ---
 

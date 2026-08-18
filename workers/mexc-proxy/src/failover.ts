@@ -1,11 +1,11 @@
 /**
  * Dual Cloudflare account failover.
  *
- * Primary runs until daily budget / subrequest failures.
- * Critical: handoff must NOT run inside a tick that already hit
- * «Too many subrequests» — that fetch to peer also fails. Instead we
- * set a pending flag and hand off at the START of the next cron
- * (fresh subrequest budget).
+ * Primary (account A) runs until free-plan limits (KV 1000 writes/day,
+ * ~80k invocations). Then it activates standby (account B) so the bot
+ * spends B's separate quota. Subrequest-limit hits stay on primary
+ * (next cron is a fresh 50). KV/daily handoff is deferred to the next
+ * tick if this one already burned subrequests.
  *
  * Secrets/vars (both workers):
  *   FAILOVER_ROLE=primary|standby
@@ -15,7 +15,14 @@
  *   FAILOVER_DAILY_BUDGET=80000
  */
 
-import { kvPutThrottled } from './kvWrite'
+import {
+  isKvQuotaHandoffDone,
+  isKvWriteQuotaExhausted,
+  kvPutThrottled,
+  markKvQuotaHandoffDone,
+  markKvWriteQuotaExhausted,
+  refreshKvWriteQuotaFromCache,
+} from './kvWrite'
 
 export type FailoverRole = 'primary' | 'standby'
 
@@ -57,6 +64,27 @@ export type FailoverSubscriberPayload = {
   joinedAt?: number
 }
 
+/** Copied onto the peer so its separate KV can keep trading. */
+export type FailoverHandoffPayload = {
+  memeSubs?: FailoverSubscriberPayload[]
+  sniperSubs?: FailoverSubscriberPayload[]
+  journal?: string | null
+  paper?: string | null
+  gates?: string | null
+  watchlist?: string | null
+}
+
+export const HANDOFF_KV_KEYS = {
+  journal: 'telegram:bot_journal_v292',
+  paper: 'telegram:paper_trades_v292',
+  gates: 'telegram:bot_gates_v292',
+  watchlist: 'scanner:hot_meme_watchlist_v7_premove',
+} as const
+
+function isQuotaHandoffReason(reason: string | null | undefined): boolean {
+  return /kv_quota|daily_budget/i.test(reason ?? '')
+}
+
 const STATE_KEY = 'telegram:failover_state'
 const REQ_COUNT_KEY = 'telegram:failover_reqcount'
 /** Sticky owner — cron must not fight KV races on `active` */
@@ -96,7 +124,7 @@ async function writeOwner(env: FailoverEnv, owner: FailoverRole): Promise<void> 
       expirationTtl: 60 * 60 * 36,
     })
   } catch {
-    /* ignore */
+    await markKvWriteQuotaExhausted()
   }
 }
 
@@ -121,6 +149,7 @@ export async function loadFailoverState(
   env: FailoverEnv
 ): Promise<FailoverState> {
   const base = defaultState(env)
+  await refreshKvWriteQuotaFromCache()
   try {
     const [raw, countRaw, owner] = await Promise.all([
       env.SUBSCRIBERS?.get(STATE_KEY) ?? Promise.resolve(null),
@@ -129,7 +158,7 @@ export async function loadFailoverState(
     ])
     if (!raw) {
       if (owner) base.active = owner === base.role
-      return base
+      return applyQuotaOwnerOverlay(base)
     }
     const parsed = JSON.parse(raw) as Partial<FailoverState>
     const day = dayKeyUtc()
@@ -146,7 +175,7 @@ export async function loadFailoverState(
     const reqFromState = sameDay ? Number(parsed.requestCount ?? 0) : 0
     const activeFromState =
       typeof parsed.active === 'boolean' ? parsed.active : base.active
-    return {
+    const loaded: FailoverState = {
       ...base,
       ...parsed,
       role: base.role,
@@ -160,9 +189,22 @@ export async function loadFailoverState(
       peerUrl: env.FAILOVER_PEER_URL ?? parsed.peerUrl ?? null,
       updatedAt: Date.now(),
     }
+    return applyQuotaOwnerOverlay(loaded)
   } catch {
-    return base
+    return applyQuotaOwnerOverlay(base)
   }
+}
+
+/** If A already handed off for today's KV cap, A stays idle even when OWNER put failed. */
+function applyQuotaOwnerOverlay(state: FailoverState): FailoverState {
+  if (
+    state.role === 'primary' &&
+    isKvWriteQuotaExhausted() &&
+    isKvQuotaHandoffDone()
+  ) {
+    state.active = false
+  }
+  return state
 }
 
 export async function saveFailoverState(
@@ -179,7 +221,7 @@ export async function saveFailoverState(
       JSON.stringify({ dayKey: state.dayKey, n: state.requestCount })
     )
   } catch {
-    // best effort
+    await markKvWriteQuotaExhausted()
   }
 }
 
@@ -224,10 +266,14 @@ function markPeerDead(): void {
   peerDeadUntil = Date.now() + PEER_DEAD_COOLDOWN_MS
 }
 
-function peerAbortSignal(): AbortSignal | undefined {
+function clearPeerDead(): void {
+  peerDeadUntil = 0
+}
+
+function peerAbortSignal(ms = PEER_FETCH_MS): AbortSignal | undefined {
   try {
     if (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal) {
-      return AbortSignal.timeout(PEER_FETCH_MS)
+      return AbortSignal.timeout(ms)
     }
   } catch {
     /* ignore */
@@ -262,9 +308,16 @@ async function requestPeerStandby(
   }
 }
 
+export type PeerFailoverSnapshot = {
+  active?: boolean
+  role?: string
+  kvQuotaExhausted?: boolean
+  kvQuotaHandoff?: boolean
+}
+
 async function peerFailoverSnapshot(
   env: FailoverEnv
-): Promise<{ active?: boolean; role?: string } | null> {
+): Promise<PeerFailoverSnapshot | null> {
   const peer = env.FAILOVER_PEER_URL?.replace(/\/$/, '')
   if (!peer || peerLikelyDead()) return null
   try {
@@ -276,7 +329,7 @@ async function peerFailoverSnapshot(
       markPeerDead()
       return null
     }
-    return (await r.json()) as { active?: boolean; role?: string }
+    return (await r.json()) as PeerFailoverSnapshot
   } catch {
     markPeerDead()
     return null
@@ -287,17 +340,35 @@ export async function shouldRunCronWork(
   env: FailoverEnv
 ): Promise<{ run: boolean; state: FailoverState; reason?: string }> {
   let state = await bumpFailoverRequest(env, 1)
+  await refreshKvWriteQuotaFromCache()
   if (!failoverConfigured(env)) {
     return { run: true, state, reason: 'failover_disabled' }
+  }
+  if (roleOf(env) === 'primary') {
+    await kvPutThrottled(
+      env.SUBSCRIBERS,
+      'telegram:kv_quota_probe',
+      dayKeyUtc(),
+      2 * 60 * 60_000
+    )
+    await refreshKvWriteQuotaFromCache()
   }
 
   const role = roleOf(env)
   const budget = dailyBudget(env)
+  const kvQuota = isKvWriteQuotaExhausted()
+  const quotaHandoffDone = isKvQuotaHandoffDone()
 
-  // Standby yields whenever primary is actually running. Never fight a live primary.
+  // Standby yields to a healthy primary. If A already burned today's KV
+  // writes, B must keep using account B's separate 1000-write budget.
   if (role === 'standby') {
     const peer = await peerFailoverSnapshot(env)
-    if (peer?.role === 'primary' && peer.active === true) {
+    const primaryStillHasQuota =
+      peer?.role === 'primary' &&
+      peer.active === true &&
+      !peer.kvQuotaExhausted &&
+      !peer.kvQuotaHandoff
+    if (primaryStillHasQuota) {
       if (state.active) {
         state = await standbyThisWorker(env, 'yield_to_active_primary')
       }
@@ -312,13 +383,20 @@ export async function shouldRunCronWork(
     return { run: true, state, reason: 'standby_owner' }
   }
 
-  // PRIMARY must not sit idle. Handoff to standby after subrequest fails left
-  // the bot silent for hours: peer stayed active:true on old code, reclaim
-  // treated that as "peer owns" and never took the baton back.
+  // Account A hit free KV / daily cap — stay idle and let B spend its quota.
+  if (kvQuota || quotaHandoffDone) {
+    if (quotaHandoffDone) {
+      return { run: false, state, reason: 'kv_quota_peer_owns' }
+    }
+    return { run: false, state, reason: 'kv_quota' }
+  }
+
+  // PRIMARY must not sit idle after a bad subrequest handoff. Reclaim unless
+  // we handed off for today's KV/daily budget and the peer is actually running.
   if (!state.active) {
     const age = Date.now() - (state.lastHandoffAt ?? 0)
     const budgetHandoff =
-      /daily_budget/i.test(state.lastReason ?? '') &&
+      isQuotaHandoffReason(state.lastReason) &&
       age < PRIMARY_IDLE_RECLAIM_MS * 3
     if (budgetHandoff) {
       const peer = await peerFailoverSnapshot(env)
@@ -331,7 +409,8 @@ export async function shouldRunCronWork(
   } else if (
     /handoff→peer|yield_to_active_standby|subrequest_fails|primary_clear_stuck_handoff/i.test(
       state.lastReason ?? ''
-    )
+    ) &&
+    !isQuotaHandoffReason(state.lastReason)
   ) {
     // OWNER already primary but webhooks may still point at standby
     const healed = await activateThisWorker(
@@ -341,8 +420,12 @@ export async function shouldRunCronWork(
     state = healed.state
   }
 
-  // Drop queued subrequest handoffs — they caused dual-idle / wrong-owner silence
-  if (state.pendingHandoff || state.subrequestFails >= SUBREQUEST_FAIL_HANDOFF) {
+  // Drop queued subrequest handoffs — they caused dual-idle / wrong-owner silence.
+  // Keep KV/daily-budget pending so the next tick can activate account B.
+  if (
+    !isQuotaHandoffReason(state.pendingReason) &&
+    (state.pendingHandoff || state.subrequestFails >= SUBREQUEST_FAIL_HANDOFF)
+  ) {
     state.pendingHandoff = false
     state.pendingReason = null
     state.subrequestFails = 0
@@ -395,47 +478,58 @@ export async function noteFailoverFailure(
 
 export async function maybeHandoffOnBudget(
   env: FailoverEnv,
-  payload?: {
-    memeSubs?: FailoverSubscriberPayload[]
-    sniperSubs?: FailoverSubscriberPayload[]
-  }
+  payload?: FailoverHandoffPayload
+): Promise<{ handedOff: boolean; state: FailoverState }> {
+  return maybeHandoffOnLimit(env, payload)
+}
+
+/**
+ * When account A is out of free-plan KV writes (1000/day) or daily
+ * invocations, activate account B so the bot spends B's separate quota.
+ */
+export async function maybeHandoffOnLimit(
+  env: FailoverEnv,
+  payload?: FailoverHandoffPayload
 ): Promise<{ handedOff: boolean; state: FailoverState }> {
   const state = await loadFailoverState(env)
-  if (!failoverConfigured(env) || !state.active) {
+  await refreshKvWriteQuotaFromCache()
+  if (!failoverConfigured(env) || roleOf(env) !== 'primary') {
     return { handedOff: false, state }
   }
-  if (state.requestCount < dailyBudget(env)) {
+  const quota = isKvWriteQuotaExhausted()
+  const budget = state.requestCount >= dailyBudget(env)
+  if (!quota && !budget) {
     return { handedOff: false, state }
   }
-  const handed = await handoffToPeer(
-    env,
-    `daily_budget ${state.requestCount}`,
-    payload
-  )
+  if (isKvQuotaHandoffDone()) {
+    return { handedOff: false, state }
+  }
+  clearPeerDead()
+  const reason = quota
+    ? 'kv_quota'
+    : `daily_budget ${state.requestCount}`
+  const handed = await handoffToPeer(env, reason, payload)
   if (!handed.ok) {
-    const pending = await markPendingHandoff(
-      env,
-      `daily_budget ${state.requestCount}`
-    )
+    const pending = await markPendingHandoff(env, reason)
     return { handedOff: false, state: pending }
   }
+  await markKvQuotaHandoffDone()
   return { handedOff: true, state: handed.state }
 }
 
 /** Run at cron start with fresh subrequest budget. */
 export async function processPendingHandoff(
   env: FailoverEnv,
-  payload?: {
-    memeSubs?: FailoverSubscriberPayload[]
-    sniperSubs?: FailoverSubscriberPayload[]
-  }
+  payload?: FailoverHandoffPayload
 ): Promise<{ handedOff: boolean; state: FailoverState }> {
   const state = await loadFailoverState(env)
   if (!failoverConfigured(env) || !state.pendingHandoff) {
     return { handedOff: false, state }
   }
-  // Primary: cancel queued subrequest handoff instead of going idle
-  if (roleOf(env) === 'primary') {
+  const quotaPending = isQuotaHandoffReason(state.pendingReason)
+  // Primary: cancel queued subrequest handoff instead of going idle.
+  // KV/daily-budget pending must actually activate account B.
+  if (roleOf(env) === 'primary' && !quotaPending) {
     state.pendingHandoff = false
     state.pendingReason = null
     state.subrequestFails = 0
@@ -445,12 +539,14 @@ export async function processPendingHandoff(
     await saveFailoverState(env, state)
     return { handedOff: false, state }
   }
-  if (!state.active) {
+  if (!state.active && !quotaPending) {
     return { handedOff: false, state }
   }
+  clearPeerDead()
   const reason = state.pendingReason ?? 'pending_handoff'
   const handed = await handoffToPeer(env, reason, payload)
   if (handed.ok) {
+    if (quotaPending) await markKvQuotaHandoffDone()
     const next = await loadFailoverState(env)
     next.pendingHandoff = false
     next.pendingReason = null
@@ -558,13 +654,14 @@ export async function standbyThisWorker(
 export async function handoffToPeer(
   env: FailoverEnv,
   reason: string,
-  payload?: {
-    memeSubs?: FailoverSubscriberPayload[]
-    sniperSubs?: FailoverSubscriberPayload[]
-  }
+  payload?: FailoverHandoffPayload
 ): Promise<{ ok: boolean; state: FailoverState; peer?: unknown }> {
   const state = await loadFailoverState(env)
-  if (!state.active) return { ok: false, state }
+  const quotaForce =
+    isQuotaHandoffReason(reason) &&
+    isKvWriteQuotaExhausted() &&
+    !isKvQuotaHandoffDone()
+  if (!state.active && !quotaForce) return { ok: false, state }
   const peer = env.FAILOVER_PEER_URL?.replace(/\/$/, '')
   const secret = env.FAILOVER_SECRET
   if (!peer || !secret) {
@@ -586,8 +683,12 @@ export async function handoffToPeer(
         publicBase: env.PUBLIC_BASE_URL ?? null,
         memeSubs: payload?.memeSubs ?? [],
         sniperSubs: payload?.sniperSubs ?? [],
+        journal: payload?.journal ?? null,
+        paper: payload?.paper ?? null,
+        gates: payload?.gates ?? null,
+        watchlist: payload?.watchlist ?? null,
       }),
-      signal: peerAbortSignal(),
+      signal: peerAbortSignal(8_000),
     })
     const body = await r.json().catch(() => ({}))
     if (!r.ok) {
@@ -603,6 +704,9 @@ export async function handoffToPeer(
     }
     // Peer live — now idle ourselves
     const idle = await standbyThisWorker(env, `handoff→peer: ${reason}`)
+    if (isQuotaHandoffReason(reason)) {
+      await markKvQuotaHandoffDone()
+    }
     return { ok: true, state: idle, peer: body }
   } catch (err) {
     const next = await loadFailoverState(env)

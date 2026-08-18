@@ -3,9 +3,10 @@
 ## Idea
 - **Account A / `mexc-proxy`** = primary (active)
 - **Account B / `mexc-proxy-b`** = standby (idle cron)
-- When A hits Free limits (`Too many subrequests` ×3 or ~80k requests/day), it calls B `/telegram/failover/activate`
-- B becomes active, switches Telegram webhooks to itself, sends TG notice
-- A goes idle (cron no-op) so it stops burning quota
+- When A hits Free **KV 1000 writes/day** (or ~80k invocations), it calls B `/telegram/failover/activate`
+- B becomes active, copies subscribers + journal/paper, switches Telegram webhooks, sends TG notice
+- A goes idle until **00:00 UTC** (A's KV quota resets), then reclaim
+- Subrequest-limit (50/tick) stays on A — next cron is a fresh 50; that is not a reason to switch accounts
 
 ## Setup Account B
 1. New Cloudflare account + Workers enabled  
@@ -48,8 +49,8 @@ curl "https://mexc-proxy-b.mexc-standby.workers.dev/telegram/failover/status"
 ```
 
 ## Notes
-- Journals/KV are **per account**. Handoff now **copies subscribers** in the activate payload so standby can TG.
+- Journals/KV are **per account**. Handoff copies **subscribers + journal/paper/gates/watchlist** so B can keep trading.
 - Standby must have the **same** bot tokens or webhook switch is useless.
 - Free plan still has **50 subrequests/invocation** on each account.
-- Handoff after subrequest errors is **deferred to the next cron** (same tick is already out of subrequests — that caused `peer_unreachable_rollback` silence).
-- Fail counter is sticky (2 hits → pending handoff); peer is activated **before** primary goes idle.
+- Handoff after KV/daily-limit is **deferred to the next cron** if this tick already burned subrequests.
+- Standby must **not** yield to primary while `kvQuotaExhausted` / `kvQuotaHandoff` is set on A.

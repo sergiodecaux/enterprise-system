@@ -1457,7 +1457,7 @@ export function deriveAdaptiveGates(
   }
 }
 
-/** Learn PEAK SHORT winrate per coin — keep winners, block dumpers. */
+/** Learn PEAK SHORT winrate per coin — recency (last 3) for prefer; dumpers still blocked. */
 export function learnPeakSymbolWr(entries: BotJournalEntry[]): {
   blocked: string[]
   prefer: string[]
@@ -1466,31 +1466,46 @@ export function learnPeakSymbolWr(entries: BotJournalEntry[]): {
   const peak = entries.filter(
     (e) => e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT'
   )
-  const map = new Map<string, { w: number; l: number }>()
+  const map = new Map<
+    string,
+    Array<{ at: number; win: boolean; dead: boolean }>
+  >()
   for (const e of peak) {
     if (e.status !== 'WIN' && e.status !== 'LOSS') continue
-    const row = map.get(e.symbol) ?? { w: 0, l: 0 }
-    if (e.status === 'WIN') row.w++
-    else row.l++
-    map.set(e.symbol, row)
+    const list = map.get(e.symbol) ?? []
+    list.push({
+      at: e.createdAt,
+      win: e.status === 'WIN',
+      dead: e.outcomePrimaryTag === 'DEAD_ENTRY' || e.closeReason === 'dead_entry',
+    })
+    map.set(e.symbol, list)
   }
   const blocked: string[] = []
   const prefer: string[] = []
   const rows: SymbolWrRow[] = []
-  for (const [symbol, s] of map) {
-    const n = s.w + s.l
-    const wr = n > 0 ? (100 * s.w) / n : 0
-    rows.push({ symbol, n, wins: s.w, losses: s.l, wr })
+  for (const [symbol, fills] of map) {
+    fills.sort((a, b) => a.at - b.at)
+    const w = fills.filter((f) => f.win).length
+    const l = fills.length - w
+    const n = fills.length
+    const wr = n > 0 ? (100 * w) / n : 0
+    rows.push({ symbol, n, wins: w, losses: l, wr })
     if (
       isEquityTokenSymbol(symbol) ||
       (n >= 2 && wr < 40) ||
-      (s.l >= 2 && s.w === 0)
+      (l >= 2 && w === 0)
     ) {
       blocked.push(symbol)
       continue
     }
-    // Coins the detector already reads: unbeaten, or n≥2 WR≥60
-    if ((s.w >= 1 && s.l === 0) || (n >= 2 && wr >= 60)) {
+    const recent = fills.slice(-3)
+    const rw = recent.filter((f) => f.win).length
+    const rl = recent.length - rw
+    const rn = recent.length
+    const rwr = rn > 0 ? (100 * rw) / rn : 0
+    const lastDead = Boolean(recent[recent.length - 1]?.dead && !recent[recent.length - 1]?.win)
+    if (lastDead) continue
+    if ((rw >= 1 && rl === 0) || (rn >= 2 && rwr >= 60)) {
       prefer.push(symbol)
     }
   }

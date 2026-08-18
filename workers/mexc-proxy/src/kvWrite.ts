@@ -42,6 +42,80 @@ async function writeStamp(key: string, at: number): Promise<void> {
 
 export type KvPutResult = 'written' | 'skipped' | 'failed' | 'no_kv'
 
+function dayKeyUtc(now = Date.now()): string {
+  return new Date(now).toISOString().slice(0, 10)
+}
+
+function quotaReq(kind: 'exhausted' | 'handoff'): Request {
+  return new Request(
+    `https://enterprise-system-runtime.invalid/kv-quota/${kind}`
+  )
+}
+
+let quotaExhaustedDay: string | null = null
+let quotaHandoffDay: string | null = null
+
+async function persistDayFlag(
+  kind: 'exhausted' | 'handoff',
+  day: string
+): Promise<void> {
+  try {
+    await caches.default.put(
+      quotaReq(kind),
+      new Response(day, {
+        headers: { 'Cache-Control': 'public, max-age=90000' },
+      })
+    )
+  } catch {
+    /* memory only */
+  }
+}
+
+async function readDayFlag(kind: 'exhausted' | 'handoff'): Promise<string | null> {
+  try {
+    const res = await caches.default.match(quotaReq(kind))
+    if (!res) return null
+    const day = (await res.text()).trim()
+    return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null
+  } catch {
+    return null
+  }
+}
+
+/** Free-plan KV writes/day (1000) used up on this isolate / Cache. */
+export function isKvWriteQuotaExhausted(): boolean {
+  return quotaExhaustedDay === dayKeyUtc()
+}
+
+/** Primary already activated the peer for today's KV/daily limit. */
+export function isKvQuotaHandoffDone(): boolean {
+  return quotaHandoffDay === dayKeyUtc()
+}
+
+export async function refreshKvWriteQuotaFromCache(): Promise<void> {
+  const today = dayKeyUtc()
+  if (quotaExhaustedDay !== today) {
+    const stored = await readDayFlag('exhausted')
+    if (stored === today) quotaExhaustedDay = today
+  }
+  if (quotaHandoffDay !== today) {
+    const stored = await readDayFlag('handoff')
+    if (stored === today) quotaHandoffDay = today
+  }
+}
+
+export async function markKvWriteQuotaExhausted(): Promise<void> {
+  const day = dayKeyUtc()
+  quotaExhaustedDay = day
+  await persistDayFlag('exhausted', day)
+}
+
+export async function markKvQuotaHandoffDone(): Promise<void> {
+  const day = dayKeyUtc()
+  quotaHandoffDay = day
+  await persistDayFlag('handoff', day)
+}
+
 /**
  * Put to KV at most once per `minIntervalMs` per key (unless force).
  * Callers must still write Cache/memory themselves for hot path.
@@ -68,6 +142,7 @@ export async function kvPutThrottled(
     await writeStamp(key, now)
     return 'written'
   } catch {
+    await markKvWriteQuotaExhausted()
     return 'failed'
   }
 }

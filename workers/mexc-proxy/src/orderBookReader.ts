@@ -65,6 +65,8 @@ export interface OrderBookEvent {
 
 export interface OrderBookRead {
   snapshot: OrderBookSnapshot | null
+  /** Previous snap used for spoof/crowd (live 3-snap or KV) */
+  prior?: OrderBookSnapshot | null
   event: OrderBookEvent
   /** Always filled when deals loaded — even if no wall/MM event */
   tape: { buyFlowPct: number; priceMoveBps: number } | null
@@ -535,7 +537,8 @@ function computeTape(
 function withTape(
   snapshot: OrderBookSnapshot | null,
   event: OrderBookEvent,
-  tape: { buyFlowPct: number; priceMoveBps: number } | null
+  tape: { buyFlowPct: number; priceMoveBps: number } | null,
+  prior?: OrderBookSnapshot | null
 ): OrderBookRead {
   // Stamp real OBI onto cold events so detectors still "see" the book
   const stamped =
@@ -547,7 +550,7 @@ function withTape(
           priceMoveBps: tape?.priceMoveBps ?? event.priceMoveBps,
         }
       : event
-  return { snapshot, event: stamped, tape }
+  return { snapshot, prior: prior ?? null, event: stamped, tape }
 }
 
 function withLevels(
@@ -994,6 +997,11 @@ export async function readOrderBookEvent(opts: {
   const tape = computeTape(deals, current, previous)
   const asks = current.asks.map(([price, vol]) => ({ price, vol }))
   const bids = current.bids.map(([price, vol]) => ({ price, vol }))
+  const pack = (
+    snap: OrderBookSnapshot | null,
+    ev: OrderBookEvent,
+    tp: { buyFlowPct: number; priceMoveBps: number } | null
+  ) => withTape(snap, ev, tp, previous)
 
   const mm = detectMmSignal({
     previous,
@@ -1004,7 +1012,7 @@ export async function readOrderBookEvent(opts: {
     oiChangePct: opts.oiChangePct ?? null,
   })
   if (mm.wash.wash) {
-    return withTape(current, {
+    return pack(current, {
       ...emptyEvent(mm.wash.reason),
       kind: 'WASH_SKIP',
       notes: [mm.wash.reason, 'Монета пропущена — нет реального дисбаланса'],
@@ -1019,25 +1027,25 @@ export async function readOrderBookEvent(opts: {
       ? mm.signal
       : null
   if (mmUsable) {
-    return withTape(
+    return pack(
       current,
       mmToEvent(mmUsable, current.mid, asks, bids),
       tape
     )
   }
   if (mm.oiBlock && !mm.signal) {
-    return withTape(current, emptyEvent(mm.oiBlock), tape)
+    return pack(current, emptyEvent(mm.oiBlock), tape)
   }
 
   // Fallback: classic vacuum / pressure (still LIMIT_CHASE levels).
   const classic = analyzeEvent(older, previous, current, deals)
   if (!classic.ready || !classic.side) {
-    return withTape(current, classic, tape)
+    return pack(current, classic, tape)
   }
   // Trap flip toxic in journal — skip trap, but if this is a real release
   // (persisted wall gone) keep it; trap-only ticks fall through empty.
   if (classic.trap) {
-    return withTape(
+    return pack(
       current,
       emptyEvent(
         'Trap flip отключён — жду wall-release / absorption (не spoof)'
@@ -1055,7 +1063,7 @@ export async function readOrderBookEvent(opts: {
     classic.side === 'LONG' ? limit * 1.02 : limit * 0.98
   const tp1 =
     classic.side === 'LONG' ? limit * 1.015 : limit * 0.985
-  return withTape(current, {
+  return pack(current, {
     ...classic,
     entryMode: 'LIMIT_CHASE',
     wallPrice: limit,

@@ -76,7 +76,12 @@ import {
 } from './memePipelineDebug'
 import { runEliteAltJewelScan, ALT_JEWEL_SETUP } from './eliteAltJewel'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
-import { kvPutThrottled } from './kvWrite'
+import {
+  isKvQuotaHandoffDone,
+  isKvWriteQuotaExhausted,
+  kvPutThrottled,
+  refreshKvWriteQuotaFromCache,
+} from './kvWrite'
 import {
   enqueuePendingMeme,
   flushPendingMemeAlerts,
@@ -85,13 +90,15 @@ import {
   activateThisWorker,
   authorizeFailover,
   failoverConfigured,
+  HANDOFF_KV_KEYS,
   handoffToPeer,
   loadFailoverState,
-  maybeHandoffOnBudget,
+  maybeHandoffOnLimit,
   noteFailoverFailure,
   processPendingHandoff,
   shouldRunCronWork,
   standbyThisWorker,
+  type FailoverHandoffPayload,
   type FailoverSubscriberPayload,
 } from './failover'
 
@@ -155,6 +162,64 @@ async function runtimePut(key: string, value: string): Promise<void> {
   } catch {
     // In-memory fallback is enough for local development.
   }
+}
+
+function toHandoffSub(s: Subscriber): FailoverSubscriberPayload {
+  return {
+    chatId: s.chatId,
+    username: s.username,
+    joinedAt: s.subscribedAt,
+    memeAlerts: s.meme,
+    sniperAlerts: s.sniper,
+  }
+}
+
+function clipBlob(raw: string | null, max: number): string | null {
+  if (!raw) return null
+  return raw.length <= max ? raw : raw.slice(0, max)
+}
+
+async function collectHandoffPayload(env: Env): Promise<FailoverHandoffPayload> {
+  const kv = env.SUBSCRIBERS
+  const [memeSubs, sniperSubs, journal, paper, gates, watchlist] =
+    await Promise.all([
+      listSubscribers(env, 'meme'),
+      listSubscribers(env, 'sniper'),
+      kv?.get(HANDOFF_KV_KEYS.journal) ?? Promise.resolve(null),
+      kv?.get(HANDOFF_KV_KEYS.paper) ?? Promise.resolve(null),
+      kv?.get(HANDOFF_KV_KEYS.gates) ?? Promise.resolve(null),
+      kv?.get(HANDOFF_KV_KEYS.watchlist) ?? Promise.resolve(null),
+    ])
+  return {
+    memeSubs: memeSubs.map(toHandoffSub),
+    sniperSubs: sniperSubs.map(toHandoffSub),
+    journal: clipBlob(journal, 400_000),
+    paper: clipBlob(paper, 80_000),
+    gates: clipBlob(gates, 40_000),
+    watchlist: clipBlob(watchlist, 80_000),
+  }
+}
+
+async function importHandoffKv(
+  env: Env,
+  body: FailoverHandoffPayload
+): Promise<void> {
+  const kv = env.SUBSCRIBERS
+  if (!kv) return
+  const jobs: Promise<unknown>[] = []
+  if (body.journal && body.journal.length > 2) {
+    jobs.push(kv.put(HANDOFF_KV_KEYS.journal, body.journal))
+  }
+  if (body.paper && body.paper.length > 2) {
+    jobs.push(kv.put(HANDOFF_KV_KEYS.paper, body.paper))
+  }
+  if (body.gates && body.gates.length > 2) {
+    jobs.push(kv.put(HANDOFF_KV_KEYS.gates, body.gates))
+  }
+  if (body.watchlist && body.watchlist.length > 2) {
+    jobs.push(kv.put(HANDOFF_KV_KEYS.watchlist, body.watchlist))
+  }
+  if (jobs.length) await Promise.all(jobs)
 }
 
 /** Prefer the newer of Cache vs KV (they can diverge across colos). */
@@ -593,6 +658,7 @@ async function handleTelegram(
   // Dual-account failover
   if (path === '/telegram/failover/status' && request.method === 'GET') {
     const state = await loadFailoverState(env)
+    await refreshKvWriteQuotaFromCache()
     return json({
       ok: true,
       configured: failoverConfigured(env),
@@ -608,6 +674,8 @@ async function handleTelegram(
       lastReason: state.lastReason,
       peerUrl: state.peerUrl,
       publicBaseUrl: env.PUBLIC_BASE_URL ?? null,
+      kvQuotaExhausted: isKvWriteQuotaExhausted(),
+      kvQuotaHandoff: isKvQuotaHandoffDone(),
     })
   }
 
@@ -621,6 +689,7 @@ async function handleTelegram(
     let reason = 'manual_or_peer_activate'
     let memeSubs: FailoverSubscriberPayload[] = []
     let sniperSubs: FailoverSubscriberPayload[] = []
+    let kvBlob: FailoverHandoffPayload = {}
     if (request.method === 'GET') {
       const u = new URL(request.url)
       if (u.searchParams.get('reason')) {
@@ -628,14 +697,18 @@ async function handleTelegram(
       }
     } else {
       try {
-        const body = (await request.json()) as {
+        const body = (await request.json()) as FailoverHandoffPayload & {
           reason?: string
-          memeSubs?: FailoverSubscriberPayload[]
-          sniperSubs?: FailoverSubscriberPayload[]
         }
         if (body?.reason) reason = String(body.reason).slice(0, 200)
         if (Array.isArray(body?.memeSubs)) memeSubs = body.memeSubs
         if (Array.isArray(body?.sniperSubs)) sniperSubs = body.sniperSubs
+        kvBlob = {
+          journal: body?.journal,
+          paper: body?.paper,
+          gates: body?.gates,
+          watchlist: body?.watchlist,
+        }
       } catch {
         // empty body ok
       }
@@ -676,6 +749,11 @@ async function handleTelegram(
       }
     } catch (err) {
       console.error('[failover] import subs failed', err)
+    }
+    try {
+      await importHandoffKv(env, kvBlob)
+    } catch (err) {
+      console.error('[failover] import journal/paper failed', err)
     }
     // Never 500 on activate — peer handoff treats non-2xx as failure and dual-active sticks
     try {
@@ -719,26 +797,11 @@ async function handleTelegram(
     if (!authorizeFailover(request, env)) {
       return json({ error: 'Unauthorized' }, 401)
     }
-    const [memeSubs, sniperSubs] = await Promise.all([
-      listSubscribers(env, 'meme'),
-      listSubscribers(env, 'sniper'),
-    ])
-    const r = await handoffToPeer(env, 'manual_handoff', {
-      memeSubs: memeSubs.map((s) => ({
-        chatId: s.chatId,
-        username: s.username,
-        joinedAt: s.subscribedAt,
-        memeAlerts: s.meme,
-        sniperAlerts: s.sniper,
-      })),
-      sniperSubs: sniperSubs.map((s) => ({
-        chatId: s.chatId,
-        username: s.username,
-        joinedAt: s.subscribedAt,
-        memeAlerts: s.meme,
-        sniperAlerts: s.sniper,
-      })),
-    })
+    const r = await handoffToPeer(
+      env,
+      'manual_handoff',
+      await collectHandoffPayload(env)
+    )
     return json(r)
   }
 
@@ -1040,9 +1103,9 @@ async function handleTelegram(
       return json({ error: 'Unauthorized' }, 401)
     }
     const targetBlock = [
-      `<b>🎯 РЕЖИМ (v27.2 PEAK + coin WR)</b>`,
-      `Мемы: <b>peak-only</b> · оставляем монеты с высоким WR · режем STOCK/дамперы.`,
-      `Стакан: memeBookForecast + toxic/coherence. Выход: TP1→BE→TP2.`,
+      `<b>🎯 РЕЖИМ (v27.3 PEAK + crowd book)</b>`,
+      `Мемы: peak-only · live стакан на 2–3 prefer+PUMP · толпа в оценку, не в бан.`,
+      `Стакан: crowd/spoof на live 3-snap. Выход: TP1→BE→TP2, OBI flip только 2 тика.`,
       `Альты: ALT_JEWEL L/S @ ×50 · +40% ROE.`,
     ].join('\n')
     const memeText = [
@@ -1632,27 +1695,11 @@ async function runCronScan(
   // Dual CF: pending handoff first (fresh subrequest budget), then gate
   if (failoverConfigured(env)) {
     const st = await loadFailoverState(env)
-    if (st.active && st.pendingHandoff) {
-      const [memeSubs, sniperSubs] = await Promise.all([
-        listSubscribers(env, 'meme'),
-        listSubscribers(env, 'sniper'),
-      ])
-      const pending = await processPendingHandoff(env, {
-        memeSubs: memeSubs.map((s) => ({
-          chatId: s.chatId,
-          username: s.username,
-          joinedAt: s.subscribedAt,
-          memeAlerts: s.meme,
-          sniperAlerts: s.sniper,
-        })),
-        sniperSubs: sniperSubs.map((s) => ({
-          chatId: s.chatId,
-          username: s.username,
-          joinedAt: s.subscribedAt,
-          memeAlerts: s.meme,
-          sniperAlerts: s.sniper,
-        })),
-      })
+    if (st.pendingHandoff) {
+      const pending = await processPendingHandoff(
+        env,
+        await collectHandoffPayload(env)
+      )
       if (pending.handedOff) {
         const idle = JSON.stringify({
           status: 'HANDED_OFF',
@@ -1684,27 +1731,8 @@ async function runCronScan(
 
   const gate = await shouldRunCronWork(env)
   if (!gate.run) {
-    if (gate.reason === 'daily_budget') {
-      const [memeSubs, sniperSubs] = await Promise.all([
-        listSubscribers(env, 'meme'),
-        listSubscribers(env, 'sniper'),
-      ])
-      await maybeHandoffOnBudget(env, {
-        memeSubs: memeSubs.map((s) => ({
-          chatId: s.chatId,
-          username: s.username,
-          joinedAt: s.subscribedAt,
-          memeAlerts: s.meme,
-          sniperAlerts: s.sniper,
-        })),
-        sniperSubs: sniperSubs.map((s) => ({
-          chatId: s.chatId,
-          username: s.username,
-          joinedAt: s.subscribedAt,
-          memeAlerts: s.meme,
-          sniperAlerts: s.sniper,
-        })),
-      })
+    if (gate.reason === 'daily_budget' || gate.reason === 'kv_quota') {
+      await maybeHandoffOnLimit(env, await collectHandoffPayload(env))
     }
     const idle = JSON.stringify({
       status: 'STANDBY_IDLE',
@@ -1723,28 +1751,6 @@ async function runCronScan(
       paperComments: 0,
       predatorSkip: gate.reason ?? 'failover_idle',
     }
-  }
-  {
-    const [memeSubs, sniperSubs] = await Promise.all([
-      listSubscribers(env, 'meme'),
-      listSubscribers(env, 'sniper'),
-    ])
-    await maybeHandoffOnBudget(env, {
-      memeSubs: memeSubs.map((s) => ({
-        chatId: s.chatId,
-        username: s.username,
-        joinedAt: s.subscribedAt,
-        memeAlerts: s.meme,
-        sniperAlerts: s.sniper,
-      })),
-      sniperSubs: sniperSubs.map((s) => ({
-        chatId: s.chatId,
-        username: s.username,
-        joinedAt: s.subscribedAt,
-        memeAlerts: s.meme,
-        sniperAlerts: s.sniper,
-      })),
-    })
   }
 
   const scanStartedAt = Date.now()
@@ -2876,6 +2882,17 @@ async function runCronScan(
     10 * 60_000,
     { expirationTtl: 60 * 60 * 24 * 3 }
   )
+  if (
+    failoverConfigured(env) &&
+    isKvWriteQuotaExhausted() &&
+    !isKvQuotaHandoffDone()
+  ) {
+    try {
+      await maybeHandoffOnLimit(env, await collectHandoffPayload(env))
+    } catch (err) {
+      console.error('[cron] kv_quota handoff failed', err)
+    }
+  }
   return result
 }
 
