@@ -1,12 +1,10 @@
-# STANDBY-2 worker — third Cloudflare account (C)
-# Deploy: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID for C, then:
-#   npx wrangler deploy -c wrangler.standby2.toml
-# Secrets (same as A and B): TELEGRAM_* ALERT_SECRET FAILOVER_SECRET MEXC_*
+# STANDBY-3 worker — fourth Cloudflare account (D / Money bot 3)
+# Deploy: npx wrangler deploy -c wrangler.standby3.toml
 
-name = "mexc-proxy-c"
+name = "mexc-proxy-d"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
-account_id = "c256c823b763a79fe2206bd16c69a62b"
+account_id = "7a55891f90e84f1bcf58b901fe568771"
 
 [triggers]
 crons = [
@@ -21,8 +19,8 @@ FAILOVER_ROLE = "standby"
 FAILOVER_DAILY_BUDGET = "80000"
 FAILOVER_RING = "https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev,https://mexc-proxy-d.mexc-d.workers.dev,https://mexc-proxy-e.mexc-e.workers.dev"
 FAILOVER_PEER_URL = "https://mexc-proxy.sergiodecaux.workers.dev"
-PUBLIC_BASE_URL = "https://mexc-proxy-c.mexc-c.workers.dev"
+PUBLIC_BASE_URL = "https://mexc-proxy-d.mexc-d.workers.dev"
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"
-id = "226faf17b60b46989be28f1847026e0d"
+id = "a0df9419bc284e2fad8f0b332ebf15da"
