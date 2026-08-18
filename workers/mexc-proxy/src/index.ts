@@ -96,6 +96,8 @@ import {
   maybeHandoffOnLimit,
   noteFailoverFailure,
   processPendingHandoff,
+  ringIndex,
+  ringUrls,
   shouldRunCronWork,
   standbyThisWorker,
   type FailoverHandoffPayload,
@@ -319,6 +321,8 @@ interface Env {
   /** primary | standby — dual CF account failover */
   FAILOVER_ROLE?: string
   FAILOVER_PEER_URL?: string
+  /** Comma-separated worker URLs in priority order (A,B,C,…) */
+  FAILOVER_RING?: string
   FAILOVER_SECRET?: string
   /** This worker public URL, e.g. https://mexc-proxy-xxx.workers.dev */
   PUBLIC_BASE_URL?: string
@@ -663,6 +667,8 @@ async function handleTelegram(
       ok: true,
       configured: failoverConfigured(env),
       role: state.role,
+      ring: ringUrls(env),
+      ringIndex: ringIndex(env),
       active: state.active,
       dayKey: state.dayKey,
       requestCount: state.requestCount,

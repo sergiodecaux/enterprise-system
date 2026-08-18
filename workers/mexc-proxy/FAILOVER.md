@@ -1,56 +1,87 @@
-# Dual Cloudflare failover (2 accounts → 2 Workers)
+# Cloudflare ring failover (N free accounts)
 
-## Idea
-- **Account A / `mexc-proxy`** = primary (active)
-- **Account B / `mexc-proxy-b`** = standby (idle cron)
-- When A hits Free **KV 1000 writes/day** (or ~80k invocations), it calls B `/telegram/failover/activate`
-- B becomes active, copies subscribers + journal/paper, switches Telegram webhooks, sends TG notice
-- A goes idle until **00:00 UTC** (A's KV quota resets), then reclaim
-- Subrequest-limit (50/tick) stays on A — next cron is a fresh 50; that is not a reason to switch accounts
+Free plan: **1000 KV writes/day per account**. Invocations (~100k) are not the usual limiter.
+Each extra account adds another 1000 writes. The active worker runs until its quota is gone,
+then activates the next URL in `FAILOVER_RING`. If every peer is exhausted or unreachable,
+the current node stays up on Cache (`kv_quota_last_alive`) so the bot does not go mute.
 
-## Setup Account B
-1. New Cloudflare account + Workers enabled  
-2. In `workers/mexc-proxy`:
-   ```bash
-   npx wrangler kv namespace create SUBSCRIBERS
-   # paste id into wrangler.standby.toml
-   npx wrangler deploy -c wrangler.standby.toml
-   ```
-3. Secrets on **both** workers (same TG tokens):
-   ```bash
-   npx wrangler secret put TELEGRAM_BOT_TOKEN
-   npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN
-   npx wrangler secret put ALERT_SECRET
-   npx wrangler secret put FAILOVER_SECRET   # same random string on A and B
-   ```
-4. Vars (already set in toml after first standby deploy):
-   - **Primary** `https://mexc-proxy.sergiodecaux.workers.dev`
-     - `FAILOVER_ROLE=primary`
-     - `FAILOVER_PEER_URL=https://mexc-proxy-b.mexc-standby.workers.dev`
-     - `PUBLIC_BASE_URL=https://mexc-proxy.sergiodecaux.workers.dev`
-   - **Standby** `https://mexc-proxy-b.mexc-standby.workers.dev`
-     - `FAILOVER_ROLE=standby`
-     - `FAILOVER_PEER_URL=https://mexc-proxy.sergiodecaux.workers.dev`
-     - `PUBLIC_BASE_URL=https://mexc-proxy-b.mexc-standby.workers.dev`
+```
+A (index 0, preferred) → B → C → A …
+```
 
-## Manual switch
+Lowest index with remaining quota is preferred. Index 0 reclaims at 00:00 UTC only if it still has quota.
+
+## Live nodes
+
+| | Worker | Account |
+|---|---|---|
+| **A primary** | `https://mexc-proxy.sergiodecaux.workers.dev` | `b64dba72…` |
+| **B standby** | `https://mexc-proxy-b.mexc-standby.workers.dev` | `e3a84d77…` |
+| **C** | template `wrangler.standby2.toml` | create new CF account |
+
+Same `FAILOVER_SECRET` and Telegram tokens on every node.
+
+## Vars (all workers, same RING)
+
+```
+FAILOVER_RING=https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev
+PUBLIC_BASE_URL=https://<this-worker>
+FAILOVER_ROLE=primary|standby
+FAILOVER_PEER_URL=https://<legacy next>   # fallback if RING is empty
+FAILOVER_DAILY_BUDGET=80000
+```
+
+When C is live, append its URL to `FAILOVER_RING` on **every** worker and redeploy A+B+C.
+
+## Add account C (or D, E, …)
+
+1. New Cloudflare account, Workers enabled (free).
+2. API token: Workers Scripts Edit + KV Edit + Account settings Read.
+3. From `workers/mexc-proxy`:
+
+```powershell
+$env:CLOUDFLARE_API_TOKEN = "<token C>"
+$env:CLOUDFLARE_ACCOUNT_ID = "<account C>"
+npx wrangler kv namespace create SUBSCRIBERS
+```
+
+4. Paste `account_id` and KV `id` into `wrangler.standby2.toml`. Replace `REPLACE_SUBDOMAIN` after the first deploy (Workers.dev URL is printed by wrangler).
+5. Deploy and put the **same** secrets as A/B:
+
+```powershell
+npx wrangler deploy -c wrangler.standby2.toml
+npx wrangler secret put TELEGRAM_BOT_TOKEN -c wrangler.standby2.toml
+npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN -c wrangler.standby2.toml
+npx wrangler secret put ALERT_SECRET -c wrangler.standby2.toml
+npx wrangler secret put FAILOVER_SECRET -c wrangler.standby2.toml
+```
+
+6. Set `FAILOVER_RING` on A, B, and C to the three URLs (same order). Redeploy all.
+
+A third account ≈ 3000 KV writes/day (~3× runtime before Cache-only last-alive).
+
+## Behaviour
+
+- Any **active** node can hand off (not only primary). Next hop with remaining quota wins; wrap-around is allowed (B→C→A).
+- Per-URL dead cooldown is **2 minutes** (one dead hop does not hide the rest).
+- Activate idles **all other** ring members so only one owner holds Telegram webhooks.
+- KV probe runs on **every** role (not only primary).
+- Subrequest-limit (50/tick) stays on the current node — next cron is a fresh 50; that is not a reason to switch accounts.
+- Handoff copies **subscribers + journal/paper/gates/watchlist** into the peer’s own KV.
+
+## Status / manual switch
+
 ```bash
-# Activate standby now
+curl "https://mexc-proxy.sergiodecaux.workers.dev/telegram/failover/status"
+curl "https://mexc-proxy-b.mexc-standby.workers.dev/telegram/failover/status"
+
+# Activate a node now
 curl -X POST "https://mexc-proxy-b.mexc-standby.workers.dev/telegram/failover/activate" \
   -H "X-Failover-Secret: YOUR_SECRET"
 
-# Force primary → peer handoff
+# Force this node → next hop
 curl -X POST "https://mexc-proxy.sergiodecaux.workers.dev/telegram/failover/handoff" \
   -H "X-Failover-Secret: YOUR_SECRET"
-
-# Status
-curl "https://mexc-proxy.sergiodecaux.workers.dev/telegram/failover/status"
-curl "https://mexc-proxy-b.mexc-standby.workers.dev/telegram/failover/status"
 ```
 
-## Notes
-- Journals/KV are **per account**. Handoff copies **subscribers + journal/paper/gates/watchlist** so B can keep trading.
-- Standby must have the **same** bot tokens or webhook switch is useless.
-- Free plan still has **50 subrequests/invocation** on each account.
-- Handoff after KV/daily-limit is **deferred to the next cron** if this tick already burned subrequests.
-- Standby must **not** yield to primary while `kvQuotaExhausted` / `kvQuotaHandoff` is set on A.
+Status JSON includes `ring`, `ringIndex`, `kvQuotaExhausted`, `kvQuotaHandoff`.
