@@ -17,48 +17,27 @@ Lowest index with remaining quota is preferred. Index 0 reclaims at 00:00 UTC on
 |---|---|---|
 | **A primary** | `https://mexc-proxy.sergiodecaux.workers.dev` | `b64dba72…` |
 | **B standby** | `https://mexc-proxy-b.mexc-standby.workers.dev` | `e3a84d77…` |
-| **C** | template `wrangler.standby2.toml` | create new CF account |
+| **C standby** | `https://mexc-proxy-c.mexc-c.workers.dev` | `c256c823…` |
 
 Same `FAILOVER_SECRET` and Telegram tokens on every node.
 
 ## Vars (all workers, same RING)
 
 ```
-FAILOVER_RING=https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev
+FAILOVER_RING=https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev
 PUBLIC_BASE_URL=https://<this-worker>
 FAILOVER_ROLE=primary|standby
 FAILOVER_PEER_URL=https://<legacy next>   # fallback if RING is empty
 FAILOVER_DAILY_BUDGET=80000
 ```
 
-When C is live, append its URL to `FAILOVER_RING` on **every** worker and redeploy A+B+C.
+To add **D**: new CF account, copy `wrangler.standby2.toml` → `wrangler.standby3.toml`, append URL to `FAILOVER_RING` on every worker, redeploy all.
 
-## Add account C (or D, E, …)
+## Add account D (or E, …)
 
 1. New Cloudflare account, Workers enabled (free).
-2. API token: Workers Scripts Edit + KV Edit + Account settings Read.
-3. From `workers/mexc-proxy`:
-
-```powershell
-$env:CLOUDFLARE_API_TOKEN = "<token C>"
-$env:CLOUDFLARE_ACCOUNT_ID = "<account C>"
-npx wrangler kv namespace create SUBSCRIBERS
-```
-
-4. Paste `account_id` and KV `id` into `wrangler.standby2.toml`. Replace `REPLACE_SUBDOMAIN` after the first deploy (Workers.dev URL is printed by wrangler).
-5. Deploy and put the **same** secrets as A/B:
-
-```powershell
-npx wrangler deploy -c wrangler.standby2.toml
-npx wrangler secret put TELEGRAM_BOT_TOKEN -c wrangler.standby2.toml
-npx wrangler secret put TELEGRAM_SNIPER_BOT_TOKEN -c wrangler.standby2.toml
-npx wrangler secret put ALERT_SECRET -c wrangler.standby2.toml
-npx wrangler secret put FAILOVER_SECRET -c wrangler.standby2.toml
-```
-
-6. Set `FAILOVER_RING` on A, B, and C to the three URLs (same order). Redeploy all.
-
-A third account ≈ 3000 KV writes/day (~3× runtime before Cache-only last-alive).
+2. API token: template **Edit Cloudflare Workers**, No expiration.
+3. Copy `wrangler.standby2.toml` → `wrangler.standby3.toml`, fill `account_id` + KV id, append the new URL to `FAILOVER_RING` on **every** worker, redeploy all.
 
 ## Behaviour
 

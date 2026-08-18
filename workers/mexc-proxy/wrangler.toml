@@ -17,7 +17,7 @@ crons = [
 
 [vars]
 FAILOVER_ROLE = "primary"
-FAILOVER_RING = "https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev"
+FAILOVER_RING = "https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev"
 FAILOVER_PEER_URL = "https://mexc-proxy-b.mexc-standby.workers.dev"
 PUBLIC_BASE_URL = "https://mexc-proxy.sergiodecaux.workers.dev"
 FAILOVER_DAILY_BUDGET = "80000"
