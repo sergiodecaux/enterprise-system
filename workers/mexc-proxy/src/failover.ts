@@ -426,6 +426,39 @@ function peerIndex(p: PeerFailoverSnapshot, env: FailoverEnv): number {
   return i >= 0 ? i : 99
 }
 
+function isHealthyOwner(p: PeerFailoverSnapshot): boolean {
+  return (
+    p.active === true &&
+    p.kvQuotaExhausted !== true &&
+    p.kvQuotaHandoff !== true
+  )
+}
+
+/** Reachability probe for /telegram/failover/status */
+export async function pingRing(env: FailoverEnv): Promise<
+  {
+    url: string
+    reachable: boolean
+    active: boolean | null
+    kvQuotaExhausted: boolean | null
+    kvQuotaHandoff: boolean | null
+    ringIndex: number | null
+  }[]
+> {
+  const snaps = await ringSnapshots(env)
+  return otherUrls(env).map((url) => {
+    const s = snaps.find((x) => x.url === url)
+    return {
+      url,
+      reachable: Boolean(s),
+      active: s?.active ?? null,
+      kvQuotaExhausted: s?.kvQuotaExhausted ?? null,
+      kvQuotaHandoff: s?.kvQuotaHandoff ?? null,
+      ringIndex: s ? peerIndex(s, env) : null,
+    }
+  })
+}
+
 export async function shouldRunCronWork(
   env: FailoverEnv
 ): Promise<{ run: boolean; state: FailoverState; reason?: string }> {
@@ -449,11 +482,7 @@ export async function shouldRunCronWork(
   const others = await ringSnapshots(env)
 
   const healthier = others.find(
-    (p) =>
-      p.active === true &&
-      !p.kvQuotaExhausted &&
-      !p.kvQuotaHandoff &&
-      peerIndex(p, env) < idx
+    (p) => isHealthyOwner(p) && peerIndex(p, env) < idx
   )
   if (healthier) {
     if (state.active) {
@@ -462,19 +491,19 @@ export async function shouldRunCronWork(
     return { run: false, state, reason: 'yield_to_priority' }
   }
 
-  const peerWithQuota = others.some(
-    (p) => p.kvQuotaExhausted !== true
-  )
-  const peerActive = others.some((p) => p.active === true)
+  const peerWithQuota = others.some((p) => p.kvQuotaExhausted !== true)
+  const healthyActive = others.some(isHealthyOwner)
 
   if (kvQuota || quotaHandoffDone) {
-    if (quotaHandoffDone && peerActive) {
+    // Only sit idle if another node is actually scanning with remaining quota.
+    if (quotaHandoffDone && healthyActive) {
       return { run: false, state, reason: 'kv_quota_peer_owns' }
     }
-    if (peerWithQuota) {
+    if (peerWithQuota && !quotaHandoffDone) {
       return { run: false, state, reason: 'kv_quota' }
     }
-    // Every reachable peer is also out of writes (or dead) — stay up on Cache
+    // Handoff marked done but peer never ran, or every peer is exhausted —
+    // keep scanning on Cache so the bot does not go mute.
     return { run: true, state, reason: 'kv_quota_last_alive' }
   }
 
@@ -483,11 +512,11 @@ export async function shouldRunCronWork(
     const budgetHandoff =
       isQuotaHandoffReason(state.lastReason) &&
       age < PRIMARY_IDLE_RECLAIM_MS * 3
-    if (budgetHandoff && peerActive) {
+    if (budgetHandoff && healthyActive) {
       return { run: false, state, reason: 'budget_peer_owns' }
     }
-    const takeOver = idx === 0 || !peerActive
-    if (!takeOver) {
+    // Do not wait for a quota-dead "active" owner to POST handoff.
+    if (healthyActive) {
       return { run: false, state, reason: 'standby_idle' }
     }
     const healed = await activateThisWorker(env, 'self_heal_ring_must_run')
@@ -584,7 +613,10 @@ export async function maybeHandoffOnLimit(
   if (!quota && !budget) {
     return { handedOff: false, state }
   }
-  if (isKvQuotaHandoffDone()) {
+  const others = await ringSnapshots(env)
+  const healthy = others.some(isHealthyOwner)
+  // Retry hop if we already "handed off" but nobody healthy is running.
+  if (isKvQuotaHandoffDone() && healthy) {
     return { handedOff: false, state }
   }
   clearPeerDead()
@@ -739,9 +771,7 @@ export async function handoffToPeer(
 ): Promise<{ ok: boolean; state: FailoverState; peer?: unknown }> {
   const state = await loadFailoverState(env)
   const quotaForce =
-    isQuotaHandoffReason(reason) &&
-    isKvWriteQuotaExhausted() &&
-    !isKvQuotaHandoffDone()
+    isQuotaHandoffReason(reason) && isKvWriteQuotaExhausted()
   if (!state.active && !quotaForce) return { ok: false, state }
   const secret = env.FAILOVER_SECRET
   const hops = hopsAfterSelf(env)

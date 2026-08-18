@@ -95,6 +95,7 @@ import {
   loadFailoverState,
   maybeHandoffOnLimit,
   noteFailoverFailure,
+  pingRing,
   processPendingHandoff,
   ringIndex,
   ringUrls,
@@ -663,6 +664,7 @@ async function handleTelegram(
   if (path === '/telegram/failover/status' && request.method === 'GET') {
     const state = await loadFailoverState(env)
     await refreshKvWriteQuotaFromCache()
+    const peers = failoverConfigured(env) ? await pingRing(env) : []
     return json({
       ok: true,
       configured: failoverConfigured(env),
@@ -682,6 +684,7 @@ async function handleTelegram(
       publicBaseUrl: env.PUBLIC_BASE_URL ?? null,
       kvQuotaExhausted: isKvWriteQuotaExhausted(),
       kvQuotaHandoff: isKvQuotaHandoffDone(),
+      peers,
     })
   }
 
@@ -1738,7 +1741,12 @@ async function runCronScan(
   const gate = await shouldRunCronWork(env)
   if (!gate.run) {
     if (gate.reason === 'daily_budget' || gate.reason === 'kv_quota') {
-      await maybeHandoffOnLimit(env, await collectHandoffPayload(env))
+      try {
+        const payload = await collectHandoffPayload(env).catch(() => undefined)
+        await maybeHandoffOnLimit(env, payload)
+      } catch (err) {
+        console.error('[cron] kv_quota handoff failed', err)
+      }
     }
     const idle = JSON.stringify({
       status: 'STANDBY_IDLE',

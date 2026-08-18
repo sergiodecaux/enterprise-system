@@ -44,6 +44,8 @@ To add **F**: new CF account, copy `wrangler.standby4.toml` → `wrangler.standb
 ## Behaviour
 
 - Any **active** node can hand off (not only primary). Next hop with remaining quota wins; wrap-around is allowed (B→C→A).
+- If the owner is quota-dead but still `active:true`, the next node **self-heals and takes over** instead of waiting for a handoff POST.
+- If handoff was marked done but the peer never ran, the current node stays up on Cache (`kv_quota_last_alive`).
 - Per-URL dead cooldown is **2 minutes** (one dead hop does not hide the rest).
 - Activate idles **all other** ring members so only one owner holds Telegram webhooks.
 - KV probe runs on **every** role (not only primary).
