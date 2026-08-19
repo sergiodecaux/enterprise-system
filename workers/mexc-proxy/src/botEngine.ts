@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-peak-fuel-v27.3',
-  label: 'MEME: PEAK + crowd book',
+  id: 'meme-peak-fuel-v27.4',
+  label: 'MEME: PEAK + proven coins',
   deployedNote:
-    'v27.3: live book on 2–3 prefer+PUMP · crowd score · no fake tape · OBI exit 2 ticks.',
+    'v27.4: сигналы только по монетам с WR · новая = notice без входа · WR в каждом алерте.',
 } as const
 
 /**

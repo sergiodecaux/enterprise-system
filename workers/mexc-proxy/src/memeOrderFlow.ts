@@ -1,5 +1,5 @@
 /**
- * MEME order-flow scanner v27 — PEAK_FUEL_FAIL only.
+ * MEME order-flow scanner v27.4 — PEAK_FUEL_FAIL only (proven coins).
  *
  * All predator capacity on pump peaks without fuel → small SHORT.
  * CONT_* / WITH-day continuation disabled (journal: trap/late longs toxic).
@@ -19,6 +19,7 @@ import {
 import { memeBookForecast } from './memeBookForecast'
 import {
   allowPeakSymbol,
+  peakCoinTrack,
   setupHistoricalWr,
   type BotAdaptiveGates,
 } from './botJournal'
@@ -135,7 +136,8 @@ function peakFailToAlert(
   symbol: string,
   sig: NonNullable<ReturnType<typeof detectPeakFuelFail>>,
   dayBias: 'PUMP' | 'DUMP' | null,
-  chg24hPct: number
+  chg24hPct: number,
+  wrLine: string
 ): ScanAlert {
   const name = symbol.replace('_USDT', '/USDT')
   const limit = sig.limitPrice
@@ -162,11 +164,12 @@ function peakFailToAlert(
       `Тейк 2 (TP): ${fmt(sig.tp)} (${pct(limit, sig.tp)})`,
       '',
       `дневной памп ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · PEAK_FUEL_FAIL`,
+      wrLine,
       dayBias === 'PUMP'
         ? 'PUMP day · fade без топлива'
         : 'сильный зелёный ход · fade',
       ...sig.notes.filter((n) => !/^SL~/i.test(n)),
-      'v27.3: peak · live book prefer+PUMP · crowd score',
+      'v27.4: только проверенные монеты · WR в сигнале · новая = notice',
     ].join('\n'),
     dedupeKey: `cron:mof273:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
     score: sig.confidence,
@@ -485,11 +488,54 @@ export async function runMemeOrderFlowScan(opts: {
       })
       continue
     }
+    const track = peakCoinTrack(gates, coin.symbol)
+    if (track.kind === 'thin') {
+      rejects.push({
+        symbol: coin.symbol,
+        reason: `symbol_thin:${track.wrLine}`,
+      })
+      continue
+    }
+    if (track.kind === 'new') {
+      const nick = coin.symbol.replace(/_USDT$/i, '')
+      candidates.push({
+        type: 'MEME',
+        title: `NEW ${nick} · нет истории PEAK`,
+        text: [
+          `Новая монета: ${nick}`,
+          `PEAK SHORT нашёл сетап, но закрытых сделок по ней нет.`,
+          `Сигнал не открываю — сначала нужна история.`,
+          track.wrLine,
+          `pump ${coin.chg24hPct >= 0 ? '+' : ''}${coin.chg24hPct.toFixed(1)}%`,
+        ].join('\n'),
+        dedupeKey: `cron:new_coin:${coin.symbol}:${Math.floor(Date.now() / 14_400_000)}`,
+        score: Math.max(1, peak.confidence - 20),
+        winPct: 0,
+        style: 'SCALP',
+        align: 'COUNTER',
+        watchOnly: true,
+        tradePlan: {
+          side: 'SHORT',
+          symbol: coin.symbol,
+          setup: 'PEAK_FUEL_FAIL',
+          qualityTier: 'A',
+          signalPrice: peak.limitPrice,
+          entryIdeal: peak.limitPrice,
+          zoneLow: peak.limitPrice,
+          zoneHigh: peak.limitPrice * 1.001,
+          invalidate: peak.limitPrice * 1.007,
+          sl: peak.sl,
+          tp: peak.tp,
+        },
+      })
+      continue
+    }
     const alert = peakFailToAlert(
       coin.symbol,
       peak,
       coin.dayBias,
-      coin.chg24hPct
+      coin.chg24hPct,
+      track.wrLine
     )
     if (gate.action === 'prefer') {
       alert.score = Math.min(99, alert.score + 4)
@@ -510,13 +556,18 @@ export async function runMemeOrderFlowScan(opts: {
   await saveBookState(opts.kv, state)
 
   candidates.sort((a, b) => {
+    const noticeA = a.watchOnly ? 1 : 0
+    const noticeB = b.watchOnly ? 1 : 0
+    if (noticeA !== noticeB) return noticeA - noticeB
     const prefA =
-      allowPeakSymbol(gates, a.tradePlan.symbol).action === 'prefer' ? 1 : 0
+      allowPeakSymbol(gates, a.tradePlan!.symbol).action === 'prefer' ? 1 : 0
     const prefB =
-      allowPeakSymbol(gates, b.tradePlan.symbol).action === 'prefer' ? 1 : 0
+      allowPeakSymbol(gates, b.tradePlan!.symbol).action === 'prefer' ? 1 : 0
     return prefB - prefA || b.score - a.score
   })
-  const top = candidates.slice(0, MAX_ALERTS)
+  const trades = candidates.filter((a) => !a.watchOnly)
+  const notices = candidates.filter((a) => a.watchOnly).slice(0, 1)
+  const top = [...trades.slice(0, Math.max(1, MAX_ALERTS - 1)), ...notices]
 
   return {
     alerts: top,

@@ -1510,10 +1510,50 @@ export function learnPeakSymbolWr(entries: BotJournalEntry[]): {
     }
   }
   rows.sort((a, b) => b.n - a.n || b.wr - a.wr)
-  return { blocked, prefer, rows: rows.slice(0, 40) }
+  return { blocked, prefer, rows }
 }
 
 export type PeakSymbolAction = 'block' | 'prefer' | 'neutral'
+
+export type PeakCoinKind = 'new' | 'proven' | 'thin' | 'blocked'
+
+export function formatPeakCoinWr(
+  symbol: string,
+  row: SymbolWrRow | null | undefined
+): string {
+  const nick = symbol.replace(/_USDT$/i, '')
+  if (!row || row.n < 1) return `${nick} WR: нет сделок PEAK SHORT`
+  return `${nick} WR: ${row.wins}W/${row.losses}L = ${Math.round(row.wr)}% (n=${row.n})`
+}
+
+/**
+ * new = no closed PEAK SHORT yet (notice only).
+ * proven = prefer list or ≥2 fills and WR≥50% (trade signal).
+ * thin = some history but not enough / WR too weak (no trade).
+ */
+export function peakCoinTrack(
+  gates: BotAdaptiveGates | null | undefined,
+  symbol: string
+): {
+  kind: PeakCoinKind
+  wrLine: string
+  row: SymbolWrRow | null
+} {
+  const row =
+    gates?.symbolWr?.find((r) => r.symbol === symbol) ?? null
+  const wrLine = formatPeakCoinWr(symbol, row)
+  if (isEquityTokenSymbol(symbol) || gates?.blockedSymbols?.includes(symbol)) {
+    return { kind: 'blocked', wrLine, row }
+  }
+  if (!row || row.n < 1) {
+    return { kind: 'new', wrLine, row: null }
+  }
+  const proven =
+    Boolean(gates?.preferSymbols?.includes(symbol)) ||
+    (row.n >= 2 && row.wr >= 50)
+  if (proven) return { kind: 'proven', wrLine, row }
+  return { kind: 'thin', wrLine, row }
+}
 
 /** Emit/scan gate: *STOCK* always off; journal dumpers off; winners preferred. */
 export function allowPeakSymbol(
@@ -2155,6 +2195,17 @@ export function formatPeakShortStatsReport(
   if (gates.blockedSymbols?.length) {
     lines.push(
       `Монеты − : ${gates.blockedSymbols.slice(0, 8).map(nick).join(', ')}`
+    )
+  }
+  if (gates.symbolWr?.length) {
+    lines.push(
+      `WR: ${gates.symbolWr
+        .slice(0, 8)
+        .map(
+          (r) =>
+            `${nick(r.symbol)} ${r.wins}/${r.n}=${Math.round(r.wr)}%`
+        )
+        .join(' · ')}`
     )
   }
   if (gates.peakPreferReasons?.length) {

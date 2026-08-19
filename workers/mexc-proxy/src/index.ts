@@ -1113,9 +1113,9 @@ async function handleTelegram(
       return json({ error: 'Unauthorized' }, 401)
     }
     const targetBlock = [
-      `<b>🎯 РЕЖИМ (v27.3 PEAK + crowd book)</b>`,
-      `Мемы: peak-only · live стакан на 2–3 prefer+PUMP · толпа в оценку, не в бан.`,
-      `Стакан: crowd/spoof на live 3-snap. Выход: TP1→BE→TP2, OBI flip только 2 тика.`,
+      `<b>🎯 РЕЖИМ (v27.4 proven coins + WR)</b>`,
+      `Мемы: сигналы только по проверенным PEAK SHORT. Новая монета = notice без входа.`,
+      `WR прошлых сделок в каждом алерте и в /status.`,
       `Альты: ALT_JEWEL L/S @ ×50 · +40% ROE.`,
     ].join('\n')
     const memeText = [
@@ -1858,6 +1858,20 @@ async function runCronScan(
     }
     seenDedup.add(a.dedupeKey)
     allAlerts.push(a)
+
+    if (a.type === 'MEME' && a.watchOnly) {
+      const cr = await broadcastAlert(env, {
+        type: 'SYSTEM',
+        channel: 'meme',
+        title: a.title,
+        text: a.text,
+        dedupeKey: a.dedupeKey,
+      })
+      sent += cr.sent
+      failed += cr.failed
+      if (cr.skipped) skipped++
+      return
+    }
 
     if (a.type === 'MEME') {
       if (!a.tradePlan) {
