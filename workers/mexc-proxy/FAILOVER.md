@@ -6,7 +6,7 @@ then activates the next URL in `FAILOVER_RING`. If every peer is exhausted or un
 the current node stays up on Cache (`kv_quota_last_alive`) so the bot does not go mute.
 
 ```
-A (index 0, preferred) → B → C → D → E → A …
+A (index 0, preferred) → B → C → D → E → F → A …
 ```
 
 Lowest index with remaining quota is preferred. Index 0 reclaims at 00:00 UTC only if it still has quota.
@@ -20,26 +20,27 @@ Lowest index with remaining quota is preferred. Index 0 reclaims at 00:00 UTC on
 | **C standby** | `https://mexc-proxy-c.mexc-c.workers.dev` | `c256c823…` |
 | **D standby** | `https://mexc-proxy-d.mexc-d.workers.dev` | `7a55891f…` |
 | **E standby** | `https://mexc-proxy-e.mexc-e.workers.dev` | `d0557787…` |
+| **F standby** | `https://mexc-proxy-f.mexc-f.workers.dev` | `f25b2e34…` |
 
-Same `FAILOVER_SECRET` and Telegram tokens on every node. Five accounts ≈ **5000 KV writes/day**.
+Same `FAILOVER_SECRET` and Telegram tokens on every node. Six accounts ≈ **6000 KV writes/day**.
 
 ## Vars (all workers, same RING)
 
 ```
-FAILOVER_RING=https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev,https://mexc-proxy-d.mexc-d.workers.dev,https://mexc-proxy-e.mexc-e.workers.dev
+FAILOVER_RING=https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev,https://mexc-proxy-d.mexc-d.workers.dev,https://mexc-proxy-e.mexc-e.workers.dev,https://mexc-proxy-f.mexc-f.workers.dev
 PUBLIC_BASE_URL=https://<this-worker>
 FAILOVER_ROLE=primary|standby
 FAILOVER_PEER_URL=https://<legacy next>   # fallback if RING is empty
 FAILOVER_DAILY_BUDGET=80000
 ```
 
-To add **F**: new CF account, copy `wrangler.standby4.toml` → `wrangler.standby5.toml`, append URL to `FAILOVER_RING` on every worker, redeploy all.
+To add **G**: new CF account, copy `wrangler.standby5.toml` → `wrangler.standby6.toml`, append URL to `FAILOVER_RING` on every worker, redeploy all.
 
-## Add account F (or G, …)
+## Add account G (or H, …)
 
 1. New Cloudflare account, Workers enabled (free).
 2. API token: template **Edit Cloudflare Workers**, No expiration.
-3. Copy `wrangler.standby4.toml` → `wrangler.standby5.toml`, fill `account_id` + KV id, append the new URL to `FAILOVER_RING` on **every** worker, redeploy all.
+3. Copy `wrangler.standby5.toml` → `wrangler.standby6.toml`, fill `account_id` + KV id, append the new URL to `FAILOVER_RING` on **every** worker, redeploy all.
 
 ## Behaviour
 

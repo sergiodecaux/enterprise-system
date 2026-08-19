@@ -302,7 +302,7 @@ export async function bumpFailoverRequest(
 
 export function failoverConfigured(env: FailoverEnv): boolean {
   return Boolean(
-    env.FAILOVER_SECRET &&
+    (env.FAILOVER_SECRET || env.ALERT_SECRET) &&
       (ringUrls(env).length >= 2 || env.FAILOVER_PEER_URL)
   )
 }
@@ -349,7 +349,7 @@ async function requestUrlStandby(
       headers: {
         'Content-Type': 'application/json',
         'X-Failover-Secret': secret,
-        'X-Alert-Secret': secret,
+        'X-Alert-Secret': env.ALERT_SECRET || secret,
       },
       body: JSON.stringify({
         reason,
@@ -802,7 +802,7 @@ export async function handoffToPeer(
   const quotaForce =
     isQuotaHandoffReason(reason) && isKvWriteQuotaExhausted()
   if (!state.active && !quotaForce) return { ok: false, state }
-  const secret = env.FAILOVER_SECRET
+  const secret = env.FAILOVER_SECRET || env.ALERT_SECRET
   const hops = hopsAfterSelf(env)
   if (!secret || !hops.length) {
     return { ok: false, state }
@@ -833,6 +833,7 @@ export async function handoffToPeer(
         headers: {
           'Content-Type': 'application/json',
           'X-Failover-Secret': secret,
+          'X-Alert-Secret': env.ALERT_SECRET || secret,
         },
         body: JSON.stringify(body),
         signal: peerAbortSignal(8_000),
@@ -871,10 +872,12 @@ export function authorizeFailover(
   const hdr = request.headers.get('X-Failover-Secret')
   const alertHdr = request.headers.get('X-Alert-Secret')
   const q = url.searchParams.get('secret')
-  const offered = hdr || alertHdr || q
-  if (!offered) return false
-  if (env.FAILOVER_SECRET && offered === env.FAILOVER_SECRET) return true
-  // Emergency recovery when FAILOVER_SECRET is unknown locally
-  if (env.ALERT_SECRET && offered === env.ALERT_SECRET) return true
+  const offered = [hdr, alertHdr, q]
+  if (!offered.some(Boolean)) return false
+  for (const value of offered) {
+    if (!value) continue
+    if (env.FAILOVER_SECRET && value === env.FAILOVER_SECRET) return true
+    if (env.ALERT_SECRET && value === env.ALERT_SECRET) return true
+  }
   return false
 }
