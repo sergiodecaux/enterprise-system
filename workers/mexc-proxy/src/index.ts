@@ -80,6 +80,7 @@ import {
   isKvQuotaHandoffDone,
   isKvWriteQuotaExhausted,
   kvPutThrottled,
+  markKvWriteQuotaExhausted,
   refreshKvWriteQuotaFromCache,
 } from './kvWrite'
 import {
@@ -2917,14 +2918,70 @@ async function listSubscribers(
   channel: TgChannel = 'meme'
 ): Promise<Subscriber[]> {
   const mem = memorySubs[channel]
-  if (!env.SUBSCRIBERS) return [...mem.values()]
-  const raw = await env.SUBSCRIBERS.get(subKey(channel))
-  if (!raw) return [...mem.values()]
-  try {
-    return JSON.parse(raw) as Subscriber[]
-  } catch {
-    return [...mem.values()]
+  const parse = (raw: string | null): Subscriber[] | null => {
+    if (!raw) return null
+    try {
+      const list = JSON.parse(raw) as Subscriber[]
+      return Array.isArray(list) && list.length ? list : null
+    } catch {
+      return null
+    }
   }
+  if (env.SUBSCRIBERS) {
+    try {
+      const fromKv = parse(await env.SUBSCRIBERS.get(subKey(channel)))
+      if (fromKv) {
+        mem.clear()
+        for (const s of fromKv) mem.set(s.chatId, s)
+        await writeSubCache(channel, fromKv)
+        return fromKv
+      }
+    } catch {
+      /* quota / network */
+    }
+  }
+  const fromCache = parse(await runtimeGet(`subs:${channel}`))
+  if (fromCache) {
+    mem.clear()
+    for (const s of fromCache) mem.set(s.chatId, s)
+    return fromCache
+  }
+  if (mem.size) return [...mem.values()]
+  const seeded = seedSubscribers(channel)
+  await saveSubscribers(env, seeded, channel)
+  return seeded
+}
+
+async function writeSubCache(
+  channel: TgChannel,
+  list: Subscriber[]
+): Promise<void> {
+  memoryRuntime.set(`subs:${channel}`, JSON.stringify(list))
+  try {
+    await caches.default.put(
+      runtimeCacheRequest(`subs:${channel}`),
+      new Response(JSON.stringify(list), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      })
+    )
+  } catch {
+    /* memory only */
+  }
+}
+
+/** Lab owner chats — last known live health. Never leave TG with 0 recipients. */
+function seedSubscribers(channel: TgChannel): Subscriber[] {
+  const ids = channel === 'sniper' ? [1996603727] : [1996603727, 1118540342]
+  const now = Date.now()
+  return ids.map((chatId) => ({
+    chatId,
+    subscribedAt: now,
+    sniper: channel === 'sniper',
+    meme: channel === 'meme',
+  }))
 }
 
 async function saveSubscribers(
@@ -2935,8 +2992,13 @@ async function saveSubscribers(
   const mem = memorySubs[channel]
   mem.clear()
   for (const s of list) mem.set(s.chatId, s)
+  await writeSubCache(channel, list)
   if (!env.SUBSCRIBERS) return
-  await env.SUBSCRIBERS.put(subKey(channel), JSON.stringify(list))
+  try {
+    await env.SUBSCRIBERS.put(subKey(channel), JSON.stringify(list))
+  } catch {
+    await markKvWriteQuotaExhausted()
+  }
 }
 
 async function upsertSubscriber(

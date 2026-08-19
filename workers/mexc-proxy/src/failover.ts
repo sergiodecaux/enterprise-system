@@ -467,6 +467,35 @@ export async function shouldRunCronWork(
   if (!failoverConfigured(env)) {
     return { run: true, state, reason: 'failover_disabled' }
   }
+
+  const kvQuotaEarly = isKvWriteQuotaExhausted()
+  const quotaHandoffEarly = isKvQuotaHandoffDone()
+  // Healthy owner: skip 4 peer fetches (those burned the 50-subrequest budget
+  // so Telegram never sent). Re-check the ring when idle or quota-dead.
+  const skipRingPing =
+    state.active &&
+    !kvQuotaEarly &&
+    !quotaHandoffEarly &&
+    !state.pendingHandoff
+  if (skipRingPing) {
+    await kvPutThrottled(
+      env.SUBSCRIBERS,
+      'telegram:kv_quota_probe',
+      dayKeyUtc(),
+      2 * 60 * 60_000
+    )
+    await refreshKvWriteQuotaFromCache()
+    if (isKvWriteQuotaExhausted()) {
+      // fall through to full ring logic this tick
+    } else {
+      const budget = dailyBudget(env)
+      if (state.requestCount >= budget) {
+        return { run: false, state, reason: 'daily_budget' }
+      }
+      return { run: true, state, reason: 'healthy_skip_ring' }
+    }
+  }
+
   await kvPutThrottled(
     env.SUBSCRIBERS,
     'telegram:kv_quota_probe',

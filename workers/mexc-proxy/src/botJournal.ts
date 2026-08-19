@@ -358,7 +358,7 @@ async function writeJournalCache(list: BotJournalEntry[]): Promise<void> {
       new Response(JSON.stringify(list), {
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=3600',
+          'Cache-Control': 'public, max-age=86400',
         },
       })
     )
@@ -400,7 +400,7 @@ async function listJournal(env: Env): Promise<BotJournalEntry[]> {
       const raw = await env.SUBSCRIBERS.get(JOURNAL_KEY)
       if (raw != null) {
         const parsed = JSON.parse(raw) as BotJournalEntry[]
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           memoryJournal.length = 0
           memoryJournal.push(...parsed)
           await writeJournalCache(parsed)
