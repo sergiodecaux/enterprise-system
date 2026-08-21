@@ -12,11 +12,11 @@ import { kvPutThrottled } from './kvWrite'
 import { attachPeakOutcome } from './peakDecisionLog'
 
 /** Bump key + cache URL when wiping lab — old Cache must not resurrect stats */
-const JOURNAL_KEY = 'telegram:bot_journal_v292'
+const JOURNAL_KEY = 'telegram:bot_journal_v293'
 /** Long-term closed trades for analysis (not pruned with live open book) */
-const ARCHIVE_KEY = 'telegram:bot_journal_archive_v292'
-const GATES_KEY = 'telegram:bot_gates_v292'
-const LAB_VERSION = 'v292'
+const ARCHIVE_KEY = 'telegram:bot_journal_archive_v293'
+const GATES_KEY = 'telegram:bot_gates_v293'
+const LAB_VERSION = 'v293'
 const MAX_ENTRIES = 500
 const MAX_ARCHIVE = 1200
 const OPEN_TTL_MS = 4 * 60 * 60_000
@@ -105,6 +105,14 @@ export interface BotJournalEntry {
     quality?: string | null
     tapeUp?: boolean | null
     riskPct?: number | null
+    probability?: number | null
+    bookScore?: number | null
+    obi?: number | null
+    bidAskUsdRatio?: number | null
+    bookEvidence?: number | null
+    bookBias?: string | null
+    bookEvent?: string | null
+    candlePatterns?: string[] | null
   } | null
   /** predator | elite — which TG bot owns the signal */
   botChannel?: 'predator' | 'elite' | null
@@ -257,6 +265,10 @@ function parseEntryMeta(reasons: string[] | null | undefined): BotJournalEntry['
   else if (has('oi_flat:')) oiState = 'flat'
   else if (has('oi_unknown')) oiState = 'unknown'
   const q = reasons.find((r) => r.startsWith('quality:'))
+  const text = (prefix: string) => {
+    const hit = reasons.find((r) => r.startsWith(prefix))
+    return hit ? hit.slice(prefix.length) : null
+  }
   return {
     chg24hPct: num('chg24:'),
     distToHighPct: num('dist_high:'),
@@ -270,6 +282,14 @@ function parseEntryMeta(reasons: string[] | null | undefined): BotJournalEntry['
     quality: q ? q.slice('quality:'.length) : null,
     tapeUp: has('tape_up:') || has('book_ok:strong_tape') ? true : null,
     riskPct: null,
+    probability: num('prob:'),
+    bookScore: num('book_score:'),
+    obi: num('obi:'),
+    bidAskUsdRatio: num('book_ratio:'),
+    bookEvidence: num('book_evidence:'),
+    bookBias: text('book_bias:'),
+    bookEvent: text('book_event:'),
+    candlePatterns: text('patterns:')?.split('+').filter(Boolean) ?? null,
   }
 }
 
@@ -319,15 +339,18 @@ async function archiveClosedTrades(
   memoryArchive.push(...trimmed)
   if (!env.SUBSCRIBERS) return
   try {
-    // Archive writes are rarer — allow up to ~every 5m
-    await kvPutThrottled(
-      env.SUBSCRIBERS,
-      ARCHIVE_KEY,
-      JSON.stringify(trimmed),
-      5 * 60_000
-    )
+    await env.SUBSCRIBERS.put(ARCHIVE_KEY, JSON.stringify(trimmed))
   } catch {
-    /* quota */
+    try {
+      await kvPutThrottled(
+        env.SUBSCRIBERS,
+        ARCHIVE_KEY,
+        JSON.stringify(trimmed),
+        5 * 60_000
+      )
+    } catch {
+      /* quota */
+    }
   }
 }
 
@@ -336,26 +359,49 @@ interface Env {
 }
 
 const memoryJournal: BotJournalEntry[] = []
+let memoryJournalAt = 0
 
-function journalCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v292')
+interface JournalBlob {
+  at: number
+  entries: BotJournalEntry[]
 }
 
-async function readJournalCache(): Promise<BotJournalEntry[] | null> {
+function journalCacheRequest(): Request {
+  return new Request('https://enterprise-system-runtime.invalid/bot-journal-v293')
+}
+
+function parseJournalBlob(data: unknown): JournalBlob {
+  if (Array.isArray(data)) {
+    return { at: 0, entries: data as BotJournalEntry[] }
+  }
+  if (
+    data &&
+    typeof data === 'object' &&
+    Array.isArray((data as JournalBlob).entries)
+  ) {
+    return {
+      at: Number((data as JournalBlob).at) || 0,
+      entries: (data as JournalBlob).entries,
+    }
+  }
+  return { at: 0, entries: [] }
+}
+
+async function readJournalCache(): Promise<JournalBlob | null> {
   try {
     const response = await caches.default.match(journalCacheRequest())
     if (!response) return null
-    return (await response.json()) as BotJournalEntry[]
+    return parseJournalBlob(await response.json())
   } catch {
     return null
   }
 }
 
-async function writeJournalCache(list: BotJournalEntry[]): Promise<void> {
+async function writeJournalCache(blob: JournalBlob): Promise<void> {
   try {
     await caches.default.put(
       journalCacheRequest(),
-      new Response(JSON.stringify(list), {
+      new Response(JSON.stringify(blob), {
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': 'public, max-age=86400',
@@ -394,26 +440,29 @@ function rMult(
 }
 
 async function listJournal(env: Env): Promise<BotJournalEntry[]> {
-  // KV is source of truth — Cache-first resurrected wiped journals
+  const candidates: JournalBlob[] = []
+  if (memoryJournalAt > 0 || memoryJournal.length) {
+    candidates.push({ at: memoryJournalAt, entries: [...memoryJournal] })
+  }
+  const cached = await readJournalCache()
+  if (cached) candidates.push(cached)
   if (env.SUBSCRIBERS) {
     try {
       const raw = await env.SUBSCRIBERS.get(JOURNAL_KEY)
-      if (raw != null) {
-        const parsed = JSON.parse(raw) as BotJournalEntry[]
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          memoryJournal.length = 0
-          memoryJournal.push(...parsed)
-          await writeJournalCache(parsed)
-          return [...parsed]
-        }
-      }
+      if (raw != null) candidates.push(parseJournalBlob(JSON.parse(raw)))
     } catch {
       /* fallthrough */
     }
   }
-  const cached = await readJournalCache()
-  if (cached) return cached
-  return [...memoryJournal]
+  if (!candidates.length) return [...memoryJournal]
+  candidates.sort(
+    (a, b) => b.at - a.at || b.entries.length - a.entries.length
+  )
+  const best = candidates[0]!
+  memoryJournal.length = 0
+  memoryJournal.push(...best.entries)
+  memoryJournalAt = best.at
+  return [...best.entries]
 }
 
 async function saveJournal(
@@ -425,21 +474,18 @@ async function saveJournal(
   const trimmed = list
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, MAX_ENTRIES)
+  const blob: JournalBlob = { at: Date.now(), entries: trimmed }
   memoryJournal.length = 0
   memoryJournal.push(...trimmed)
-  await writeJournalCache(trimmed)
+  memoryJournalAt = blob.at
+  await writeJournalCache(blob)
   if (!env.SUBSCRIBERS || (!checkpoint && !forceKv)) return
+  const payload = JSON.stringify(blob)
   if (forceKv) {
-    await env.SUBSCRIBERS.put(JOURNAL_KEY, JSON.stringify(trimmed))
+    await env.SUBSCRIBERS.put(JOURNAL_KEY, payload)
     return
   }
-  // Free KV budget: checkpoint at most ~every 10m (Cache holds live journal)
-  await kvPutThrottled(
-    env.SUBSCRIBERS,
-    JOURNAL_KEY,
-    JSON.stringify(trimmed),
-    10 * 60_000
-  )
+  await kvPutThrottled(env.SUBSCRIBERS, JOURNAL_KEY, payload, 10 * 60_000)
 }
 
 export async function recordBotAlert(
@@ -451,11 +497,15 @@ export async function recordBotAlert(
     plan: TradePlanLike
   }
 ): Promise<BotJournalEntry | null> {
-  // Predator: PEAK SHORT only. Elite: PUMP/DUMP LONG + ALT_JEWEL SHORT as SNIPER.
+  // Predator: book-confirmed PEAK SHORT or MEME_BOOK_LONG.
   if (input.alertType === 'MEME') {
     if (
-      input.plan.setup !== 'PEAK_FUEL_FAIL' ||
-      input.plan.side !== 'SHORT'
+      !(
+        (input.plan.setup === 'PEAK_FUEL_FAIL' &&
+          input.plan.side === 'SHORT') ||
+        (input.plan.setup === 'MEME_BOOK_LONG' &&
+          input.plan.side === 'LONG')
+      )
     ) {
       return null
     }
@@ -622,7 +672,7 @@ export async function recordBotAlert(
   )
 
   list.unshift(entry)
-  await saveJournal(env, list, true)
+  await saveJournal(env, list, true, true)
   return entry
 }
 
@@ -1061,7 +1111,7 @@ export async function resolveBotJournal(
     }
   }
 
-  if (changed > 0) await saveJournal(env, list, outcomes.length > 0)
+  if (changed > 0) await saveJournal(env, list, true, outcomes.length > 0)
 
   // Persist closed trades into long-term archive for analysis
   if (outcomes.length || peakResolved.length) {
@@ -1972,6 +2022,14 @@ export function journalToCsv(rows: BotJournalEntry[]): string {
     'quality',
     'tapeUp',
     'riskPct',
+    'probability',
+    'bookScore',
+    'obi',
+    'bidAskUsdRatio',
+    'bookEvidence',
+    'bookBias',
+    'bookEvent',
+    'candlePatterns',
     'events',
   ]
   const esc = (v: unknown) => {
@@ -2022,6 +2080,14 @@ export function journalToCsv(rows: BotJournalEntry[]): string {
         e.entryMeta?.quality ?? '',
         e.entryMeta?.tapeUp ?? '',
         e.entryMeta?.riskPct ?? '',
+        e.entryMeta?.probability ?? '',
+        e.entryMeta?.bookScore ?? '',
+        e.entryMeta?.obi ?? '',
+        e.entryMeta?.bidAskUsdRatio ?? '',
+        e.entryMeta?.bookEvidence ?? '',
+        e.entryMeta?.bookBias ?? '',
+        e.entryMeta?.bookEvent ?? '',
+        (e.entryMeta?.candlePatterns ?? []).join('|'),
         (e.events ?? [])
           .map((ev) => `${ev.kind}:${ev.detail}`)
           .join(' || '),
@@ -2156,7 +2222,9 @@ export function formatPeakShortStatsReport(
   gates: BotAdaptiveGates
 ): string {
   const peak = entries.filter(
-    (e) => e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT'
+    (e) =>
+      (e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT') ||
+      (e.setup === 'MEME_BOOK_LONG' && e.side === 'LONG')
   )
   const wins = peak.filter((e) => e.status === 'WIN')
   const losses = peak.filter((e) => e.status === 'LOSS')
@@ -2180,12 +2248,20 @@ export function formatPeakShortStatsReport(
     ? pnls.reduce((a, b) => a + b, 0) / pnls.length
     : 0
   const lines: string[] = [
-    `<b>PEAK SHORT · своя статистика</b>`,
+    `<b>MEME BOOK LONG/SHORT · статистика</b>`,
     decided
       ? `WR ${wr.toFixed(0)}% · ${wins.length}W/${losses.length}L · E[R]=${avgR.toFixed(2)} · avg PnL ${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`
       : `Закрытых пока нет — копим с нуля (open ${open.length})`,
-    `Открыто: ${open.length} · порог score ≥${gates.minMemeScore}`,
+    `Открыто: ${open.length} · порог вероятности ≥68%`,
   ]
+  const sideLine = (side: 'LONG' | 'SHORT') => {
+    const rows = peak.filter((e) => e.side === side)
+    const w = rows.filter((e) => e.status === 'WIN').length
+    const l = rows.filter((e) => e.status === 'LOSS').length
+    const n = w + l
+    return `${side}: ${n ? `${Math.round((100 * w) / n)}% · ${w}W/${l}L` : 'копим данные'}`
+  }
+  lines.push(sideLine('LONG'), sideLine('SHORT'))
   const nick = (s: string) => s.replace(/_USDT$/i, '')
   if (gates.preferSymbols?.length) {
     lines.push(
@@ -2222,7 +2298,7 @@ export function formatPeakShortStatsReport(
 }
 
 /**
- * Archive non-PEAK meme rows from live journal so PEAK keeps a clean book.
+ * Archive obsolete meme rows; preserve current directional book setups.
  * SNIPER / Elite rows untouched.
  */
 export async function purgeNonPeakMemeJournal(env: Env): Promise<number> {
@@ -2230,13 +2306,17 @@ export async function purgeNonPeakMemeJournal(env: Env): Promise<number> {
   const drop = list.filter(
     (e) =>
       e.alertType === 'MEME' &&
-      (e.setup !== 'PEAK_FUEL_FAIL' || e.side !== 'SHORT')
+      !(
+        (e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT') ||
+        (e.setup === 'MEME_BOOK_LONG' && e.side === 'LONG')
+      )
   )
   if (!drop.length) return 0
   const keep = list.filter(
     (e) =>
       e.alertType !== 'MEME' ||
-      (e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT')
+      (e.setup === 'PEAK_FUEL_FAIL' && e.side === 'SHORT') ||
+      (e.setup === 'MEME_BOOK_LONG' && e.side === 'LONG')
   )
   await archiveClosedTrades(
     env,

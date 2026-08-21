@@ -38,7 +38,7 @@ import {
 } from './eliteAltJewel'
 import { kvPutThrottled } from './kvWrite'
 
-const PAPER_KEY = 'telegram:paper_trades_v292'
+const PAPER_KEY = 'telegram:paper_trades_v293'
 const MAX_ACTIVE = 6
 /** One live PEAK at a time — manage it, don't spam */
 const MAX_ACTIVE_MEME = 1
@@ -59,6 +59,10 @@ const PEAK_BE_R = 0.55
 /** Elite meme LONGs — separate slot from PEAK SHORT */
 const MAX_ACTIVE_ELITE_MEME = 1
 const ELITE_MEME_SETUPS = new Set(['DUMP_FUEL_FAIL', 'PUMP_CONTINUE'])
+const PREDATOR_DIRECTIONAL_SETUPS = new Set([
+  'PEAK_FUEL_FAIL',
+  'MEME_BOOK_LONG',
+])
 function isContSetup(setup?: string | null): boolean {
   return Boolean(setup?.startsWith('CONT_'))
 }
@@ -68,6 +72,10 @@ function isPredatorShortSetup(setup: string, side?: string): boolean {
     setup === 'DUMP_CONTINUATION' ||
     (isContSetup(setup) && (!side || side === 'SHORT'))
   )
+}
+function isPredatorMemeSetup(setup: string, side?: string): boolean {
+  if (setup === 'MEME_BOOK_LONG') return !side || side === 'LONG'
+  return isPredatorShortSetup(setup, side)
 }
 function isEliteMemeLongSetup(setup: string, side?: string): boolean {
   return (
@@ -254,7 +262,7 @@ interface MarketBrief {
 const memoryPapers: PaperTrade[] = []
 
 function paperCacheRequest(): Request {
-  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v292')
+  return new Request('https://enterprise-system-runtime.invalid/paper-trades-v293')
 }
 
 async function readPaperCache(): Promise<PaperTrade[] | null> {
@@ -880,7 +888,12 @@ export async function listPaperTrades(env: PaperEnv): Promise<PaperTrade[]> {
   const cached = await readPaperCache()
   if (cached?.length) return expireStalePapers(cached)
   if (!env.SUBSCRIBERS) return expireStalePapers([...memoryPapers])
-  const raw = await env.SUBSCRIBERS.get(PAPER_KEY)
+  let raw: string | null = null
+  try {
+    raw = await env.SUBSCRIBERS.get(PAPER_KEY)
+  } catch {
+    return expireStalePapers([...memoryPapers])
+  }
   if (!raw) return expireStalePapers([...memoryPapers])
   try {
     return expireStalePapers(JSON.parse(raw) as PaperTrade[])
@@ -897,13 +910,13 @@ export async function closeNonPeakMemePapers(env: PaperEnv): Promise<number> {
   for (const t of list) {
     if (t.alertType !== 'MEME') continue
     if (t.status !== 'WAITING' && t.status !== 'OPEN') continue
-    if (isPredatorShortSetup(t.setup, t.side) && t.side === 'SHORT') continue
+    if (isPredatorMemeSetup(t.setup, t.side)) continue
     t.status = 'CLOSED'
     t.closedAt = now
     t.closeReason = 'non_peak_purged'
     n++
   }
-  if (n) await savePaperTrades(env, list)
+  if (n) await savePaperTrades(env, list, true)
   return n
 }
 
@@ -920,7 +933,7 @@ export async function closeAllMemePapers(env: PaperEnv): Promise<number> {
     t.closeReason = 'stats_reset'
     n++
   }
-  if (n) await savePaperTrades(env, list)
+  if (n) await savePaperTrades(env, list, true)
   return n
 }
 
@@ -936,24 +949,25 @@ export async function closeAllLabPapers(env: PaperEnv): Promise<number> {
     t.closeReason = 'stats_reset'
     n++
   }
-  if (n) await savePaperTrades(env, list)
+  if (n) await savePaperTrades(env, list, true)
   return n
 }
 
 async function savePaperTrades(
   env: PaperEnv,
-  list: PaperTrade[]
+  list: PaperTrade[],
+  forceKv = false
 ): Promise<void> {
   memoryPapers.length = 0
   memoryPapers.push(...list)
   await writePaperCache(list)
   try {
-    await kvPutThrottled(
-      env.SUBSCRIBERS,
-      PAPER_KEY,
-      JSON.stringify(list),
-      10 * 60_000
-    )
+    const payload = JSON.stringify(list)
+    if (forceKv) {
+      await env.SUBSCRIBERS.put(PAPER_KEY, payload)
+      return
+    }
+    await kvPutThrottled(env.SUBSCRIBERS, PAPER_KEY, payload, 10 * 60_000)
   } catch {
     /* quota */
   }
@@ -980,7 +994,8 @@ export async function createPaperTradeFromPlan(
     plan.alertType === 'SNIPER' && plan.setup === ALT_JEWEL_SETUP
   if (
     plan.alertType === 'MEME' &&
-    (!isPredatorShortSetup(plan.setup, plan.side) || plan.side !== 'SHORT')
+    (!PREDATOR_DIRECTIONAL_SETUPS.has(plan.setup) ||
+      !isPredatorMemeSetup(plan.setup, plan.side))
   ) {
     return { created: false, comment: null, skipReason: 'setup' }
   }
@@ -1242,7 +1257,7 @@ export async function createPaperTradeFromPlan(
   }
 
   pruned.push(trade)
-  await savePaperTrades(env, pruned)
+  await savePaperTrades(env, pruned, true)
 
   const icon = plan.side === 'LONG' ? '🟢' : '🔴'
   const cadence = isMeme ? 'каждые ~2 мин' : 'каждые ~5 мин'
@@ -2505,7 +2520,7 @@ export async function monitorPaperTrades(
     }
   }
 
-  if (dirty) await savePaperTrades(env, list)
+  if (dirty) await savePaperTrades(env, list, true)
   for (const c of comments) {
     if (c.route) continue
     const trade = list.find((p) => c.dedupeKey.includes(p.id))

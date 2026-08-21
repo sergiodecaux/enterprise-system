@@ -74,7 +74,7 @@ import {
   formatMemePipelineDebug,
   loadMemePipelineDebug,
 } from './memePipelineDebug'
-import { runEliteAltJewelScan, ALT_JEWEL_SETUP } from './eliteAltJewel'
+import { ALT_JEWEL_SETUP } from './eliteAltJewel'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 import {
   isKvQuotaHandoffDone,
@@ -102,6 +102,8 @@ import {
   ringUrls,
   shouldRunCronWork,
   standbyThisWorker,
+  botLane,
+  pinEliteWebhook,
   type FailoverHandoffPayload,
   type FailoverSubscriberPayload,
 } from './failover'
@@ -212,16 +214,32 @@ async function importHandoffKv(
   if (!kv) return
   const jobs: Promise<unknown>[] = []
   if (body.journal && body.journal.length > 2) {
-    jobs.push(kv.put(HANDOFF_KV_KEYS.journal, body.journal))
+    jobs.push(
+      kvPutThrottled(kv, HANDOFF_KV_KEYS.journal, body.journal, 0, {
+        force: true,
+      })
+    )
   }
   if (body.paper && body.paper.length > 2) {
-    jobs.push(kv.put(HANDOFF_KV_KEYS.paper, body.paper))
+    jobs.push(
+      kvPutThrottled(kv, HANDOFF_KV_KEYS.paper, body.paper, 0, {
+        force: true,
+      })
+    )
   }
   if (body.gates && body.gates.length > 2) {
-    jobs.push(kv.put(HANDOFF_KV_KEYS.gates, body.gates))
+    jobs.push(
+      kvPutThrottled(kv, HANDOFF_KV_KEYS.gates, body.gates, 0, {
+        force: true,
+      })
+    )
   }
   if (body.watchlist && body.watchlist.length > 2) {
-    jobs.push(kv.put(HANDOFF_KV_KEYS.watchlist, body.watchlist))
+    jobs.push(
+      kvPutThrottled(kv, HANDOFF_KV_KEYS.watchlist, body.watchlist, 0, {
+        force: true,
+      })
+    )
   }
   if (jobs.length) await Promise.all(jobs)
 }
@@ -328,6 +346,9 @@ interface Env {
   FAILOVER_SECRET?: string
   /** This worker public URL, e.g. https://mexc-proxy-xxx.workers.dev */
   PUBLIC_BASE_URL?: string
+  /** meme = Predator ring; elite = dedicated alt worker */
+  BOT_LANE?: string
+  ELITE_PUBLIC_URL?: string
   /** Soft daily invocation budget (Free ≈100k). Default 80000 */
   FAILOVER_DAILY_BUDGET?: string
   /** MEXC futures API — filter symbols available to this account/region */
@@ -435,6 +456,7 @@ export type CronRole =
   | 'predator'
   | 'paper'
   | 'vane'
+  | 'jewel'
   | 'elite_hourly'
   | 'elite_daily'
   | 'all'
@@ -448,6 +470,33 @@ function cronRoleFromExpression(cron: string): CronRole {
   // legacy every-3m vane expression
   if (cron === '0-57/3 * * * *') return 'vane'
   return 'all'
+}
+
+/** Mini App watches belong on the Elite worker (F). */
+async function forwardToEliteProxy(
+  env: Env,
+  request: Request,
+  path: string
+): Promise<Response | null> {
+  if (botLane(env) === 'elite') return null
+  const elite = (env.ELITE_PUBLIC_URL ?? '').replace(/\/$/, '')
+  if (!elite) return null
+  const headers: Record<string, string> = {
+    'Content-Type': request.headers.get('Content-Type') || 'application/json',
+  }
+  const secret = request.headers.get('X-Alert-Secret')
+  if (secret) headers['X-Alert-Secret'] = secret
+  const r = await fetch(`${elite}${path}`, {
+    method: 'POST',
+    headers,
+    body: await request.clone().text(),
+  })
+  return new Response(await r.text(), {
+    status: r.status,
+    headers: {
+      'Content-Type': r.headers.get('Content-Type') || 'application/json',
+    },
+  })
 }
 
 async function handleTelegram(
@@ -663,9 +712,29 @@ async function handleTelegram(
 
   // Dual-account failover
   if (path === '/telegram/failover/status' && request.method === 'GET') {
+    const shallow = new URL(request.url).searchParams.get('shallow') === '1'
     const state = await loadFailoverState(env)
     await refreshKvWriteQuotaFromCache()
-    const peers = failoverConfigured(env) ? await pingRing(env) : []
+    const peers =
+      !shallow && failoverConfigured(env) ? await pingRing(env) : []
+    let predatorScanStatus: string | null = null
+    let predatorScanStartedAt: number | null = null
+    let lastPredatorCompletedAt: number | null = null
+    try {
+      const raw = await runtimeGet(`${LAST_SCAN_KEY}:predator`)
+      if (raw) {
+        const scan = JSON.parse(raw) as {
+          status?: string
+          startedAt?: number
+          completedAt?: number
+        }
+        predatorScanStatus = scan.status ?? null
+        predatorScanStartedAt = Number(scan.startedAt ?? 0) || null
+        lastPredatorCompletedAt = Number(scan.completedAt ?? 0) || null
+      }
+    } catch {
+      /* health metadata is best-effort */
+    }
     return json({
       ok: true,
       configured: failoverConfigured(env),
@@ -685,6 +754,9 @@ async function handleTelegram(
       publicBaseUrl: env.PUBLIC_BASE_URL ?? null,
       kvQuotaExhausted: isKvWriteQuotaExhausted(),
       kvQuotaHandoff: isKvQuotaHandoffDone(),
+      predatorScanStatus,
+      predatorScanStartedAt,
+      lastPredatorCompletedAt,
       peers,
     })
   }
@@ -696,7 +768,8 @@ async function handleTelegram(
     if (!authorizeFailover(request, env)) {
       return json({ error: 'Unauthorized' }, 401)
     }
-    let reason = 'manual_or_peer_activate'
+    let reason =
+      request.method === 'GET' ? 'manual_force_activate' : 'peer_activate'
     let memeSubs: FailoverSubscriberPayload[] = []
     let sniperSubs: FailoverSubscriberPayload[] = []
     let kvBlob: FailoverHandoffPayload = {}
@@ -768,6 +841,21 @@ async function handleTelegram(
     // Never 500 on activate — peer handoff treats non-2xx as failure and dual-active sticks
     try {
       const r = await activateThisWorker(env, reason)
+      if (!r.ok) {
+        return json(
+          {
+            ok: false,
+            error: r.state.lastReason ?? 'activate_refused',
+            state: r.state,
+          },
+          409
+        )
+      }
+      try {
+        await maybeAnnounceEngine(env)
+      } catch {
+        // Strategy announce is best-effort; activation already succeeded.
+      }
       try {
         await broadcastAlert(env, {
           type: 'SYSTEM',
@@ -852,6 +940,7 @@ async function handleTelegram(
       roleParam === 'predator' ||
       roleParam === 'paper' ||
       roleParam === 'vane' ||
+      roleParam === 'jewel' ||
       roleParam === 'elite_hourly' ||
       roleParam === 'elite_daily' ||
       roleParam === 'all'
@@ -955,6 +1044,8 @@ async function handleTelegram(
   }
 
   if (path === '/telegram/watch' && request.method === 'POST') {
+    const fwd = await forwardToEliteProxy(env, request, '/telegram/watch')
+    if (fwd) return fwd
     const body = (await request.json()) as {
       chatId: number
       symbol: string
@@ -995,6 +1086,8 @@ async function handleTelegram(
   }
 
   if (path === '/telegram/watch/batch' && request.method === 'POST') {
+    const fwd = await forwardToEliteProxy(env, request, '/telegram/watch/batch')
+    if (fwd) return fwd
     const body = (await request.json()) as {
       chatId: number
       symbol: string
@@ -1076,15 +1169,14 @@ async function handleTelegram(
     if (!env.ALERT_SECRET || secret !== env.ALERT_SECRET) {
       return json({ error: 'Unauthorized' }, 401)
     }
-    const { resetAllLabStats } = await import('./botJournal')
+    const { resetAllPeakStats } = await import('./botJournal')
     const { clearPeakDecisions } = await import('./peakDecisionLog')
-    const { closeAllLabPapers } = await import('./paperTrades')
-    const result = await resetAllLabStats(env)
+    const { closeAllMemePapers } = await import('./paperTrades')
+    const result = await resetAllPeakStats(env)
     const clearedDecisions = await clearPeakDecisions(env.SUBSCRIBERS)
-    const closedPapers = await closeAllLabPapers(env)
+    const closedPapers = await closeAllMemePapers(env)
     await env.SUBSCRIBERS?.delete('telegram:peak_only_purged_v283')
     await env.SUBSCRIBERS?.delete('telegram:last_peak_alert_at')
-    await env.SUBSCRIBERS?.delete('telegram:last_elite_dump_alert_at')
     try {
       await env.SUBSCRIBERS?.delete('telegram:pending_meme_alerts')
     } catch {
@@ -1095,8 +1187,8 @@ async function handleTelegram(
       ...result,
       clearedDecisions,
       closedPapers,
-      engines: { meme: BOT_ENGINE.id, elite: SNIPER_ENGINE.id },
-      note: 'Full lab wipe v292 — clean slate + detailed calibration journal',
+      engine: BOT_ENGINE.id,
+      note: 'Predator MEME clean slate — Elite history preserved; detailed directional journal enabled',
     })
   }
 
@@ -1113,10 +1205,9 @@ async function handleTelegram(
       return json({ error: 'Unauthorized' }, 401)
     }
     const targetBlock = [
-      `<b>🎯 РЕЖИМ (v27.4 proven coins + WR)</b>`,
-      `Мемы: сигналы только по проверенным PEAK SHORT. Новая монета = notice без входа.`,
-      `WR прошлых сделок в каждом алерте и в /status.`,
-      `Альты: ALT_JEWEL L/S @ ×50 · +40% ROE.`,
+      `<b>🎯 РАЗДЕЛЕНИЕ БОТОВ</b>`,
+      `Predator (@Enterprisesystem_bot): мемы LONG/SHORT по стакану и свечам · от 68%.`,
+      `Elite (@Enterpriseelite_bot): альты как Mini App «Сигналы» · прокси mexc-proxy-f.`,
     ].join('\n')
     const memeText = [
       `🚀 <b>ENTERPRISE PREDATOR</b>`,
@@ -1124,11 +1215,17 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Стратегия:</b> <b>PEAK SHORT</b> · DISTRIBUTION/FOMO · exh≥62 · age≥12м`,
-      '• + DUMP_CONTINUATION SHORT после bounce',
-      '• ageGate: &lt;8м chaos skip',
+      `<b>Обновление v27.7:</b>`,
+      '• LONG/SHORT: свечи 1m + фаза 5m/15m, затем 3 снимка живого стакана',
+      '• SHORT veto: bid wall · OBI ≥10% · bid/ask ≥1.55 · forecast NEXT_UP',
+      '• LONG veto: ask wall · OBI ≤−10% · bid/ask ≤0.65 · forecast NEXT_DOWN',
+      '• минимум 2 независимых book evidence + обязательный realBook/event',
+      '• score от 68; для thin/new SHORT — от 72',
+      '• фиксируются probability, OBI, book score/bias/event, patterns, MFE/MAE и outcome',
+      '• failover A→B→C при KV/daily limit; quota-dead и stale/CPU-dead peer пропускаются',
+      '• сейчас только сигнал + paper companion; одновременно одна MEME-сделка',
       '',
-      `Журнал lab <code>v292</code>.`,
+      `Журнал lab <code>v293</code>.`,
       new Date().toISOString(),
     ].join('\n')
     const eliteText = [
@@ -1138,11 +1235,11 @@ async function handleTelegram(
       targetBlock,
       '',
       `<b>Стратегия:</b>`,
-      '• <b>PUMP_CONTINUE LONG</b> — LAUNCH/RELAUNCH · exh≤35',
-      '• <b>ALT_JEWEL</b> SHORT|LONG топ‑3 (без Mini App)',
-      '• DUMP reclaim выключен',
+      '• как Mini App: зоны HTF, SMC hunt, confluence, ScoreCard',
+      '• вход только READY (или INVALIDATED)',
+      '• /scan · /brief · /zone · слежение из вкладки Сигналы',
       '',
-      `Журнал lab <code>v292</code>.`,
+      `Журнал lab <code>v293</code>.`,
       new Date().toISOString(),
     ].join('\n')
     const meme = await broadcastAlert(env, {
@@ -1161,7 +1258,7 @@ async function handleTelegram(
     })
     return json({
       ok: true,
-      lab: 'v292',
+      lab: 'v293',
       engines: { meme: BOT_ENGINE.id, elite: SNIPER_ENGINE.id },
       meme,
       sniper,
@@ -1448,6 +1545,8 @@ async function maybeHeartbeat(env: Env): Promise<number> {
   let sent = 0
   let attempted = 0
   for (const channel of ['meme', 'sniper'] as TgChannel[]) {
+    if (botLane(env) === 'elite' && channel === 'meme') continue
+    if (botLane(env) !== 'elite' && channel === 'sniper') continue
     const subs = await listSubscribers(env, channel)
     if (!subs.length) {
       await recordDelivery(env, {
@@ -1473,14 +1572,14 @@ async function maybeHeartbeat(env: Env): Promise<number> {
     }
     const engine = channel === 'sniper' ? SNIPER_ENGINE : BOT_ENGINE
     attempted++
-    const elite = channel === 'sniper' && isEliteAssistantOnly(env)
+    const elite = channel === 'sniper'
     const r = await broadcastAlert(env, {
       type: 'SYSTEM',
       channel,
-      title: elite ? 'Elite online' : 'Scanner online',
+      title: elite ? 'Elite alts online' : 'Scanner online',
       text: elite
-        ? `🏛 Elite Assistant · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий доклад ~:05 UTC · /brief`
-        : `🟢 24/7 heartbeat · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
+        ? `🏛 Elite · альты как Mini App · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nЗоны / SMC / READY · прокси mexc-proxy-f`
+        : `🟢 Predator · мемы BOOK LONG/SHORT ≥68% · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
       dedupeKey: `heartbeat:${channel}:${tick}`,
     })
     sent += r.sent
@@ -1519,6 +1618,8 @@ async function maybeDeliveryProbe(env: Env): Promise<number> {
   let sent = 0
   const ts = new Date().toISOString()
   for (const channel of ['sniper', 'meme'] as TgChannel[]) {
+    if (botLane(env) === 'elite' && channel === 'meme') continue
+    if (botLane(env) !== 'elite' && channel === 'sniper') continue
     const subs = await listSubscribers(env, channel)
     const token = tokenForChannel(env, channel)
     if (!subs.length || !token) {
@@ -1623,6 +1724,15 @@ function planToPullbackWatch(
 
 const ENGINE_ANNOUNCE_KEY = 'telegram:engine_announced'
 
+function stableTextHash(value: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
 async function announceEngineToChannel(
   env: Env,
   channel: TgChannel,
@@ -1630,7 +1740,10 @@ async function announceEngineToChannel(
   extraLines: string[]
 ): Promise<void> {
   if (!tokenForChannel(env, channel) || !env.SUBSCRIBERS) return
-  const key = `${ENGINE_ANNOUNCE_KEY}:${channel}:${engine.id}`
+  const releaseHash = stableTextHash(
+    [engine.id, engine.label, engine.deployedNote, ...extraLines].join('\n')
+  )
+  const key = `${ENGINE_ANNOUNCE_KEY}:${channel}:${engine.id}:${releaseHash}`
   const [runtimeDone, done] = await Promise.all([
     runtimeGet(key),
     env.SUBSCRIBERS.get(key),
@@ -1663,14 +1776,45 @@ async function announceEngineToChannel(
 }
 
 async function maybeAnnounceEngine(env: Env): Promise<void> {
-  await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
-    'Predator memes: liquidation echo, paper companion.',
-  ])
-  await announceEngineToChannel(env, 'sniper', SNIPER_ENGINE, [
-    'Hourly /brief · daily close · зоны · F&G · новости',
-    'ALT JEWEL: топ‑3 альта · SHORT ×50 · +40% ROE (0.8% цены) — без Mini App',
-    'Mini App → Сигналы (альты): слежение + READY → журнал Lab WR',
-  ])
+  if (botLane(env) !== 'elite') {
+    await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
+      '• LONG/SHORT: свечи 1m + контекст 5m/15m, затем 3 снимка живого стакана.',
+      '• SHORT запрещён против bid wall, OBI ≥10%, bid/ask ≥1.55 или NEXT_UP.',
+      '• LONG запрещён против ask wall, OBI ≤−10%, bid/ask ≤0.65 или NEXT_DOWN.',
+      '• Требуются ≥2 независимых book evidence и realBook/event.',
+      '• Сигналы ниже 68 не отправляются; thin/new SHORT требует 72.',
+      '• Журнал v293: probability, OBI, book score/bias/event, свечные паттерны, MFE/MAE и outcome.',
+      '• Failover A→B→C: KV/daily limit, отказ исчерпанного peer и stale/CPU-dead scan.',
+      '• Режим проверки: только signal + paper companion; максимум одна активная MEME-сделка.',
+    ])
+  } else {
+    await announceEngineToChannel(env, 'sniper', SNIPER_ENGINE, [
+      'Hourly /brief · daily close · зоны · F&G · новости',
+      'ALT JEWEL: топ‑3 альта · SHORT ×50 · +40% ROE (0.8% цены) — без Mini App',
+      'Mini App → Сигналы (альты): слежение + READY → журнал Lab WR',
+    ])
+  }
+}
+
+async function notifyFailoverHandoff(
+  env: Env,
+  reason: string
+): Promise<void> {
+  try {
+    await broadcastAlert(env, {
+      type: 'SYSTEM',
+      channel: 'meme',
+      title: '🔀 Cloudflare failover',
+      text: [
+        `Текущий Worker передал сканер следующему узлу A/B/C.`,
+        `Причина: ${reason}`,
+        'Новый узел повторно проверяет лимит, включает webhook и продолжает paper-журнал.',
+      ].join('\n'),
+      dedupeKey: `failover:handoff:${reason}:${Math.floor(Date.now() / 300_000)}`,
+    })
+  } catch {
+    // Limit handoff must not fail because Telegram notification failed.
+  }
 }
 
 async function runCronScan(
@@ -1732,19 +1876,15 @@ async function runCronScan(
     }
   }
 
-  // Announce before failover gate — otherwise idle primary never announces a deploy
-  try {
-    await maybeAnnounceEngine(env)
-  } catch (err) {
-    console.error('[cron] engine announce failed', err)
-  }
-
   const gate = await shouldRunCronWork(env)
   if (!gate.run) {
     if (gate.reason === 'daily_budget' || gate.reason === 'kv_quota') {
       try {
         const payload = await collectHandoffPayload(env).catch(() => undefined)
-        await maybeHandoffOnLimit(env, payload)
+        const handoff = await maybeHandoffOnLimit(env, payload)
+        if (handoff.handedOff) {
+          await notifyFailoverHandoff(env, gate.reason)
+        }
       } catch (err) {
         console.error('[cron] kv_quota handoff failed', err)
       }
@@ -1768,13 +1908,29 @@ async function runCronScan(
     }
   }
 
+  // Only the elected owner announces a deploy; standby accounts have separate KV.
+  try {
+    await maybeAnnounceEngine(env)
+  } catch (err) {
+    console.error('[cron] engine announce failed', err)
+  }
+
   const scanStartedAt = Date.now()
+  const lane = botLane(env)
+  if (lane === 'elite') {
+    try {
+      await pinEliteWebhook(env)
+    } catch (err) {
+      console.error('[cron] pin elite webhook failed', err)
+    }
+  }
   const scanRunning = JSON.stringify({
     status: 'RUNNING',
     role,
     startedAt: scanStartedAt,
   })
   await runtimePut(LAST_SCAN_KEY, scanRunning)
+  await runtimePut(`${LAST_SCAN_KEY}:${role}`, scanRunning)
   // Cache only — last_scan was ~2 KV writes per cron (~1400+/day)
 
   let watchAlerts = 0
@@ -1837,21 +1993,22 @@ async function runCronScan(
 
   const deliver = async (a: ScanAlert) => {
     if (seenDedup.has(a.dedupeKey)) return
-    // Hard gate: meme = PEAK_FUEL_FAIL SHORT A-tier only (restored v28)
+    // Meme v27.6: only book-confirmed directional A-tier setups >=68%.
     if (a.type === 'MEME') {
       const plan = a.tradePlan
       if (
         !plan ||
-        plan.setup !== 'PEAK_FUEL_FAIL' ||
-        plan.side !== 'SHORT' ||
-        plan.qualityTier !== 'A'
+        !['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(plan.setup) ||
+        plan.qualityTier !== 'A' ||
+        a.winPct < 68
       ) {
         skipped++
         console.log(
-          '[cron] meme blocked non-peak',
+          '[cron] meme blocked directional gate',
           plan?.setup ?? 'no_plan',
           plan?.side,
-          plan?.qualityTier
+          plan?.qualityTier,
+          a.winPct
         )
         return
       }
@@ -1878,7 +2035,7 @@ async function runCronScan(
         skipped++
         return
       }
-      // Global pace: max 1 new PEAK every 12m (stops alert spam)
+      // Global pace: max one directional meme signal every 8m.
       try {
         const paceRaw = await env.SUBSCRIBERS?.get('telegram:last_peak_alert_at')
         const lastAt = paceRaw ? Number(paceRaw) : 0
@@ -1894,7 +2051,7 @@ async function runCronScan(
       const conflict = await isSymbolSideBlocked(
         env.SUBSCRIBERS,
         a.tradePlan.symbol,
-        'SHORT'
+        a.tradePlan.side
       )
       if (conflict.blocked) {
         skipped++
@@ -1975,7 +2132,7 @@ async function runCronScan(
         await markSymbolSideLock(
           env.SUBSCRIBERS,
           a.tradePlan.symbol,
-          'SHORT',
+        a.tradePlan.side,
           a.tradePlan.setup
         )
       }
@@ -2139,12 +2296,12 @@ async function runCronScan(
       return
     }
 
-    // Elite ALT_JEWEL SHORT — top-3 liquid alts @×50 (independent of Mini App)
+    // Elite ALT_JEWEL — top-3 liquid alts @×50 (SHORT and LONG)
     if (
       a.type === 'SNIPER' &&
       a.tradePlan &&
       a.tradePlan.setup === ALT_JEWEL_SETUP &&
-      a.tradePlan.side === 'SHORT'
+      (a.tradePlan.side === 'SHORT' || a.tradePlan.side === 'LONG')
     ) {
       if (a.tradePlan.qualityTier !== 'A') {
         skipped++
@@ -2346,10 +2503,10 @@ async function runCronScan(
       let tgBudget = 6
       for (const c of comments) {
         if (tgBudget <= 0) break
-        // Meme companion TG: PEAK SHORT only — orphan/old dual paper → mute
+        // Meme companion TG: current directional setups only.
         if (
           (c.route ?? 'meme') === 'meme' &&
-          c.setup !== 'PEAK_FUEL_FAIL'
+          !['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(c.setup)
         ) {
           continue
         }
@@ -2372,7 +2529,7 @@ async function runCronScan(
 
   const runJournal = async () => {
     try {
-      // v292 keys are fresh empty — no wipe PUT needed (KV write quota)
+      // v293 keys are fresh empty — no wipe PUT needed (KV write quota)
       const resolution = await resolveBotJournal(env)
       journalResolved = resolution.changed
       let tgBudget = 5
@@ -2386,9 +2543,9 @@ async function runCronScan(
         ) {
           continue
         }
-        // Meme TG: only PEAK SHORT WIN/LOSS — no orphan TIMEOUT/BE, no dual LONGs
+        // Meme TG: only current directional WIN/LOSS outcomes.
         if (outcome.alertType === 'MEME') {
-          if (outcome.setup !== 'PEAK_FUEL_FAIL') continue
+          if (!['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(outcome.setup)) continue
           if (outcome.status !== 'WIN' && outcome.status !== 'LOSS') continue
           if (outcome.tgEntrySent === false) continue
         }
@@ -2469,7 +2626,7 @@ async function runCronScan(
                   t.setup.startsWith('CONT_'))))
         )
         .map((t) => t.symbol)
-      // CONT/PEAK SHORT → Predator; CONT/PUMP LONG A → Elite
+      // Predator handles book-confirmed meme LONG/SHORT.
       const gates = await getAdaptiveGates(env)
       const flow = await runMemeOrderFlowScan({
         kv,
@@ -2707,8 +2864,9 @@ async function runCronScan(
     }
     await runJournal()
     await runPaper()
-    await runSignalWatches()
-    // Idle pulse on fresh paper budget (predator only stamps intent)
+    if (lane === 'elite') await runSignalWatches()
+    // Idle pulse on fresh paper budget (Predator memes only)
+    if (lane !== 'elite') {
     try {
       const pendingRaw = await runtimeGet(IDLE_PULSE_PENDING_KEY)
       const lastIdle = Number((await durableGet(env, IDLE_PULSE_KEY)) || 0)
@@ -2748,19 +2906,12 @@ async function runCronScan(
         const m = await broadcastAlert(env, {
           type: 'SYSTEM',
           channel: 'meme',
-          title: '👁 Ищу сетап A',
+          title: '👁 Ищу мем PEAK',
           text: body,
           dedupeKey: `idle-pulse:meme:${tick}`,
         })
-        const s = await broadcastAlert(env, {
-          type: 'SYSTEM',
-          channel: 'sniper',
-          title: '👁 Ищу сетап A',
-          text: body.replace(BOT_ENGINE.id, SNIPER_ENGINE.id),
-          dedupeKey: `idle-pulse:sniper:${tick}`,
-        })
-        if (m.sent + s.sent > 0) {
-          idlePulses += m.sent + s.sent
+        if (m.sent > 0) {
+          idlePulses += m.sent
           await durablePut(
             env,
             IDLE_PULSE_KEY,
@@ -2773,46 +2924,11 @@ async function runCronScan(
     } catch (err) {
       console.error('[cron] idle pulse (paper) failed', err)
     }
-    // Elite ALT_JEWEL — paced (~6m) so paper tick stays under CF subrequest cap
-    let jewelRan = false
-    try {
-      const lastJewel = Number(
-        (await runtimeGet(ALT_JEWEL_PACE_KEY)) ||
-          (await env.SUBSCRIBERS?.get(ALT_JEWEL_PACE_KEY)) ||
-          0
-      )
-      if (!lastJewel || Date.now() - lastJewel >= ALT_JEWEL_SCAN_MS) {
-        const jewel = await runEliteAltJewelScan({ kv })
-        jewelRan = true
-        await runtimePut(ALT_JEWEL_PACE_KEY, String(Date.now()))
-        console.log(
-          '[cron] alt jewel',
-          'scanned',
-          jewel.scanned.join(','),
-          'alerts',
-          jewel.alerts.length,
-          'rejects',
-          jewel.rejects
-            .map((r) => `${r.symbol.replace('_USDT', '')}:${r.reason}`)
-            .slice(0, 4)
-            .join('|')
-        )
-        for (const a of jewel.alerts) {
-          try {
-            await deliver(a)
-          } catch (err) {
-            failed++
-            console.error('[cron] alt jewel deliver failed', a.dedupeKey, err)
-          }
-        }
-      } else {
-        console.log('[cron] alt jewel paced')
-      }
-    } catch (err) {
-      console.error('[cron] alt jewel scan failed', err)
     }
-    // Remizov-lite moments for watched alts (skip if jewel ate budget)
-    if (!jewelRan) {
+  }
+
+  // Mini App watch moments — Elite worker only (alts)
+  if (lane === 'elite' && (role === 'paper' || role === 'all')) {
     try {
       const watches = await listWatches(env)
       const now = Date.now()
@@ -2858,24 +2974,28 @@ async function runCronScan(
     } catch (err) {
       console.error('[cron] processMoment failed', err)
     }
-    }
   }
 
-  if (role === 'predator' || role === 'all') {
+  if (lane !== 'elite' && (role === 'predator' || role === 'all')) {
     await runPredator()
   }
 
-  if (role === 'vane' || role === 'all') {
+  if (
+    lane === 'elite' &&
+    (role === 'predator' ||
+      role === 'paper' ||
+      role === 'vane' ||
+      role === 'jewel' ||
+      role === 'all')
+  ) {
     await runVane()
-    // Do NOT run delivery probe on vane ticks — scan already near CF subrequest cap.
-    // Probe stays on paper cron only.
   }
 
-  if (role === 'elite_hourly' || role === 'all') {
+  if (lane === 'elite' && (role === 'elite_hourly' || role === 'all')) {
     await runEliteBrief('hourly')
   }
 
-  if (role === 'elite_daily') {
+  if (lane === 'elite' && role === 'elite_daily') {
     await runEliteBrief('daily')
   }
 
@@ -2904,6 +3024,7 @@ async function runCronScan(
     ...result,
   })
   await runtimePut(LAST_SCAN_KEY, scanDone)
+  await runtimePut(`${LAST_SCAN_KEY}:${role}`, scanDone)
   await kvPutThrottled(
     env.SUBSCRIBERS,
     `${LAST_SCAN_KEY}:${role}`,
@@ -2917,7 +3038,13 @@ async function runCronScan(
     !isKvQuotaHandoffDone()
   ) {
     try {
-      await maybeHandoffOnLimit(env, await collectHandoffPayload(env))
+      const handoff = await maybeHandoffOnLimit(
+        env,
+        await collectHandoffPayload(env)
+      )
+      if (handoff.handedOff) {
+        await notifyFailoverHandoff(env, 'kv_quota_after_scan')
+      }
     } catch (err) {
       console.error('[cron] kv_quota handoff failed', err)
     }
@@ -3048,9 +3175,6 @@ const IDLE_PULSE_KEY = 'telegram:last_idle_pulse'
 const IDLE_PULSE_PENDING_KEY = 'telegram:idle_pulse_pending'
 /** «Ищу сетап» — only on paper cron (fresh subrequest budget) */
 const IDLE_PULSE_MS = 90 * 60_000
-const ALT_JEWEL_PACE_KEY = 'telegram:last_elite_alt_jewel_scan_at'
-/** Top-3 alt jewel: every ~6m, not every paper tick */
-const ALT_JEWEL_SCAN_MS = 6 * 60_000
 /** If no TG delivery stamp for this long → Worker→TG self-check (not a signal) */
 const DELIVERY_PROBE_MS = 6 * 60 * 60_000
 
@@ -3151,8 +3275,8 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> — meme LONG + ALT JEWEL SHORT\n\nМемы LONG A: <b>PUMP_CONTINUE</b>\nАльты: <b>ALT_JEWEL</b> SHORT топ‑3 @ ×50 · +40% ROE (без Mini App)\nРаз в час: BTC + TOP-8 · F&amp;G · новости · зоны\nMini App → <b>Сигналы</b> (альты) → READY → журнал WR\n\nКоманды:\n/brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
-        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · PEAK SHORT A · paper companion.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
+        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · как Mini App «Сигналы»: зоны, SMC, confluence.\nВход в TG только когда сетап <b>READY</b>.\nПрокси: <code>mexc-proxy-f</code> (Money bot 7).\nМемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
+        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · LONG/SHORT по живому стакану + свечам · сигнал от 68% · paper companion.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
       await tgSend(
@@ -3286,30 +3410,36 @@ async function dispatchCommand(
       await tgSend(env, chatId, 'Сначала /start', channel)
       return
     }
-    if (channel === 'sniper' && isEliteAssistantOnly(env)) {
-      await tgSend(env, chatId, '⏳ Собираю Elite доклад…', channel)
-      try {
-        const briefing = await buildEliteBriefing({
-          kind: 'hourly',
-          kv: env.SUBSCRIBERS
-            ? {
-                get: (key: string) => env.SUBSCRIBERS!.get(key),
-                put: (key: string, value: string) =>
-                  env.SUBSCRIBERS!.put(key, value),
-              }
-            : undefined,
-        })
-        for (const part of briefing.htmlParts) {
-          await tgSend(env, chatId, part, channel)
-        }
-      } catch (err) {
-        console.error('[brief] failed', err)
-        await tgSend(env, chatId, 'Не удалось собрать доклад. Попробуй позже.', channel)
+    if (channel === 'sniper') {
+      await tgSend(env, chatId, '⏳ Сканирую альты (зоны / SMC, как Mini App)…', channel)
+      const result = await runCronScan(env, 'vane')
+      if (result.alerts === 0) {
+        await tgSend(
+          env,
+          chatId,
+          [
+            `✅ Скан альтов: сильного сетапа (READY) сейчас нет.`,
+            `Отправлено: ${result.sent} · дедуп: ${result.skipped}`,
+            '',
+            `⚙ Движок: <code>${engine.id}</code>`,
+            engine.deployedNote,
+            '',
+            `/status · /brief · /trades`,
+          ].join('\n'),
+          channel
+        )
+      } else {
+        await tgSend(
+          env,
+          chatId,
+          `✅ Скан альтов (${engine.id}): найдено ${result.alerts}, отправлено ${result.sent}, дедуп ${result.skipped}`,
+          channel
+        )
       }
       return
     }
-    await tgSend(env, chatId, '⏳ Сканирую рынок…', channel)
-    const result = await runCronScan(env, channel === 'sniper' ? 'vane' : 'predator')
+    await tgSend(env, chatId, '⏳ Сканирую мемы…', channel)
+    const result = await runCronScan(env, 'predator')
     if (result.alerts === 0) {
       await tgSend(
         env,
@@ -3475,22 +3605,23 @@ async function dispatchCommand(
         env,
         chatId,
         [
-          `🏛 <b>Статус ELITE Assistant</b>`,
+          `🏛 <b>Статус ELITE · альты</b>`,
           `⚙ <code>${SNIPER_ENGINE.id}</code>`,
           SNIPER_ENGINE.label,
           SNIPER_ENGINE.deployedNote,
           ``,
+          `Ищу: альты как Mini App — зоны HTF, SMC hunt, confluence, READY`,
+          `Прокси: mexc-proxy-f · мемы в @Enterprisesystem_bot`,
           `Доклад: каждый час :05 UTC · суточный 00:05 UTC`,
-          `Вселенная: BTC + ETH SOL BNB XRP AVAX LINK DOGE SUI`,
-          `Режим: помощник + Mini App Сигналы → журнал Lab`,
+          `Вселенная: BTC + ETH SOL BNB XRP AVAX LINK DOGE SUI + jewel pool`,
           session.ok
             ? `Сессия: ${session.session} OK`
             : `Сессия: ${session.reason}`,
-          `Paper (legacy): ${live}`,
+          `Paper альты: ${live}`,
           `Подписчиков: ${list.length}`,
           `chatId: <code>${chatId}</code>`,
           ``,
-          `/brief · /brief ETH · /market · /zone · /scan · /journal`,
+          `/scan · /brief · /brief ETH · /market · /zone · /journal`,
         ].join('\n'),
         channel
       )
@@ -3523,7 +3654,8 @@ async function dispatchCommand(
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: только PEAK_FUEL_FAIL SHORT A · SL 1% / TP 1.8%`,
+        `Режим: MEME LONG/SHORT A · стакан+свечи · вероятность ≥68%`,
+        `Альты: нет (они в @Enterpriseelite_bot)`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,
         hotLine,

@@ -299,6 +299,16 @@ export function memeBookForecast(
   else if (obiAligned && score >= 50)
     bias = side === 'LONG' ? 'NEXT_UP' : 'NEXT_DOWN'
 
+  // Book magnet opposite to the intended fade — callers must skip, not score-down.
+  if (side === 'SHORT' && obi != null && obi >= 10 && bias !== 'TRAP') {
+    bias = 'NEXT_UP'
+    reasons.push('forecast:next_up_against_short')
+  }
+  if (side === 'LONG' && obi != null && obi <= -10 && bias !== 'TRAP') {
+    bias = 'NEXT_DOWN'
+    reasons.push('forecast:next_down_against_long')
+  }
+
   if (bias === 'TRAP') reasons.push('forecast:trap')
   else if (bias === 'NEXT_UP') reasons.push('forecast:next_up')
   else if (bias === 'NEXT_DOWN') reasons.push('forecast:next_down')

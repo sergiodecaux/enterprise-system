@@ -1,4 +1,5 @@
-# STANDBY-5 worker — sixth Cloudflare account (F / Money bot 7)
+# Elite-only worker — Account F / Money bot 7
+# Dedicated proxy for @Enterpriseelite_bot (alts). Not in the meme failover ring.
 # Deploy: npx wrangler deploy -c wrangler.standby5.toml
 
 name = "mexc-proxy-f"
@@ -15,11 +16,14 @@ crons = [
 ]
 
 [vars]
+BOT_LANE = "elite"
+ELITE_ASSISTANT_ONLY = "0"
 FAILOVER_ROLE = "standby"
 FAILOVER_DAILY_BUDGET = "80000"
-FAILOVER_RING = "https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev,https://mexc-proxy-d.mexc-d.workers.dev,https://mexc-proxy-e.mexc-e.workers.dev,https://mexc-proxy-f.mexc-f.workers.dev"
-FAILOVER_PEER_URL = "https://mexc-proxy.sergiodecaux.workers.dev"
+FAILOVER_RING = ""
+FAILOVER_PEER_URL = ""
 PUBLIC_BASE_URL = "https://mexc-proxy-f.mexc-f.workers.dev"
+ELITE_PUBLIC_URL = "https://mexc-proxy-f.mexc-f.workers.dev"
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"

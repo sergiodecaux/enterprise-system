@@ -1,13 +1,14 @@
 /**
- * MEME order-flow scanner v27.4 — PEAK_FUEL_FAIL only (proven coins).
+ * MEME order-flow scanner v27.5 — PEAK_FUEL_FAIL only (proven coins).
  *
- * All predator capacity on pump peaks without fuel → small SHORT.
- * CONT_* / WITH-day continuation disabled (journal: trap/late longs toxic).
+ * Candles + HTF first, then live book only on structured peaks.
+ * Never SHORT into bid walls / bid-heavy OBI.
  */
 
 import type { ScanAlert } from './scanner'
 import {
   resolveHotMemeWatchlist,
+  type HotMemeEntry,
   type HotMemeWatchlist,
 } from './hotMemeWatchlist'
 import {
@@ -23,18 +24,27 @@ import {
   setupHistoricalWr,
   type BotAdaptiveGates,
 } from './botJournal'
-import { detectPeakFuelFail, type Candle } from './peakFuelFail'
+import {
+  inspectPeakStructure,
+  type Candle,
+} from './peakFuelFail'
+import {
+  detectMemeDirectionalSignal,
+  inspectMemeCandleDirections,
+  type MemeCandleCandidate,
+  type MemeDirectionalSignal,
+} from './memeDirectionalSignal'
 
 const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 /** Cover full hotlist — peak hunt needs breadth */
 const MAX_SCAN = 12
-/** Live 3-snap (~4 subrequests) only on a few prefer+PUMP names */
-const LIVE_BOOK = 3
+/** Live 3-snap only after candle/HTF structure already passed */
+const LIVE_BOOK = 4
 /** More alerts per tick — was missing live peaks */
 const MAX_ALERTS = 5
-/** Only emit PEAK_FUEL_FAIL */
-const PEAK_ONLY = true
+const MIN_SIGNAL_PROBABILITY = 68
+const PEAK_ONLY = false
 
 const BLUE_CHIPS = new Set([
   'BTC_USDT',
@@ -132,64 +142,59 @@ export function allowMemeFlowEvent(
   return { ok: false, reason: 'peak_only_mode' }
 }
 
-function peakFailToAlert(
+function directionalToAlert(
   symbol: string,
-  sig: NonNullable<ReturnType<typeof detectPeakFuelFail>>,
-  dayBias: 'PUMP' | 'DUMP' | null,
-  chg24hPct: number,
-  wrLine: string
+  sig: MemeDirectionalSignal,
+  chg24hPct: number
 ): ScanAlert {
   const name = symbol.replace('_USDT', '/USDT')
-  const limit = sig.limitPrice
   const fmt = (p: number) => {
-    if (!(p > 0)) return '—'
     if (p >= 1000) return p.toFixed(2)
     if (p >= 1) return p.toFixed(4)
     if (p >= 0.01) return p.toFixed(6)
     return p.toFixed(8)
   }
-  const pct = (entry: number, level: number) => {
-    if (!(entry > 0)) return ''
-    const p = ((level - entry) / entry) * 100
+  const pct = (level: number) => {
+    const p = ((level - sig.limitPrice) / sig.limitPrice) * 100
     return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`
   }
   return {
     type: 'MEME',
-    title: `🦈 MEME SHORT ${name} · PEAK_FUEL_FAIL`,
+    title: `${sig.side === 'LONG' ? '🟢' : '🔴'} MEME ${sig.side} ${name} · BOOK+CANDLES`,
     text: [
-      `Уровни (SHORT):`,
-      `Открытие: ${fmt(limit)}`,
-      `Стоп (SL): ${fmt(sig.sl)} (${pct(limit, sig.sl)})`,
-      `Тейк 1 (TP1): ${fmt(sig.tp1)} (${pct(limit, sig.tp1)})`,
-      `Тейк 2 (TP): ${fmt(sig.tp)} (${pct(limit, sig.tp)})`,
+      `Вероятность: ${sig.probability}% · порог ${MIN_SIGNAL_PROBABILITY}%`,
+      `24h ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}%`,
       '',
-      `дневной памп ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}% · PEAK_FUEL_FAIL`,
-      wrLine,
-      dayBias === 'PUMP'
-        ? 'PUMP day · fade без топлива'
-        : 'сильный зелёный ход · fade',
-      ...sig.notes.filter((n) => !/^SL~/i.test(n)),
-      'v27.4: только проверенные монеты · WR в сигнале · новая = notice',
+      `Вход: ${fmt(sig.limitPrice)}`,
+      `SL: ${fmt(sig.sl)} (${pct(sig.sl)})`,
+      `TP1: ${fmt(sig.tp1)} (${pct(sig.tp1)})`,
+      `TP2: ${fmt(sig.tp)} (${pct(sig.tp)})`,
+      ...sig.notes,
+      'v27.6: направление задаёт живой стакан, свечи и 5m/15m подтверждают',
     ].join('\n'),
-    dedupeKey: `cron:mof273:peak_fuel_fail:${symbol}:SHORT:${Math.round(limit * 1e5)}:${Math.floor(Date.now() / 480_000)}`,
-    score: sig.confidence,
-    winPct: Math.min(74, Math.max(48, 45 + (sig.confidence - 70))),
+    dedupeKey: `cron:mof276:${sig.setup}:${symbol}:${sig.side}:${Math.round(sig.limitPrice * 1e6)}:${Math.floor(Date.now() / 480_000)}`,
+    score: sig.probability,
+    winPct: sig.probability,
     style: 'SCALP',
-    align: 'COUNTER',
+    align: sig.side === 'LONG' ? 'WITH_TREND' : 'COUNTER',
     tradePlan: {
-      side: 'SHORT',
+      side: sig.side,
       symbol,
-      setup: 'PEAK_FUEL_FAIL',
+      setup: sig.setup,
       qualityTier: 'A',
-      signalPrice: limit,
-      entryIdeal: limit,
-      zoneLow: limit,
-      zoneHigh: limit * 1.001,
-      invalidate: limit * 1.007,
+      signalPrice: sig.limitPrice,
+      entryIdeal: sig.limitPrice,
+      zoneLow:
+        sig.side === 'LONG' ? sig.limitPrice * 0.999 : sig.limitPrice,
+      zoneHigh:
+        sig.side === 'LONG' ? sig.limitPrice : sig.limitPrice * 1.001,
+      invalidate: sig.sl,
       sl: sig.sl,
       tp: sig.tp,
       target1: sig.tp1,
-      target3: limit * (1 - 0.025),
+      target3: sig.target3,
+      entryReasons: sig.journalReasons,
+      entryNotes: sig.notes.join(' · '),
     },
   }
 }
@@ -271,67 +276,101 @@ export async function runMemeOrderFlowScan(opts: {
     }
   }
 
-  const pinSet = new Set(opts.pinSymbols ?? [])
   const gates = opts.gates ?? null
   const rejects: Array<{ symbol: string; reason: string }> = []
   const candidates: ScanAlert[] = []
-  // Peak hunt: journal winners first, then PUMP / strong green
+  // Directional hunt: liquid heat first. SHORT symbol WR is applied only
+  // after the book chose SHORT; it must not suppress valid LONG candidates.
   const ranked = [...watchlist.entries]
-    .filter((e) => {
-      const gate = allowPeakSymbol(gates, e.symbol)
-      if (gate.ok) return true
-      if (pinSet.has(e.symbol)) return true
-      rejects.push({ symbol: e.symbol, reason: gate.reason || 'symbol_wr_block' })
-      return false
-    })
     .sort((a, b) => {
       const prefA = allowPeakSymbol(gates, a.symbol).action === 'prefer' ? 1 : 0
       const prefB = allowPeakSymbol(gates, b.symbol).action === 'prefer' ? 1 : 0
-      const pumpA = a.dayBias === 'PUMP' || a.chg24hPct >= 8 ? 1 : 0
-      const pumpB = b.dayBias === 'PUMP' || b.chg24hPct >= 8 ? 1 : 0
       const thinA =
         a.quoteVolUsd >= 150_000 && a.quoteVolUsd <= 5_000_000 ? 1 : 0
       const thinB =
         b.quoteVolUsd >= 150_000 && b.quoteVolUsd <= 5_000_000 ? 1 : 0
       return (
         prefB - prefA ||
-        pumpB - pumpA ||
-        b.chg24hPct - a.chg24hPct ||
         thinB - thinA ||
-        b.score - a.score
+        b.score - a.score ||
+        Math.abs(b.chg24hPct) - Math.abs(a.chg24hPct)
       )
     })
   const batch = ranked.slice(0, MAX_SCAN)
-  const liveBook = new Set<string>()
-  const pumpBatch = batch.filter(
-    (c) => c.dayBias === 'PUMP' || c.chg24hPct >= 4
-  )
-  const preferPumps = pumpBatch.filter(
-    (c) => allowPeakSymbol(gates, c.symbol).action === 'prefer'
-  )
-  const otherPumps = pumpBatch.filter(
-    (c) => allowPeakSymbol(gates, c.symbol).action !== 'prefer'
-  )
-  for (const c of [...preferPumps, ...otherPumps]) {
-    if (liveBook.size >= LIVE_BOOK) break
-    liveBook.add(c.symbol)
-  }
   const state = await loadBookState(opts.kv)
 
+  type Structured = {
+    coin: HotMemeEntry
+    price: number
+    holdVol: number | null
+    prevHold: number | null
+    candles: Candle[]
+    directions: MemeCandleCandidate[]
+  }
+  const structured: Structured[] = []
+
   for (const coin of batch) {
-    const prev = state[coin.symbol]?.previous ?? null
-    const older = state[coin.symbol]?.older ?? null
     const prevHold = state[coin.symbol]?.holdVol ?? null
     const tickerRow = tickers.find((t) => t.symbol === coin.symbol)
     const holdVol =
       tickerRow?.holdVol != null ? Number(tickerRow.holdVol) : null
     const price = Number(tickerRow?.lastPrice ?? 0)
-
-    const isPump = coin.dayBias === 'PUMP' || coin.chg24hPct >= 4
-    if (!isPump) {
-      rejects.push({ symbol: coin.symbol, reason: 'not_pump_skip' })
+    if (!(price > 0)) {
+      rejects.push({ symbol: coin.symbol, reason: 'no_price' })
       continue
     }
+    if (holdVol != null) {
+      state[coin.symbol] = {
+        ...(state[coin.symbol] ?? {}),
+        holdVol,
+      }
+    }
+    const candles = await fetchMin1Candles(coin.symbol, 60)
+    const peakInspect = inspectPeakStructure({
+      price,
+      chg24hPct: coin.chg24hPct,
+      dayBias: coin.dayBias,
+      candles1m: candles,
+    })
+    const directions = inspectMemeCandleDirections(candles, coin.chg24hPct)
+    if (
+      peakInspect?.ok &&
+      !directions.some((candidate) => candidate.side === 'SHORT')
+    ) {
+      directions.push({
+        side: 'SHORT',
+        score: 64,
+        htfAligned: !peakInspect.candles.htfUp,
+        patterns: peakInspect.candles.patterns,
+      })
+    }
+    if (!directions.length) {
+      rejects.push({
+        symbol: coin.symbol,
+        reason: peakInspect?.reason || 'no_directional_candle_structure',
+      })
+      continue
+    }
+    structured.push({ coin, price, holdVol, prevHold, candles, directions })
+  }
+
+  const liveBook = new Set<string>()
+  const bookRanked = [...structured].sort((a, b) => {
+    const bestA = Math.max(...a.directions.map((d) => d.score))
+    const bestB = Math.max(...b.directions.map((d) => d.score))
+    const prefA = allowPeakSymbol(gates, a.coin.symbol).action === 'prefer' ? 1 : 0
+    const prefB = allowPeakSymbol(gates, b.coin.symbol).action === 'prefer' ? 1 : 0
+    return bestB - bestA || prefB - prefA || b.coin.score - a.coin.score
+  })
+  for (const r of bookRanked) {
+    if (liveBook.size >= LIVE_BOOK) break
+    liveBook.add(r.coin.symbol)
+  }
+
+  for (const row of structured) {
+    const { coin, price, holdVol, prevHold, candles, directions } = row
+    const prev = state[coin.symbol]?.previous ?? null
+    const older = state[coin.symbol]?.older ?? null
 
     let evSide: 'LONG' | 'SHORT' | null = null
     let evKind = ''
@@ -340,9 +379,20 @@ export async function runMemeOrderFlowScan(opts: {
     let evMm: string | null = null
     let evReady = false
     let bookSeen = false
-    let crowdSoft = 0
-    let crowdNote: string | null = null
     let toxicBook = false
+    let bookEvent: OrderBookEvent | null = null
+    let snapshot: OrderBookSnapshot | null = null
+    let crowd = analyzeCrowdBook(null)
+    let forecastShort = memeBookForecast({
+      side: 'SHORT',
+      bookSeen: false,
+      market: 'meme',
+    })
+    let forecastLong = memeBookForecast({
+      side: 'LONG',
+      bookSeen: false,
+      market: 'meme',
+    })
     const wantLive = liveBook.has(coin.symbol)
     if (wantLive) {
       try {
@@ -357,52 +407,25 @@ export async function runMemeOrderFlowScan(opts: {
         })
         if (read.snapshot) {
           bookSeen = true
+          snapshot = read.snapshot
           state[coin.symbol] = {
             older: prev,
             previous: read.snapshot,
             holdVol: holdVol ?? prevHold,
           }
-        } else if (holdVol != null) {
-          state[coin.symbol] = {
-            ...(state[coin.symbol] ?? {}),
-            holdVol,
-          }
         }
         const ev = read.event
+        bookEvent = ev
         evReady = ev.ready
         evSide = ev.side
         evKind = ev.kind
-        evFlow = ev.ready ? ev.flowSharePct : null
-        evMove = ev.ready ? ev.priceMoveBps : null
+        evFlow = read.tape?.buyFlowPct ?? (ev.ready ? ev.flowSharePct : null)
+        evMove = read.tape?.priceMoveBps ?? (ev.ready ? ev.priceMoveBps : null)
         evMm = ev.mmPattern ?? null
 
-        const crowd = analyzeCrowdBook(
-          read.snapshot,
-          read.prior ?? prev
-        )
-        if (crowd.shortBaitAsks) {
-          crowdSoft -= 1
-          crowdNote = `мелкие asks толпы ×${crowd.crowdAskLevels} — приманка шортов`
-        }
-        if (crowd.spoofAskWall && crowd.largeBidWall) {
-          crowdSoft -= 2
-          crowdNote = 'yank ask + живые биды — магнит вверх'
-        } else if (crowd.spoofAskWall) {
-          crowdSoft -= 1
-          crowdNote = crowdNote ?? 'ask-стена сорвана без прохода (spoof)'
-        } else if (
-          crowd.largeAskWall &&
-          evReady &&
-          evMove != null &&
-          Math.abs(evMove) <= 16 &&
-          (evFlow ?? 0) >= 52
-        ) {
-          crowdSoft += 2
-          crowdNote = 'живая ask-стена · покупки не едут — толпа заперта'
-        }
-        crowdSoft = Math.max(-2, Math.min(2, crowdSoft))
+        crowd = analyzeCrowdBook(read.snapshot, read.prior ?? prev)
 
-        const fc = memeBookForecast({
+        forecastShort = memeBookForecast({
           side: 'SHORT',
           bookSeen: true,
           snapshot: read.snapshot,
@@ -416,66 +439,74 @@ export async function runMemeOrderFlowScan(opts: {
           eventSide: evSide,
           market: 'meme',
         })
-        if (fc.toxic) toxicBook = true
+        forecastLong = memeBookForecast({
+          side: 'LONG',
+          bookSeen: true,
+          snapshot: read.snapshot,
+          previous: prev,
+          event: ev,
+          tapeBuy: evFlow,
+          tapeMoveBps: evMove,
+          mmPattern: evMm,
+          eventKind: evKind,
+          eventReady: evReady,
+          eventSide: evSide,
+          market: 'meme',
+        })
+        if (forecastShort.toxic && forecastLong.toxic) toxicBook = true
       } catch {
-        if (holdVol != null) {
-          state[coin.symbol] = {
-            ...(state[coin.symbol] ?? {}),
-            holdVol,
-          }
-        }
-      }
-    } else if (holdVol != null) {
-      state[coin.symbol] = {
-        ...(state[coin.symbol] ?? {}),
-        holdVol,
+        /* book is mandatory below */
       }
     }
 
-    if (!(price > 0)) {
-      rejects.push({ symbol: coin.symbol, reason: 'no_price' })
+    if (!bookSeen || !snapshot || !bookEvent) {
+      rejects.push({ symbol: coin.symbol, reason: 'live_book_required' })
       continue
     }
 
-    const candles = await fetchMin1Candles(coin.symbol, 60)
-    const peak = detectPeakFuelFail({
-      symbol: coin.symbol,
-      price,
-      chg24hPct: coin.chg24hPct,
-      dayBias: coin.dayBias,
-      holdVol,
-      prevHoldVol: prevHold,
-      candles1m: candles,
-      buyFlowPct:
-        evReady && evSide === 'SHORT'
-          ? evFlow
-          : evReady && evSide === 'LONG'
-            ? evFlow != null
-              ? Math.max(0, 100 - evFlow)
-              : null
-            : evReady
-              ? 55
-              : null,
-      priceMoveBps: evReady ? evMove : null,
-      absorptionShort:
-        evKind === 'ABSORPTION_SHORT' ||
-        (evMm === 'ABSORPTION' && evSide === 'SHORT') ||
-        (evReady && evSide === 'SHORT' && evMove != null && Math.abs(evMove) <= 16),
-      cvdBearish: evKind === 'CVD_DIVERGENCE' && evSide === 'SHORT',
-      bookSeen,
-      crowdSoft,
-      crowdNote,
-      toxicBook,
-    })
+    const longCandidate = directions
+      .filter((candidate) => candidate.side === 'LONG')
+      .sort((a, b) => b.score - a.score)[0]
+    const longSignal = longCandidate
+      ? detectMemeDirectionalSignal({
+          candidate: longCandidate,
+          price,
+          snapshot,
+          crowd,
+          forecast: forecastLong,
+          event: bookEvent,
+        })
+      : null
+    if (longSignal) {
+      candidates.push(directionalToAlert(coin.symbol, longSignal, coin.chg24hPct))
+      continue
+    }
 
-    if (!peak?.ready) {
+    const hasShortCandidate = directions.some(
+      (candidate) => candidate.side === 'SHORT'
+    )
+    if (!hasShortCandidate) {
+      rejects.push({ symbol: coin.symbol, reason: 'book_rejected_long' })
+      continue
+    }
+
+    const shortCandidate = directions
+      .filter((candidate) => candidate.side === 'SHORT')
+      .sort((a, b) => b.score - a.score)[0]!
+    const shortSignal = detectMemeDirectionalSignal({
+      candidate: shortCandidate,
+      price,
+      snapshot,
+      crowd,
+      forecast: forecastShort,
+      event: bookEvent,
+    })
+    if (!shortSignal) {
       rejects.push({
         symbol: coin.symbol,
         reason: toxicBook
-          ? `peak_book_toxic:${evKind || 'forecast'}`
-          : evReady
-            ? `no_peak:${evKind}`
-            : 'no_peak_structure',
+          ? `short_book_toxic:${evKind || 'forecast'}`
+          : 'short_probability_or_book_below_gate',
       })
       continue
     }
@@ -489,53 +520,20 @@ export async function runMemeOrderFlowScan(opts: {
       continue
     }
     const track = peakCoinTrack(gates, coin.symbol)
-    if (track.kind === 'thin') {
+    if (
+      (track.kind === 'thin' || track.kind === 'new') &&
+      shortSignal.probability < 72
+    ) {
       rejects.push({
         symbol: coin.symbol,
-        reason: `symbol_thin:${track.wrLine}`,
+        reason: `symbol_${track.kind}_needs_72:${track.wrLine}`,
       })
       continue
     }
-    if (track.kind === 'new') {
-      const nick = coin.symbol.replace(/_USDT$/i, '')
-      candidates.push({
-        type: 'MEME',
-        title: `NEW ${nick} · нет истории PEAK`,
-        text: [
-          `Новая монета: ${nick}`,
-          `PEAK SHORT нашёл сетап, но закрытых сделок по ней нет.`,
-          `Сигнал не открываю — сначала нужна история.`,
-          track.wrLine,
-          `pump ${coin.chg24hPct >= 0 ? '+' : ''}${coin.chg24hPct.toFixed(1)}%`,
-        ].join('\n'),
-        dedupeKey: `cron:new_coin:${coin.symbol}:${Math.floor(Date.now() / 14_400_000)}`,
-        score: Math.max(1, peak.confidence - 20),
-        winPct: 0,
-        style: 'SCALP',
-        align: 'COUNTER',
-        watchOnly: true,
-        tradePlan: {
-          side: 'SHORT',
-          symbol: coin.symbol,
-          setup: 'PEAK_FUEL_FAIL',
-          qualityTier: 'A',
-          signalPrice: peak.limitPrice,
-          entryIdeal: peak.limitPrice,
-          zoneLow: peak.limitPrice,
-          zoneHigh: peak.limitPrice * 1.001,
-          invalidate: peak.limitPrice * 1.007,
-          sl: peak.sl,
-          tp: peak.tp,
-        },
-      })
-      continue
-    }
-    const alert = peakFailToAlert(
+    const alert = directionalToAlert(
       coin.symbol,
-      peak,
-      coin.dayBias,
-      coin.chg24hPct,
-      track.wrLine
+      shortSignal,
+      coin.chg24hPct
     )
     if (gate.action === 'prefer') {
       alert.score = Math.min(99, alert.score + 4)

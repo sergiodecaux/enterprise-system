@@ -19,9 +19,11 @@ crons = [
 [vars]
 FAILOVER_ROLE = "standby"
 FAILOVER_DAILY_BUDGET = "80000"
-FAILOVER_RING = "https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev,https://mexc-proxy-d.mexc-d.workers.dev,https://mexc-proxy-e.mexc-e.workers.dev,https://mexc-proxy-f.mexc-f.workers.dev"
+FAILOVER_RING = "https://mexc-proxy.sergiodecaux.workers.dev,https://mexc-proxy-b.mexc-standby.workers.dev,https://mexc-proxy-c.mexc-c.workers.dev"
 FAILOVER_PEER_URL = "https://mexc-proxy.sergiodecaux.workers.dev"
 PUBLIC_BASE_URL = "https://mexc-proxy-b.mexc-standby.workers.dev"
+BOT_LANE = "meme"
+ELITE_PUBLIC_URL = "https://mexc-proxy-f.mexc-f.workers.dev"
 
 [[kv_namespaces]]
 binding = "SUBSCRIBERS"

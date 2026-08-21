@@ -26,6 +26,12 @@ import {
 
 export type FailoverRole = 'primary' | 'standby'
 
+export type BotLane = 'meme' | 'elite'
+
+export function botLane(env: { BOT_LANE?: string }): BotLane {
+  return env.BOT_LANE === 'elite' ? 'elite' : 'meme'
+}
+
 export interface FailoverState {
   role: FailoverRole
   /** This worker currently owns meme/elite cron + webhooks */
@@ -55,6 +61,10 @@ export interface FailoverEnv {
   FAILOVER_SECRET?: string
   PUBLIC_BASE_URL?: string
   FAILOVER_DAILY_BUDGET?: string
+  /** meme = Predator ring; elite = dedicated alt worker (not in RING) */
+  BOT_LANE?: string
+  /** Always pin Enterpriseelite_bot webhook here */
+  ELITE_PUBLIC_URL?: string
 }
 
 export type FailoverSubscriberPayload = {
@@ -77,9 +87,9 @@ export type FailoverHandoffPayload = {
 }
 
 export const HANDOFF_KV_KEYS = {
-  journal: 'telegram:bot_journal_v292',
-  paper: 'telegram:paper_trades_v292',
-  gates: 'telegram:bot_gates_v292',
+  journal: 'telegram:bot_journal_v293',
+  paper: 'telegram:paper_trades_v293',
+  gates: 'telegram:bot_gates_v293',
   watchlist: 'scanner:hot_meme_watchlist_v7_premove',
 } as const
 
@@ -96,6 +106,8 @@ const DEFAULT_DAILY_BUDGET = 80_000
 const SUBREQUEST_FAIL_HANDOFF = 5
 /** Primary reclaim if idle this long — prevents dual-idle silence after bad handoff */
 const PRIMARY_IDLE_RECLAIM_MS = 10 * 60_000
+/** A reachable Worker with a stuck predator cron is not a healthy owner. */
+const PREDATOR_SCAN_STALE_MS = 12 * 60_000
 
 function dayKeyUtc(now = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10)
@@ -108,6 +120,13 @@ function roleOf(env: FailoverEnv): FailoverRole {
 function dailyBudget(env: FailoverEnv): number {
   const n = Number(env.FAILOVER_DAILY_BUDGET ?? DEFAULT_DAILY_BUDGET)
   return Number.isFinite(n) && n > 1000 ? n : DEFAULT_DAILY_BUDGET
+}
+
+function isKvDailyLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /KV (get|put)\(\) limit exceeded|KV.*daily.*limit|quota.*exceeded/i.test(
+    message
+  )
 }
 
 function normalizeUrl(url: string): string {
@@ -245,7 +264,12 @@ export async function loadFailoverState(
       updatedAt: Date.now(),
     }
     return applyQuotaOwnerOverlay(loaded)
-  } catch {
+  } catch (error) {
+    // A read-limit outage is as fatal for this account as a write-limit outage.
+    // Reuse the daily quota flag so the next ring node takes ownership.
+    if (isKvDailyLimitError(error)) {
+      await markKvWriteQuotaExhausted()
+    }
     return applyQuotaOwnerOverlay(base)
   }
 }
@@ -385,6 +409,11 @@ export type PeerFailoverSnapshot = {
   publicBaseUrl?: string | null
   kvQuotaExhausted?: boolean
   kvQuotaHandoff?: boolean
+  requestCount?: number
+  dailyBudget?: number
+  predatorScanStatus?: string | null
+  predatorScanStartedAt?: number | null
+  lastPredatorCompletedAt?: number | null
 }
 
 async function snapshotUrl(
@@ -392,7 +421,7 @@ async function snapshotUrl(
 ): Promise<(PeerFailoverSnapshot & { url: string }) | null> {
   if (!url || peerIsDead(url)) return null
   try {
-    const r = await fetch(`${url}/telegram/failover/status`, {
+    const r = await fetch(`${url}/telegram/failover/status?shallow=1`, {
       method: 'GET',
       signal: peerAbortSignal(),
     })
@@ -427,10 +456,28 @@ function peerIndex(p: PeerFailoverSnapshot, env: FailoverEnv): number {
 }
 
 function isHealthyOwner(p: PeerFailoverSnapshot): boolean {
+  const now = Date.now()
+  const budget = Number(p.dailyBudget ?? DEFAULT_DAILY_BUDGET)
+  const count = Number(p.requestCount ?? 0)
+  const overBudget =
+    Number.isFinite(budget) &&
+    budget > 0 &&
+    Number.isFinite(count) &&
+    count >= budget
+  const stuckRunning =
+    p.predatorScanStatus === 'RUNNING' &&
+    Number(p.predatorScanStartedAt ?? 0) > 0 &&
+    now - Number(p.predatorScanStartedAt) > PREDATOR_SCAN_STALE_MS
+  const staleCompleted =
+    Number(p.lastPredatorCompletedAt ?? 0) > 0 &&
+    now - Number(p.lastPredatorCompletedAt) > PREDATOR_SCAN_STALE_MS
   return (
     p.active === true &&
     p.kvQuotaExhausted !== true &&
-    p.kvQuotaHandoff !== true
+    p.kvQuotaHandoff !== true &&
+    !overBudget &&
+    !stuckRunning &&
+    !staleCompleted
   )
 }
 
@@ -464,6 +511,9 @@ export async function shouldRunCronWork(
 ): Promise<{ run: boolean; state: FailoverState; reason?: string }> {
   let state = await bumpFailoverRequest(env, 1)
   await refreshKvWriteQuotaFromCache()
+  if (botLane(env) === 'elite') {
+    return { run: true, state, reason: 'elite_lane' }
+  }
   if (!failoverConfigured(env)) {
     return { run: true, state, reason: 'failover_disabled' }
   }
@@ -695,50 +745,55 @@ export async function processPendingHandoff(
   return { handedOff: false, state: handed.state }
 }
 
+async function setOneTelegramWebhook(
+  token: string,
+  url: string
+): Promise<boolean> {
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, drop_pending_updates: false }),
+    })
+    const j = (await r.json()) as { ok?: boolean }
+    return Boolean(j.ok)
+  } catch {
+    return false
+  }
+}
+
+function eliteWebhookRoot(env: FailoverEnv): string {
+  const elite = (env.ELITE_PUBLIC_URL ?? '').replace(/\/$/, '')
+  if (elite) return elite
+  if (botLane(env) === 'elite') {
+    return (env.PUBLIC_BASE_URL ?? '').replace(/\/$/, '')
+  }
+  return ''
+}
+
+/** Pin Elite bot to the dedicated alt worker. Never steal Predator webhook. */
+export async function pinEliteWebhook(env: FailoverEnv): Promise<boolean> {
+  const root = eliteWebhookRoot(env)
+  if (!env.TELEGRAM_SNIPER_BOT_TOKEN || !root) return false
+  return setOneTelegramWebhook(
+    env.TELEGRAM_SNIPER_BOT_TOKEN,
+    `${root}/telegram/webhook/sniper`
+  )
+}
+
 async function setTelegramWebhooks(
   env: FailoverEnv,
   baseUrl: string
 ): Promise<{ meme: boolean; sniper: boolean }> {
   const root = baseUrl.replace(/\/$/, '')
   const out = { meme: false, sniper: false }
-  if (env.TELEGRAM_BOT_TOKEN) {
-    try {
-      const r = await fetch(
-        `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: `${root}/telegram/webhook`,
-            drop_pending_updates: false,
-          }),
-        }
-      )
-      const j = (await r.json()) as { ok?: boolean }
-      out.meme = Boolean(j.ok)
-    } catch {
-      out.meme = false
-    }
+  if (botLane(env) !== 'elite' && env.TELEGRAM_BOT_TOKEN) {
+    out.meme = await setOneTelegramWebhook(
+      env.TELEGRAM_BOT_TOKEN,
+      `${root}/telegram/webhook`
+    )
   }
-  if (env.TELEGRAM_SNIPER_BOT_TOKEN) {
-    try {
-      const r = await fetch(
-        `https://api.telegram.org/bot${env.TELEGRAM_SNIPER_BOT_TOKEN}/setWebhook`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url: `${root}/telegram/webhook/sniper`,
-            drop_pending_updates: false,
-          }),
-        }
-      )
-      const j = (await r.json()) as { ok?: boolean }
-      out.sniper = Boolean(j.ok)
-    } catch {
-      out.sniper = false
-    }
-  }
+  out.sniper = await pinEliteWebhook(env)
   return out
 }
 
@@ -751,7 +806,19 @@ export async function activateThisWorker(
   webhooks?: { meme: boolean; sniper: boolean }
   peerStandby?: boolean
 }> {
+  await refreshKvWriteQuotaFromCache()
   const state = await loadFailoverState(env)
+  const forceManual = /manual_force/i.test(reason)
+  const quotaDead = isKvWriteQuotaExhausted()
+  const budgetDead = state.requestCount >= dailyBudget(env)
+  if ((quotaDead || budgetDead) && !forceManual) {
+    state.active = false
+    state.lastReason = quotaDead
+      ? 'activate_refused_kv_quota'
+      : 'activate_refused_daily_budget'
+    await saveFailoverState(env, state)
+    return { ok: false, state, peerStandby: false }
+  }
   state.active = true
   state.subrequestFails = 0
   state.pendingHandoff = false
@@ -827,6 +894,16 @@ export async function handoffToPeer(
     if (peerIsDead(peer)) continue
     const snap = await snapshotUrl(peer)
     if (snap?.kvQuotaExhausted) continue
+    const peerBudget = Number(snap?.dailyBudget ?? DEFAULT_DAILY_BUDGET)
+    const peerCount = Number(snap?.requestCount ?? 0)
+    if (
+      Number.isFinite(peerBudget) &&
+      peerBudget > 0 &&
+      Number.isFinite(peerCount) &&
+      peerCount >= peerBudget
+    ) {
+      continue
+    }
     try {
       const r = await fetch(`${peer}/telegram/failover/activate`, {
         method: 'POST',

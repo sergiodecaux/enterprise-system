@@ -224,12 +224,24 @@ export interface CrowdBookMetrics {
   /** Wall vanished fast without trade-through → spoof */
   spoofAskWall: boolean
   spoofBidWall: boolean
+  /** Largest single bid/ask level in USD (top 12) */
+  maxBidUsd: number
+  maxAskUsd: number
+  /** Near-touch (5 levels) bid USD / ask USD */
+  bidAskUsdRatio: number
+  /** Count of bid/ask levels ≥ $400 */
+  stackedBidWalls: number
+  stackedAskWalls: number
+  /** Sum of first 5 bid/ask levels in USD */
+  nearBidUsd: number
+  nearAskUsd: number
 }
 
 const CROWD_USD_LO = 1
 const CROWD_USD_HI = 10
 const REAL_LEVEL_USD = 120
 const WALL_USD = 800
+const STACK_USD = 400
 
 export function analyzeCrowdBook(
   snap: OrderBookSnapshot | null | undefined,
@@ -246,6 +258,13 @@ export function analyzeCrowdBook(
     largeBidWall: false,
     spoofAskWall: false,
     spoofBidWall: false,
+    maxBidUsd: 0,
+    maxAskUsd: 0,
+    bidAskUsdRatio: 0,
+    stackedBidWalls: 0,
+    stackedAskWalls: 0,
+    nearBidUsd: 0,
+    nearAskUsd: 0,
   }
   if (!snap?.asks?.length) return empty
   const nearAsks = snap.asks.slice(0, 15)
@@ -253,9 +272,15 @@ export function analyzeCrowdBook(
   let crowdAskUsd = 0
   let realAskUsd = 0
   let largeAskWall = false
-  for (const [price, vol] of nearAsks) {
+  let maxAskUsd = 0
+  let stackedAskWalls = 0
+  let nearAskUsd = 0
+  nearAsks.forEach(([price, vol], i) => {
     const usd = price * vol
-    if (!(usd > 0)) continue
+    if (!(usd > 0)) return
+    if (usd > maxAskUsd) maxAskUsd = usd
+    if (usd >= STACK_USD) stackedAskWalls++
+    if (i < 5) nearAskUsd += usd
     if (usd >= CROWD_USD_LO && usd <= CROWD_USD_HI) {
       crowdAskLevels++
       crowdAskUsd += usd
@@ -263,16 +288,25 @@ export function analyzeCrowdBook(
       realAskUsd += usd
     }
     if (usd >= WALL_USD) largeAskWall = true
-  }
+  })
   const crowdAskShare =
     nearAsks.length > 0 ? crowdAskLevels / nearAsks.length : 0
   let bidSupportUsd = 0
   let largeBidWall = false
-  for (const [price, vol] of (snap.bids ?? []).slice(0, 8)) {
+  let maxBidUsd = 0
+  let stackedBidWalls = 0
+  let nearBidUsd = 0
+  ;(snap.bids ?? []).slice(0, 12).forEach(([price, vol], i) => {
     const usd = price * vol
+    if (!(usd > 0)) return
+    if (usd > maxBidUsd) maxBidUsd = usd
+    if (usd >= STACK_USD) stackedBidWalls++
+    if (i < 5) nearBidUsd += usd
     if (usd >= REAL_LEVEL_USD) bidSupportUsd += usd
     if (usd >= WALL_USD) largeBidWall = true
-  }
+  })
+  const bidAskUsdRatio =
+    nearAskUsd > 0 ? Number((nearBidUsd / nearAskUsd).toFixed(2)) : nearBidUsd > 0 ? 9 : 0
   const shortBaitAsks =
     (crowdAskLevels >= 3 || crowdAskShare >= 0.3) &&
     realAskUsd < Math.max(350, crowdAskUsd * 10)
@@ -338,6 +372,13 @@ export function analyzeCrowdBook(
     largeBidWall: largeBidWall && !spoofBidWall,
     spoofAskWall,
     spoofBidWall,
+    maxBidUsd: Number(maxBidUsd.toFixed(1)),
+    maxAskUsd: Number(maxAskUsd.toFixed(1)),
+    bidAskUsdRatio,
+    stackedBidWalls,
+    stackedAskWalls,
+    nearBidUsd: Number(nearBidUsd.toFixed(1)),
+    nearAskUsd: Number(nearAskUsd.toFixed(1)),
   }
 }
 

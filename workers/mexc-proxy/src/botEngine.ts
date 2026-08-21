@@ -1,19 +1,19 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-peak-fuel-v27.4',
-  label: 'MEME: PEAK + proven coins',
+  id: 'meme-book-directional-v27.7',
+  label: 'MEME: LIVE BOOK + CANDLES + FAILOVER',
   deployedNote:
-    'v27.4: сигналы только по монетам с WR · новая = notice без входа · WR в каждом алерте.',
+    'v27.7: LONG/SHORT только со свечами 1m+5m/15m и живым стаканом · hard veto против сильной встречной ликвидности · подробный журнал v293 · failover A/B/C.',
 } as const
 
 /**
  * Enterpriseelite_bot — ALT JEWEL + assistant (meme LONGs off in peak-only era).
  */
 export const SNIPER_ENGINE = {
-  id: 'elite-alt-jewel-v27.1r',
-  label: 'ELITE: ALT JEWEL L/S + assistant',
+  id: 'elite-vane-miniapp-v28',
+  label: 'ELITE: альты как Mini App',
   deployedNote:
-    'Peak-only memes на Predator. Elite: ALT JEWEL топ‑3 · brief · Mini App.',
+    'Как вкладка Сигналы: зоны HTF, SMC hunt, confluence, вход только READY. Прокси: mexc-proxy-f.',
 } as const
 
 /** Alias for clarity in Elite-facing code */

@@ -1,9 +1,18 @@
 /**
- * PEAK_FUEL_FAIL — small SHORT when a pump-day meme stalls at a local high
- * without open-interest / tape fuel to continue.
+ * PEAK_FUEL_FAIL — small SHORT only after a pump-day long has failed.
  *
- * v27.1: looser gates — was missing too many live peaks.
+ * v27.5: stall-at-high is not enough. Need a reversal print, HTF not still
+ * expanding, and a hard veto when the live book is bid-heavy.
  */
+
+import {
+  readPeakBook,
+  readPeakCandles,
+  utcSession,
+  type PeakCandleRead,
+} from './peakContext'
+import type { CrowdBookMetrics, OrderBookSnapshot } from './orderBookReader'
+import type { MemeBookForecast } from './memeBookForecast'
 
 export type Candle = [number, number, number, number, number, number]
 
@@ -26,6 +35,12 @@ export interface PeakFuelFailInput {
   crowdNote?: string | null
   /** Wash/spoof/trap — skip this tick only */
   toxicBook?: boolean
+  snapshot?: OrderBookSnapshot | null
+  crowd?: CrowdBookMetrics | null
+  forecast?: MemeBookForecast | null
+  evSide?: 'LONG' | 'SHORT' | null
+  evKind?: string
+  evReady?: boolean
 }
 
 export interface PeakFuelFailSignal {
@@ -38,6 +53,14 @@ export interface PeakFuelFailSignal {
   tp: number
   tp1: number
   notes: string[]
+}
+
+export interface PeakStructureInspect {
+  ok: boolean
+  reason: string
+  hi: number
+  distPct: number
+  candles: PeakCandleRead
 }
 
 const SL_PCT = 0.01
@@ -56,7 +79,6 @@ function recentHigh(candles: Candle[], bars = 40): number {
 
 function failedBreakHigher(candles: Candle[]): boolean {
   if (candles.length < 6) return false
-  // Check last 3 closed bars for failed break
   const closed = candles.slice(0, -1)
   for (let k = 0; k < 3; k++) {
     const last = closed[closed.length - 1 - k]
@@ -72,7 +94,6 @@ function failedBreakHigher(candles: Candle[]): boolean {
 }
 
 function rejectionWick(candles: Candle[]): boolean {
-  // Last or previous candle
   for (const c of [candles[candles.length - 1], candles[candles.length - 2]]) {
     if (!c) continue
     const [, o, h, l, cl] = c
@@ -115,16 +136,18 @@ function stallAtHigh(candles: Candle[], price: number, hi: number): boolean {
   const maxClose = Math.max(...last3.map((c) => c[4]))
   const minClose = Math.min(...last3.map((c) => c[4]))
   const chopPct = ((maxClose - minClose) / price) * 100
-  // Chop under the high without clean breakout
   return chopPct <= 0.9 && maxClose <= hi * 1.0015
 }
 
 /**
- * Detect exhausted pump peak → SHORT scalp (permissive for live coverage).
+ * Candle/HTF prefilter — used before spending live-book subrequests.
  */
-export function detectPeakFuelFail(
-  input: PeakFuelFailInput
-): PeakFuelFailSignal | null {
+export function inspectPeakStructure(
+  input: Pick<
+    PeakFuelFailInput,
+    'price' | 'chg24hPct' | 'dayBias' | 'candles1m'
+  >
+): PeakStructureInspect | null {
   const price = input.price
   if (!(price > 0) || input.candles1m.length < 10) return null
 
@@ -135,17 +158,83 @@ export function detectPeakFuelFail(
   const hi = recentHigh(input.candles1m, 40)
   if (!(hi > 0)) return null
   const distPct = ((hi - price) / hi) * 100
-  if (distPct > PEAK_DIST_PCT) return null
+  if (distPct > PEAK_DIST_PCT) {
+    return {
+      ok: false,
+      reason: 'not_at_peak',
+      hi,
+      distPct,
+      candles: readPeakCandles({
+        candles1m: input.candles1m,
+        price,
+        hi,
+        failed: false,
+        wick: false,
+        lh: false,
+        stall: false,
+      }),
+    }
+  }
 
   const failed = failedBreakHigher(input.candles1m)
   const wick = rejectionWick(input.candles1m)
   const lh = lowerHighStructure(input.candles1m)
   const stall = stallAtHigh(input.candles1m, price, hi)
-  const technicalPeak = failed || wick || lh || stall
-  if (!technicalPeak) return null
+  const candles = readPeakCandles({
+    candles1m: input.candles1m,
+    price,
+    hi,
+    failed,
+    wick,
+    lh,
+    stall,
+  })
+  if (candles.stillHH) {
+    return { ok: false, reason: '1m_still_HH', hi, distPct, candles }
+  }
+  if (!candles.globalOk) {
+    return {
+      ok: false,
+      reason: candles.htfUp ? 'htf_uptrend_no_fail' : 'no_reversal_pattern',
+      hi,
+      distPct,
+      candles,
+    }
+  }
+  return { ok: true, reason: 'ok', hi, distPct, candles }
+}
 
+/**
+ * Detect exhausted pump peak → SHORT scalp. Requires a failed long,
+ * not a stall on a still-alive bid wall.
+ */
+export function detectPeakFuelFail(
+  input: PeakFuelFailInput
+): PeakFuelFailSignal | null {
+  const inspect = inspectPeakStructure(input)
+  if (!inspect?.ok) return null
+
+  if (input.toxicBook) return null
+
+  const book = readPeakBook({
+    bookSeen: input.bookSeen === true,
+    snap: input.snapshot,
+    crowd: input.crowd,
+    forecast: input.forecast,
+    evSide: input.evSide,
+    evKind: input.evKind,
+    evReady: input.evReady,
+  })
+  if (!book.allow) return null
+
+  const { candles, hi, distPct } = inspect
+  const price = input.price
   let fuelScore = 0
   const notes: string[] = []
+  notes.push(`сессия ${utcSession()}`)
+  if (candles.patterns.length) {
+    notes.push(`свечи: ${candles.patterns.filter((p) => p !== 'stall').join(', ')}`)
+  }
 
   const hv = input.holdVol
   const prev = input.prevHoldVol
@@ -157,13 +246,12 @@ export function detectPeakFuelFail(
     } else if (oiChg < 0.9) {
       fuelScore += 1
       notes.push(`OI слабый +${oiChg.toFixed(2)}%`)
+    } else {
+      notes.push(`OI ещё растёт +${oiChg.toFixed(2)}%`)
     }
   } else {
-    // No OI series yet — give structure a chance
-    fuelScore += 1
+    notes.push('OI неизвестен — не считаем «нет топлива»')
   }
-
-  if (input.toxicBook) return null
 
   const buyFlow = input.bookSeen === false ? null : input.buyFlowPct
   const moveBps = input.bookSeen === false ? null : input.priceMoveBps
@@ -191,26 +279,34 @@ export function detectPeakFuelFail(
     notes.push('CVD медвежья дивергенция')
   }
 
-  if (failed) notes.push('Failed break выше локального хая')
-  if (wick) notes.push('Rejection wick у пика')
-  if (lh) notes.push('Lower high структура')
-  if (stall) notes.push('Застой под хаем')
+  notes.push(...book.notes.slice(0, 3))
+  if (input.crowdNote) notes.push(input.crowdNote)
 
-  // Permissive: structure at peak + any fuel hint OR strong pump alone
+  const strongReversal =
+    candles.failed ||
+    candles.engulfing ||
+    candles.eveningStar ||
+    candles.shootingStar
   const strongPump = input.chg24hPct >= 8
-  if (fuelScore < 1 && !input.absorptionShort) {
-    if (!(strongPump && (failed || wick || stall))) return null
+
+  if (input.bookSeen) {
+    if (fuelScore + book.adj < 1 && !input.absorptionShort && !strongReversal) {
+      return null
+    }
+  } else if (fuelScore < 1 && !input.absorptionShort) {
+    if (!(strongPump && strongReversal)) return null
   }
 
   const crowdSoft = Math.max(-2, Math.min(2, input.crowdSoft ?? 0))
-  if (input.crowdNote) notes.push(input.crowdNote)
 
-  let confidence = 68 + fuelScore * 4
-  if (failed || wick) confidence += 4
+  let confidence = 70 + fuelScore * 4 + book.adj * 4
+  if (candles.failed || candles.wick) confidence += 4
+  if (candles.engulfing || candles.eveningStar || candles.shootingStar) {
+    confidence += 4
+  }
   if (input.absorptionShort || fuelScore >= 3) confidence += 5
   if (input.chg24hPct >= 12) confidence += 3
   if (distPct <= 0.5) confidence += 3
-  if (stall && fuelScore >= 2) confidence += 2
   confidence += crowdSoft * 3
   confidence = Math.min(94, Math.round(confidence))
 
@@ -227,9 +323,9 @@ export function detectPeakFuelFail(
     tp: limit * (1 - TP_PCT),
     tp1: limit * (1 - TP1_PCT),
     notes: [
-      `Пик без топлива · SHORT скальп`,
+      `Пик без топлива · SHORT только после срыва лонга`,
       `24h ${input.chg24hPct >= 0 ? '+' : ''}${input.chg24hPct.toFixed(1)}% · к хаю −${distPct.toFixed(2)}%`,
-      ...notes.slice(0, 4),
+      ...notes.slice(0, 6),
       `SL~${(SL_PCT * 100).toFixed(1)}% · TP1~${(TP1_PCT * 100).toFixed(1)}% · TP~${(TP_PCT * 100).toFixed(1)}%`,
     ],
   }

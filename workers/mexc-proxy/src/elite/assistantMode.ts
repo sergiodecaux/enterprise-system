@@ -6,7 +6,9 @@
 /** Default ON: Elite = assistant. Set ELITE_ASSISTANT_ONLY=0 to restore VANE spam. */
 export function isEliteAssistantOnly(env?: {
   ELITE_ASSISTANT_ONLY?: string
+  BOT_LANE?: string
 }): boolean {
+  if (env?.BOT_LANE === 'elite') return false
   const v = env?.ELITE_ASSISTANT_ONLY
   if (v === '0' || v === 'false' || v === 'off') return false
   return true
