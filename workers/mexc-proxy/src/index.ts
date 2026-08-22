@@ -1331,9 +1331,9 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Обновление v28.5:</b>`,
-      '• Только Jeweler Burst; legacy и внешний Jeweler Live отключены',
-      '• Снова классические мемы: PEPE · DOGE · WIF · BONK · SHIB · TRUMP · FARTCOIN · FLOKI',
+      `<b>Обновление v28.6:</b>`,
+      '• Стол, который уже торговали: CATE · BASECAT · BRIAN · AGI · AIINU · SQD · DOLO',
+      '• Цель сделки: забрать 1–1.5%, SL 0.6% · без trail и OBI-flip после плюса',
       '• L1/DeFi не сканируются: HYPE · AAVE · TAO · LDO · FET · ETC · ENA',
       '• RANGE: ликвидный боковик, обе стороны, стакан выбирает направление',
       '• Стена $1200 больше не вето; режет только доминирующий opposite supply',
@@ -2102,7 +2102,7 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
   if (botLane(env) !== 'elite') {
     await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
       '• Только Jeweler Burst; старые MEME и внешний live-ingress отключены.',
-      '• Классические мемы: PEPE/DOGE/WIF/BONK/TRUMP. LDO/FET/HYPE/AAVE не сканируются.',
+      '• Стол CATE/BASECAT/SQD/AIINU. Цель: забрать 1–1.5% со сделки, SL 0.6%.',
       '• Ищет PEAK и RANGE: отбой от границы или подтверждённый пробой.',
       '• В RANGE обе стороны номинируются; стакан выбирает LONG/SHORT.',
       '• Граница: sync ≥8 + forecast или sync 15. Mid-range: sync 15 и direction score ≥75.',

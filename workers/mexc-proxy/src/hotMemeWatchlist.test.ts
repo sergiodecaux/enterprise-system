@@ -113,6 +113,34 @@ test('keeps classic memes like PEPE and drops L1/DeFi', () => {
   assert.ok(list.entries.some((entry) => entry.symbol === 'MEMEBOX_USDT'))
 })
 
+test('pins the traded desk including CATE SQD AIINU', () => {
+  const movers = Array.from({ length: 20 }, (_, index) => ({
+    symbol: `MOVE${index}_USDT`,
+    lastPrice: 1,
+    riseFallRate: (20 + index) / 100,
+    amount24: 2_000_000,
+  }))
+  const desk = ['CATE_USDT', 'SQD_USDT', 'AIINU_USDT', 'BASECAT_USDT'].map(
+    (symbol) => ({
+      symbol,
+      lastPrice: 0.05,
+      riseFallRate: 0.03,
+      amount24: 1_200_000,
+    })
+  )
+  const list = buildHotMemeWatchlist([...movers, ...desk], {
+    blueChips: new Set(),
+    tradable: new Set([...movers, ...desk].map((ticker) => ticker.symbol)),
+    now: Date.UTC(2026, 7, 22, 20),
+  })
+  for (const symbol of desk.map((row) => row.symbol)) {
+    assert.ok(
+      list.entries.some((entry) => entry.symbol === symbol),
+      `expected traded ${symbol}`
+    )
+  }
+})
+
 test('pins volatile 1000PEPE/ZEN/ENS even when rockets dominate', () => {
   const movers = Array.from({ length: 25 }, (_, index) => ({
     symbol: `MOVE${index}_USDT`,

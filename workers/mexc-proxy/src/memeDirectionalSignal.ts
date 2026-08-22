@@ -574,9 +574,9 @@ export function detectMemeDirectionalSignal(opts: {
       0
     ) / Math.max(1, closed.length)
   const volatility = atr > 0.02 ? 'HIGH' : atr < 0.005 ? 'LOW' : 'NORMAL'
-  const risk = volatility === 'HIGH' ? 0.007 : volatility === 'LOW' ? 0.0035 : 0.005
+  const risk = 0.006
   const tp1Pct = 0.01
-  const tpPct = volatility === 'HIGH' ? 0.02 : volatility === 'LOW' ? 0.01 : 0.015
+  const tpPct = 0.015
   const tp3Pct = tpPct
   const dir = side === 'LONG' ? 1 : -1
   return {

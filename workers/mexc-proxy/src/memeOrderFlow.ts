@@ -91,7 +91,6 @@ const BLUE_CHIPS = new Set([
   'ETHFI_USDT',
   'JTO_USDT',
   'ZRO_USDT',
-  'BICO_USDT',
   'COTI_USDT',
   'KAITO_USDT',
   'KAS_USDT',

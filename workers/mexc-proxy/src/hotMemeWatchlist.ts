@@ -47,16 +47,41 @@ export function isEquityTokenSymbol(symbol: string): boolean {
 
 export type DayBias = 'PUMP' | 'DUMP'
 
-/** Always keep these volatile pump names on the list and in the scan batch. */
+/** Desk we already traded — pin and scan these before PEPE/DOGE tape. */
 export const CORE_VOLATILE_MEMES = [
-  '1000PEPE_USDT',
-  'PEPE_USDT',
-  'ZEN_USDT',
-  'ENS_USDT',
+  'CATE_USDT',
   'BASECAT_USDT',
   'BRIAN_USDT',
-  'CATE_USDT',
   'AGI_USDT',
+  'AIINU_USDT',
+  'SQD_USDT',
+  'DOLO_USDT',
+  'JIMOTHY_USDT',
+  'FEFER_USDT',
+  'EYE_USDT',
+  'B3_USDT',
+  'NIL_USDT',
+  'UAI_USDT',
+  'HOME_USDT',
+  'HEMI_USDT',
+  'BICO_USDT',
+  'BEAT_USDT',
+  'PORTAL_USDT',
+  'RIVER_USDT',
+  'SUPRA_USDT',
+  'BMT_USDT',
+  'COOKIE_USDT',
+  'ZEN_USDT',
+  'ENS_USDT',
+  '1000PEPE_USDT',
+  'PEPE_USDT',
+  'WIF_USDT',
+  'FARTCOIN_USDT',
+  'FLOKI_USDT',
+  'PENGU_USDT',
+  'MELANIA_USDT',
+  'GALA_USDT',
+  '1000BONK_USDT',
 ] as const
 
 export interface HotMemeEntry {

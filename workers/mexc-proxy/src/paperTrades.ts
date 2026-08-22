@@ -2058,6 +2058,41 @@ export async function monitorPaperTrades(
     const ageMs = t.openedAt != null ? now - t.openedAt : now - t.createdAt
     const binaryRoe = isBinaryRoeExit(t)
 
+    if (isJewelerStrategy(t) && !t.tpSent) {
+      const takePct = 0.01
+      const hitTake =
+        t.side === 'LONG'
+          ? snap.high >= fill * (1 + takePct)
+          : snap.low <= fill * (1 - takePct)
+      if (hitTake || hitTp(t, snap)) {
+        const exit = hitTp(t, snap)
+          ? t.side === 'LONG'
+            ? Math.max(snap.last, t.tp)
+            : Math.min(snap.last, t.tp)
+          : t.side === 'LONG'
+            ? fill * (1 + takePct)
+            : fill * (1 - takePct)
+        t.tpSent = true
+        t.status = 'CLOSED'
+        t.closedAt = now
+        t.closeReason = 'tp'
+        dirty = true
+        await updatePredatorRiskOnClose(env, t, exit)
+        await updateVaneRiskOnClose(env, t, exit)
+        const px = pnlPct(t.side, fill, exit)
+        pushComment(t, {
+          alertType: 'SYSTEM',
+          title: `🎯 +${px.toFixed(2)}% take ${nameOf(t.symbol)}`,
+          text: [
+            `Jeweler: забираю 1–1.5% со сделки, без trail и OBI-flip.`,
+            `Вход ${fmt(fill)} → ~${fmt(exit)}`,
+          ].join('\n'),
+          dedupeKey: `paper:tp:${t.id}`,
+        })
+        continue
+      }
+    }
+
     // Live-migrate open binary papers to TP2 + structural TP1 + TTL floor
     if (binaryRoe && t.fillPrice != null) {
       const tpPct = binaryTpPct(t)

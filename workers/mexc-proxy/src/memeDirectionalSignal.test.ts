@@ -245,6 +245,8 @@ test('RANGE low reclaim confirms with sync 8 and aligned forecast', () => {
   assert.ok(signal)
   assert.equal(signal.side, 'LONG')
   assert.ok(signal.probability >= 68)
+  assert.ok(Math.abs(signal.tp / signal.limitPrice - 1.015) < 1e-6)
+  assert.ok(Math.abs(signal.sl / signal.limitPrice - 0.994) < 1e-6)
 })
 
 test('does not veto a long just because a $1.8k ask level exists', () => {
