@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'jeweler-burst-v28.3',
+  id: 'jeweler-burst-v28.4',
   label: 'MEME: JEWELER · PEAK + RANGE UNIVERSE',
   deployedNote:
-    'v28.3: sideways sticky на hotlist · RANGE номинирует LONG и SHORT · стакан выбирает сторону · 6 live books / 3 range · quality ≥68 · paper-first.',
+    'v28.4: без majors (DOGE/PEPE/HYPE) · RANGE 250k–8M · стены относительно книги · 6 live books / 3 range · quality ≥68 · paper-first.',
 } as const
 
 /**

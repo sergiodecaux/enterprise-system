@@ -371,6 +371,26 @@ export function inspectMemeCandleDirections(
   return out
 }
 
+function opposingSupplyBlocks(
+  side: MemeDirection,
+  crowd: CrowdBookMetrics
+): boolean {
+  if (side === 'LONG') {
+    return (
+      (crowd.maxAskUsd >= 4000 &&
+        crowd.maxAskUsd >= Math.max(crowd.maxBidUsd, 1) * 1.8) ||
+      (crowd.stackedAskWalls >= 4 &&
+        crowd.nearAskUsd > crowd.nearBidUsd * 1.5)
+    )
+  }
+  return (
+    (crowd.maxBidUsd >= 4000 &&
+      crowd.maxBidUsd >= Math.max(crowd.maxAskUsd, 1) * 1.8) ||
+    (crowd.stackedBidWalls >= 4 &&
+      crowd.nearBidUsd > crowd.nearAskUsd * 1.5)
+  )
+}
+
 function eventSupports(side: MemeDirection, event: OrderBookEvent): boolean {
   if (!event.ready || event.side !== side) return false
   return side === 'LONG'
@@ -460,9 +480,7 @@ export function detectMemeDirectionalSignal(opts: {
 
   if (side === 'LONG') {
     if (
-      crowd.largeAskWall ||
-      crowd.maxAskUsd >= 1200 ||
-      crowd.stackedAskWalls >= 2 ||
+      opposingSupplyBlocks('LONG', crowd) ||
       ratio <= 0.65 ||
       obi <= -10 ||
       forecast.bias === 'NEXT_DOWN' ||
@@ -471,9 +489,7 @@ export function detectMemeDirectionalSignal(opts: {
       return null
     }
   } else if (
-    crowd.largeBidWall ||
-    crowd.maxBidUsd >= 1200 ||
-    crowd.stackedBidWalls >= 2 ||
+    opposingSupplyBlocks('SHORT', crowd) ||
     ratio >= 1.55 ||
     obi >= 10 ||
     forecast.bias === 'NEXT_UP' ||
@@ -503,8 +519,13 @@ export function detectMemeDirectionalSignal(opts: {
   const rangeForecastOnly =
     !rangeBoundary &&
     candidate.patterns.some((pattern) => pattern.startsWith('range_book_forecast_'))
-  if (phase === 'RANGE' && !alignedBias) return null
-  if (phase === 'RANGE' && rangeForecastOnly && syncScore < 15) return null
+  if (phase === 'RANGE') {
+    if (rangeForecastOnly) {
+      if (!alignedBias || syncScore < 15) return null
+    } else if (!alignedBias && syncScore < 15) {
+      return null
+    }
+  }
 
   // At least two independent book confirmations. Static wall alone is not enough.
   const bookEvidence = [

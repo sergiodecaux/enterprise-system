@@ -1,8 +1,7 @@
 /**
- * Jeweler Burst v28.3 — PEAK + first-class RANGE universe.
+ * Jeweler Burst v28.4 — PEAK + first-class RANGE on meme-scale books.
  *
- * Candles nominate the box; live book/tape choose LONG vs SHORT.
- * Never SHORT into bid walls / bid-heavy OBI.
+ * Majors are excluded. Candles nominate the box; live book/tape choose side.
  */
 
 import type { ScanAlert } from './scanner'
@@ -68,7 +67,31 @@ const BLUE_CHIPS = new Set([
   'SUI_USDT',
   'TRX_USDT',
   'TON_USDT',
+  'DOGE_USDT',
+  'PEPE_USDT',
+  'SHIB_USDT',
+  'WIF_USDT',
+  '1000BONK_USDT',
+  'HYPE_USDT',
+  'AAVE_USDT',
+  'TAO_USDT',
+  'WLD_USDT',
+  'ONDO_USDT',
+  'ENA_USDT',
+  'XLM_USDT',
+  'POL_USDT',
+  'HBAR_USDT',
+  'SEI_USDT',
+  'OP_USDT',
+  'FIL_USDT',
+  'FILECOIN_USDT',
+  'ARB_USDT',
+  'INJ_USDT',
+  'TIA_USDT',
 ])
+const RANGE_VOL_MIN = 250_000
+const RANGE_VOL_MAX = 8_000_000
+const BOOK_FIT_VOL_MAX = 8_000_000
 
 interface KvLike {
   get(key: string): Promise<string | null>
@@ -333,14 +356,18 @@ export async function runMemeOrderFlowScan(opts: {
       (coin) =>
         Math.abs(coin.chg24hPct) >= 0.5 &&
         Math.abs(coin.chg24hPct) < 6 &&
-        coin.quoteVolUsd >= 250_000
+        coin.quoteVolUsd >= RANGE_VOL_MIN &&
+        coin.quoteVolUsd <= RANGE_VOL_MAX
     )
     .sort((a, b) => {
-      const liquidityA = Math.log10(Math.max(a.quoteVolUsd, 10_000))
-      const liquidityB = Math.log10(Math.max(b.quoteVolUsd, 10_000))
+      const sweet = (vol: number) => {
+        const log = Math.log10(Math.max(vol, 10_000))
+        const fat = vol > 5_000_000 ? (vol - 5_000_000) / 5_000_000 : 0
+        return log - fat
+      }
       const calmA = Math.max(0, 6 - Math.abs(a.chg24hPct))
       const calmB = Math.max(0, 6 - Math.abs(b.chg24hPct))
-      return liquidityB + calmB * 0.35 - (liquidityA + calmA * 0.35)
+      return sweet(b.quoteVolUsd) + calmB * 0.35 - (sweet(a.quoteVolUsd) + calmA * 0.35)
     })
     .slice(0, Math.floor(MAX_SCAN / 2))
   const batch = [...movers, ...sideways]
@@ -406,17 +433,23 @@ export async function runMemeOrderFlowScan(opts: {
   }
 
   const liveBook = new Set<string>()
+  const bookFit = (row: Structured) =>
+    row.coin.quoteVolUsd >= 150_000 && row.coin.quoteVolUsd <= BOOK_FIT_VOL_MAX
   const bookRanked = [...structured].sort((a, b) => {
+    const fitA = bookFit(a) ? 1 : 0
+    const fitB = bookFit(b) ? 1 : 0
     const bestA = Math.max(...a.directions.map((d) => d.score))
     const bestB = Math.max(...b.directions.map((d) => d.score))
     const prefA = allowPeakSymbol(gates, a.coin.symbol).action === 'prefer' ? 1 : 0
     const prefB = allowPeakSymbol(gates, b.coin.symbol).action === 'prefer' ? 1 : 0
-    return bestB - bestA || prefB - prefA || b.coin.score - a.coin.score
+    return fitB - fitA || bestB - bestA || prefB - prefA || b.coin.score - a.coin.score
   })
-  const rangeStructured = bookRanked.filter((row) =>
-    row.directions.some((direction) =>
-      direction.patterns.some((pattern) => pattern.startsWith('range_'))
-    )
+  const rangeStructured = bookRanked.filter(
+    (row) =>
+      bookFit(row) &&
+      row.directions.some((direction) =>
+        direction.patterns.some((pattern) => pattern.startsWith('range_'))
+      )
   )
   for (const row of rangeStructured.slice(0, RANGE_LIVE_SLOTS)) {
     liveBook.add(row.coin.symbol)
@@ -519,7 +552,9 @@ export async function runMemeOrderFlowScan(opts: {
     }
 
     if (!bookSeen || !snapshot || !bookEvent) {
-      rejects.push({ symbol: coin.symbol, reason: 'live_book_required' })
+      if (wantLive) {
+        rejects.push({ symbol: coin.symbol, reason: 'live_book_required' })
+      }
       continue
     }
 

@@ -4,7 +4,7 @@
  * confirmed on 1m in memeOrderFlow, not from ticker alone).
  */
 
-const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v7_premove'
+const WATCHLIST_KEY = 'scanner:hot_meme_watchlist_v8_meme_scale'
 /** Rebuild order more often so new hot names enter the top */
 const REFRESH_MS = 10 * 60_000
 /**
@@ -35,7 +35,11 @@ const PREMOVE_VOL_MIN = 200_000
 const PREMOVE_CHG_MAX = 14
 const PREMOVE_CHG_MIN = 1.5
 const SIDEWAYS_VOL_MIN = 250_000
+/** Above this, a "quiet" name is a major, not a meme RANGE hunt. */
+const SIDEWAYS_VOL_MAX = 8_000_000
 const SIDEWAYS_CHG_MAX = 6
+/** DOGE/PEPE/HYPE-scale tape — Jeweler wall logic is for thin meme books. */
+const MEME_UNIVERSE_VOL_MAX = 40_000_000
 
 /**
  * Equity-token perps (CRWVSTOCK, WDAYSTOCK, BSPSTOCK…).
@@ -129,7 +133,8 @@ function isSidewaysEntry(entry: HotMemeEntry): boolean {
   return (
     chgAbs >= MIN_ABS_CHG_PCT &&
     chgAbs < SIDEWAYS_CHG_MAX &&
-    entry.quoteVolUsd >= SIDEWAYS_VOL_MIN
+    entry.quoteVolUsd >= SIDEWAYS_VOL_MIN &&
+    entry.quoteVolUsd <= SIDEWAYS_VOL_MAX
   )
 }
 
@@ -137,8 +142,13 @@ function isSidewaysEntry(entry: HotMemeEntry): boolean {
 function stillWatchable(chgPct: number, vol: number): boolean {
   const chgAbs = Math.abs(chgPct)
   if (chgAbs < MIN_ABS_CHG_PCT || vol < MIN_QUOTE_VOL * 0.5) return false
+  if (vol > MEME_UNIVERSE_VOL_MAX) return false
   if (chgAbs >= 4) return true
-  return chgAbs < SIDEWAYS_CHG_MAX && vol >= SIDEWAYS_VOL_MIN
+  return (
+    chgAbs < SIDEWAYS_CHG_MAX &&
+    vol >= SIDEWAYS_VOL_MIN &&
+    vol <= SIDEWAYS_VOL_MAX
+  )
 }
 
 function sidewaysScore(entry: HotMemeEntry): number {
@@ -239,7 +249,7 @@ export function buildHotMemeWatchlist(
       const vol = quoteVol(t)
       const chg = Number(t.riseFallRate ?? 0) * 100
       if (!(price > 0) || price > 250) return false
-      if (vol < MIN_QUOTE_VOL) return false
+      if (vol < MIN_QUOTE_VOL || vol > MEME_UNIVERSE_VOL_MAX) return false
       return Math.abs(chg) >= MIN_ABS_CHG_PCT
     })
     .map((t) => {
@@ -324,6 +334,7 @@ export function buildHotMemeWatchlist(
     for (const old of prev.entries) {
       if (bySym.has(old.symbol)) continue
       if (isEquityTokenSymbol(old.symbol) || blocked.has(old.symbol)) continue
+      if (opts.blueChips.has(old.symbol)) continue
       const t = tickers.find((x) => x.symbol === old.symbol)
       if (!t) continue
       const chg = Number(t.riseFallRate ?? 0) * 100

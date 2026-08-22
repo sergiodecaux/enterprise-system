@@ -70,8 +70,38 @@ test('sticky refresh keeps liquid sideways names below 4% 24h', () => {
   const keptSideways = next.entries.filter((entry) =>
     entry.symbol.startsWith('RANGE')
   )
-  assert.ok(
-    keptSideways.length >= 10,
-    `expected sticky RANGE names, got ${keptSideways.map((e) => e.symbol).join(',')}`
-  )
+    assert.ok(
+      keptSideways.length >= 10,
+      `expected sticky RANGE names, got ${keptSideways.map((e) => e.symbol).join(',')}`
+    )
+})
+
+test('drops major-tape names from the meme universe', () => {
+  const tickers = [
+    {
+      symbol: 'PEPE_USDT',
+      lastPrice: 1,
+      riseFallRate: 0.02,
+      amount24: 500_000_000,
+    },
+    {
+      symbol: 'MEMEBOX_USDT',
+      lastPrice: 1,
+      riseFallRate: 0.02,
+      amount24: 1_200_000,
+    },
+    ...Array.from({ length: 20 }, (_, index) => ({
+      symbol: `MOVE${index}_USDT`,
+      lastPrice: 1,
+      riseFallRate: (18 + index) / 100,
+      amount24: 1_500_000,
+    })),
+  ]
+  const list = buildHotMemeWatchlist(tickers, {
+    blueChips: new Set(['PEPE_USDT']),
+    tradable: new Set(tickers.map((ticker) => ticker.symbol)),
+    now: Date.UTC(2026, 7, 22, 18),
+  })
+  assert.ok(!list.entries.some((entry) => entry.symbol === 'PEPE_USDT'))
+  assert.ok(list.entries.some((entry) => entry.symbol === 'MEMEBOX_USDT'))
 })

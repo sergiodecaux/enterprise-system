@@ -247,6 +247,37 @@ test('RANGE low reclaim confirms with sync 8 and aligned forecast', () => {
   assert.ok(signal.probability >= 68)
 })
 
+test('does not veto a long just because a $1.8k ask level exists', () => {
+  const candles = rangeBox()
+  const book = longBook()
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'LONG',
+      score: 60,
+      htfAligned: true,
+      patterns: ['range_low_reclaim'],
+    },
+    price: 1,
+    snapshot: { ...book.snapshot, obi: 8 },
+    crowd: {
+      ...book.crowd,
+      largeAskWall: true,
+      maxAskUsd: 1800,
+      stackedAskWalls: 2,
+      nearAskUsd: 2200,
+      nearBidUsd: 2800,
+      bidAskUsdRatio: 1.27,
+    },
+    forecast: book.forecast,
+    event: book.event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 50,
+    tapeMoveBps: 0,
+  })
+  assert.ok(signal)
+})
+
 test('RANGE mid-range forecast still needs sync 15', () => {
   const candles = rangeBox()
   const book = longBook()
