@@ -76,13 +76,19 @@ test('sticky refresh keeps liquid sideways names below 4% 24h', () => {
     )
 })
 
-test('drops major-tape names from the meme universe', () => {
+test('keeps classic memes like PEPE and drops L1/DeFi', () => {
   const tickers = [
     {
       symbol: 'PEPE_USDT',
       lastPrice: 1,
       riseFallRate: 0.02,
       amount24: 500_000_000,
+    },
+    {
+      symbol: 'LDO_USDT',
+      lastPrice: 1,
+      riseFallRate: 0.02,
+      amount24: 9_000_000,
     },
     {
       symbol: 'MEMEBOX_USDT',
@@ -98,10 +104,11 @@ test('drops major-tape names from the meme universe', () => {
     })),
   ]
   const list = buildHotMemeWatchlist(tickers, {
-    blueChips: new Set(['PEPE_USDT']),
+    blueChips: new Set(['LDO_USDT']),
     tradable: new Set(tickers.map((ticker) => ticker.symbol)),
     now: Date.UTC(2026, 7, 22, 18),
   })
-  assert.ok(!list.entries.some((entry) => entry.symbol === 'PEPE_USDT'))
+  assert.ok(list.entries.some((entry) => entry.symbol === 'PEPE_USDT'))
+  assert.ok(!list.entries.some((entry) => entry.symbol === 'LDO_USDT'))
   assert.ok(list.entries.some((entry) => entry.symbol === 'MEMEBOX_USDT'))
 })

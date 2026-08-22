@@ -11,7 +11,7 @@
 |---|---|
 | **Раньше (высокий WR)** | PEAK_FUEL_FAIL v27.1 — peak-only, мягкие пороги, до 5 алертов/тик |
 | **v29–v31 / v32** | CONT / regime / ageGate — то молчание, то не то ядро |
-| **Сейчас мемы (v28.4)** | **JEWELER BURST** · meme-scale 250k–8M RANGE · majors excluded · book picks direction |
+| **Сейчас мемы (v28.5)** | **JEWELER BURST** · classic memes PEPE/WIF/DOGE/BONK · no LDO/FET/HYPE · relative walls |
 | **Альты** | ALT_JEWEL book forecast L/S |
 
 Мемы: Predator принимает только `source:jeweler_burst`; legacy и внешний

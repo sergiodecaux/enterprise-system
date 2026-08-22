@@ -1331,10 +1331,11 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Обновление v28.4:</b>`,
+      `<b>Обновление v28.5:</b>`,
       '• Только Jeweler Burst; legacy и внешний Jeweler Live отключены',
-      '• Вселенная мемов, не majors: DOGE/PEPE/HYPE/AAVE и tape &gt;40M отсекаются',
-      '• RANGE-слоты: ликвидные боковики 250k–8M, не стакан PEPE',
+      '• Снова классические мемы: PEPE · DOGE · WIF · BONK · SHIB · TRUMP · FARTCOIN · FLOKI',
+      '• L1/DeFi не сканируются: HYPE · AAVE · TAO · LDO · FET · ETC · ENA',
+      '• RANGE: ликвидный боковик, обе стороны, стакан выбирает направление',
       '• Стена $1200 больше не вето; режет только доминирующий opposite supply',
       '• RANGE граница: sync 8 + forecast или sync 15; mid-range — sync 15 и score ≥75',
       '• 6 live books, 3 слота зарезервированы под RANGE',
@@ -2101,7 +2102,7 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
   if (botLane(env) !== 'elite') {
     await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
       '• Только Jeweler Burst; старые MEME и внешний live-ingress отключены.',
-      '• Каждый скан резервирует 6 мест для мемных sideways 250k–8M; majors не сканируются.',
+      '• Классические мемы: PEPE/DOGE/WIF/BONK/TRUMP. LDO/FET/HYPE/AAVE не сканируются.',
       '• Ищет PEAK и RANGE: отбой от границы или подтверждённый пробой.',
       '• В RANGE обе стороны номинируются; стакан выбирает LONG/SHORT.',
       '• Граница: sync ≥8 + forecast или sync 15. Mid-range: sync 15 и direction score ≥75.',
