@@ -53,6 +53,10 @@ export const CORE_VOLATILE_MEMES = [
   'PEPE_USDT',
   'ZEN_USDT',
   'ENS_USDT',
+  'BASECAT_USDT',
+  'BRIAN_USDT',
+  'CATE_USDT',
+  'AGI_USDT',
 ] as const
 
 export interface HotMemeEntry {
@@ -439,7 +443,23 @@ export function buildHotMemeWatchlist(
     const extras = entries.filter(
       (e) => !keep.some((k) => k.symbol === e.symbol)
     )
-    const merged = reserveSideways([...keep, ...extras], prefer)
+    const heatIn = extras
+      .filter((e) => Math.abs(e.chg24hPct) >= 6)
+      .sort((a, b) => Math.abs(b.chg24hPct) - Math.abs(a.chg24hPct))
+      .slice(0, 6)
+    const heatSyms = new Set(heatIn.map((e) => e.symbol))
+    const pinnedNow = entries.filter(
+      (e) => pinned.has(e.symbol) || prefer.has(e.symbol)
+    )
+    const taken = new Set(pinnedNow.map((e) => e.symbol))
+    const restKeep = keep.filter((e) => !taken.has(e.symbol))
+    const restExtras = extras.filter(
+      (e) => !taken.has(e.symbol) && !heatSyms.has(e.symbol)
+    )
+    const merged = reserveSideways(
+      [...pinnedNow, ...heatIn, ...restKeep, ...restExtras],
+      prefer
+    )
     entries = [
       ...merged.filter((e) => prefer.has(e.symbol)),
       ...merged.filter((e) => !prefer.has(e.symbol)),

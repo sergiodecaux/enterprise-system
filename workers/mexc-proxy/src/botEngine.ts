@@ -3,7 +3,7 @@ export const BOT_ENGINE = {
   id: 'jeweler-burst-v28.5',
   label: 'MEME: JEWELER · PEAK + RANGE UNIVERSE',
   deployedNote:
-    'v28.5: PEPE/WIF/DOGE/BONK/TRUMP + всегда ZEN/ENS/PEPE · без LDO/FET/HYPE/AAVE · стены относительно книги · quality ≥68.',
+    'v28.5: PEPE/WIF/DOGE + всегда ZEN/ENS/BASECAT/BRIAN/CATE/AGI · без LDO/FET/HYPE · стены относительно книги · quality ≥68.',
 } as const
 
 /**
