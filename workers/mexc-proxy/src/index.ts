@@ -39,6 +39,7 @@ import {
   resolveMexcSymbol,
 } from './userZoneWatch'
 import {
+  applyJewelerPaperExit,
   createPaperTradeFromPlan,
   formatTradesStatus,
   listPaperTrades,
@@ -950,6 +951,115 @@ async function handleTelegram(
     return json({ ok: true, ...result })
   }
 
+  if (
+    (path === '/telegram/jeweler/command' ||
+      path === '/telegram/jeweler/command/') &&
+    request.method === 'POST'
+  ) {
+    if (!env.ALERT_SECRET) {
+      return json({ ok: false, error: 'ALERT_SECRET is not configured' }, 503)
+    }
+    if (request.headers.get('X-Alert-Secret') !== env.ALERT_SECRET) {
+      return json({ ok: false, error: 'Unauthorized' }, 401)
+    }
+    const raw = await request.text()
+    if (raw.length > 64_000) {
+      return json({ ok: false, error: 'Command is too large' }, 413)
+    }
+    const signature = request.headers.get('X-Jeweler-Signature') ?? ''
+    if (!(await verifyJewelerSignature(raw, env.ALERT_SECRET, signature))) {
+      return json({ ok: false, error: 'Invalid command signature' }, 401)
+    }
+    let command: JewelerCommand
+    try {
+      command = JSON.parse(raw) as JewelerCommand
+    } catch {
+      return json({ ok: false, error: 'Invalid JSON' }, 400)
+    }
+    const now = Date.now()
+    if (
+      (command.action !== 'SIGNAL' && command.action !== 'EXIT') ||
+      command.mode !== 'paper_signal' ||
+      !Number.isFinite(command.issuedAt) ||
+      !Number.isFinite(command.expiresAt) ||
+      command.issuedAt > now + 5_000 ||
+      now - command.issuedAt > 30_000 ||
+      command.expiresAt < now ||
+      command.expiresAt - command.issuedAt > 30_000
+    ) {
+      return json({ ok: false, error: 'Expired or invalid command envelope' }, 400)
+    }
+    if (failoverConfigured(env)) {
+      const state = await loadFailoverState(env)
+      if (!state.active) {
+        return json(
+          {
+            ok: false,
+            error: 'standby_node',
+            role: state.role,
+            peerUrl: state.peerUrl,
+          },
+          409
+        )
+      }
+    }
+    if (command.action === 'EXIT') {
+      const exit = command.exit
+      if (
+        !exit ||
+        !/^[A-Z0-9]{2,30}_USDT$/.test(exit.symbol) ||
+        (exit.side !== 'LONG' && exit.side !== 'SHORT') ||
+        !Number.isFinite(exit.price) ||
+        exit.price <= 0 ||
+        (exit.action !== 'PARTIAL_EXIT' && exit.action !== 'FULL_EXIT') ||
+        ![
+          'halfway',
+          'book_reversal',
+          'toxic_wall',
+          'trailing',
+          'stop',
+          'target',
+        ].includes(exit.reason)
+      ) {
+        return json({ ok: false, error: 'Invalid exit command' }, 400)
+      }
+      const applied = await applyJewelerPaperExit(env, exit)
+      if (applied.comment) {
+        await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel: 'meme',
+          title: applied.comment.title,
+          text: applied.comment.text,
+          dedupeKey: applied.comment.dedupeKey,
+        })
+      }
+      return json(
+        { ok: applied.applied, ...applied },
+        applied.applied ? 200 : 409
+      )
+    }
+    const validation = validateJewelerAlert(command.alert)
+    if (!validation.ok) {
+      return json({ ok: false, error: validation.error }, 400)
+    }
+    try {
+      const delivered = await deliverJewelerAlert(env, command.alert!)
+      return json(
+        { ok: delivered.accepted, ...delivered },
+        delivered.accepted ? 200 : 409
+      )
+    } catch (err) {
+      console.error('[jeweler] command failed', err)
+      return json(
+        {
+          ok: false,
+          error: err instanceof Error ? err.message.slice(0, 200) : 'command_failed',
+        },
+        500
+      )
+    }
+  }
+
   if (path === '/telegram/webhook' && request.method === 'POST') {
     if (!env.TELEGRAM_BOT_TOKEN) {
       return json({ error: 'TELEGRAM_BOT_TOKEN not configured' }, 503)
@@ -1035,6 +1145,12 @@ async function handleTelegram(
   if (path === '/telegram/alert' && request.method === 'POST') {
     const payload = (await request.json()) as AlertPayload
     if (!payload?.text) return json({ error: 'text required' }, 400)
+    if (payload.type === 'MEME') {
+      return json(
+        { error: 'Legacy MEME ingress disabled; Jeweler Burst only' },
+        410
+      )
+    }
 
     const auth = await assertAlertAuth(env, request, payload.chatId)
     if (!auth.ok) return json({ error: auth.error }, 401)
@@ -1206,7 +1322,7 @@ async function handleTelegram(
     }
     const targetBlock = [
       `<b>🎯 РАЗДЕЛЕНИЕ БОТОВ</b>`,
-      `Predator (@Enterprisesystem_bot): мемы LONG/SHORT по стакану и свечам · от 68%.`,
+      `Predator (@Enterprisesystem_bot): только Jeweler Burst LONG/SHORT · quality от 68.`,
       `Elite (@Enterpriseelite_bot): альты как Mini App «Сигналы» · прокси mexc-proxy-f.`,
     ].join('\n')
     const memeText = [
@@ -1215,13 +1331,14 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Обновление v27.7:</b>`,
-      '• LONG/SHORT: свечи 1m + фаза 5m/15m, затем 3 снимка живого стакана',
+      `<b>Обновление v28.0:</b>`,
+      '• Только Jeweler Burst; legacy и внешний Jeweler Live отключены',
+      '• LONG/SHORT: phase + BTC + momentum + свечи, затем 3 снимка стакана',
       '• SHORT veto: bid wall · OBI ≥10% · bid/ask ≥1.55 · forecast NEXT_UP',
       '• LONG veto: ask wall · OBI ≤−10% · bid/ask ≤0.65 · forecast NEXT_DOWN',
-      '• минимум 2 независимых book evidence + обязательный realBook/event',
-      '• score от 68; для thin/new SHORT — от 72',
-      '• фиксируются probability, OBI, book score/bias/event, patterns, MFE/MAE и outcome',
+      '• sync ≥8 + минимум 2 независимых book evidence + realBook/event',
+      '• quality score без базового якоря: SILVER 68 · GOLD 75 · PLATINUM 85',
+      '• журнал: phase, BTC, momentum, sync, OBI, book/event, patterns, MFE/MAE',
       '• failover A→B→C при KV/daily limit; quota-dead и stale/CPU-dead peer пропускаются',
       '• сейчас только сигнал + paper companion; одновременно одна MEME-сделка',
       '',
@@ -1363,6 +1480,205 @@ async function assertAlertAuth(
   }
 
   return { ok: false, error: 'Unauthorized: invalid ALERT_SECRET' }
+}
+
+interface JewelerCommand {
+  action: 'SIGNAL' | 'EXIT'
+  mode: 'paper_signal'
+  issuedAt: number
+  expiresAt: number
+  alert?: ScanAlert
+  exit?: {
+    symbol: string
+    side: 'LONG' | 'SHORT'
+    price: number
+    action: 'PARTIAL_EXIT' | 'FULL_EXIT'
+    reason:
+      | 'halfway'
+      | 'book_reversal'
+      | 'toxic_wall'
+      | 'trailing'
+      | 'stop'
+      | 'target'
+  }
+}
+
+async function verifyJewelerSignature(
+  raw: string,
+  secret: string,
+  signatureHex: string
+): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/i.test(signatureHex)) return false
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    )
+    const signature = new Uint8Array(
+      signatureHex.match(/.{2}/g)!.map((pair) => Number.parseInt(pair, 16))
+    )
+    return await crypto.subtle.verify(
+      'HMAC',
+      key,
+      signature,
+      new TextEncoder().encode(raw)
+    )
+  } catch {
+    return false
+  }
+}
+
+function validateJewelerAlert(
+  alert: ScanAlert | null | undefined
+): { ok: true } | { ok: false; error: string } {
+  const plan = alert?.tradePlan
+  if (!alert || alert.type !== 'MEME' || !plan) {
+    return { ok: false, error: 'MEME tradePlan is required' }
+  }
+  if (
+    !alert.dedupeKey.startsWith('jeweler:burst:') ||
+    !plan.entryReasons?.includes('source:jeweler_burst')
+  ) {
+    return { ok: false, error: 'Invalid dedupe namespace' }
+  }
+  if (
+    !Number.isFinite(alert.score) ||
+    !Number.isFinite(alert.winPct) ||
+    alert.score < 68 ||
+    alert.score > 100 ||
+    alert.winPct < 68 ||
+    alert.winPct > 100
+  ) {
+    return { ok: false, error: 'Score gate failed' }
+  }
+  if (
+    plan.qualityTier !== 'A' ||
+    !/^[A-Z0-9]{2,30}_USDT$/.test(plan.symbol) ||
+    !Number.isFinite(plan.signalPrice) ||
+    !Number.isFinite(plan.sl) ||
+    !Number.isFinite(plan.tp) ||
+    plan.signalPrice <= 0 ||
+    plan.sl <= 0 ||
+    plan.tp <= 0
+  ) {
+    return { ok: false, error: 'Invalid trade plan' }
+  }
+  const validDirection =
+    (plan.side === 'LONG' &&
+      plan.setup === 'MEME_BOOK_LONG' &&
+      plan.sl < plan.signalPrice &&
+      plan.tp > plan.signalPrice) ||
+    (plan.side === 'SHORT' &&
+      plan.setup === 'PEAK_FUEL_FAIL' &&
+      plan.sl > plan.signalPrice &&
+      plan.tp < plan.signalPrice)
+  if (!validDirection) return { ok: false, error: 'Direction/setup mismatch' }
+  return { ok: true }
+}
+
+async function deliverJewelerAlert(
+  env: Env,
+  alert: ScanAlert
+): Promise<{
+  accepted: boolean
+  reason?: string
+  sent?: number
+  queued?: boolean
+  paperId?: string
+  journalLogged?: boolean
+}> {
+  const plan = alert.tradePlan!
+  try {
+    const paceRaw = await env.SUBSCRIBERS?.get('telegram:last_peak_alert_at')
+    const lastAt = paceRaw ? Number(paceRaw) : 0
+    if (lastAt > 0 && Date.now() - lastAt < 8 * 60_000) {
+      return { accepted: false, reason: 'meme_signal_paced' }
+    }
+  } catch {
+    // Paper creation remains the authoritative duplicate/open-position gate.
+  }
+
+  const conflict = await isSymbolSideBlocked(
+    env.SUBSCRIBERS,
+    plan.symbol,
+    plan.side
+  )
+  if (conflict.blocked) {
+    return {
+      accepted: false,
+      reason: `symbol_side_conflict:${conflict.reason ?? 'locked'}`,
+    }
+  }
+
+  const paper = await createPaperTradeFromPlan(env, {
+    ...plan,
+    alertType: 'MEME',
+    target1: plan.target1,
+    target3: plan.target3,
+    markPrice: plan.signalPrice || plan.entryIdeal || undefined,
+  })
+  if (!paper.created) {
+    return {
+      accepted: false,
+      reason: `paper_blocked:${paper.skipReason ?? 'unknown'}`,
+    }
+  }
+  const paperId =
+    paper.comment?.dedupeKey?.replace(/^paper:fill:/, '') || undefined
+  const delivery = await broadcastAlert(env, {
+    type: 'SYSTEM',
+    channel: 'meme',
+    title: alert.title,
+    text: alert.text,
+    dedupeKey: alert.dedupeKey,
+  })
+  let queued = false
+  if (delivery.sent === 0 && !delivery.skipped) {
+    await enqueuePendingMeme(env, {
+      title: alert.title,
+      text: alert.text,
+      dedupeKey: alert.dedupeKey,
+    })
+    queued = true
+  }
+  if (delivery.sent > 0 || queued) {
+    try {
+      await env.SUBSCRIBERS?.put('telegram:last_peak_alert_at', String(Date.now()))
+    } catch {
+      /* runtime paper slot still prevents duplicates */
+    }
+    await markSymbolSideLock(env.SUBSCRIBERS, plan.symbol, plan.side, plan.setup)
+  }
+  if (paper.comment && (delivery.sent > 0 || queued)) {
+    await broadcastAlert(env, {
+      type: 'SYSTEM',
+      channel: 'meme',
+      title: paper.comment.title,
+      text: paper.comment.text,
+      dedupeKey: paper.comment.dedupeKey,
+    })
+  }
+  const journal = await recordBotAlert(env, {
+    alertType: 'MEME',
+    score: alert.score,
+    dedupeKey: alert.dedupeKey,
+    plan: {
+      ...plan,
+      engineId: `${BOT_ENGINE.id}+jeweler-live-v1`,
+      paperId,
+      tgEntrySent: delivery.sent > 0 || queued,
+    },
+  })
+  return {
+    accepted: true,
+    sent: delivery.sent,
+    queued,
+    paperId,
+    journalLogged: Boolean(journal),
+  }
 }
 
 /** Dedup + send to subscribers of the matching Telegram bot */
@@ -1778,12 +2094,13 @@ async function announceEngineToChannel(
 async function maybeAnnounceEngine(env: Env): Promise<void> {
   if (botLane(env) !== 'elite') {
     await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
-      '• LONG/SHORT: свечи 1m + контекст 5m/15m, затем 3 снимка живого стакана.',
+      '• Только Jeweler Burst; старые MEME и внешний live-ingress отключены.',
+      '• LONG/SHORT: phase + BTC + momentum + свечи, затем 3 снимка стакана.',
       '• SHORT запрещён против bid wall, OBI ≥10%, bid/ask ≥1.55 или NEXT_UP.',
       '• LONG запрещён против ask wall, OBI ≤−10%, bid/ask ≤0.65 или NEXT_DOWN.',
-      '• Требуются ≥2 независимых book evidence и realBook/event.',
-      '• Сигналы ниже 68 не отправляются; thin/new SHORT требует 72.',
-      '• Журнал v293: probability, OBI, book score/bias/event, свечные паттерны, MFE/MAE и outcome.',
+      '• Требуются sync ≥8, ≥2 независимых book evidence и realBook/event.',
+      '• Quality score без базы: SILVER 68 · GOLD 75 · PLATINUM 85.',
+      '• Журнал v293: phase/BTC/momentum/sync, OBI, book/event, паттерны, MFE/MAE.',
       '• Failover A→B→C: KV/daily limit, отказ исчерпанного peer и stale/CPU-dead scan.',
       '• Режим проверки: только signal + paper companion; максимум одна активная MEME-сделка.',
     ])
@@ -1993,12 +2310,14 @@ async function runCronScan(
 
   const deliver = async (a: ScanAlert) => {
     if (seenDedup.has(a.dedupeKey)) return
-    // Meme v27.6: only book-confirmed directional A-tier setups >=68%.
+    // Exclusive meme lane: only Cloudflare Jeweler Burst signals.
     if (a.type === 'MEME') {
       const plan = a.tradePlan
       if (
         !plan ||
         !['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(plan.setup) ||
+        !plan.entryReasons?.includes('source:jeweler_burst') ||
+        !a.dedupeKey.startsWith('jeweler:burst:') ||
         plan.qualityTier !== 'A' ||
         a.winPct < 68
       ) {
@@ -2472,6 +2791,9 @@ async function runCronScan(
       const flushed = await flushPendingMemeAlerts(
         env,
         async (item) => {
+          if (!item.dedupeKey.startsWith('jeweler:burst:')) {
+            return { sent: 0, failed: 0, skipped: 'no_subscribers' }
+          }
           const r = await broadcastAlert(env, {
             type: 'SYSTEM',
             channel: 'meme',
@@ -2500,13 +2822,21 @@ async function runCronScan(
 
     try {
       const comments = await monitorPaperTrades(env)
+      const burstPaperIds = new Set(
+        (await listPaperTrades(env))
+          .filter((trade) =>
+            trade.entryReasons?.includes('source:jeweler_burst')
+          )
+          .map((trade) => trade.id)
+      )
       let tgBudget = 6
       for (const c of comments) {
         if (tgBudget <= 0) break
         // Meme companion TG: current directional setups only.
         if (
           (c.route ?? 'meme') === 'meme' &&
-          !['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(c.setup)
+          (!['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(c.setup) ||
+            ![...burstPaperIds].some((id) => c.dedupeKey.includes(id)))
         ) {
           continue
         }
@@ -2546,6 +2876,7 @@ async function runCronScan(
         // Meme TG: only current directional WIN/LOSS outcomes.
         if (outcome.alertType === 'MEME') {
           if (!['PEAK_FUEL_FAIL', 'MEME_BOOK_LONG'].includes(outcome.setup)) continue
+          if (!outcome.entryReasons?.includes('source:jeweler_burst')) continue
           if (outcome.status !== 'WIN' && outcome.status !== 'LOSS') continue
           if (outcome.tgEntrySent === false) continue
         }
@@ -3276,7 +3607,7 @@ async function dispatchCommand(
     const welcome =
       channel === 'sniper'
         ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · как Mini App «Сигналы»: зоны, SMC, confluence.\nВход в TG только когда сетап <b>READY</b>.\nПрокси: <code>mexc-proxy-f</code> (Money bot 7).\nМемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
-        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nМемы · LONG/SHORT по живому стакану + свечам · сигнал от 68% · paper companion.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
+        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nТолько Jeweler Burst · LONG/SHORT · phase+BTC+momentum+sync+3-snapshot стакан · quality от 68 · paper-first.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
       await tgSend(
@@ -3654,7 +3985,7 @@ async function dispatchCommand(
         BOT_ENGINE.label,
         BOT_ENGINE.deployedNote,
         ``,
-        `Режим: MEME LONG/SHORT A · стакан+свечи · вероятность ≥68%`,
+        `Режим: только Jeweler Burst · quality ≥68 · paper-first`,
         `Альты: нет (они в @Enterpriseelite_bot)`,
         `Сделок в работе: ${live}`,
         `Meme alerts: ${me.meme ? 'ON' : 'OFF'}`,

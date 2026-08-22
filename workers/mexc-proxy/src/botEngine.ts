@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'meme-book-directional-v27.7',
-  label: 'MEME: LIVE BOOK + CANDLES + FAILOVER',
+  id: 'jeweler-burst-v28.0',
+  label: 'MEME: JEWELER BURST ONLY',
   deployedNote:
-    'v27.7: LONG/SHORT только со свечами 1m+5m/15m и живым стаканом · hard veto против сильной встречной ликвидности · подробный журнал v293 · failover A/B/C.',
+    'v28.0: только Jeweler Burst LONG/SHORT · phase + BTC + momentum + sync · 3-snapshot стакан · quality ≥68 без базового якоря · paper-first · failover A/B/C.',
 } as const
 
 /**

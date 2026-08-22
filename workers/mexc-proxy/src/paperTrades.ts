@@ -389,9 +389,16 @@ function isAltJewel(t: PaperTrade | { setup?: string }): boolean {
   return t.setup === ALT_JEWEL_SETUP
 }
 
+function isJewelerStrategy(t: PaperTrade): boolean {
+  return (
+    t.entryReasons?.includes('source:jeweler_live') === true ||
+    t.entryReasons?.includes('source:jeweler_burst') === true
+  )
+}
+
 /** PEAK / Elite meme: only initial SL or +2% TP (40% @ ×20). */
 function isBinaryRoeExit(t: PaperTrade): boolean {
-  return isMemeTrade(t) || isAltJewel(t)
+  return (isMemeTrade(t) && !isJewelerStrategy(t)) || isAltJewel(t)
 }
 
 function binaryTpPct(t: PaperTrade): number {
@@ -953,6 +960,84 @@ export async function closeAllLabPapers(env: PaperEnv): Promise<number> {
   return n
 }
 
+export async function applyJewelerPaperExit(
+  env: PaperEnv,
+  input: {
+    symbol: string
+    side: PaperSide
+    price: number
+    action: 'PARTIAL_EXIT' | 'FULL_EXIT'
+    reason: 'halfway' | 'book_reversal' | 'toxic_wall' | 'trailing' | 'stop' | 'target'
+  }
+): Promise<{ applied: boolean; reason?: string; comment?: PaperComment }> {
+  const list = await listPaperTrades(env)
+  const trade = list
+    .filter(
+      (row) =>
+        row.symbol === input.symbol &&
+        row.side === input.side &&
+        row.status === 'OPEN' &&
+        isJewelerStrategy(row)
+    )
+    .sort((a, b) => (b.openedAt ?? b.createdAt) - (a.openedAt ?? a.createdAt))[0]
+  if (!trade) return { applied: false, reason: 'open_jeweler_trade_not_found' }
+  if (!(input.price > 0) || !Number.isFinite(input.price)) {
+    return { applied: false, reason: 'invalid_exit_price' }
+  }
+  const now = Date.now()
+  const ticker = nameOf(trade.symbol)
+  if (input.action === 'PARTIAL_EXIT') {
+    if (trade.tp1Sent) return { applied: false, reason: 'partial_already_applied' }
+    trade.tp1Sent = true
+    trade.beSent = true
+    const fill = trade.fillPrice ?? trade.entryIdeal
+    trade.sl =
+      trade.side === 'LONG'
+        ? Math.max(trade.sl, fill * 0.9995)
+        : Math.min(trade.sl, fill * 1.0005)
+    trade.lastPulseAt = now
+    await savePaperTrades(env, list, true)
+    return {
+      applied: true,
+      comment: {
+        alertType: 'SYSTEM',
+        route: 'meme',
+        setup: trade.setup,
+        title: `① Ювелир частично ${ticker}`,
+        text: `Зафиксировано 50% @ ${fmt(input.price)} · SL → BE ${fmt(trade.sl)} · причина ${input.reason}.`,
+        dedupeKey: `paper:jeweler:partial:${trade.id}`,
+      },
+    }
+  }
+
+  trade.status = 'CLOSED'
+  trade.closedAt = now
+  trade.lastPulseAt = now
+  if (input.reason === 'target') {
+    trade.tp = input.price
+    trade.closeReason = 'tp'
+    trade.tpSent = true
+  } else if (input.reason === 'stop') {
+    trade.sl = input.price
+    trade.closeReason = 'sl'
+  } else {
+    trade.trailingStop = input.price
+    trade.closeReason = 'trail'
+  }
+  await savePaperTrades(env, list, true)
+  return {
+    applied: true,
+    comment: {
+      alertType: 'SYSTEM',
+      route: 'meme',
+      setup: trade.setup,
+      title: `🚪 Ювелир выход ${ticker}`,
+      text: `${trade.side} закрыт @ ${fmt(input.price)} · причина ${input.reason}.`,
+      dedupeKey: `paper:jeweler:exit:${trade.id}`,
+    },
+  }
+}
+
 async function savePaperTrades(
   env: PaperEnv,
   list: PaperTrade[],
@@ -983,7 +1068,14 @@ export async function createPaperTradeFromPlan(
 ): Promise<{
   created: boolean
   comment: PaperComment | null
-  skipReason?: 'cooldown' | 'caps' | 'dup' | 'bad_mark' | 'pre_stopped' | 'setup'
+  skipReason?:
+    | 'cooldown'
+    | 'caps'
+    | 'dup'
+    | 'bad_mark'
+    | 'pre_stopped'
+    | 'setup'
+    | 'jeweler_risk_bounds'
 }> {
   // Predator: PEAK / DUMP_CONT / CONT_* SHORT. Elite: PUMP / CONT_* LONG + ALT_JEWEL.
   const eliteMemeLong =
@@ -1116,6 +1208,9 @@ export async function createPaperTradeFromPlan(
   let zoneHigh = plan.zoneHigh
   if (isImpulse) {
     const isPeak = isPredatorShortSetup(plan.setup, plan.side)
+    const isJewelerLive =
+      plan.entryReasons?.includes('source:jeweler_live') === true ||
+      plan.entryReasons?.includes('source:jeweler_burst') === true
     let mark =
       plan.markPrice && plan.markPrice > 0
         ? plan.markPrice
@@ -1153,6 +1248,38 @@ export async function createPaperTradeFromPlan(
       }
       target1 = tp
       target3 = tp
+    } else if (isJewelerLive) {
+      // The external collector has 3m of live depth/tape evidence. Preserve its
+      // volatility-adaptive levels, but reject unsafe or obviously malformed risk.
+      const stopDistance = Math.abs(plan.sl - mark) / mark
+      const targetDistance = Math.abs(plan.tp - mark) / mark
+      const directionOk =
+        plan.side === 'LONG'
+          ? plan.sl < mark && plan.tp > mark
+          : plan.sl > mark && plan.tp < mark
+      if (
+        !directionOk ||
+        stopDistance < 0.003 ||
+        stopDistance > 0.012 ||
+        targetDistance < 0.008 ||
+        targetDistance > 0.025
+      ) {
+        return {
+          created: false,
+          comment: null,
+          skipReason: 'jeweler_risk_bounds',
+        }
+      }
+      sl = plan.sl
+      tp = plan.tp
+      target1 =
+        plan.target1 ??
+        (plan.side === 'LONG'
+          ? mark + (tp - mark) * 0.5
+          : mark - (mark - tp) * 0.5)
+      target3 = tp
+      zoneLow = Math.min(zoneLow, mark * 0.999)
+      zoneHigh = Math.max(zoneHigh, mark * 1.001)
     } else {
       const minSlPct = isPeak ? 0 : 0.01
       if (plan.side === 'LONG') {

@@ -31,6 +31,16 @@ export interface MemeDirectionalSignal {
   journalReasons: string[]
 }
 
+export type BtcBurstState = 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL'
+type MovementPhase =
+  | 'ACCUMULATION'
+  | 'IMPULSE_UP'
+  | 'IMPULSE_DOWN'
+  | 'EXTENSION_UP'
+  | 'EXTENSION_DOWN'
+  | 'DISTRIBUTION'
+  | 'UNKNOWN'
+
 const MIN_SIGNAL_PROBABILITY = 68
 
 function body(c: Candle): number {
@@ -110,6 +120,75 @@ function tfTrend(candles: Candle[]): 'UP' | 'DOWN' | 'FLAT' {
     w[3]![2] <= w[1]![2] * 1.003 &&
     w[3]![3] <= w[1]![3] * 1.002
   return up ? 'UP' : down ? 'DOWN' : 'FLAT'
+}
+
+export function movementPhase(candles: Candle[]): MovementPhase {
+  const closed = candles.slice(0, -1)
+  if (closed.length < 30) return 'UNKNOWN'
+  const recent = closed.slice(-5)
+  const older = closed.slice(-20, -5)
+  const recentVol =
+    recent.reduce((sum, candle) => sum + candle[5], 0) / Math.max(1, recent.length)
+  const olderVol =
+    older.reduce((sum, candle) => sum + candle[5], 0) / Math.max(1, older.length)
+  const move =
+    recent[0]![1] > 0
+      ? ((recent[recent.length - 1]![4] - recent[0]![1]) / recent[0]![1]) * 100
+      : 0
+  const volRatio = olderVol > 0 ? recentVol / olderVol : 1
+  const rangeWindow = closed.slice(-40)
+  const high = Math.max(...rangeWindow.map((candle) => candle[2]))
+  const low = Math.min(...rangeWindow.map((candle) => candle[3]))
+  const range = high - low
+  const last = recent[recent.length - 1]![4]
+  const position = range > 0 ? (last - low) / range : 0.5
+  if (Math.abs(move) < 0.35 && volRatio >= 1.15 && position < 0.75) {
+    return 'ACCUMULATION'
+  }
+  if (move >= 0.35 && volRatio >= 1.05 && position < 0.9) return 'IMPULSE_UP'
+  if (move <= -0.35 && volRatio >= 1.05 && position > 0.1) return 'IMPULSE_DOWN'
+  if (position >= 0.82 && volRatio < 1) return 'EXTENSION_UP'
+  if (position <= 0.18 && volRatio < 1) return 'EXTENSION_DOWN'
+  if (position >= 0.78 && volRatio >= 1.1 && Math.abs(move) < 0.45) {
+    return 'DISTRIBUTION'
+  }
+  return 'UNKNOWN'
+}
+
+export function tailBlocked(candles: Candle[], side: MemeDirection): boolean {
+  const closed = candles.slice(0, -1)
+  if (closed.length < 20) return true
+  const window = closed.slice(-120)
+  const first = window[0]![1]
+  const last = window[window.length - 1]![4]
+  const move = first > 0 ? ((last - first) / first) * 100 : 0
+  const lastThree = closed.slice(-3)
+  const fallingVolume =
+    lastThree.length === 3 &&
+    lastThree[0]![5] > lastThree[1]![5] &&
+    lastThree[1]![5] > lastThree[2]![5]
+  if (side === 'LONG') return move > 15 || (move > 5 && fallingVolume)
+  return move < -12
+}
+
+export function patternTier(patterns: string[]): 'S' | 'A' | 'B' {
+  if (
+    patterns.some((pattern) =>
+      [
+        'failed_breakdown',
+        'morning_star',
+        'bullish_engulfing',
+        'bearish_engulfing',
+        'shooting_star',
+      ].includes(pattern)
+    )
+  ) {
+    return 'S'
+  }
+  if (patterns.some((pattern) => ['hammer', 'higher_low'].includes(pattern))) {
+    return 'A'
+  }
+  return 'B'
 }
 
 /**
@@ -229,12 +308,46 @@ export function detectMemeDirectionalSignal(opts: {
   crowd: CrowdBookMetrics
   forecast: MemeBookForecast
   event: OrderBookEvent
+  candles: Candle[]
+  btcState: BtcBurstState
+  tapeBuyPct: number | null
+  tapeMoveBps: number | null
 }): MemeDirectionalSignal | null {
-  const { candidate, price, snapshot, crowd, forecast, event } = opts
+  const {
+    candidate,
+    price,
+    snapshot,
+    crowd,
+    forecast,
+    event,
+    candles,
+    btcState,
+    tapeBuyPct,
+    tapeMoveBps,
+  } = opts
   if (!(price > 0) || forecast.toxic) return null
   const side = candidate.side
   const obi = snapshot.obi
   const ratio = crowd.bidAskUsdRatio
+  const phase = movementPhase(candles)
+  const tier = patternTier(candidate.patterns)
+  if (tailBlocked(candles, side)) return null
+  if (side === 'LONG' && btcState === 'RISK_OFF') return null
+  if (side === 'SHORT' && btcState === 'RISK_ON') return null
+  if (
+    side === 'LONG' &&
+    phase !== 'ACCUMULATION' &&
+    phase !== 'IMPULSE_UP'
+  ) {
+    return null
+  }
+  if (
+    side === 'SHORT' &&
+    phase !== 'EXTENSION_UP' &&
+    phase !== 'DISTRIBUTION'
+  ) {
+    return null
+  }
 
   if (side === 'LONG') {
     if (
@@ -267,6 +380,14 @@ export function detectMemeDirectionalSignal(opts: {
       ? crowd.largeBidWall || crowd.stackedBidWalls >= 1 || ratio >= 1.2
       : crowd.largeAskWall || crowd.stackedAskWalls >= 1 || (ratio > 0 && ratio <= 0.83)
   const alignedEvent = eventSupports(side, event)
+  const flowAligned =
+    tapeBuyPct != null &&
+    (side === 'LONG' ? tapeBuyPct >= 55 : tapeBuyPct <= 45)
+  const moveAligned =
+    tapeMoveBps != null &&
+    (side === 'LONG' ? tapeMoveBps >= 2 : tapeMoveBps <= -2)
+  const syncScore = alignedEvent && (flowAligned || moveAligned) ? 15 : alignedEvent || (flowAligned && moveAligned) ? 8 : 0
+  if (syncScore < 8) return null
 
   // At least two independent book confirmations. Static wall alone is not enough.
   const bookEvidence = [
@@ -278,21 +399,37 @@ export function detectMemeDirectionalSignal(opts: {
   ].filter(Boolean).length
   if (bookEvidence < 2 || (!forecast.realBook && !alignedEvent)) return null
 
-  let probability = 46
-  probability += Math.max(0, Math.min(14, (forecast.score - 50) * 0.35))
-  probability += Math.max(0, Math.min(8, (candidate.score - 52) * 0.4))
-  if (forecast.realBook) probability += 4
-  if (alignedBias) probability += 3
-  if (alignedEvent) probability += 4
-  if (wallAligned) probability += 2
-  if (candidate.htfAligned) probability += 2
-  probability = Math.min(78, Math.round(probability))
+  // Jeweler Burst score: no base anchor and no duplicate reward for raw OBI.
+  let probability = 0
+  probability += tier === 'S' ? 15 : tier === 'A' ? 10 : 4
+  probability += syncScore
+  probability += Math.max(0, Math.min(15, forecast.score * 0.15))
+  if (forecast.realBook) probability += 10
+  if (alignedBias) probability += 8
+  if (alignedEvent) probability += 8
+  if (wallAligned) probability += 6
+  if (candidate.htfAligned) probability += 7
+  probability += phase === 'IMPULSE_UP' || phase === 'DISTRIBUTION' ? 7 : 5
+  if (flowAligned && moveAligned) probability += 5
+  if (btcState === 'NEUTRAL') probability += 4
+  probability = Math.min(100, Math.round(probability))
+  if (tier === 'B' && probability < 72) return null
   if (probability < MIN_SIGNAL_PROBABILITY) return null
+  const quality =
+    probability >= 85 ? 'PLATINUM' : probability >= 75 ? 'GOLD' : 'SILVER'
 
-  const risk = side === 'LONG' ? 0.011 : 0.01
+  const closed = candles.slice(0, -1).slice(-20)
+  const atr =
+    closed.reduce(
+      (sum, candle) =>
+        sum + (candle[4] > 0 ? (candle[2] - candle[3]) / candle[4] : 0),
+      0
+    ) / Math.max(1, closed.length)
+  const volatility = atr > 0.02 ? 'HIGH' : atr < 0.005 ? 'LOW' : 'NORMAL'
+  const risk = volatility === 'HIGH' ? 0.007 : volatility === 'LOW' ? 0.0035 : 0.005
   const tp1Pct = 0.01
-  const tpPct = 0.02
-  const tp3Pct = 0.028
+  const tpPct = volatility === 'HIGH' ? 0.02 : volatility === 'LOW' ? 0.01 : 0.015
+  const tp3Pct = tpPct
   const dir = side === 'LONG' ? 1 : -1
   return {
     side,
@@ -304,15 +441,24 @@ export function detectMemeDirectionalSignal(opts: {
     tp: price * (1 + dir * tpPct),
     target3: price * (1 + dir * tp3Pct),
     notes: [
-      `оценка вероятности ${probability}%`,
+      `Jeweler ${quality} · quality score ${probability}/100 · sync ${syncScore}`,
+      `фаза ${phase} · BTC ${btcState} · momentum ${flowAligned && moveAligned ? 'BUILDING' : 'MIXED'}`,
       `стакан ${forecast.bias} · score ${forecast.score}/100 · OBI ${obi >= 0 ? '+' : ''}${obi.toFixed(0)}%`,
       `bids/asks USD ${ratio.toFixed(2)} · book evidence ${bookEvidence}/5`,
-      `свечи: ${candidate.patterns.slice(0, 5).join(', ')}`,
+      `свечи tier ${tier}: ${candidate.patterns.slice(0, 5).join(', ')}`,
       alignedEvent ? `событие стакана: ${event.kind}` : 'событие: подтверждение глубиной/OBI',
     ],
     journalReasons: [
-      `prob:${probability}`,
       `conf:${probability}`,
+      'source:jeweler_burst',
+      `quality_score:${probability}`,
+      `quality:${quality}`,
+      `sync:${syncScore}`,
+      `phase:${phase}`,
+      `btc:${btcState}`,
+      `momentum:${flowAligned && moveAligned ? 'BUILDING' : 'MIXED'}`,
+      `volatility:${volatility}`,
+      `pattern_tier:${tier}`,
       `book_score:${forecast.score}`,
       `obi:${Number(obi.toFixed(2))}`,
       `book_ratio:${ratio}`,
@@ -322,7 +468,7 @@ export function detectMemeDirectionalSignal(opts: {
       `patterns:${candidate.patterns.slice(0, 8).join('+')}`,
       'book_ok',
       candidate.htfAligned ? 'structure_ok' : 'structure_weak',
-      `quality:A`,
+      'quality:A',
     ],
   }
 }

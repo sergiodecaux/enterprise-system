@@ -31,6 +31,7 @@ import {
 import {
   detectMemeDirectionalSignal,
   inspectMemeCandleDirections,
+  type BtcBurstState,
   type MemeCandleCandidate,
   type MemeDirectionalSignal,
 } from './memeDirectionalSignal'
@@ -158,11 +159,15 @@ function directionalToAlert(
     const p = ((level - sig.limitPrice) / sig.limitPrice) * 100
     return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`
   }
+  const quality =
+    sig.journalReasons
+      .find((reason) => /^quality:(PLATINUM|GOLD|SILVER)$/.test(reason))
+      ?.split(':')[1] ?? 'SILVER'
   return {
     type: 'MEME',
-    title: `${sig.side === 'LONG' ? '🟢' : '🔴'} MEME ${sig.side} ${name} · BOOK+CANDLES`,
+    title: `${sig.side === 'LONG' ? '🟢' : '🔴'} ${quality} ${sig.side} ${name} · JEWELER BURST`,
     text: [
-      `Вероятность: ${sig.probability}% · порог ${MIN_SIGNAL_PROBABILITY}%`,
+      `Jeweler quality: ${sig.probability}/100 · порог ${MIN_SIGNAL_PROBABILITY}`,
       `24h ${chg24hPct >= 0 ? '+' : ''}${chg24hPct.toFixed(1)}%`,
       '',
       `Вход: ${fmt(sig.limitPrice)}`,
@@ -170,9 +175,9 @@ function directionalToAlert(
       `TP1: ${fmt(sig.tp1)} (${pct(sig.tp1)})`,
       `TP2: ${fmt(sig.tp)} (${pct(sig.tp)})`,
       ...sig.notes,
-      'v27.6: направление задаёт живой стакан, свечи и 5m/15m подтверждают',
+      'Новая стратегия: 3-snapshot стакан + tape + phase + BTC + sync',
     ].join('\n'),
-    dedupeKey: `cron:mof276:${sig.setup}:${symbol}:${sig.side}:${Math.round(sig.limitPrice * 1e6)}:${Math.floor(Date.now() / 480_000)}`,
+    dedupeKey: `jeweler:burst:${sig.setup}:${symbol}:${sig.side}:${Math.floor(Date.now() / 480_000)}`,
     score: sig.probability,
     winPct: sig.probability,
     style: 'SCALP',
@@ -216,7 +221,7 @@ async function fetchMin1Candles(
   const d = json?.data
   if (!d?.time?.length) return []
   const out: Candle[] = []
-  for (let i = 0; i < d.time.length; i++) {
+  for (let i = Math.max(0, d.time.length - limit); i < d.time.length; i++) {
     out.push([
       Number(d.time[i]) * 1000,
       Number(d.open?.[i] ?? 0),
@@ -227,6 +232,23 @@ async function fetchMin1Candles(
     ])
   }
   return out
+}
+
+function btcStateFromCandles(candles: Candle[]): BtcBurstState {
+  const closed = candles.slice(0, -1)
+  if (closed.length < 3) return 'NEUTRAL'
+  const recent = closed.slice(-3)
+  const first = recent[0]![1]
+  const last = recent[recent.length - 1]![4]
+  const change = first > 0 ? ((last - first) / first) * 100 : 0
+  const short = recent.length >= 2 && recent[recent.length - 2]![4] > 0
+    ? ((last - recent[recent.length - 2]![4]) /
+        recent[recent.length - 2]![4]) *
+      100
+    : 0
+  if (change > 0.3 || short > 0.15) return 'RISK_ON'
+  if (change < -0.3 || short < -0.15) return 'RISK_OFF'
+  return 'NEUTRAL'
 }
 
 export async function runMemeOrderFlowScan(opts: {
@@ -277,6 +299,9 @@ export async function runMemeOrderFlowScan(opts: {
   }
 
   const gates = opts.gates ?? null
+  const btcState = btcStateFromCandles(
+    await fetchMin1Candles('BTC_USDT', 10)
+  )
   const rejects: Array<{ symbol: string; reason: string }> = []
   const candidates: ScanAlert[] = []
   // Directional hunt: liquid heat first. SHORT symbol WR is applied only
@@ -325,7 +350,7 @@ export async function runMemeOrderFlowScan(opts: {
         holdVol,
       }
     }
-    const candles = await fetchMin1Candles(coin.symbol, 60)
+    const candles = await fetchMin1Candles(coin.symbol, 120)
     const peakInspect = inspectPeakStructure({
       price,
       chg24hPct: coin.chg24hPct,
@@ -475,6 +500,10 @@ export async function runMemeOrderFlowScan(opts: {
           crowd,
           forecast: forecastLong,
           event: bookEvent,
+          candles,
+          btcState,
+          tapeBuyPct: evFlow,
+          tapeMoveBps: evMove,
         })
       : null
     if (longSignal) {
@@ -500,6 +529,10 @@ export async function runMemeOrderFlowScan(opts: {
       crowd,
       forecast: forecastShort,
       event: bookEvent,
+      candles,
+      btcState,
+      tapeBuyPct: evFlow,
+      tapeMoveBps: evMove,
     })
     if (!shortSignal) {
       rejects.push({

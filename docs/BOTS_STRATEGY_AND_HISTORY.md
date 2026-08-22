@@ -11,31 +11,32 @@
 |---|---|
 | **Раньше (высокий WR)** | PEAK_FUEL_FAIL v27.1 — peak-only, мягкие пороги, до 5 алертов/тик |
 | **v29–v31 / v32** | CONT / regime / ageGate — то молчание, то не то ядро |
-| **Сейчас мемы (v27.3)** | **PEAK_FUEL_FAIL** + live book на 2–3 prefer+PUMP · crowd score · без фейковой ленты |
+| **Сейчас мемы (v28.0)** | **JEWELER BURST ONLY** · phase + BTC + momentum + sync + 3-snapshot стакан |
 | **Альты** | ALT_JEWEL book forecast L/S |
 
-Мемы: весь Predator на fade без топлива у хая. CONT/PUMP на мем-пути выкл.
+Мемы: Predator принимает только `source:jeweler_burst`; legacy и внешний
+`jeweler_live` не могут отправить торговый сигнал.
 
 ---
 
-## 1. Конвейер мемов (v27.3 PEAK + crowd book)
+## 1. Конвейер мемов (v28.0 Jeweler Burst)
 
 ```
-Hotlist (pumps + prefer coins)              hotMemeWatchlist.ts
+Hotlist (meme movers + prefer coins)        hotMemeWatchlist.ts
     ↓
-скан до 12 имён по 1m свечам
+до 12 имён: 120×1m свечи + phase/tail + BTC context
     ↓
-live 3-snap стакан только на 2–3 prefer+PUMP  orderBookReader.ts
+live 3-snap стакан на 4 лучших структуры      orderBookReader.ts
     ↓ crowd bait / spoof magnet / trapped asks   analyzeCrowdBook
     ↓ toxic (wash/spoof) → skip this tick
-detectPeakFuelFail — stall / wick / failed_break + real fuel
-    (без выдуманного buyFlow=58, если стакана не было)
-    ↓ conf ≥ 70 · chg24 ≥ 4 · dist ≤ 1.8% · crowd ± к score
-PEAK_FUEL_FAIL SHORT → Predator (до 5 / тик)
-выход: TP1→BE→TP2; OBI-flip только 2 тика подряд и не пока MFE растёт
+LONG: accumulation→impulse · SHORT: extension→distribution
+    ↓ BTC veto · momentum/tape · SYNC ≥ 8
+    ↓ ≥2 book evidence + realBook/event
+quality без базового якоря: SILVER 68 · GOLD 75 · PLATINUM 85
+MEME_BOOK_LONG / PEAK_FUEL_FAIL → paper-first → Telegram → журнал
 ```
 
-CONT / PUMP / ageGate / regime — не в бою.  
+Любой meme alert без `source:jeweler_burst` блокируется перед paper/TG.  
 Альты: `eliteAltJewel.ts` на Elite.
 WR монеты: prefer по последним 3 WIN/LOSS; STOCK и дамперы по-прежнему block.
 
