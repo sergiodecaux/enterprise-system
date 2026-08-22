@@ -112,3 +112,43 @@ test('keeps classic memes like PEPE and drops L1/DeFi', () => {
   assert.ok(!list.entries.some((entry) => entry.symbol === 'LDO_USDT'))
   assert.ok(list.entries.some((entry) => entry.symbol === 'MEMEBOX_USDT'))
 })
+
+test('pins volatile 1000PEPE/ZEN/ENS even when rockets dominate', () => {
+  const movers = Array.from({ length: 25 }, (_, index) => ({
+    symbol: `MOVE${index}_USDT`,
+    lastPrice: 1,
+    riseFallRate: (20 + index) / 100,
+    amount24: 2_000_000,
+  }))
+  const core = [
+    {
+      symbol: '1000PEPE_USDT',
+      lastPrice: 0.01,
+      riseFallRate: 0.03,
+      amount24: 800_000,
+    },
+    {
+      symbol: 'ZEN_USDT',
+      lastPrice: 5.6,
+      riseFallRate: 0.08,
+      amount24: 7_700_000,
+    },
+    {
+      symbol: 'ENS_USDT',
+      lastPrice: 5.8,
+      riseFallRate: 0.04,
+      amount24: 5_500_000,
+    },
+  ]
+  const list = buildHotMemeWatchlist([...movers, ...core], {
+    blueChips: new Set(),
+    tradable: new Set([...movers, ...core].map((ticker) => ticker.symbol)),
+    now: Date.UTC(2026, 7, 22, 18),
+  })
+  for (const symbol of ['1000PEPE_USDT', 'ZEN_USDT', 'ENS_USDT']) {
+    assert.ok(
+      list.entries.some((entry) => entry.symbol === symbol),
+      `expected ${symbol} on the watchlist`
+    )
+  }
+})

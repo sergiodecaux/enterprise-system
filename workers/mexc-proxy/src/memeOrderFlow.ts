@@ -7,6 +7,7 @@
 import type { ScanAlert } from './scanner'
 import {
   resolveHotMemeWatchlist,
+  CORE_VOLATILE_MEMES,
   type HotMemeEntry,
   type HotMemeWatchlist,
 } from './hotMemeWatchlist'
@@ -357,6 +358,9 @@ export async function runMemeOrderFlowScan(opts: {
     })
   // Reserve half of every scan for liquid low-movement names. The old ranking
   // was dominated by 24h pumps/dumps, so RANGE logic rarely received candles.
+  const core = ranked.filter((coin) =>
+    (CORE_VOLATILE_MEMES as readonly string[]).includes(coin.symbol)
+  )
   const movers = ranked
     .filter((coin) => Math.abs(coin.chg24hPct) >= 6)
     .slice(0, Math.ceil(MAX_SCAN / 2))
@@ -375,8 +379,8 @@ export async function runMemeOrderFlowScan(opts: {
       return liquidityB + calmB * 0.35 - (liquidityA + calmA * 0.35)
     })
     .slice(0, Math.floor(MAX_SCAN / 2))
-  const batch = [...movers, ...sideways]
-  for (const coin of ranked) {
+  const batch: HotMemeEntry[] = []
+  for (const coin of [...core, ...movers, ...sideways, ...ranked]) {
     if (batch.length >= MAX_SCAN) break
     if (!batch.some((picked) => picked.symbol === coin.symbol)) batch.push(coin)
   }

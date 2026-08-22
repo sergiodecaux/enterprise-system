@@ -47,6 +47,14 @@ export function isEquityTokenSymbol(symbol: string): boolean {
 
 export type DayBias = 'PUMP' | 'DUMP'
 
+/** Always keep these volatile pump names on the list and in the scan batch. */
+export const CORE_VOLATILE_MEMES = [
+  '1000PEPE_USDT',
+  'PEPE_USDT',
+  'ZEN_USDT',
+  'ENS_USDT',
+] as const
+
 export interface HotMemeEntry {
   symbol: string
   displayName: string
@@ -223,10 +231,17 @@ export function buildHotMemeWatchlist(
     now - prev.updatedAt < REFRESH_MS &&
     prev.entries.length > 0
 
+  const pinned = new Set<string>([
+    ...(opts.pinSymbols ?? []),
+    ...CORE_VOLATILE_MEMES,
+  ])
   const blocked = new Set(
-    (opts.blockedSymbols ?? []).filter((s) => !(opts.pinSymbols ?? []).includes(s))
+    (opts.blockedSymbols ?? []).filter((s) => !pinned.has(s))
   )
-  const prefer = new Set(opts.preferSymbols ?? [])
+  const prefer = new Set([
+    ...(opts.preferSymbols ?? []),
+    ...CORE_VOLATILE_MEMES,
+  ])
   const candidates = tickers
     .filter((t) => {
       if (!opts.tradable.has(t.symbol)) return false
@@ -342,7 +357,7 @@ export function buildHotMemeWatchlist(
     }
   }
 
-  for (const sym of opts.pinSymbols ?? []) {
+  for (const sym of pinned) {
     if (bySym.has(sym)) continue
     const t = tickers.find((x) => x.symbol === sym)
     if (!t) continue
@@ -384,7 +399,7 @@ export function buildHotMemeWatchlist(
   }
 
   let entries = reserveSideways([...bySym.values()]
-    .filter((e) => Math.abs(e.chg24hPct) >= MIN_ABS_CHG_PCT || prefer.has(e.symbol))
+    .filter((e) => Math.abs(e.chg24hPct) >= MIN_ABS_CHG_PCT || prefer.has(e.symbol) || pinned.has(e.symbol))
     .map((e) =>
       prefer.has(e.symbol) ? { ...e, score: Number((e.score + 40).toFixed(2)) } : e
     )
