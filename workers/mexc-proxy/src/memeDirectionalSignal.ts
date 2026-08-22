@@ -34,6 +34,7 @@ export interface MemeDirectionalSignal {
 export type BtcBurstState = 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL'
 type MovementPhase =
   | 'ACCUMULATION'
+  | 'RANGE'
   | 'IMPULSE_UP'
   | 'IMPULSE_DOWN'
   | 'EXTENSION_UP'
@@ -141,6 +142,7 @@ export function movementPhase(candles: Candle[]): MovementPhase {
   const low = Math.min(...rangeWindow.map((candle) => candle[3]))
   const range = high - low
   const last = recent[recent.length - 1]![4]
+  const rangeWidthPct = last > 0 ? (range / last) * 100 : 0
   const position = range > 0 ? (last - low) / range : 0.5
   if (Math.abs(move) < 0.35 && volRatio >= 1.15 && position < 0.75) {
     return 'ACCUMULATION'
@@ -151,6 +153,15 @@ export function movementPhase(candles: Candle[]): MovementPhase {
   if (position <= 0.18 && volRatio < 1) return 'EXTENSION_DOWN'
   if (position >= 0.78 && volRatio >= 1.1 && Math.abs(move) < 0.45) {
     return 'DISTRIBUTION'
+  }
+  if (
+    Math.abs(move) < 0.45 &&
+    rangeWidthPct >= 0.6 &&
+    rangeWidthPct <= 8 &&
+    volRatio >= 0.65 &&
+    volRatio <= 1.35
+  ) {
+    return 'RANGE'
   }
   return 'UNKNOWN'
 }
@@ -180,12 +191,23 @@ export function patternTier(patterns: string[]): 'S' | 'A' | 'B' {
         'bullish_engulfing',
         'bearish_engulfing',
         'shooting_star',
+        'range_breakout_up',
+        'range_breakdown',
       ].includes(pattern)
     )
   ) {
     return 'S'
   }
-  if (patterns.some((pattern) => ['hammer', 'higher_low'].includes(pattern))) {
+  if (
+    patterns.some((pattern) =>
+      [
+        'hammer',
+        'higher_low',
+        'range_low_reclaim',
+        'range_high_reject',
+      ].includes(pattern)
+    )
+  ) {
     return 'A'
   }
   return 'B'
@@ -209,6 +231,33 @@ export function inspectMemeCandleDirections(
   const trend15 = tfTrend(c15)
   const vol = volumeExpansion(candles)
   const out: MemeCandleCandidate[] = []
+  const rangeBase = candles.slice(0, -2).slice(-40)
+  const rangeHigh =
+    rangeBase.length >= 20 ? Math.max(...rangeBase.map((c) => c[2])) : 0
+  const rangeLow =
+    rangeBase.length >= 20 ? Math.min(...rangeBase.map((c) => c[3])) : 0
+  const rangeWidthPct =
+    rangeLow > 0 ? ((rangeHigh - rangeLow) / rangeLow) * 100 : 0
+  const rangePosition =
+    last && rangeHigh > rangeLow
+      ? (last[4] - rangeLow) / (rangeHigh - rangeLow)
+      : 0.5
+  const validRange =
+    rangeBase.length >= 20 && rangeWidthPct >= 0.6 && rangeWidthPct <= 8
+  const rangeLowReclaim = Boolean(
+    validRange &&
+      last &&
+      rangePosition <= 0.35 &&
+      last[4] > last[1] &&
+      (hammer(last) || failedBreakdown(candles))
+  )
+  const rangeBreakoutUp = Boolean(
+    validRange &&
+      last &&
+      last[4] > rangeHigh * 1.001 &&
+      last[4] > last[1] &&
+      vol
+  )
 
   const bullPatterns: string[] = []
   if (bullishEngulfing(prev, last)) bullPatterns.push('bullish_engulfing')
@@ -220,6 +269,8 @@ export function inspectMemeCandleDirections(
   if (vol) bullPatterns.push('volume_expansion')
   if (trend5 === 'UP') bullPatterns.push('5m_up')
   if (trend15 === 'UP') bullPatterns.push('15m_up')
+  if (rangeLowReclaim) bullPatterns.push('range_low_reclaim')
+  if (rangeBreakoutUp) bullPatterns.push('range_breakout_up')
 
   const strongBullPattern = bullPatterns.some((p) =>
     ['bullish_engulfing', 'hammer', 'failed_breakdown', 'morning_star'].includes(p)
@@ -228,7 +279,9 @@ export function inspectMemeCandleDirections(
     stillMakingHH(candles, 6) && higherLow(candles) && vol && trend5 === 'UP'
   if (
     (strongBullPattern && trend15 !== 'DOWN') ||
-    (continuation && chg24hPct >= 2 && chg24hPct <= 35)
+    (continuation && chg24hPct >= 2 && chg24hPct <= 35) ||
+    rangeLowReclaim ||
+    rangeBreakoutUp
   ) {
     let score = 52
     if (strongBullPattern) score += 7
@@ -236,6 +289,8 @@ export function inspectMemeCandleDirections(
     if (trend15 === 'UP') score += 4
     if (vol) score += 3
     if (higherLow(candles)) score += 2
+    if (rangeLowReclaim) score += 5
+    if (rangeBreakoutUp) score += 7
     out.push({
       side: 'LONG',
       score: Math.min(72, score),
@@ -256,20 +311,46 @@ export function inspectMemeCandleDirections(
       last[4] < last[1] &&
       last[4] <= prev[1] * 1.0005
   )
+  const rangeHighReject = Boolean(
+    validRange &&
+      last &&
+      rangePosition >= 0.65 &&
+      last[4] < last[1] &&
+      (shooting || engulf)
+  )
+  const rangeBreakdown = Boolean(
+    validRange &&
+      last &&
+      last[4] < rangeLow * 0.999 &&
+      last[4] < last[1] &&
+      vol
+  )
   if (shooting) shortPatterns.push('shooting_star')
   if (engulf) shortPatterns.push('bearish_engulfing')
   if (trend5 === 'DOWN') shortPatterns.push('5m_down')
   if (trend15 === 'DOWN') shortPatterns.push('15m_down')
   if (vol) shortPatterns.push('volume_expansion')
+  if (rangeHighReject) shortPatterns.push('range_high_reject')
+  if (rangeBreakdown) shortPatterns.push('range_breakdown')
   if (
-    !stillMakingHH(candles, 6) &&
-    (shooting || engulf) &&
-    chg24hPct >= 4 &&
-    trend15 !== 'UP'
+    (!stillMakingHH(candles, 6) &&
+      (shooting || engulf) &&
+      chg24hPct >= 4 &&
+      trend15 !== 'UP') ||
+    rangeHighReject ||
+    rangeBreakdown
   ) {
     out.push({
       side: 'SHORT',
-      score: Math.min(72, 57 + (shooting ? 5 : 0) + (engulf ? 6 : 0) + (vol ? 3 : 0)),
+      score: Math.min(
+        76,
+        57 +
+          (shooting ? 5 : 0) +
+          (engulf ? 6 : 0) +
+          (vol ? 3 : 0) +
+          (rangeHighReject ? 5 : 0) +
+          (rangeBreakdown ? 7 : 0)
+      ),
       htfAligned: trend15 !== 'UP',
       patterns: shortPatterns,
     })
@@ -337,14 +418,28 @@ export function detectMemeDirectionalSignal(opts: {
   if (
     side === 'LONG' &&
     phase !== 'ACCUMULATION' &&
-    phase !== 'IMPULSE_UP'
+    phase !== 'IMPULSE_UP' &&
+    !(
+      phase === 'RANGE' &&
+      (candidate.patterns.includes('range_low_reclaim') ||
+        candidate.patterns.includes('range_breakout_up'))
+    )
   ) {
     return null
   }
   if (
     side === 'SHORT' &&
     phase !== 'EXTENSION_UP' &&
-    phase !== 'DISTRIBUTION'
+    phase !== 'DISTRIBUTION' &&
+    !(
+      phase === 'RANGE' &&
+      (candidate.patterns.includes('range_high_reject') ||
+        candidate.patterns.includes('range_breakdown'))
+    ) &&
+    !(
+      phase === 'IMPULSE_DOWN' &&
+      candidate.patterns.includes('range_breakdown')
+    )
   ) {
     return null
   }
@@ -388,6 +483,7 @@ export function detectMemeDirectionalSignal(opts: {
     (side === 'LONG' ? tapeMoveBps >= 2 : tapeMoveBps <= -2)
   const syncScore = alignedEvent && (flowAligned || moveAligned) ? 15 : alignedEvent || (flowAligned && moveAligned) ? 8 : 0
   if (syncScore < 8) return null
+  if (phase === 'RANGE' && (syncScore < 15 || !alignedBias)) return null
 
   // At least two independent book confirmations. Static wall alone is not enough.
   const bookEvidence = [
@@ -412,6 +508,12 @@ export function detectMemeDirectionalSignal(opts: {
   probability += phase === 'IMPULSE_UP' || phase === 'DISTRIBUTION' ? 7 : 5
   if (flowAligned && moveAligned) probability += 5
   if (btcState === 'NEUTRAL') probability += 4
+  const directionScore =
+    (alignedBias ? 25 : 0) +
+    (alignedEvent ? 25 : 0) +
+    (flowAligned ? 20 : 0) +
+    (moveAligned ? 15 : 0) +
+    (wallAligned ? 15 : 0)
   probability = Math.min(100, Math.round(probability))
   if (tier === 'B' && probability < 72) return null
   if (probability < MIN_SIGNAL_PROBABILITY) return null
@@ -443,6 +545,7 @@ export function detectMemeDirectionalSignal(opts: {
     notes: [
       `Jeweler ${quality} · quality score ${probability}/100 · sync ${syncScore}`,
       `фаза ${phase} · BTC ${btcState} · momentum ${flowAligned && moveAligned ? 'BUILDING' : 'MIXED'}`,
+      `направление ${side}: ${directionScore}/100 по forecast+event+tape+walls`,
       `стакан ${forecast.bias} · score ${forecast.score}/100 · OBI ${obi >= 0 ? '+' : ''}${obi.toFixed(0)}%`,
       `bids/asks USD ${ratio.toFixed(2)} · book evidence ${bookEvidence}/5`,
       `свечи tier ${tier}: ${candidate.patterns.slice(0, 5).join(', ')}`,
@@ -457,6 +560,7 @@ export function detectMemeDirectionalSignal(opts: {
       `phase:${phase}`,
       `btc:${btcState}`,
       `momentum:${flowAligned && moveAligned ? 'BUILDING' : 'MIXED'}`,
+      `direction_score:${directionScore}`,
       `volatility:${volatility}`,
       `pattern_tier:${tier}`,
       `book_score:${forecast.score}`,

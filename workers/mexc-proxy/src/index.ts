@@ -1331,8 +1331,10 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Обновление v28.0:</b>`,
+      `<b>Обновление v28.1:</b>`,
       '• Только Jeweler Burst; legacy и внешний Jeweler Live отключены',
+      '• Ищет не только PEAK: RANGE low/high reclaim и пробои границ с объёмом',
+      '• Направление LONG/SHORT рассчитывает по forecast + event + tape + walls',
       '• LONG/SHORT: phase + BTC + momentum + свечи, затем 3 снимка стакана',
       '• SHORT veto: bid wall · OBI ≥10% · bid/ask ≥1.55 · forecast NEXT_UP',
       '• LONG veto: ask wall · OBI ≤−10% · bid/ask ≤0.65 · forecast NEXT_DOWN',
@@ -2095,6 +2097,8 @@ async function maybeAnnounceEngine(env: Env): Promise<void> {
   if (botLane(env) !== 'elite') {
     await announceEngineToChannel(env, 'meme', BOT_ENGINE, [
       '• Только Jeweler Burst; старые MEME и внешний live-ingress отключены.',
+      '• Ищет PEAK и RANGE: отбой от границы или подтверждённый пробой.',
+      '• Направление выбирается по forecast + event + tape + walls.',
       '• LONG/SHORT: phase + BTC + momentum + свечи, затем 3 снимка стакана.',
       '• SHORT запрещён против bid wall, OBI ≥10%, bid/ask ≥1.55 или NEXT_UP.',
       '• LONG запрещён против ask wall, OBI ≤−10%, bid/ask ≤0.65 или NEXT_DOWN.',
@@ -3607,7 +3611,7 @@ async function dispatchCommand(
     const welcome =
       channel === 'sniper'
         ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · как Mini App «Сигналы»: зоны, SMC, confluence.\nВход в TG только когда сетап <b>READY</b>.\nПрокси: <code>mexc-proxy-f</code> (Money bot 7).\nМемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
-        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nТолько Jeweler Burst · LONG/SHORT · phase+BTC+momentum+sync+3-snapshot стакан · quality от 68 · paper-first.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
+        : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nJeweler Burst · PEAK + RANGE · направление по forecast/event/tape/walls · phase+BTC+sync+3-snapshot стакан · quality от 68 · paper-first.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
       await tgSend(

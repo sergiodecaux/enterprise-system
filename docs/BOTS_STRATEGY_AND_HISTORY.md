@@ -11,7 +11,7 @@
 |---|---|
 | **Раньше (высокий WR)** | PEAK_FUEL_FAIL v27.1 — peak-only, мягкие пороги, до 5 алертов/тик |
 | **v29–v31 / v32** | CONT / regime / ageGate — то молчание, то не то ядро |
-| **Сейчас мемы (v28.0)** | **JEWELER BURST ONLY** · phase + BTC + momentum + sync + 3-snapshot стакан |
+| **Сейчас мемы (v28.1)** | **JEWELER BURST** · PEAK + RANGE · направление по forecast/event/tape/walls |
 | **Альты** | ALT_JEWEL book forecast L/S |
 
 Мемы: Predator принимает только `source:jeweler_burst`; legacy и внешний
@@ -19,7 +19,7 @@
 
 ---
 
-## 1. Конвейер мемов (v28.0 Jeweler Burst)
+## 1. Конвейер мемов (v28.1 Jeweler Burst)
 
 ```
 Hotlist (meme movers + prefer coins)        hotMemeWatchlist.ts
@@ -29,7 +29,9 @@ Hotlist (meme movers + prefer coins)        hotMemeWatchlist.ts
 live 3-snap стакан на 4 лучших структуры      orderBookReader.ts
     ↓ crowd bait / spoof magnet / trapped asks   analyzeCrowdBook
     ↓ toxic (wash/spoof) → skip this tick
-LONG: accumulation→impulse · SHORT: extension→distribution
+PEAK: LONG accumulation→impulse · SHORT extension→distribution
+RANGE: low reclaim / high reject / breakout / breakdown
+    ↓ сравнить LONG и SHORT direction score (forecast+event+tape+walls)
     ↓ BTC veto · momentum/tape · SYNC ≥ 8
     ↓ ≥2 book evidence + realBook/event
 quality без базового якоря: SILVER 68 · GOLD 75 · PLATINUM 85

@@ -506,80 +506,75 @@ export async function runMemeOrderFlowScan(opts: {
           tapeMoveBps: evMove,
         })
       : null
-    if (longSignal) {
-      candidates.push(directionalToAlert(coin.symbol, longSignal, coin.chg24hPct))
-      continue
-    }
-
-    const hasShortCandidate = directions.some(
-      (candidate) => candidate.side === 'SHORT'
-    )
-    if (!hasShortCandidate) {
-      rejects.push({ symbol: coin.symbol, reason: 'book_rejected_long' })
-      continue
-    }
 
     const shortCandidate = directions
       .filter((candidate) => candidate.side === 'SHORT')
-      .sort((a, b) => b.score - a.score)[0]!
-    const shortSignal = detectMemeDirectionalSignal({
-      candidate: shortCandidate,
-      price,
-      snapshot,
-      crowd,
-      forecast: forecastShort,
-      event: bookEvent,
-      candles,
-      btcState,
-      tapeBuyPct: evFlow,
-      tapeMoveBps: evMove,
-    })
-    if (!shortSignal) {
+      .sort((a, b) => b.score - a.score)[0]
+    const shortSignal = shortCandidate
+      ? detectMemeDirectionalSignal({
+          candidate: shortCandidate,
+          price,
+          snapshot,
+          crowd,
+          forecast: forecastShort,
+          event: bookEvent,
+          candles,
+          btcState,
+          tapeBuyPct: evFlow,
+          tapeMoveBps: evMove,
+        })
+      : null
+    const chosen = [longSignal, shortSignal]
+      .filter((signal): signal is MemeDirectionalSignal => signal != null)
+      .sort((a, b) => b.probability - a.probability)[0]
+    if (!chosen) {
       rejects.push({
         symbol: coin.symbol,
         reason: toxicBook
-          ? `short_book_toxic:${evKind || 'forecast'}`
-          : 'short_probability_or_book_below_gate',
+          ? `book_toxic:${evKind || 'forecast'}`
+          : 'jeweler_direction_not_confirmed',
       })
       continue
     }
 
     const gate = allowPeakSymbol(gates, coin.symbol)
-    if (!gate.ok) {
-      rejects.push({
-        symbol: coin.symbol,
-        reason: gate.reason || 'symbol_wr_block',
-      })
-      continue
-    }
-    const track = peakCoinTrack(gates, coin.symbol)
-    if (
-      (track.kind === 'thin' || track.kind === 'new') &&
-      shortSignal.probability < 72
-    ) {
-      rejects.push({
-        symbol: coin.symbol,
-        reason: `symbol_${track.kind}_needs_72:${track.wrLine}`,
-      })
-      continue
-    }
-    const alert = directionalToAlert(
-      coin.symbol,
-      shortSignal,
-      coin.chg24hPct
-    )
-    if (gate.action === 'prefer') {
-      alert.score = Math.min(99, alert.score + 4)
-    }
-    if (gates) {
-      const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
-      if (hist.n >= 8 && hist.wr < 28) {
+    if (chosen.side === 'SHORT') {
+      if (!gate.ok) {
         rejects.push({
           symbol: coin.symbol,
-          reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
+          reason: gate.reason || 'symbol_wr_block',
         })
         continue
       }
+      const track = peakCoinTrack(gates, coin.symbol)
+      if (
+        (track.kind === 'thin' || track.kind === 'new') &&
+        chosen.probability < 72
+      ) {
+        rejects.push({
+          symbol: coin.symbol,
+          reason: `symbol_${track.kind}_needs_72:${track.wrLine}`,
+        })
+        continue
+      }
+      if (gates) {
+        const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
+        if (hist.n >= 8 && hist.wr < 28) {
+          rejects.push({
+            symbol: coin.symbol,
+            reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
+          })
+          continue
+        }
+      }
+    }
+    const alert = directionalToAlert(
+      coin.symbol,
+      chosen,
+      coin.chg24hPct
+    )
+    if (chosen.side === 'SHORT' && gate.action === 'prefer') {
+      alert.score = Math.min(99, alert.score + 4)
     }
     candidates.push(alert)
   }

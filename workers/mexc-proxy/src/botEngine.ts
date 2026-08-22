@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'jeweler-burst-v28.0',
-  label: 'MEME: JEWELER BURST ONLY',
+  id: 'jeweler-burst-v28.1',
+  label: 'MEME: JEWELER BURST · PEAK + RANGE',
   deployedNote:
-    'v28.0: только Jeweler Burst LONG/SHORT · phase + BTC + momentum + sync · 3-snapshot стакан · quality ≥68 без базового якоря · paper-first · failover A/B/C.',
+    'v28.1: Jeweler Burst ищет PEAK и RANGE · направление считает по forecast+event+tape+walls · phase/BTC/sync · quality ≥68 · paper-first · failover A/B/C.',
 } as const
 
 /**
