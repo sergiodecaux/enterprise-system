@@ -11,7 +11,7 @@
 |---|---|
 | **Раньше (высокий WR)** | PEAK_FUEL_FAIL v27.1 — peak-only, мягкие пороги, до 5 алертов/тик |
 | **v29–v31 / v32** | CONT / regime / ageGate — то молчание, то не то ядро |
-| **Сейчас мемы (v28.2)** | **JEWELER BURST** · 6 movers + 6 sideways · book-driven RANGE direction |
+| **Сейчас мемы (v28.3)** | **JEWELER BURST** · sticky sideways · RANGE nominates both sides · book picks direction |
 | **Альты** | ALT_JEWEL book forecast L/S |
 
 Мемы: Predator принимает только `source:jeweler_burst`; legacy и внешний
@@ -19,21 +19,21 @@
 
 ---
 
-## 1. Конвейер мемов (v28.2 Jeweler Burst)
+## 1. Конвейер мемов (v28.3 Jeweler Burst)
 
 ```
 Hotlist: 6 movers + 6 liquid sideways       hotMemeWatchlist.ts
-    ↓
+    ↓ sticky keep: rockets |chg|≥4 OR liquid |chg|<6
 до 12 имён: 120×1m свечи + phase/tail + BTC context
     ↓
-live 3-snap стакан на 4 лучших структуры      orderBookReader.ts
+live 3-snap стакан на 6 лучших (3 слота RANGE)   orderBookReader.ts
     ↓ crowd bait / spoof magnet / trapped asks   analyzeCrowdBook
     ↓ toxic (wash/spoof) → skip this tick
 PEAK: LONG accumulation→impulse · SHORT extension→distribution
-RANGE: low reclaim / high reject / breakout / breakdown
-RANGE middle: оба направления номинируются, стакан выбирает сторону
-    (только sync 15 + aligned forecast + direction score ≥75)
-    ↓ сравнить LONG и SHORT direction score (forecast+event+tape+walls)
+RANGE: коробка номинирует LONG и SHORT без hammer/shooting
+RANGE low/high: reclaim/reject при sync ≥8 + aligned forecast
+RANGE middle: стакан выбирает сторону (sync 15 + direction score ≥75)
+    ↓ если оба прошли — зазор quality ≥4, иначе skip
     ↓ BTC veto · momentum/tape · SYNC ≥ 8
     ↓ ≥2 book evidence + realBook/event
 quality без базового якоря: SILVER 68 · GOLD 75 · PLATINUM 85

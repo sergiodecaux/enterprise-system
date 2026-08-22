@@ -17,10 +17,12 @@ const MAX_CALM = 10
 const MAX_PREMOVE = 10
 /** Dump lane for DUMP_CONTINUATION SHORT / balance */
 const MAX_DUMPS = 10
+/** Guaranteed source pool for candle-confirmed RANGE setups. */
+const MAX_SIDEWAYS = 10
 const MAX_TOTAL = 30
 /** Force full rebuild if sticky list collapses (was stuck at 1 coin → no signals) */
 const MIN_HEALTHY_LIST = 10
-const MIN_ABS_CHG_PCT = 2
+const MIN_ABS_CHG_PCT = 0.5
 /** Rockets: was 100k — thin names (LONGXIA…) SL'd; need tradeable depth */
 const MIN_QUOTE_VOL = 100_000
 /** Calm lane: more liquid, milder 24h — slower path to TP */
@@ -32,6 +34,8 @@ const CALM_CHG_MAX = 35
 const PREMOVE_VOL_MIN = 200_000
 const PREMOVE_CHG_MAX = 14
 const PREMOVE_CHG_MIN = 1.5
+const SIDEWAYS_VOL_MIN = 250_000
+const SIDEWAYS_CHG_MAX = 6
 
 /**
  * Equity-token perps (CRWVSTOCK, WDAYSTOCK, BSPSTOCK…).
@@ -118,6 +122,49 @@ function heatScore(chgAbs: number, vol: number): number {
     calmScore(chgAbs, vol),
     premoveScore(chgAbs, vol)
   )
+}
+
+function isSidewaysEntry(entry: HotMemeEntry): boolean {
+  const chgAbs = Math.abs(entry.chg24hPct)
+  return (
+    chgAbs >= MIN_ABS_CHG_PCT &&
+    chgAbs < SIDEWAYS_CHG_MAX &&
+    entry.quoteVolUsd >= SIDEWAYS_VOL_MIN
+  )
+}
+
+/** Sticky keep: rockets stay hot, RANGE names stay if still liquid and quiet. */
+function stillWatchable(chgPct: number, vol: number): boolean {
+  const chgAbs = Math.abs(chgPct)
+  if (chgAbs < MIN_ABS_CHG_PCT || vol < MIN_QUOTE_VOL * 0.5) return false
+  if (chgAbs >= 4) return true
+  return chgAbs < SIDEWAYS_CHG_MAX && vol >= SIDEWAYS_VOL_MIN
+}
+
+function sidewaysScore(entry: HotMemeEntry): number {
+  const liquidity = Math.log10(Math.max(entry.quoteVolUsd, 10_000))
+  const calm = SIDEWAYS_CHG_MAX - Math.abs(entry.chg24hPct)
+  return liquidity + calm * 0.35
+}
+
+/** Keep RANGE names from being displaced by 24h rockets in the 30-slot list. */
+function reserveSideways(
+  entries: HotMemeEntry[],
+  prefer: Set<string>
+): HotMemeEntry[] {
+  const sideways = entries
+    .filter(isSidewaysEntry)
+    .sort((a, b) => {
+      const prefA = prefer.has(a.symbol) ? 1 : 0
+      const prefB = prefer.has(b.symbol) ? 1 : 0
+      return prefB - prefA || sidewaysScore(b) - sidewaysScore(a)
+    })
+    .slice(0, MAX_SIDEWAYS)
+  const sideSymbols = new Set(sideways.map((entry) => entry.symbol))
+  const directional = entries
+    .filter((entry) => !sideSymbols.has(entry.symbol))
+    .slice(0, MAX_TOTAL - sideways.length)
+  return [...directional, ...sideways]
 }
 
 export async function loadHotMemeWatchlist(
@@ -251,10 +298,15 @@ export function buildHotMemeWatchlist(
         Math.max(e.score, premoveScore(Math.abs(e.chg24hPct), e.quoteVolUsd)).toFixed(2)
       ),
     }))
+  const sideways = [...candidates]
+    .filter(isSidewaysEntry)
+    .sort((a, b) => sidewaysScore(b) - sidewaysScore(a))
+    .slice(0, MAX_SIDEWAYS)
 
-  // Premoves first (early), then rockets/calm — avoid living only in 24h tails
+  // Premoves first (early), then rockets/calm + an explicit RANGE pool.
   const bySym = new Map<string, HotMemeEntry>()
   for (const e of premoves) bySym.set(e.symbol, e)
+  for (const e of sideways) bySym.set(e.symbol, e)
   for (const e of rockets) {
     if (!bySym.has(e.symbol)) bySym.set(e.symbol, e)
   }
@@ -267,7 +319,7 @@ export function buildHotMemeWatchlist(
     .slice(0, MAX_DUMPS)
   for (const e of dumps) bySym.set(e.symbol, e)
 
-  // Sticky: keep prior watchlist names if still hot enough (|chg|≥4) today.
+  // Sticky: keep prior names if still a rocket or a liquid sideways box.
   if (prev?.dayKey === key) {
     for (const old of prev.entries) {
       if (bySym.has(old.symbol)) continue
@@ -276,7 +328,7 @@ export function buildHotMemeWatchlist(
       if (!t) continue
       const chg = Number(t.riseFallRate ?? 0) * 100
       const vol = quoteVol(t)
-      if (Math.abs(chg) < 4 || vol < MIN_QUOTE_VOL * 0.5) continue
+      if (!stillWatchable(chg, vol)) continue
       bySym.set(old.symbol, {
         symbol: old.symbol,
         displayName: old.displayName,
@@ -316,8 +368,7 @@ export function buildHotMemeWatchlist(
     const vol = quoteVol(t)
     const price = Number(t.lastPrice ?? 0)
     if (!(price > 0) || price > 250) continue
-    if (vol < MIN_QUOTE_VOL * 0.5) continue
-    if (Math.abs(chg) < 1.5) continue
+    if (!stillWatchable(chg, vol)) continue
     bySym.set(sym, {
       symbol: sym,
       displayName: sym.replace('_USDT', '/USDT'),
@@ -331,7 +382,7 @@ export function buildHotMemeWatchlist(
     })
   }
 
-  let entries = [...bySym.values()]
+  let entries = reserveSideways([...bySym.values()]
     .filter((e) => Math.abs(e.chg24hPct) >= MIN_ABS_CHG_PCT || prefer.has(e.symbol))
     .map((e) =>
       prefer.has(e.symbol) ? { ...e, score: Number((e.score + 40).toFixed(2)) } : e
@@ -342,8 +393,7 @@ export function buildHotMemeWatchlist(
       const pumpA = a.dayBias === 'PUMP' ? 1 : 0
       const pumpB = b.dayBias === 'PUMP' ? 1 : 0
       return prefB - prefA || b.score - a.score || pumpB - pumpA
-    })
-    .slice(0, MAX_TOTAL)
+    }), prefer)
 
   if (freshEnough && prev) {
     // Soft refresh: keep previous order for symbols still present; only replace drops.
@@ -351,7 +401,7 @@ export function buildHotMemeWatchlist(
       .map((e) => bySym.get(e.symbol))
       .filter(
         (e): e is HotMemeEntry =>
-          Boolean(e) && Math.abs(e!.chg24hPct) >= 4
+          Boolean(e) && (Math.abs(e.chg24hPct) >= 4 || isSidewaysEntry(e))
       )
     // Collapsed sticky → full rebuild. Never return empty if candidates exist.
     if (keep.length < MIN_HEALTHY_LIST) {
@@ -373,7 +423,7 @@ export function buildHotMemeWatchlist(
     const extras = entries.filter(
       (e) => !keep.some((k) => k.symbol === e.symbol)
     )
-    const merged = [...keep, ...extras].slice(0, MAX_TOTAL)
+    const merged = reserveSideways([...keep, ...extras], prefer)
     entries = [
       ...merged.filter((e) => prefer.has(e.symbol)),
       ...merged.filter((e) => !prefer.has(e.symbol)),

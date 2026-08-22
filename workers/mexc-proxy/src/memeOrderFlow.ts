@@ -1,7 +1,7 @@
 /**
- * Jeweler Burst v28.2 — PEAK + dedicated RANGE universe.
+ * Jeweler Burst v28.3 — PEAK + first-class RANGE universe.
  *
- * Candles + HTF first, then live book only on structured peaks.
+ * Candles nominate the box; live book/tape choose LONG vs SHORT.
  * Never SHORT into bid walls / bid-heavy OBI.
  */
 
@@ -29,6 +29,7 @@ import {
   type Candle,
 } from './peakFuelFail'
 import {
+  chooseConfirmedDirection,
   detectMemeDirectionalSignal,
   inspectMemeCandleDirections,
   type BtcBurstState,
@@ -40,11 +41,12 @@ const MEXC = 'https://contract.mexc.com'
 const BOOK_STATE_KEY = 'scanner:meme_order_flow_v27'
 /** Cover full hotlist — peak hunt needs breadth */
 const MAX_SCAN = 12
-/** Live 3-snap only after candle/HTF structure already passed */
-const LIVE_BOOK = 4
+/** Live 3-snap after candles nominate PEAK or RANGE structure */
+const LIVE_BOOK = 6
 /** More alerts per tick — was missing live peaks */
 const MAX_ALERTS = 5
 const MIN_SIGNAL_PROBABILITY = 68
+const RANGE_LIVE_SLOTS = 3
 const PEAK_ONLY = false
 
 const BLUE_CHIPS = new Set([
@@ -416,7 +418,7 @@ export async function runMemeOrderFlowScan(opts: {
       direction.patterns.some((pattern) => pattern.startsWith('range_'))
     )
   )
-  for (const row of rangeStructured.slice(0, 2)) {
+  for (const row of rangeStructured.slice(0, RANGE_LIVE_SLOTS)) {
     liveBook.add(row.coin.symbol)
   }
   for (const r of bookRanked) {
@@ -556,15 +558,14 @@ export async function runMemeOrderFlowScan(opts: {
           tapeMoveBps: evMove,
         })
       : null
-    const chosen = [longSignal, shortSignal]
-      .filter((signal): signal is MemeDirectionalSignal => signal != null)
-      .sort((a, b) => b.probability - a.probability)[0]
+    const chosenPick = chooseConfirmedDirection(longSignal, shortSignal)
+    const chosen = chosenPick.pick
     if (!chosen) {
       rejects.push({
         symbol: coin.symbol,
         reason: toxicBook
           ? `book_toxic:${evKind || 'forecast'}`
-          : 'jeweler_direction_not_confirmed',
+          : chosenPick.reason || 'jeweler_direction_not_confirmed',
       })
       continue
     }

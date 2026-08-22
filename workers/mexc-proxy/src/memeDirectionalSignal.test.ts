@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  chooseConfirmedDirection,
+  detectMemeDirectionalSignal,
   inspectMemeCandleDirections,
   movementPhase,
   patternTier,
   tailBlocked,
+  type MemeDirectionalSignal,
 } from './memeDirectionalSignal'
+import type { MemeBookForecast } from './memeBookForecast'
+import type {
+  CrowdBookMetrics,
+  OrderBookEvent,
+  OrderBookSnapshot,
+} from './orderBookReader'
 import type { Candle } from './peakFuelFail'
 
 function candle(
@@ -116,4 +125,170 @@ test('assigns candlestick pattern tiers', () => {
   assert.equal(patternTier(['failed_breakdown']), 'S')
   assert.equal(patternTier(['higher_low']), 'A')
   assert.equal(patternTier(['volume_expansion']), 'B')
+})
+
+function rangeBox(count = 46): Candle[] {
+  const candles: Candle[] = []
+  for (let index = 0; index < count; index++) {
+    const quiet = index >= count - 6
+    const open = quiet ? 1.008 : index % 2 === 0 ? 1.004 : 1.012
+    const close = quiet ? 1.008 : index % 2 === 0 ? 1.012 : 1.004
+    candles.push(candle(index, open, close, 100, 0.004, 0.004))
+  }
+  return candles
+}
+
+test('classifies a mild 0.55% drift with flat volume as range', () => {
+  const candles: Candle[] = []
+  for (let index = 0; index < 46; index++) {
+    const drifting = index >= 40
+    const open = drifting ? 1.004 + (index - 40) * 0.0011 : index % 2 === 0 ? 1.004 : 1.016
+    const close = drifting ? open + 0.0008 : index % 2 === 0 ? 1.016 : 1.004
+    candles.push(candle(index, open, close, 100, 0.004, 0.004))
+  }
+  assert.equal(movementPhase(candles), 'RANGE')
+})
+
+test('nominates a long at range low without a hammer', () => {
+  const candles = rangeBox(42)
+  candles.push(candle(42, 1.005, 1.003, 100, 0.001, 0.001))
+  candles.push(candle(43, 1.002, 1.005, 100, 0.001, 0.001))
+  const long = inspectMemeCandleDirections(candles, 1).find(
+    (candidate) => candidate.side === 'LONG'
+  )
+  assert.ok(long)
+  assert.ok(long.patterns.includes('range_low_reclaim'))
+})
+
+function longBook() {
+  const snapshot: OrderBookSnapshot = {
+    symbol: 'BOX_USDT',
+    at: 1,
+    mid: 1,
+    asks: [[1.01, 1]],
+    bids: [[0.99, 2]],
+    obi: 12,
+  }
+  const crowd: CrowdBookMetrics = {
+    crowdAskLevels: 0,
+    crowdAskUsd: 0,
+    realAskUsd: 800,
+    crowdAskShare: 0,
+    shortBaitAsks: false,
+    bidSupportUsd: 1800,
+    largeAskWall: false,
+    largeBidWall: true,
+    spoofAskWall: false,
+    spoofBidWall: false,
+    maxBidUsd: 800,
+    maxAskUsd: 400,
+    bidAskUsdRatio: 1.4,
+    stackedBidWalls: 1,
+    stackedAskWalls: 0,
+    nearBidUsd: 1400,
+    nearAskUsd: 1000,
+  }
+  const event: OrderBookEvent = {
+    ready: true,
+    side: 'LONG',
+    confidence: 80,
+    kind: 'BID_WALL_SUPPORT',
+    entryMode: 'LIMIT_CHASE',
+    wallPrice: 0.99,
+    wallDropPct: 0,
+    wallMultiple: 1,
+    flowSharePct: 60,
+    obi: 12,
+    obiChange: 4,
+    priceMoveBps: 5,
+    spreadBps: 8,
+    relocated: false,
+    wallPersisted: true,
+    trap: false,
+    slPrice: null,
+    tpPrice: null,
+    tp1Price: null,
+    notes: [],
+  }
+  const forecast: MemeBookForecast = {
+    score: 70,
+    realBook: true,
+    strongTape: true,
+    toxic: false,
+    obiAligned: true,
+    bias: 'NEXT_UP',
+    reasons: ['test'],
+  }
+  return { snapshot, crowd, event, forecast }
+}
+
+test('RANGE low reclaim confirms with sync 8 and aligned forecast', () => {
+  const candles = rangeBox()
+  const book = longBook()
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'LONG',
+      score: 60,
+      htfAligned: true,
+      patterns: ['range_low_reclaim'],
+    },
+    price: 1,
+    snapshot: book.snapshot,
+    crowd: book.crowd,
+    forecast: book.forecast,
+    event: book.event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 50,
+    tapeMoveBps: 0,
+  })
+  assert.ok(signal)
+  assert.equal(signal.side, 'LONG')
+  assert.ok(signal.probability >= 68)
+})
+
+test('RANGE mid-range forecast still needs sync 15', () => {
+  const candles = rangeBox()
+  const book = longBook()
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'LONG',
+      score: 54,
+      htfAligned: true,
+      patterns: ['range_book_forecast_long'],
+    },
+    price: 1,
+    snapshot: book.snapshot,
+    crowd: book.crowd,
+    forecast: book.forecast,
+    event: book.event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 50,
+    tapeMoveBps: 0,
+  })
+  assert.equal(signal, null)
+})
+
+function stubSignal(side: 'LONG' | 'SHORT', probability: number): MemeDirectionalSignal {
+  return {
+    side,
+    setup: side === 'LONG' ? 'MEME_BOOK_LONG' : 'PEAK_FUEL_FAIL',
+    probability,
+    limitPrice: 1,
+    sl: 0.99,
+    tp1: 1.01,
+    tp: 1.015,
+    target3: 1.015,
+    notes: [],
+    journalReasons: [],
+  }
+}
+
+test('drops a RANGE flip-flop when LONG and SHORT scores are tied', () => {
+  const tied = chooseConfirmedDirection(stubSignal('LONG', 72), stubSignal('SHORT', 73))
+  assert.equal(tied.pick, null)
+  assert.equal(tied.reason, 'range_direction_ambiguous')
+  const winner = chooseConfirmedDirection(stubSignal('LONG', 80), stubSignal('SHORT', 73))
+  assert.equal(winner.pick?.side, 'LONG')
 })

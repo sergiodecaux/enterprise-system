@@ -43,6 +43,13 @@ type MovementPhase =
   | 'UNKNOWN'
 
 const MIN_SIGNAL_PROBABILITY = 68
+const MIN_DIRECTION_GAP = 4
+const RANGE_BOUNDARY_PATTERNS = [
+  'range_low_reclaim',
+  'range_high_reject',
+  'range_breakout_up',
+  'range_breakdown',
+] as const
 
 function body(c: Candle): number {
   return Math.abs(c[4] - c[1])
@@ -155,11 +162,11 @@ export function movementPhase(candles: Candle[]): MovementPhase {
     return 'DISTRIBUTION'
   }
   if (
-    Math.abs(move) < 0.45 &&
+    Math.abs(move) < 0.7 &&
     rangeWidthPct >= 0.6 &&
     rangeWidthPct <= 8 &&
-    volRatio >= 0.65 &&
-    volRatio <= 1.35
+    volRatio >= 0.5 &&
+    volRatio <= 1.6
   ) {
     return 'RANGE'
   }
@@ -215,7 +222,7 @@ export function patternTier(patterns: string[]): 'S' | 'A' | 'B' {
 
 /**
  * Cheap candle nomination before spending the live-book request budget.
- * Returns both sides only when each has genuine structure.
+ * Inside a bounded RANGE both sides are nominated; the book picks direction.
  */
 export function inspectMemeCandleDirections(
   candles: Candle[],
@@ -244,12 +251,9 @@ export function inspectMemeCandleDirections(
       : 0.5
   const validRange =
     rangeBase.length >= 20 && rangeWidthPct >= 0.6 && rangeWidthPct <= 8
+  const boxed = validRange || movementPhase(candles) === 'RANGE'
   const rangeLowReclaim = Boolean(
-    validRange &&
-      last &&
-      rangePosition <= 0.35 &&
-      last[4] > last[1] &&
-      (hammer(last) || failedBreakdown(candles))
+    validRange && last && rangePosition <= 0.35 && last[4] > last[1]
   )
   const rangeBreakoutUp = Boolean(
     validRange &&
@@ -258,11 +262,7 @@ export function inspectMemeCandleDirections(
       last[4] > last[1] &&
       vol
   )
-  const rangeBookForecastLong =
-    validRange &&
-    trend15 === 'FLAT' &&
-    rangePosition >= 0.1 &&
-    rangePosition <= 0.55
+  const rangeBookForecastLong = boxed && rangePosition <= 0.72
 
   const bullPatterns: string[] = []
   if (bullishEngulfing(prev, last)) bullPatterns.push('bullish_engulfing')
@@ -276,11 +276,7 @@ export function inspectMemeCandleDirections(
   if (trend15 === 'UP') bullPatterns.push('15m_up')
   if (rangeLowReclaim) bullPatterns.push('range_low_reclaim')
   if (rangeBreakoutUp) bullPatterns.push('range_breakout_up')
-  if (
-    rangeBookForecastLong &&
-    !rangeLowReclaim &&
-    !rangeBreakoutUp
-  ) {
+  if (rangeBookForecastLong && !rangeLowReclaim && !rangeBreakoutUp) {
     bullPatterns.push('range_book_forecast_long')
   }
 
@@ -302,7 +298,7 @@ export function inspectMemeCandleDirections(
     if (trend15 === 'UP') score += 4
     if (vol) score += 3
     if (higherLow(candles)) score += 2
-    if (rangeLowReclaim) score += 5
+    if (rangeLowReclaim) score += hammer(last) || failedBreakdown(candles) ? 8 : 5
     if (rangeBreakoutUp) score += 7
     if (rangeBookForecastLong) score += 2
     out.push({
@@ -313,7 +309,7 @@ export function inspectMemeCandleDirections(
     })
   }
 
-  // SHORT nomination stays stricter: no short while 1m is still expanding.
+  // SHORT: peaks stay strict; RANGE nominates the high/mid so the book can fade.
   const shortPatterns: string[] = []
   const r = last ? range(last) : 0
   const upper = last ? last[2] - Math.max(last[1], last[4]) : 0
@@ -326,11 +322,7 @@ export function inspectMemeCandleDirections(
       last[4] <= prev[1] * 1.0005
   )
   const rangeHighReject = Boolean(
-    validRange &&
-      last &&
-      rangePosition >= 0.65 &&
-      last[4] < last[1] &&
-      (shooting || engulf)
+    validRange && last && rangePosition >= 0.65 && last[4] < last[1]
   )
   const rangeBreakdown = Boolean(
     validRange &&
@@ -339,11 +331,7 @@ export function inspectMemeCandleDirections(
       last[4] < last[1] &&
       vol
   )
-  const rangeBookForecastShort =
-    validRange &&
-    trend15 === 'FLAT' &&
-    rangePosition >= 0.45 &&
-    rangePosition <= 0.9
+  const rangeBookForecastShort = boxed && rangePosition >= 0.28
   if (shooting) shortPatterns.push('shooting_star')
   if (engulf) shortPatterns.push('bearish_engulfing')
   if (trend5 === 'DOWN') shortPatterns.push('5m_down')
@@ -351,11 +339,7 @@ export function inspectMemeCandleDirections(
   if (vol) shortPatterns.push('volume_expansion')
   if (rangeHighReject) shortPatterns.push('range_high_reject')
   if (rangeBreakdown) shortPatterns.push('range_breakdown')
-  if (
-    rangeBookForecastShort &&
-    !rangeHighReject &&
-    !rangeBreakdown
-  ) {
+  if (rangeBookForecastShort && !rangeHighReject && !rangeBreakdown) {
     shortPatterns.push('range_book_forecast_short')
   }
   if (
@@ -375,7 +359,7 @@ export function inspectMemeCandleDirections(
           (shooting ? 5 : 0) +
           (engulf ? 6 : 0) +
           (vol ? 3 : 0) +
-          (rangeHighReject ? 5 : 0) +
+          (rangeHighReject ? shooting || engulf ? 8 : 5 : 0) +
           (rangeBreakdown ? 7 : 0) +
           (rangeBookForecastShort ? 2 : 0)
       ),
@@ -513,7 +497,14 @@ export function detectMemeDirectionalSignal(opts: {
     (side === 'LONG' ? tapeMoveBps >= 2 : tapeMoveBps <= -2)
   const syncScore = alignedEvent && (flowAligned || moveAligned) ? 15 : alignedEvent || (flowAligned && moveAligned) ? 8 : 0
   if (syncScore < 8) return null
-  if (phase === 'RANGE' && (syncScore < 15 || !alignedBias)) return null
+  const rangeBoundary = candidate.patterns.some((pattern) =>
+    (RANGE_BOUNDARY_PATTERNS as readonly string[]).includes(pattern)
+  )
+  const rangeForecastOnly =
+    !rangeBoundary &&
+    candidate.patterns.some((pattern) => pattern.startsWith('range_book_forecast_'))
+  if (phase === 'RANGE' && !alignedBias) return null
+  if (phase === 'RANGE' && rangeForecastOnly && syncScore < 15) return null
 
   // At least two independent book confirmations. Static wall alone is not enough.
   const bookEvidence = [
@@ -538,19 +529,14 @@ export function detectMemeDirectionalSignal(opts: {
   probability += phase === 'IMPULSE_UP' || phase === 'DISTRIBUTION' ? 7 : 5
   if (flowAligned && moveAligned) probability += 5
   if (btcState === 'NEUTRAL') probability += 4
+  if (phase === 'RANGE' && rangeBoundary) probability += 4
   const directionScore =
     (alignedBias ? 25 : 0) +
     (alignedEvent ? 25 : 0) +
     (flowAligned ? 20 : 0) +
     (moveAligned ? 15 : 0) +
     (wallAligned ? 15 : 0)
-  if (
-    phase === 'RANGE' &&
-    candidate.patterns.some((pattern) =>
-      pattern.startsWith('range_book_forecast_')
-    ) &&
-    directionScore < 75
-  ) {
+  if (phase === 'RANGE' && rangeForecastOnly && directionScore < 75) {
     return null
   }
   probability = Math.min(100, Math.round(probability))
@@ -614,4 +600,18 @@ export function detectMemeDirectionalSignal(opts: {
       'quality:A',
     ],
   }
+}
+
+/** When both sides confirm, keep only a clear winner so mid-range does not flip-flop. */
+export function chooseConfirmedDirection(
+  long: MemeDirectionalSignal | null,
+  short: MemeDirectionalSignal | null
+): { pick: MemeDirectionalSignal | null; reason?: string } {
+  if (long && short) {
+    if (Math.abs(long.probability - short.probability) < MIN_DIRECTION_GAP) {
+      return { pick: null, reason: 'range_direction_ambiguous' }
+    }
+    return { pick: long.probability >= short.probability ? long : short }
+  }
+  return { pick: long ?? short ?? null }
 }
