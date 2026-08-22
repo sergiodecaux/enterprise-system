@@ -258,6 +258,11 @@ export function inspectMemeCandleDirections(
       last[4] > last[1] &&
       vol
   )
+  const rangeBookForecastLong =
+    validRange &&
+    trend15 === 'FLAT' &&
+    rangePosition >= 0.1 &&
+    rangePosition <= 0.55
 
   const bullPatterns: string[] = []
   if (bullishEngulfing(prev, last)) bullPatterns.push('bullish_engulfing')
@@ -271,6 +276,13 @@ export function inspectMemeCandleDirections(
   if (trend15 === 'UP') bullPatterns.push('15m_up')
   if (rangeLowReclaim) bullPatterns.push('range_low_reclaim')
   if (rangeBreakoutUp) bullPatterns.push('range_breakout_up')
+  if (
+    rangeBookForecastLong &&
+    !rangeLowReclaim &&
+    !rangeBreakoutUp
+  ) {
+    bullPatterns.push('range_book_forecast_long')
+  }
 
   const strongBullPattern = bullPatterns.some((p) =>
     ['bullish_engulfing', 'hammer', 'failed_breakdown', 'morning_star'].includes(p)
@@ -281,7 +293,8 @@ export function inspectMemeCandleDirections(
     (strongBullPattern && trend15 !== 'DOWN') ||
     (continuation && chg24hPct >= 2 && chg24hPct <= 35) ||
     rangeLowReclaim ||
-    rangeBreakoutUp
+    rangeBreakoutUp ||
+    rangeBookForecastLong
   ) {
     let score = 52
     if (strongBullPattern) score += 7
@@ -291,6 +304,7 @@ export function inspectMemeCandleDirections(
     if (higherLow(candles)) score += 2
     if (rangeLowReclaim) score += 5
     if (rangeBreakoutUp) score += 7
+    if (rangeBookForecastLong) score += 2
     out.push({
       side: 'LONG',
       score: Math.min(72, score),
@@ -325,6 +339,11 @@ export function inspectMemeCandleDirections(
       last[4] < last[1] &&
       vol
   )
+  const rangeBookForecastShort =
+    validRange &&
+    trend15 === 'FLAT' &&
+    rangePosition >= 0.45 &&
+    rangePosition <= 0.9
   if (shooting) shortPatterns.push('shooting_star')
   if (engulf) shortPatterns.push('bearish_engulfing')
   if (trend5 === 'DOWN') shortPatterns.push('5m_down')
@@ -333,12 +352,20 @@ export function inspectMemeCandleDirections(
   if (rangeHighReject) shortPatterns.push('range_high_reject')
   if (rangeBreakdown) shortPatterns.push('range_breakdown')
   if (
+    rangeBookForecastShort &&
+    !rangeHighReject &&
+    !rangeBreakdown
+  ) {
+    shortPatterns.push('range_book_forecast_short')
+  }
+  if (
     (!stillMakingHH(candles, 6) &&
       (shooting || engulf) &&
       chg24hPct >= 4 &&
       trend15 !== 'UP') ||
     rangeHighReject ||
-    rangeBreakdown
+    rangeBreakdown ||
+    rangeBookForecastShort
   ) {
     out.push({
       side: 'SHORT',
@@ -349,7 +376,8 @@ export function inspectMemeCandleDirections(
           (engulf ? 6 : 0) +
           (vol ? 3 : 0) +
           (rangeHighReject ? 5 : 0) +
-          (rangeBreakdown ? 7 : 0)
+          (rangeBreakdown ? 7 : 0) +
+          (rangeBookForecastShort ? 2 : 0)
       ),
       htfAligned: trend15 !== 'UP',
       patterns: shortPatterns,
@@ -422,7 +450,8 @@ export function detectMemeDirectionalSignal(opts: {
     !(
       phase === 'RANGE' &&
       (candidate.patterns.includes('range_low_reclaim') ||
-        candidate.patterns.includes('range_breakout_up'))
+        candidate.patterns.includes('range_breakout_up') ||
+        candidate.patterns.includes('range_book_forecast_long'))
     )
   ) {
     return null
@@ -434,7 +463,8 @@ export function detectMemeDirectionalSignal(opts: {
     !(
       phase === 'RANGE' &&
       (candidate.patterns.includes('range_high_reject') ||
-        candidate.patterns.includes('range_breakdown'))
+        candidate.patterns.includes('range_breakdown') ||
+        candidate.patterns.includes('range_book_forecast_short'))
     ) &&
     !(
       phase === 'IMPULSE_DOWN' &&
@@ -514,6 +544,15 @@ export function detectMemeDirectionalSignal(opts: {
     (flowAligned ? 20 : 0) +
     (moveAligned ? 15 : 0) +
     (wallAligned ? 15 : 0)
+  if (
+    phase === 'RANGE' &&
+    candidate.patterns.some((pattern) =>
+      pattern.startsWith('range_book_forecast_')
+    ) &&
+    directionScore < 75
+  ) {
+    return null
+  }
   probability = Math.min(100, Math.round(probability))
   if (tier === 'B' && probability < 72) return null
   if (probability < MIN_SIGNAL_PROBABILITY) return null

@@ -63,6 +63,21 @@ test('classifies a balanced bounded market as range', () => {
     candles.push(candle(index, open, close, 100, 0.004, 0.004))
   }
   assert.equal(movementPhase(candles), 'RANGE')
+  const directions = inspectMemeCandleDirections(candles, 1)
+  assert.ok(
+    directions.some(
+      (candidate) =>
+        candidate.side === 'LONG' &&
+        candidate.patterns.includes('range_book_forecast_long')
+    )
+  )
+  assert.ok(
+    directions.some(
+      (candidate) =>
+        candidate.side === 'SHORT' &&
+        candidate.patterns.includes('range_book_forecast_short')
+    )
+  )
 })
 
 test('nominates a short after rejection from the top of a range', () => {

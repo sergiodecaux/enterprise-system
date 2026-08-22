@@ -1,5 +1,5 @@
 /**
- * MEME order-flow scanner v27.5 — PEAK_FUEL_FAIL only (proven coins).
+ * Jeweler Burst v28.2 — PEAK + dedicated RANGE universe.
  *
  * Candles + HTF first, then live book only on structured peaks.
  * Never SHORT into bid walls / bid-heavy OBI.
@@ -321,7 +321,31 @@ export async function runMemeOrderFlowScan(opts: {
         Math.abs(b.chg24hPct) - Math.abs(a.chg24hPct)
       )
     })
-  const batch = ranked.slice(0, MAX_SCAN)
+  // Reserve half of every scan for liquid low-movement names. The old ranking
+  // was dominated by 24h pumps/dumps, so RANGE logic rarely received candles.
+  const movers = ranked
+    .filter((coin) => Math.abs(coin.chg24hPct) >= 6)
+    .slice(0, Math.ceil(MAX_SCAN / 2))
+  const sideways = ranked
+    .filter(
+      (coin) =>
+        Math.abs(coin.chg24hPct) >= 0.5 &&
+        Math.abs(coin.chg24hPct) < 6 &&
+        coin.quoteVolUsd >= 250_000
+    )
+    .sort((a, b) => {
+      const liquidityA = Math.log10(Math.max(a.quoteVolUsd, 10_000))
+      const liquidityB = Math.log10(Math.max(b.quoteVolUsd, 10_000))
+      const calmA = Math.max(0, 6 - Math.abs(a.chg24hPct))
+      const calmB = Math.max(0, 6 - Math.abs(b.chg24hPct))
+      return liquidityB + calmB * 0.35 - (liquidityA + calmA * 0.35)
+    })
+    .slice(0, Math.floor(MAX_SCAN / 2))
+  const batch = [...movers, ...sideways]
+  for (const coin of ranked) {
+    if (batch.length >= MAX_SCAN) break
+    if (!batch.some((picked) => picked.symbol === coin.symbol)) batch.push(coin)
+  }
   const state = await loadBookState(opts.kv)
 
   type Structured = {
@@ -387,6 +411,14 @@ export async function runMemeOrderFlowScan(opts: {
     const prefB = allowPeakSymbol(gates, b.coin.symbol).action === 'prefer' ? 1 : 0
     return bestB - bestA || prefB - prefA || b.coin.score - a.coin.score
   })
+  const rangeStructured = bookRanked.filter((row) =>
+    row.directions.some((direction) =>
+      direction.patterns.some((pattern) => pattern.startsWith('range_'))
+    )
+  )
+  for (const row of rangeStructured.slice(0, 2)) {
+    liveBook.add(row.coin.symbol)
+  }
   for (const r of bookRanked) {
     if (liveBook.size >= LIVE_BOOK) break
     liveBook.add(r.coin.symbol)
@@ -602,8 +634,8 @@ export async function runMemeOrderFlowScan(opts: {
     skipped: top.length
       ? ''
       : rejects[0]?.reason
-        ? `no_peak · e.g. ${rejects[0].symbol}:${rejects[0].reason}`
-        : 'no_peak_fuel_fail',
+        ? `no_jeweler_signal · e.g. ${rejects[0].symbol}:${rejects[0].reason}`
+        : 'no_jeweler_signal',
     scanned: batch.length,
     rejects: rejects.slice(0, 18),
   }
