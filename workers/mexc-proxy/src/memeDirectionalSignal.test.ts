@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   chooseConfirmedDirection,
+  deskFallbackDirections,
   detectMemeDirectionalSignal,
   inspectMemeCandleDirections,
   movementPhase,
@@ -73,19 +74,11 @@ test('classifies a balanced bounded market as range', () => {
   }
   assert.equal(movementPhase(candles), 'RANGE')
   const directions = inspectMemeCandleDirections(candles, 1)
-  assert.ok(
-    directions.some(
-      (candidate) =>
-        candidate.side === 'LONG' &&
-        candidate.patterns.includes('range_book_forecast_long')
-    )
-  )
-  assert.ok(
-    directions.some(
-      (candidate) =>
-        candidate.side === 'SHORT' &&
-        candidate.patterns.includes('range_book_forecast_short')
-    )
+  assert.equal(
+    directions.some((candidate) =>
+      candidate.patterns.some((pattern) => pattern.startsWith('range_book_forecast_'))
+    ),
+    false
   )
 })
 
@@ -124,7 +117,20 @@ test('blocks a long after an oversized two-hour tail', () => {
 test('assigns candlestick pattern tiers', () => {
   assert.equal(patternTier(['failed_breakdown']), 'S')
   assert.equal(patternTier(['higher_low']), 'A')
+  assert.equal(patternTier(['desk_dump_peak']), 'A')
   assert.equal(patternTier(['volume_expansion']), 'B')
+})
+
+test('desk fallback nominates dump short and extended peak short', () => {
+  const dump = deskFallbackDirections('JIMOTHY_USDT', -4.2)
+  assert.equal(dump[0]?.side, 'SHORT')
+  assert.ok(dump[0]?.patterns.includes('desk_dump_peak'))
+  const peak = deskFallbackDirections('CATE_USDT', 12)
+  assert.equal(peak[0]?.side, 'SHORT')
+  assert.ok(peak[0]?.patterns.includes('desk_extended_peak'))
+  const pump = deskFallbackDirections('SQD_USDT', 5)
+  assert.equal(pump.length, 0)
+  assert.equal(deskFallbackDirections('LDO_USDT', 12).length, 0)
 })
 
 function rangeBox(count = 46): Candle[] {
@@ -239,8 +245,9 @@ test('RANGE low reclaim confirms with sync 8 and aligned forecast', () => {
     event: book.event,
     candles,
     btcState: 'NEUTRAL',
-    tapeBuyPct: 50,
-    tapeMoveBps: 0,
+    tapeBuyPct: 58,
+    tapeMoveBps: 3,
+    chg24hPct: 2,
   })
   assert.ok(signal)
   assert.equal(signal.side, 'LONG')
@@ -274,8 +281,9 @@ test('does not veto a long just because a $1.8k ask level exists', () => {
     event: book.event,
     candles,
     btcState: 'NEUTRAL',
-    tapeBuyPct: 50,
-    tapeMoveBps: 0,
+    tapeBuyPct: 58,
+    tapeMoveBps: 3,
+    chg24hPct: 2,
   })
   assert.ok(signal)
 })
@@ -318,10 +326,211 @@ function stubSignal(side: 'LONG' | 'SHORT', probability: number): MemeDirectiona
   }
 }
 
-test('drops a RANGE flip-flop when LONG and SHORT scores are tied', () => {
+function impulseUpCandles(): Candle[] {
+  const candles: Candle[] = []
+  for (let index = 0; index < 40; index++) {
+    const open = 1 + index * 0.0005
+    candles.push(candle(index, open, open + 0.0004, 90, 0.03, 0.001))
+  }
+  for (let index = 40; index < 46; index++) {
+    const open = 1.02 + (index - 40) * 0.002
+    candles.push(candle(index, open, open + 0.0015, 160, 0.002, 0.002))
+  }
+  return candles
+}
+
+function shortBook() {
+  const snapshot: OrderBookSnapshot = {
+    symbol: 'CATE_USDT',
+    at: 1,
+    mid: 1,
+    asks: [[1.01, 2]],
+    bids: [[0.99, 1]],
+    obi: -8,
+  }
+  const crowd: CrowdBookMetrics = {
+    crowdAskLevels: 0,
+    crowdAskUsd: 0,
+    realAskUsd: 1800,
+    crowdAskShare: 0,
+    shortBaitAsks: false,
+    bidSupportUsd: 800,
+    largeAskWall: true,
+    largeBidWall: false,
+    spoofAskWall: false,
+    spoofBidWall: false,
+    maxBidUsd: 400,
+    maxAskUsd: 800,
+    bidAskUsdRatio: 0.7,
+    stackedBidWalls: 0,
+    stackedAskWalls: 1,
+    nearBidUsd: 1000,
+    nearAskUsd: 1400,
+  }
+  const event: OrderBookEvent = {
+    ready: false,
+    side: 'SHORT',
+    confidence: 0,
+    kind: 'NO_EVENT',
+    entryMode: 'LIMIT_CHASE',
+    wallPrice: 1.01,
+    wallDropPct: 0,
+    wallMultiple: 1,
+    flowSharePct: 40,
+    obi: -8,
+    obiChange: -3,
+    priceMoveBps: -4,
+    spreadBps: 8,
+    relocated: false,
+    wallPersisted: true,
+    trap: false,
+    slPrice: null,
+    tpPrice: null,
+    tp1Price: null,
+    notes: [],
+  }
+  const forecast: MemeBookForecast = {
+    score: 70,
+    realBook: true,
+    strongTape: false,
+    toxic: false,
+    obiAligned: true,
+    bias: 'NEXT_DOWN',
+    reasons: ['test'],
+  }
+  return { snapshot, crowd, event, forecast }
+}
+
+test('desk dump short without tape/event does not pass', () => {
+  const candles = impulseUpCandles()
+  const book = shortBook()
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'SHORT',
+      score: 60,
+      htfAligned: true,
+      patterns: ['desk_dump_peak'],
+    },
+    price: 1,
+    snapshot: book.snapshot,
+    crowd: book.crowd,
+    forecast: book.forecast,
+    event: book.event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 48,
+    tapeMoveBps: 0,
+    symbol: 'JIMOTHY_USDT',
+    chg24hPct: -5,
+  })
+  assert.equal(signal, null)
+})
+
+test('desk dump short confirms on a dump phase with ask event and tape', () => {
+  const candles: Candle[] = []
+  for (let index = 0; index < 40; index++) {
+    const open = 1.08 - index * 0.0004
+    candles.push(candle(index, open, open - 0.0003, 90, 0.001, 0.03))
+  }
+  for (let index = 40; index < 46; index++) {
+    const open = 1.06 - (index - 40) * 0.003
+    candles.push(candle(index, open, open - 0.002, 160, 0.001, 0.002))
+  }
+  const book = shortBook()
+  const event = {
+    ...book.event,
+    ready: true,
+    kind: 'ASK_WALL_RESISTANCE' as const,
+    confidence: 80,
+    flowSharePct: 38,
+    priceMoveBps: -5,
+  }
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'SHORT',
+      score: 60,
+      htfAligned: true,
+      patterns: ['desk_dump_peak'],
+    },
+    price: 1,
+    snapshot: book.snapshot,
+    crowd: book.crowd,
+    forecast: book.forecast,
+    event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 40,
+    tapeMoveBps: -4,
+    symbol: 'JIMOTHY_USDT',
+    chg24hPct: -6,
+  })
+  assert.ok(
+    movementPhase(candles) === 'IMPULSE_DOWN' ||
+      movementPhase(candles) === 'EXTENSION_DOWN' ||
+      movementPhase(candles) === 'DISTRIBUTION' ||
+      movementPhase(candles) === 'EXTENSION_UP'
+  )
+  assert.ok(signal)
+  assert.equal(signal.side, 'SHORT')
+})
+
+test('rejects a long on extension even on the desk', () => {
+  const candles: Candle[] = []
+  for (let index = 0; index < 46; index++) {
+    const open = 1 + index * 0.004
+    candles.push(candle(index, open, open + 0.003, index >= 41 ? 45 : 100))
+  }
+  assert.equal(movementPhase(candles), 'EXTENSION_UP')
+  const book = longBook()
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'LONG',
+      score: 58,
+      htfAligned: true,
+      patterns: ['desk_pump_impulse'],
+    },
+    price: 1.18,
+    snapshot: book.snapshot,
+    crowd: book.crowd,
+    forecast: book.forecast,
+    event: book.event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 58,
+    tapeMoveBps: 3,
+    symbol: 'CATE_USDT',
+    chg24hPct: 18,
+  })
+  assert.equal(signal, null)
+})
+
+test('rejects a long when 24h is already a dump', () => {
+  const candles = rangeBox()
+  const book = longBook()
+  const signal = detectMemeDirectionalSignal({
+    candidate: {
+      side: 'LONG',
+      score: 60,
+      htfAligned: true,
+      patterns: ['range_low_reclaim'],
+    },
+    price: 1,
+    snapshot: book.snapshot,
+    crowd: book.crowd,
+    forecast: book.forecast,
+    event: book.event,
+    candles,
+    btcState: 'NEUTRAL',
+    tapeBuyPct: 58,
+    tapeMoveBps: 3,
+    chg24hPct: -8,
+  })
+  assert.equal(signal, null)
+})
+
+test('prefers a peak short when LONG and SHORT scores are close', () => {
   const tied = chooseConfirmedDirection(stubSignal('LONG', 72), stubSignal('SHORT', 73))
-  assert.equal(tied.pick, null)
-  assert.equal(tied.reason, 'range_direction_ambiguous')
+  assert.equal(tied.pick?.side, 'SHORT')
   const winner = chooseConfirmedDirection(stubSignal('LONG', 80), stubSignal('SHORT', 73))
   assert.equal(winner.pick?.side, 'LONG')
 })

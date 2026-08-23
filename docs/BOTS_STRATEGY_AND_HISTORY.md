@@ -11,7 +11,7 @@
 |---|---|
 | **Раньше (высокий WR)** | PEAK_FUEL_FAIL v27.1 — peak-only, мягкие пороги, до 5 алертов/тик |
 | **v29–v31 / v32** | CONT / regime / ageGate — то молчание, то не то ядро |
-| **Сейчас мемы (v28.6)** | **JEWELER BURST** · traded desk CATE/BASECAT/SQD · take 1–1.5% · SL 0.6% |
+| **Сейчас мемы (v28.9)** | **JEWELER BURST** · peak-first desk · LONG impulse+tape · SHORT peak/dump · take 1–1.5% |
 | **Альты** | ALT_JEWEL book forecast L/S |
 
 Мемы: Predator принимает только `source:jeweler_burst`; legacy и внешний

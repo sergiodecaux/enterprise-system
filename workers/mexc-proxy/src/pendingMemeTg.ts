@@ -85,18 +85,52 @@ function prune(list: PendingMemeAlert[], now = Date.now()): PendingMemeAlert[] {
   return list.filter((x) => now - x.enqueuedAt < TTL_MS)
 }
 
+async function readCacheList(): Promise<PendingMemeAlert[]> {
+  try {
+    const hit = await caches.default.match(cacheReq())
+    if (!hit) return []
+    const parsed = (await hit.json()) as PendingMemeAlert[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+async function writeCacheList(list: PendingMemeAlert[]): Promise<void> {
+  const trimmed = list.slice(0, MAX_PENDING)
+  try {
+    await caches.default.put(
+      cacheReq(),
+      new Response(JSON.stringify(trimmed), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      })
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Queue an entry that failed (or was deferred) so paper cron can deliver it. */
 export async function enqueuePendingMeme(
   env: EnvLike,
-  alert: Omit<PendingMemeAlert, 'enqueuedAt'>
+  alert: Omit<PendingMemeAlert, 'enqueuedAt'>,
+  _opts?: { cacheOnly?: boolean }
 ): Promise<void> {
-  const list = prune(await readList(env))
-  if (list.some((x) => x.dedupeKey === alert.dedupeKey)) {
-    await writeList(env, list)
-    return
+  // Cache only on the read path — a KV GET here throws «too many subrequests»
+  // on predator ticks and the alert never lands in the paper flush queue.
+  const list = prune(await readCacheList())
+  if (!list.some((x) => x.dedupeKey === alert.dedupeKey)) {
+    list.unshift({ ...alert, enqueuedAt: Date.now() })
   }
-  list.unshift({ ...alert, enqueuedAt: Date.now() })
-  await writeList(env, list)
+  await writeCacheList(list)
+  try {
+    await env.SUBSCRIBERS?.put(KV_KEY, JSON.stringify(list.slice(0, MAX_PENDING)))
+  } catch {
+    /* predator may already be at the subrequest cap; Cache is enough */
+  }
 }
 
 export async function flushPendingMemeAlerts(

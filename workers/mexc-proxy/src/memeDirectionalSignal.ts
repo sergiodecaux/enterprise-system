@@ -7,7 +7,7 @@
 import type { MemeBookForecast } from './memeBookForecast'
 import type { CrowdBookMetrics, OrderBookEvent, OrderBookSnapshot } from './orderBookReader'
 import { aggregateTf, stillMakingHH } from './peakContext'
-import type { Candle } from './peakFuelFail'
+import { CORE_VOLATILE_MEMES } from './hotMemeWatchlist'
 
 export type MemeDirection = 'LONG' | 'SHORT'
 
@@ -212,6 +212,9 @@ export function patternTier(patterns: string[]): 'S' | 'A' | 'B' {
         'higher_low',
         'range_low_reclaim',
         'range_high_reject',
+        'desk_dump_peak',
+        'desk_extended_peak',
+        'desk_pump_impulse',
       ].includes(pattern)
     )
   ) {
@@ -251,7 +254,6 @@ export function inspectMemeCandleDirections(
       : 0.5
   const validRange =
     rangeBase.length >= 20 && rangeWidthPct >= 0.6 && rangeWidthPct <= 8
-  const boxed = validRange || movementPhase(candles) === 'RANGE'
   const rangeLowReclaim = Boolean(
     validRange && last && rangePosition <= 0.35 && last[4] > last[1]
   )
@@ -262,7 +264,6 @@ export function inspectMemeCandleDirections(
       last[4] > last[1] &&
       vol
   )
-  const rangeBookForecastLong = boxed && rangePosition <= 0.72
 
   const bullPatterns: string[] = []
   if (bullishEngulfing(prev, last)) bullPatterns.push('bullish_engulfing')
@@ -276,9 +277,6 @@ export function inspectMemeCandleDirections(
   if (trend15 === 'UP') bullPatterns.push('15m_up')
   if (rangeLowReclaim) bullPatterns.push('range_low_reclaim')
   if (rangeBreakoutUp) bullPatterns.push('range_breakout_up')
-  if (rangeBookForecastLong && !rangeLowReclaim && !rangeBreakoutUp) {
-    bullPatterns.push('range_book_forecast_long')
-  }
 
   const strongBullPattern = bullPatterns.some((p) =>
     ['bullish_engulfing', 'hammer', 'failed_breakdown', 'morning_star'].includes(p)
@@ -287,10 +285,9 @@ export function inspectMemeCandleDirections(
     stillMakingHH(candles, 6) && higherLow(candles) && vol && trend5 === 'UP'
   if (
     (strongBullPattern && trend15 !== 'DOWN') ||
-    (continuation && chg24hPct >= 2 && chg24hPct <= 35) ||
+    (continuation && chg24hPct >= 2 && chg24hPct <= 12) ||
     rangeLowReclaim ||
-    rangeBreakoutUp ||
-    rangeBookForecastLong
+    rangeBreakoutUp
   ) {
     let score = 52
     if (strongBullPattern) score += 7
@@ -300,7 +297,6 @@ export function inspectMemeCandleDirections(
     if (higherLow(candles)) score += 2
     if (rangeLowReclaim) score += hammer(last) || failedBreakdown(candles) ? 8 : 5
     if (rangeBreakoutUp) score += 7
-    if (rangeBookForecastLong) score += 2
     out.push({
       side: 'LONG',
       score: Math.min(72, score),
@@ -331,7 +327,6 @@ export function inspectMemeCandleDirections(
       last[4] < last[1] &&
       vol
   )
-  const rangeBookForecastShort = boxed && rangePosition >= 0.28
   if (shooting) shortPatterns.push('shooting_star')
   if (engulf) shortPatterns.push('bearish_engulfing')
   if (trend5 === 'DOWN') shortPatterns.push('5m_down')
@@ -339,17 +334,13 @@ export function inspectMemeCandleDirections(
   if (vol) shortPatterns.push('volume_expansion')
   if (rangeHighReject) shortPatterns.push('range_high_reject')
   if (rangeBreakdown) shortPatterns.push('range_breakdown')
-  if (rangeBookForecastShort && !rangeHighReject && !rangeBreakdown) {
-    shortPatterns.push('range_book_forecast_short')
-  }
   if (
     (!stillMakingHH(candles, 6) &&
       (shooting || engulf) &&
       chg24hPct >= 4 &&
       trend15 !== 'UP') ||
     rangeHighReject ||
-    rangeBreakdown ||
-    rangeBookForecastShort
+    rangeBreakdown
   ) {
     out.push({
       side: 'SHORT',
@@ -360,8 +351,7 @@ export function inspectMemeCandleDirections(
           (engulf ? 6 : 0) +
           (vol ? 3 : 0) +
           (rangeHighReject ? shooting || engulf ? 8 : 5 : 0) +
-          (rangeBreakdown ? 7 : 0) +
-          (rangeBookForecastShort ? 2 : 0)
+          (rangeBreakdown ? 7 : 0)
       ),
       htfAligned: trend15 !== 'UP',
       patterns: shortPatterns,
@@ -369,6 +359,35 @@ export function inspectMemeCandleDirections(
   }
 
   return out
+}
+
+/** Desk names: nominate a peak SHORT without a hammer if 24h already extended. */
+export function deskFallbackDirections(
+  symbol: string,
+  chg24hPct: number
+): MemeCandleCandidate[] {
+  if (!(CORE_VOLATILE_MEMES as readonly string[]).includes(symbol)) return []
+  if (chg24hPct <= -4) {
+    return [
+      {
+        side: 'SHORT',
+        score: 60,
+        htfAligned: true,
+        patterns: ['desk_dump_peak'],
+      },
+    ]
+  }
+  if (chg24hPct >= 8) {
+    return [
+      {
+        side: 'SHORT',
+        score: 62,
+        htfAligned: true,
+        patterns: ['desk_extended_peak'],
+      },
+    ]
+  }
+  return []
 }
 
 function opposingSupplyBlocks(
@@ -425,6 +444,8 @@ export function detectMemeDirectionalSignal(opts: {
   btcState: BtcBurstState
   tapeBuyPct: number | null
   tapeMoveBps: number | null
+  symbol?: string
+  chg24hPct?: number
 }): MemeDirectionalSignal | null {
   const {
     candidate,
@@ -437,6 +458,7 @@ export function detectMemeDirectionalSignal(opts: {
     btcState,
     tapeBuyPct,
     tapeMoveBps,
+    chg24hPct,
   } = opts
   if (!(price > 0) || forecast.toxic) return null
   const side = candidate.side
@@ -444,9 +466,13 @@ export function detectMemeDirectionalSignal(opts: {
   const ratio = crowd.bidAskUsdRatio
   const phase = movementPhase(candles)
   const tier = patternTier(candidate.patterns)
-  if (tailBlocked(candles, side)) return null
+  const deskPattern = candidate.patterns.some((pattern) =>
+    pattern.startsWith('desk_')
+  )
+  if (tailBlocked(candles, side) && !deskPattern) return null
   if (side === 'LONG' && btcState === 'RISK_OFF') return null
   if (side === 'SHORT' && btcState === 'RISK_ON') return null
+  if (side === 'LONG' && chg24hPct != null && chg24hPct <= -4) return null
   if (
     side === 'LONG' &&
     phase !== 'ACCUMULATION' &&
@@ -454,8 +480,7 @@ export function detectMemeDirectionalSignal(opts: {
     !(
       phase === 'RANGE' &&
       (candidate.patterns.includes('range_low_reclaim') ||
-        candidate.patterns.includes('range_breakout_up') ||
-        candidate.patterns.includes('range_book_forecast_long'))
+        candidate.patterns.includes('range_breakout_up'))
     )
   ) {
     return null
@@ -465,10 +490,13 @@ export function detectMemeDirectionalSignal(opts: {
     phase !== 'EXTENSION_UP' &&
     phase !== 'DISTRIBUTION' &&
     !(
+      deskPattern &&
+      (phase === 'IMPULSE_DOWN' || phase === 'EXTENSION_DOWN')
+    ) &&
+    !(
       phase === 'RANGE' &&
       (candidate.patterns.includes('range_high_reject') ||
-        candidate.patterns.includes('range_breakdown') ||
-        candidate.patterns.includes('range_book_forecast_short'))
+        candidate.patterns.includes('range_breakdown'))
     ) &&
     !(
       phase === 'IMPULSE_DOWN' &&
@@ -513,6 +541,7 @@ export function detectMemeDirectionalSignal(opts: {
     (side === 'LONG' ? tapeMoveBps >= 2 : tapeMoveBps <= -2)
   const syncScore = alignedEvent && (flowAligned || moveAligned) ? 15 : alignedEvent || (flowAligned && moveAligned) ? 8 : 0
   if (syncScore < 8) return null
+  if (side === 'LONG' && !flowAligned && !moveAligned) return null
   const rangeBoundary = candidate.patterns.some((pattern) =>
     (RANGE_BOUNDARY_PATTERNS as readonly string[]).includes(pattern)
   )
@@ -629,6 +658,12 @@ export function chooseConfirmedDirection(
   short: MemeDirectionalSignal | null
 ): { pick: MemeDirectionalSignal | null; reason?: string } {
   if (long && short) {
+    if (
+      short.setup === 'PEAK_FUEL_FAIL' &&
+      long.probability - short.probability < MIN_DIRECTION_GAP
+    ) {
+      return { pick: short }
+    }
     if (Math.abs(long.probability - short.probability) < MIN_DIRECTION_GAP) {
       return { pick: null, reason: 'range_direction_ambiguous' }
     }

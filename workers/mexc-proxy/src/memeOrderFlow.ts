@@ -1,7 +1,7 @@
 /**
- * Jeweler Burst v28.5 — PEAK + RANGE on classic memes (PEPE/WIF/DOGE/BONK).
- *
- * L1/DeFi stay out. Live book/tape choose side; wall veto is relative.
+ * Jeweler Burst v28.9 — PEAK-first on the traded desk.
+ * LONG only accumulation/impulse with tape; SHORT at extension/dump.
+ * Keep 1–1.5% take, paper flush, no L1/DeFi.
  */
 
 import type { ScanAlert } from './scanner'
@@ -21,7 +21,6 @@ import { memeBookForecast } from './memeBookForecast'
 import {
   allowPeakSymbol,
   peakCoinTrack,
-  setupHistoricalWr,
   type BotAdaptiveGates,
 } from './botJournal'
 import {
@@ -30,6 +29,7 @@ import {
 } from './peakFuelFail'
 import {
   chooseConfirmedDirection,
+  deskFallbackDirections,
   detectMemeDirectionalSignal,
   inspectMemeCandleDirections,
   type BtcBurstState,
@@ -431,6 +431,9 @@ export async function runMemeOrderFlowScan(opts: {
       })
     }
     if (!directions.length) {
+      directions.push(...deskFallbackDirections(coin.symbol, coin.chg24hPct))
+    }
+    if (!directions.length) {
       rejects.push({
         symbol: coin.symbol,
         reason: peakInspect?.reason || 'no_directional_candle_structure',
@@ -446,7 +449,23 @@ export async function runMemeOrderFlowScan(opts: {
     const bestB = Math.max(...b.directions.map((d) => d.score))
     const prefA = allowPeakSymbol(gates, a.coin.symbol).action === 'prefer' ? 1 : 0
     const prefB = allowPeakSymbol(gates, b.coin.symbol).action === 'prefer' ? 1 : 0
-    return bestB - bestA || prefB - prefA || b.coin.score - a.coin.score
+    const coreA = (CORE_VOLATILE_MEMES as readonly string[]).includes(
+      a.coin.symbol
+    )
+      ? 1
+      : 0
+    const coreB = (CORE_VOLATILE_MEMES as readonly string[]).includes(
+      b.coin.symbol
+    )
+      ? 1
+      : 0
+    return (
+      coreB - coreA ||
+      bestB - bestA ||
+      prefB - prefA ||
+      Math.abs(b.coin.chg24hPct) - Math.abs(a.coin.chg24hPct) ||
+      b.coin.score - a.coin.score
+    )
   })
   const rangeStructured = bookRanked.filter((row) =>
     row.directions.some((direction) =>
@@ -575,6 +594,8 @@ export async function runMemeOrderFlowScan(opts: {
           btcState,
           tapeBuyPct: evFlow,
           tapeMoveBps: evMove,
+          symbol: coin.symbol,
+          chg24hPct: coin.chg24hPct,
         })
       : null
 
@@ -593,6 +614,8 @@ export async function runMemeOrderFlowScan(opts: {
           btcState,
           tapeBuyPct: evFlow,
           tapeMoveBps: evMove,
+          symbol: coin.symbol,
+          chg24hPct: coin.chg24hPct,
         })
       : null
     const chosenPick = chooseConfirmedDirection(longSignal, shortSignal)
@@ -617,7 +640,11 @@ export async function runMemeOrderFlowScan(opts: {
         continue
       }
       const track = peakCoinTrack(gates, coin.symbol)
+      const deskCoin = (CORE_VOLATILE_MEMES as readonly string[]).includes(
+        coin.symbol
+      )
       if (
+        !deskCoin &&
         (track.kind === 'thin' || track.kind === 'new') &&
         chosen.probability < 72
       ) {
@@ -626,16 +653,6 @@ export async function runMemeOrderFlowScan(opts: {
           reason: `symbol_${track.kind}_needs_72:${track.wrLine}`,
         })
         continue
-      }
-      if (gates) {
-        const hist = setupHistoricalWr(gates, 'PEAK_FUEL_FAIL')
-        if (hist.n >= 8 && hist.wr < 28) {
-          rejects.push({
-            symbol: coin.symbol,
-            reason: `peak_hist_dead:${hist.wr.toFixed(0)}%`,
-          })
-          continue
-        }
       }
     }
     const alert = directionalToAlert(

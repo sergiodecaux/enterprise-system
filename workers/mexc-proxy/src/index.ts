@@ -1331,8 +1331,12 @@ async function handleTelegram(
       '',
       targetBlock,
       '',
-      `<b>Обновление v28.6:</b>`,
+      `<b>Обновление v28.9:</b>`,
       '• Стол, который уже торговали: CATE · BASECAT · BRIAN · AGI · AIINU · SQD · DOLO',
+      '• Peak-first: SHORT с вершины/дампа, LONG только accumulation/impulse + лента с нами',
+      '• Нет LONG на EXTENSION, дампе ≤−4% и mid-range forecast',
+      '• Sync ≥8 обязателен · стол без события ленты не проходит',
+      '• Вход в Telegram шлёт paper-cron — predator больше не упирается в 50 subrequest',
       '• Цель сделки: забрать 1–1.5%, SL 0.6% · без trail и OBI-flip после плюса',
       '• L1/DeFi не сканируются: HYPE · AAVE · TAO · LDO · FET · ETC · ENA',
       '• RANGE: ликвидный боковик, обе стороны, стакан выбирает направление',
@@ -2429,29 +2433,37 @@ async function runCronScan(
       let title = a.title
       let text = a.text
       let dedupeKey = a.dedupeKey
-      const cr = await broadcastAlert(env, {
-        type: 'SYSTEM',
-        channel: 'meme',
-        title,
-        text,
-        dedupeKey,
-      })
-      paperComments += cr.sent
-      sent += cr.sent
-      failed += cr.failed
-
+      // Predator tick is already at the CF 50-subrequest cap. Never fetch
+      // api.telegram.org here — Cache-queue the entry; paper cron sends it.
       let queued = false
-      if (cr.sent === 0 && !cr.skipped) {
+      try {
+        await enqueuePendingMeme(
+          env,
+          { title, text, dedupeKey },
+          { cacheOnly: true }
+        )
+        queued = true
+        console.log('[cron] meme entry queued for paper flush', dedupeKey)
+      } catch (err) {
+        console.error('[cron] pending meme enqueue failed', err)
+      }
+      if (paperComment) {
         try {
-          await enqueuePendingMeme(env, { title, text, dedupeKey })
-          queued = true
-          console.log('[cron] meme entry queued for paper flush', dedupeKey)
+          await enqueuePendingMeme(
+            env,
+            {
+              title: paperComment.title,
+              text: paperComment.text,
+              dedupeKey: paperComment.dedupeKey,
+            },
+            { cacheOnly: true }
+          )
         } catch (err) {
-          console.error('[cron] pending meme enqueue failed', err)
+          console.error('[cron] pending fill enqueue failed', err)
         }
       }
 
-      if (cr.sent > 0 || queued) {
+      if (queued) {
         try {
           await env.SUBSCRIBERS?.put(
             'telegram:last_peak_alert_at',
@@ -2468,18 +2480,6 @@ async function runCronScan(
         )
       }
 
-      // Optional fill companion (levels) — only if entry TG already went
-      if (paperComment && (cr.sent > 0 || queued)) {
-        const pr = await broadcastAlert(env, {
-          type: 'SYSTEM',
-          channel: 'meme',
-          title: paperComment.title,
-          text: paperComment.text,
-          dedupeKey: paperComment.dedupeKey,
-        })
-        paperComments += pr.sent
-      }
-
       const logged = await recordBotAlert(env, {
         alertType: 'MEME',
         score: a.score,
@@ -2488,7 +2488,7 @@ async function runCronScan(
           ...a.tradePlan,
           engineId: BOT_ENGINE.id,
           paperId,
-          tgEntrySent: cr.sent > 0 || queued,
+          tgEntrySent: queued,
         },
       })
       if (logged) journalLogged++

@@ -1,9 +1,9 @@
 /** Meme bot — shown in meme Telegram /status */
 export const BOT_ENGINE = {
-  id: 'jeweler-burst-v28.6',
-  label: 'MEME: JEWELER · TRADED DESK · TAKE 1–1.5%',
+  id: 'jeweler-burst-v28.9',
+  label: 'MEME: JEWELER · PEAK-FIRST DESK · TAKE 1–1.5%',
   deployedNote:
-    'v28.6: стол CATE/BASECAT/SQD/AIINU/BRIAN · TP 1–1.5% · SL 0.6% · без LDO/FET/HYPE · paper-first.',
+    'v28.9: peak-first · LONG только impulse+tape · SHORT с вершины/дампа · без mid-range и sync 0 · TP 1–1.5%.',
 } as const
 
 /**
