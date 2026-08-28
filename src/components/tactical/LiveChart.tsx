@@ -60,12 +60,14 @@ import {
 } from '../../api/telegram/formatters'
 import ZonePathOverlay from './ZonePathOverlay'
 import StructureHud from './StructureHud'
+import StructureOverlay from './StructureOverlay'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
 import ProbableTradesPanel from './ProbableTradesPanel'
 import SignalNowPanel from './SignalNowPanel'
 import { buildGlobalFibonacci, type GlobalFibonacciMap } from '../../engine/zones/globalFibonacci'
 import {
   composeStructureRead,
+  findCongestionZones,
   markersForChart,
   readTfStructure,
   type StructureTf,
@@ -134,8 +136,20 @@ function structureTfOf(tf: MexcTimeframe): StructureTf {
 }
 
 const CHART_HEIGHT = 440
-const CHART_HEIGHT_EXPANDED = () =>
-  Math.min(Math.round(window.innerHeight * 0.84), 820)
+
+function isPhoneLandscapeNow(): boolean {
+  if (typeof window === 'undefined') return false
+  const w = window.visualViewport?.width ?? window.innerWidth
+  const h = window.visualViewport?.height ?? window.innerHeight
+  const coarse = window.matchMedia('(pointer: coarse)').matches
+  return w > h && (coarse || h < 560)
+}
+
+function paneHeight(fullscreen: boolean, landscape: boolean, vh: number): number {
+  if (!fullscreen) return CHART_HEIGHT
+  if (landscape) return Math.max(160, Math.round(vh - 42))
+  return Math.min(Math.round(vh * 0.9), 920)
+}
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
@@ -166,6 +180,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [chartExpanded, setChartExpanded] = useState(false)
+  const [phoneLandscape, setPhoneLandscape] = useState(isPhoneLandscapeNow)
+  const [viewportH, setViewportH] = useState(
+    () =>
+      (typeof window !== 'undefined'
+        ? window.visualViewport?.height ?? window.innerHeight
+        : 700)
+  )
   const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
   const [audioOn, setAudioOn] = useState(() => {
@@ -207,8 +228,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [tradesMagnet, setTradesMagnet] = useState<TradeMagnet | null>(null)
   const jewelSentRef = useRef<Set<string>>(new Set())
 
-  const chartHeight = chartExpanded ? CHART_HEIGHT_EXPANDED() : CHART_HEIGHT
+  const fullscreen = chartExpanded || phoneLandscape
+  const chartHeight = paneHeight(fullscreen, phoneLandscape, viewportH)
   chartHeightRef.current = chartHeight
+
+  useEffect(() => {
+    const sync = () => {
+      const h = window.visualViewport?.height ?? window.innerHeight
+      setViewportH(h)
+      setPhoneLandscape(isPhoneLandscapeNow())
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    window.addEventListener('orientationchange', sync)
+    window.visualViewport?.addEventListener('resize', sync)
+    return () => {
+      window.removeEventListener('resize', sync)
+      window.removeEventListener('orientationchange', sync)
+      window.visualViewport?.removeEventListener('resize', sync)
+    }
+  }, [])
 
   useEffect(() => {
     chartRef.current?.applyOptions({
@@ -217,33 +256,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         mouseWheel: true,
         pressedMouseMove: true,
         horzTouchDrag: true,
-        vertTouchDrag: chartExpanded,
+        vertTouchDrag: fullscreen,
       },
       crosshair: { mode: CrosshairMode.Magnet },
-      timeScale: { rightOffset: chartExpanded ? 22 : 16 },
+      timeScale: { rightOffset: fullscreen ? 22 : 16 },
     })
-  }, [chartHeight, chartExpanded])
+  }, [chartHeight, fullscreen])
 
   useEffect(() => {
-    if (!chartExpanded) return
+    if (!fullscreen) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setChartExpanded(false)
     }
-    const onResize = () => {
-      const h = CHART_HEIGHT_EXPANDED()
-      chartHeightRef.current = h
-      chartRef.current?.applyOptions({ height: h })
-    }
     window.addEventListener('keydown', onKey)
-    window.addEventListener('resize', onResize)
     return () => {
       document.body.style.overflow = prev
       window.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', onResize)
     }
-  }, [chartExpanded])
+  }, [fullscreen])
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -398,48 +430,54 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
 
-  /** S/R dealing range + optional Fib 141 per TF — no auto clutter */
+  /** Проторговка (розовый диапазон) + Fib 141 по кнопкам ТФ */
   const liquidityZones = useMemo((): LiquidityZone[] => {
-    const visibleStart =
-      candles.length > 0
-        ? (Math.floor(candles[0][0] / 1000) as Time)
-        : ((Date.now() / 1000) as Time)
     const visibleEnd =
       candles.length > 0
-        ? ((Math.floor(candles[candles.length - 1][0] / 1000) + 86400 * 2) as Time)
+        ? ((Math.floor(candles[candles.length - 1][0] / 1000) + 86400 * 4) as Time)
         : ((Date.now() / 1000 + 86400) as Time)
 
     const zones: LiquidityZone[] = []
 
-    if (showSrZones && chartStructure) {
-      const hi = chartStructure.dealingHigh
-      const lo = chartStructure.dealingLow
-      if (hi > lo && hi > 0) {
-        const eq = (hi + lo) / 2
+    if (showSrZones) {
+      const cong = findCongestionZones(candles, 2)
+      if (cong.length) {
+        for (const z of cong) {
+          zones.push({
+            id: `cong_${z.startTimeSec}_${z.touches}`,
+            type: 'VALUE_AREA',
+            side: 'NEUTRAL',
+            top: z.top,
+            bottom: z.bottom,
+            startTime: z.startTimeSec as Time,
+            endTime: visibleEnd,
+            strength: 9,
+            label: '',
+          })
+        }
+      } else if (chartStructure && chartStructure.dealingHigh > chartStructure.dealingLow) {
+        const startIdx = Math.max(0, Math.floor(candles.length * 0.45))
+        const startT = candles[startIdx]
+          ? (Math.floor(candles[startIdx][0] / 1000) as Time)
+          : ((Date.now() / 1000) as Time)
         zones.push({
-          id: 'sr_premium',
-          type: 'BSL',
-          side: 'BEARISH',
-          top: hi,
-          bottom: eq,
-          startTime: visibleStart,
+          id: 'cong_dealing',
+          type: 'VALUE_AREA',
+          side: 'NEUTRAL',
+          top: chartStructure.dealingHigh,
+          bottom: chartStructure.dealingLow,
+          startTime: startT,
           endTime: visibleEnd,
-          strength: 7,
-          label: 'R',
-        })
-        zones.push({
-          id: 'sr_discount',
-          type: 'SSL',
-          side: 'BULLISH',
-          top: eq,
-          bottom: lo,
-          startTime: visibleStart,
-          endTime: visibleEnd,
-          strength: 7,
-          label: 'S',
+          strength: 8,
+          label: '',
         })
       }
     }
+
+    const visibleStart =
+      candles.length > 0
+        ? (Math.floor(candles[0][0] / 1000) as Time)
+        : ((Date.now() / 1000) as Time)
 
     for (const tf of fibTfs) {
       const fib = fibMaps[tf]
@@ -481,8 +519,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   ])
 
   const priceLevels = useMemo(() => {
-    const tfLabel = (tf: string) =>
-      tf === '1h' ? '1ч' : tf === '4h' ? '4ч' : '1д'
     const colors: Record<string, string> = {
       '1h': 'rgba(251, 191, 36, 0.75)',
       '4h': 'rgba(34, 211, 238, 0.75)',
@@ -496,7 +532,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         id: `gfib_${tf}_141`,
         type: 'FIB_OTE',
         price: fib.price141,
-        label: `141 ${tfLabel(tf)}`,
+        label: '',
         color: colors[tf] ?? 'rgba(251, 191, 36, 0.6)',
         lineStyle: 2,
       })
@@ -505,7 +541,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           id: `gfib_${tf}_161`,
           type: 'FIB_OTE',
           price: fib.price161,
-          label: `161 ${tfLabel(tf)}`,
+          label: '',
           color: colors[tf] ?? 'rgba(251, 191, 36, 0.4)',
           lineStyle: 3,
         })
@@ -1562,39 +1598,28 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
-    // Fib 141/161 — short axis tags only
+    // Fib 141 — price on the right axis only, no letter tags
     for (const level of priceLevels) {
-      addLine(level.price, level.color, level.label, {
+      addLine(level.price, level.color, '', {
         lineStyle: level.lineStyle ?? 2,
         lineWidth: 1,
         axisLabel: true,
       })
     }
 
-    if (showSrZones && chartStructure) {
-      const hi = chartStructure.dealingHigh
-      const lo = chartStructure.dealingLow
-      if (hi > lo) {
-        const eq = (hi + lo) / 2
-        const brokeUp = currentPrice > hi
-        const brokeDn = currentPrice < lo
-        addLine(
-          hi,
-          'rgba(148, 163, 184, 0.85)',
-          brokeUp ? 'BOS↑' : 'R',
-          { lineStyle: 2, lineWidth: 1, axisLabel: true }
-        )
-        addLine(eq, 'rgba(148, 163, 184, 0.45)', 'EQ', {
-          lineStyle: 3,
+    if (showSrZones) {
+      const bands = liquidityZones.filter((z) => (z.id ?? '').startsWith('cong_'))
+      for (const z of bands) {
+        addLine(z.top, 'rgba(244, 114, 182, 0.55)', '', {
+          lineStyle: 2,
           lineWidth: 1,
           axisLabel: true,
         })
-        addLine(
-          lo,
-          'rgba(45, 180, 175, 0.9)',
-          brokeDn ? 'BOS↓' : 'S',
-          { lineStyle: 2, lineWidth: 1, axisLabel: true }
-        )
+        addLine(z.bottom, 'rgba(244, 114, 182, 0.55)', '', {
+          lineStyle: 2,
+          lineWidth: 1,
+          axisLabel: true,
+        })
       }
     }
 
@@ -1659,8 +1684,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     selectedSetup,
     signalMode,
     showSrZones,
-    chartStructure,
-    currentPrice,
+    liquidityZones,
   ])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
@@ -1699,7 +1723,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
       const lineStyle = styleMap[level.strength]
 
-      const title = isBSL ? 'R' : 'S'
+      const title = ''
 
       try {
         const line = series.createPriceLine({
@@ -1875,12 +1899,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   return (
     <div
       className={
-        chartExpanded
-          ? 'fixed inset-0 z-[80] flex flex-col gap-2 overflow-y-auto bg-[#0a0a0a]/p-2 pb-4'
+        fullscreen
+          ? phoneLandscape
+            ? 'fixed inset-0 z-[80] flex flex-col overflow-hidden bg-[#0c0e12]'
+            : 'fixed inset-0 z-[80] flex flex-col gap-2 overflow-y-auto bg-[#0a0a0a] p-2 pb-4'
           : 'space-y-2'
       }
     >
-      {chartExpanded && (
+      {chartExpanded && !phoneLandscape && (
         <div className="flex items-center justify-between gap-2 rounded-lg border border-hull-border bg-hull px-3 py-2">
           <div className="min-w-0 font-mono text-[11px] font-bold uppercase tracking-wider text-holo/80">
             {flatSymbol.replace('USDT', '/USDT')} · {timeframe}
@@ -1916,14 +1942,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </button>
         </div>
       )}
-      {/* Process strip — regime · OI · film · active SEQ */}
-      <ProcessStrip
-        symbol={symbol}
-        regime={chartRegime}
-        sequence={activeSequence}
-        refreshKey={processRefreshKey}
-      />
+      {!phoneLandscape && (
+        <ProcessStrip
+          symbol={symbol}
+          regime={chartRegime}
+          sequence={activeSequence}
+          refreshKey={processRefreshKey}
+        />
+      )}
 
+      {!phoneLandscape && (
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-xs uppercase tracking-wider text-holo/50">
@@ -2025,9 +2053,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           </button>
         </div>
       </div>
+      )}
 
       {/* Tool rail — ТФ + режиссёрский набор */}
-      <div className="-mx-1 space-y-1 px-1">
+      <div className={`${phoneLandscape ? 'px-1 py-0.5' : '-mx-1 px-1'} space-y-1`}>
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             {CHART_TIMEFRAMES.map((tf) => (
@@ -2061,6 +2090,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             title="Сбросить масштаб"
           >
             Fit
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowSrZones((v) => !v)
+              haptic.impact()
+            }}
+            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+              showSrZones
+                ? 'border border-pink-400/35 bg-pink-500/15 text-pink-200'
+                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            }`}
+            title="Проторговка — полупрозрачный диапазон, не линия"
+          >
+            Зоны
           </button>
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             {FIB_TF_BUTTONS.map((b) => (
@@ -2107,6 +2151,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             {signalMode ? 'Сигнал ON' : 'Сигнал'}
           </button>
         </div>
+        {!phoneLandscape && (
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             <button
@@ -2146,21 +2191,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
               title="Горизонт: SCALP → INTRA → SWING"
             >
               {forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowSrZones((v) => !v)
-                haptic.impact()
-              }}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                showSrZones
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'text-white/55 hover:text-white/80'
-              }`}
-              title="Поддержка / сопротивление: серый премиум · бирюза дисконт. Слом = BOS↑ / BOS↓"
-            >
-              Зоны
             </button>
             <button
               type="button"
@@ -2241,17 +2271,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             </button>
           </div>
         </div>
+        )}
       </div>
 
-      <StructureHud read={structureRead} />
+      {!phoneLandscape && <StructureHud read={structureRead} />}
 
       <div
-        className={`relative w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#0c0e12] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
-          chartExpanded ? 'ring-1 ring-emerald-500/30' : ''
+        className={`relative w-full overflow-hidden bg-[#0c0e12] ${
+          phoneLandscape
+            ? 'rounded-none border-0'
+            : `rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
+                fullscreen ? 'ring-1 ring-emerald-500/30' : ''
+              }`
         }`}
         style={{
           height: chartHeight,
-          touchAction: chartExpanded ? 'none' : 'pan-x pinch-zoom',
+          touchAction: fullscreen ? 'none' : 'pan-x pinch-zoom',
         }}
         onTouchStart={(e) => e.stopPropagation()}
         onDoubleClick={resetChartView}
@@ -2306,6 +2341,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             })()}
           </div>
         )}
+        {structureRead && !pathModeActive && (
+          <div
+            className={`pointer-events-none absolute bottom-1.5 left-2 z-20 max-w-[62%] font-mono text-[10px] leading-tight ${
+              structureRead.structureHeld ? 'text-emerald-200/80' : 'text-rose-200/85'
+            }`}
+          >
+            {structureRead.summary}
+          </div>
+        )}
         {chartReady > 0 && showSessions && (
           <SessionOverlay
             chart={chartInstance}
@@ -2328,6 +2372,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             showLabels={false}
             highlightId={highlightedZoneId}
             quiet
+          />
+        )}
+        {chartReady > 0 && lastCandleTs > 0 && !pathModeActive && (
+          <StructureOverlay
+            chart={chartInstance}
+            read={structureRead}
+            lastCandleTs={lastCandleTs}
+            showPath
           />
         )}
         {chartReady > 0 && !cleanMode && (
@@ -2417,18 +2469,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
       </div>
 
+      {!phoneLandscape && (
       <DeltaSparkline
         symbol={symbol}
         refreshKey={processRefreshKey}
-        height={chartExpanded ? 44 : 32}
+        height={fullscreen ? 44 : 32}
       />
+      )}
 
-      {chartPreferences.indicators.volume &&
+      {!phoneLandscape &&
+        chartPreferences.indicators.volume &&
         indicators.volume.length > 0 && (
-          <VolumePanel volumeData={indicators.volume} height={chartExpanded ? 56 : 44} />
+          <VolumePanel volumeData={indicators.volume} height={fullscreen ? 56 : 44} />
         )}
 
-      {!chartExpanded &&
+      {!fullscreen &&
         oscillators.map((mode) => (
           <OscillatorPanel
             key={mode}
@@ -2441,7 +2496,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           />
         ))}
 
-      {chartExpanded && oscillators.length > 0 && (
+      {chartExpanded && !phoneLandscape && oscillators.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
           {oscillators.map((mode) => (
             <OscillatorPanel
@@ -2457,11 +2512,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </div>
       )}
 
-      {!chartExpanded && !cleanMode && (
+      {!fullscreen && !cleanMode && (
         <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />
       )}
 
-      {!chartExpanded && showPredictionPaths && forecast && (
+      {!fullscreen && showPredictionPaths && forecast && (
         <>
           <ScenarioLegend
             scenarios={forecast.scenarios}
@@ -2481,7 +2536,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </>
       )}
 
-      {!chartExpanded && signalMode && liveSignal && (
+      {!fullscreen && signalMode && liveSignal && (
         <SignalNowPanel
           result={liveSignal}
           selectedId={selectedSetupId}
@@ -2499,7 +2554,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {!chartExpanded && zonesMode && (
+      {!fullscreen && zonesMode && (
         <ZoneVariantsPanel
           zones={foundZones}
           setups={pickedSetups}
@@ -2514,7 +2569,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {!chartExpanded && tradesMode && (
+      {!fullscreen && tradesMode && (
         <ProbableTradesPanel
           trades={pickedSetups}
           globalView={tradesGlobalView}
@@ -2530,7 +2585,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {!chartExpanded &&
+      {!fullscreen &&
         showSetupPicker &&
         !zonesMode &&
         !tradesMode &&

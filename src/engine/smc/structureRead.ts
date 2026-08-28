@@ -91,12 +91,22 @@ export interface StructureRead {
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   confidence: number
   preferredSide: 'LONG' | 'SHORT' | null
+  /** true = закреп держит, false = структуру потеряли */
+  structureHeld: boolean
   summary: string
   factors: string[]
   chartPath: PathPoint[]
   markers: StructureMarker[]
   magnet: { price: number; label: string } | null
   invalidation: number | null
+}
+
+export interface CongestionZone {
+  top: number
+  bottom: number
+  startTimeSec: number
+  endTimeSec: number
+  touches: number
 }
 
 const TF_WEIGHT: Record<StructureTf, number> = {
@@ -147,6 +157,76 @@ export function findSwings(
     const t = Math.floor(candles[i][0] / 1000)
     if (isHigh) out.push({ index: i, price: h, timeSec: t, kind: 'HIGH' })
     if (isLow) out.push({ index: i, price: l, timeSec: t, kind: 'LOW' })
+  }
+  return out
+}
+
+/** Dense overlapping candle range = проторговка, not a single S/R line. */
+export function findCongestionZones(
+  candles: OhlcvCandle[],
+  maxZones = 2
+): CongestionZone[] {
+  if (candles.length < 12) return []
+  const window = candles.slice(-90)
+  const highs = window.map((c) => c[2])
+  const lows = window.map((c) => c[3])
+  const minP = Math.min(...lows)
+  const maxP = Math.max(...highs)
+  if (!(maxP > minP)) return []
+
+  const bins = 28
+  const step = (maxP - minP) / bins
+  if (!(step > 0)) return []
+  const counts = new Array<number>(bins).fill(0)
+  for (const c of window) {
+    const a = Math.max(0, Math.floor((c[3] - minP) / step))
+    const b = Math.min(bins - 1, Math.floor((c[2] - minP) / step))
+    for (let i = a; i <= b; i++) counts[i]++
+  }
+  const avg = counts.reduce((s, n) => s + n, 0) / bins
+  const thresh = Math.max(avg * 1.22, 3)
+
+  const runs: { a: number; b: number; sum: number }[] = []
+  let start = -1
+  for (let i = 0; i <= bins; i++) {
+    if (i < bins && counts[i] >= thresh) {
+      if (start < 0) start = i
+    } else if (start >= 0) {
+      let sum = 0
+      for (let k = start; k < i; k++) sum += counts[k]
+      runs.push({ a: start, b: i - 1, sum })
+      start = -1
+    }
+  }
+  runs.sort((x, y) => y.sum - x.sum)
+
+  const lastTs = Math.floor(window[window.length - 1][0] / 1000)
+  const out: CongestionZone[] = []
+  for (const r of runs) {
+    if (out.length >= maxZones) break
+    const bottom = minP + r.a * step
+    const top = minP + (r.b + 1) * step
+    if (!(top > bottom)) continue
+    let sIdx = 0
+    for (let i = 0; i < window.length; i++) {
+      if (window[i][2] >= bottom && window[i][3] <= top) {
+        sIdx = i
+        break
+      }
+    }
+    const next: CongestionZone = {
+      top,
+      bottom,
+      startTimeSec: Math.floor(window[sIdx][0] / 1000),
+      endTimeSec: lastTs + 86400 * 4,
+      touches: r.sum,
+    }
+    const overlaps = out.some((z) => {
+      const ov = Math.min(z.top, next.top) - Math.max(z.bottom, next.bottom)
+      const minH = Math.min(z.top - z.bottom, next.top - next.bottom)
+      return ov > minH * 0.45
+    })
+    if (!overlaps) out.push(next)
   }
   return out
 }
@@ -541,39 +621,133 @@ function pickMagnet(
     if (price != null && price > 0) cands.push({ price, label, rank })
   }
   if (side === 'LONG') {
-    push(h4?.nextBsl, '4H BSL', 8)
-    push(d1?.nextBsl, 'Daily high', 7)
-    push(w1?.nextBsl, 'Weekly high', 6)
-    push(h1?.nextBsl, '1H BSL', 5)
+    push(h4?.nextBsl, 'сопротивление 4ч', 8)
+    push(d1?.nextBsl, 'хай дня', 7)
+    push(w1?.nextBsl, 'хай недели', 6)
+    push(h1?.nextBsl, 'сопротивление 1ч', 5)
     if (fib && fib.bias === 'SHORT' && fib.state !== 'BREAK') {
-      push((fib.zoneTop + fib.zoneBottom) / 2, 'Fib 141', 4)
+      push((fib.zoneTop + fib.zoneBottom) / 2, 'зона 141', 4)
     }
   } else {
-    push(h4?.nextSsl, '4H SSL', 8)
-    push(d1?.nextSsl, 'Daily low', 7)
-    push(w1?.nextSsl, 'Weekly low', 6)
-    push(h1?.nextSsl, '1H SSL', 5)
+    push(h4?.nextSsl, 'поддержка 4ч', 8)
+    push(d1?.nextSsl, 'лоу дня', 7)
+    push(w1?.nextSsl, 'лоу недели', 6)
+    push(h1?.nextSsl, 'поддержка 1ч', 5)
     if (fib && fib.bias === 'LONG' && fib.state !== 'BREAK') {
-      push((fib.zoneTop + fib.zoneBottom) / 2, 'Fib 141', 4)
+      push((fib.zoneTop + fib.zoneBottom) / 2, 'зона 141', 4)
     }
   }
   cands.sort((a, b) => b.rank - a.rank)
   return cands[0] ?? null
 }
 
+function lastStructureEvent(tf: TfStructure | null): StructureEvent | null {
+  if (!tf) return null
+  const evs = [tf.lastReclaim, tf.lastChoch, tf.lastBos].filter(
+    (e): e is StructureEvent => e != null
+  )
+  if (!evs.length) return null
+  evs.sort((a, b) => a.index - b.index)
+  return evs[evs.length - 1]
+}
+
+/** Закреп держит vs структуру потеряли — куда падать / лететь. */
+export function structureHoldState(
+  h1: TfStructure | null,
+  price: number
+): { held: boolean; side: 'LONG' | 'SHORT' | null } {
+  if (!h1) return { held: false, side: null }
+  const last = lastStructureEvent(h1)
+  if (!last) {
+    const inside = price <= h1.dealingHigh && price >= h1.dealingLow
+    const side =
+      h1.trend === 'BULLISH' ? 'LONG' : h1.trend === 'BEARISH' ? 'SHORT' : null
+    return { held: inside, side }
+  }
+  if (last.kind === 'RECLAIM') {
+    const still = last.side === 'UP' ? price >= last.price : price <= last.price
+    return {
+      held: last.held && still,
+      side: last.side === 'UP' ? 'LONG' : 'SHORT',
+    }
+  }
+  if (last.kind === 'BOS') {
+    const still = last.side === 'UP' ? price >= last.price : price <= last.price
+    if (last.held && still) {
+      return { held: true, side: last.side === 'UP' ? 'LONG' : 'SHORT' }
+    }
+    return {
+      held: false,
+      side: last.side === 'UP' ? 'SHORT' : 'LONG',
+    }
+  }
+  if (last.kind === 'CHOCH') {
+    return {
+      held: false,
+      side: last.side === 'UP' ? 'LONG' : 'SHORT',
+    }
+  }
+  return { held: false, side: null }
+}
+
 function buildFlightPath(opts: {
   price: number
   side: 'LONG' | 'SHORT'
+  held: boolean
   h1: TfStructure | null
   h4: TfStructure | null
   fib: Fib141Reaction | null
   magnet: { price: number; label: string } | null
   invalidation: number | null
 }): PathPoint[] {
-  const { price, side, h1, h4, fib, magnet, invalidation } = opts
+  const { price, side, held, h1, h4, fib, magnet, invalidation } = opts
   const dir = side === 'LONG' ? 1 : -1
   const hour = 3600
   const points: PathPoint[] = [{ timeOffsetSeconds: 0, price, label: 'сейчас' }]
+
+  if (!held) {
+    const move = side === 'SHORT' ? 'падение' : 'полёт'
+    let t = Math.round(hour * 1.6)
+    const h4Target =
+      side === 'LONG'
+        ? h4?.nextBsl ?? h4?.dealingHigh
+        : h4?.nextSsl ?? h4?.dealingLow
+    if (h4Target != null && h4Target > 0) {
+      const aligned =
+        (side === 'LONG' && h4Target > price) ||
+        (side === 'SHORT' && h4Target < price)
+      if (aligned) {
+        points.push({
+          timeOffsetSeconds: t,
+          price: h4Target,
+          label: `${move} · 4H`,
+          isKeyLevel: true,
+        })
+        t += Math.round(hour * 8)
+      }
+    }
+    if (magnet && magnet.price > 0) {
+      const aligned =
+        (side === 'LONG' && magnet.price > price) ||
+        (side === 'SHORT' && magnet.price < price)
+      if (aligned && !points.some((p) => Math.abs(p.price - magnet.price) < magnet.price * 0.001)) {
+        points.push({
+          timeOffsetSeconds: t,
+          price: magnet.price,
+          label: `${move} · ${magnet.label}`,
+          isKeyLevel: true,
+        })
+      }
+    }
+    if (points.length < 2) {
+      points.push({
+        timeOffsetSeconds: hour * 8,
+        price: price + dir * Math.abs(price) * 0.028,
+        label: move,
+      })
+    }
+    return points
+  }
 
   // Pullback into discount (long) / premium (short) — 1H structure
   const pull =
@@ -709,14 +883,18 @@ export function composeStructureRead(input: {
   if (w1) factors.push(`W ${w1.trend === 'BULLISH' ? 'бычий' : w1.trend === 'BEARISH' ? 'медвежий' : 'флэт'}`)
   if (fib141) factors.push(fib141.narrative)
 
-  const magnet = preferredSide
-    ? pickMagnet(h1, h4, d1, w1, fib141, preferredSide)
+  const hold = structureHoldState(h1, input.price)
+  const pathSide = hold.side ?? preferredSide
+  const structureHeld = hold.held
+
+  const magnet = pathSide
+    ? pickMagnet(h1, h4, d1, w1, fib141, pathSide)
     : null
 
   const invalidation =
-    preferredSide === 'LONG'
+    pathSide === 'LONG'
       ? h1?.lastSwingLow?.price ?? h4?.lastSwingLow?.price ?? null
-      : preferredSide === 'SHORT'
+      : pathSide === 'SHORT'
         ? h1?.lastSwingHigh?.price ?? h4?.lastSwingHigh?.price ?? null
         : null
 
@@ -724,16 +902,19 @@ export function composeStructureRead(input: {
     Math.min(
       92,
       38 + Math.abs(net) * 55 + (h1?.lastBos?.held || h1?.lastReclaim?.held ? 8 : 0) +
-        (h4 && h1 && h4.trend === h1.trend && h1.trend !== 'RANGING' ? 10 : 0)
+        (h4 && h1 && h4.trend === h1.trend && h1.trend !== 'RANGING' ? 10 : 0) +
+        (structureHeld ? 6 : -6)
     )
   )
 
-  const summary =
-    bias === 'NEUTRAL'
-      ? 'Структура смешанная — ждём закреп 1H / 4H'
-      : preferredSide === 'LONG'
-        ? `Смарт-мани вверх: 1H ${h1?.lastChoch?.kind === 'CHOCH' ? 'CHoCH↑' : h1?.lastBos ? 'BOS↑' : 'дисконт'} · цель ${magnet?.label ?? '4H BSL'}`
-        : `Смарт-мани вниз: 1H ${h1?.lastChoch?.kind === 'CHOCH' ? 'CHoCH↓' : h1?.lastBos ? 'BOS↓' : 'премиум'} · цель ${magnet?.label ?? '4H SSL'}`
+  const dest = magnet?.label ?? (pathSide === 'LONG' ? 'ликвидность сверху' : 'ликвидность снизу')
+  const summary = !pathSide
+    ? 'Структура смешанная — ждём закреп'
+    : structureHeld
+      ? `Закреп держит · цель ${dest}`
+      : pathSide === 'SHORT'
+        ? `Структура потеряна · падение к ${dest}`
+        : `Структура потеряна · полёт к ${dest}`
 
   const markers: StructureMarker[] = []
   const pushMark = (ev: StructureEvent | null, tf: string) => {
@@ -747,7 +928,7 @@ export function composeStructureRead(input: {
       position: up ? 'belowBar' : 'aboveBar',
       color: isChoch ? '#f59e0b' : isRec ? '#22d3ee' : up ? '#22c55e' : '#f43f5e',
       shape: isRec ? 'circle' : up ? 'arrowUp' : 'arrowDown',
-      text: isBos ? `BOS ${tf}` : isChoch ? `CHoCH ${tf}` : `закр ${tf}`,
+      text: isBos ? `слом ${tf}` : isChoch ? `смена ${tf}` : `закр ${tf}`,
     })
   }
   // 1H is the execution chart — those markers matter most
@@ -760,10 +941,11 @@ export function composeStructureRead(input: {
   if (h4?.lastChoch) pushMark(h4.lastChoch, '4H')
 
   const chartPath =
-    preferredSide && input.price > 0
+    pathSide && input.price > 0
       ? buildFlightPath({
           price: input.price,
-          side: preferredSide,
+          side: pathSide,
+          held: structureHeld,
           h1,
           h4,
           fib: fib141,
@@ -780,7 +962,8 @@ export function composeStructureRead(input: {
     fib141,
     bias,
     confidence,
-    preferredSide,
+    preferredSide: pathSide,
+    structureHeld,
     summary,
     factors: factors.slice(0, 6),
     chartPath,

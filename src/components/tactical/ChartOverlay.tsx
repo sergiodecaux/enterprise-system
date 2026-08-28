@@ -18,6 +18,9 @@ interface Props {
 type Rgba = { r: number; g: number; b: number }
 
 function baseHue(zone: LiquidityZone): Rgba {
+  if ((zone.id ?? '').startsWith('cong_')) {
+    return { r: 244, g: 114, b: 182 }
+  }
   if ((zone.id ?? '').startsWith('sr_premium')) {
     return { r: 148, g: 163, b: 184 }
   }
@@ -75,26 +78,32 @@ function strengthVisual(
   const isFib141 =
     zone.type === 'FIBONACCI' &&
     ((zone.id ?? '').includes('141') || (zone.label ?? '').includes('141'))
+  const isCong = (zone.id ?? '').startsWith('cong_')
 
-  const airy = isFib141 || (zone.id ?? '').startsWith('sr_')
+  const airy = isFib141 || ((zone.id ?? '').startsWith('sr_') && !isCong)
   const tierMul = tier === 'STRONG' ? 1.15 : tier === 'MEDIUM' ? 0.85 : 0.55
   let op = (baseOpacityPct / 100) * tierMul
   if (airy) op = Math.min(0.09, op * 0.28)
+  if (isCong) op = 0.16
   if (highlighted) op = Math.min(0.55, op * 1.45)
   else op *= 0.92
 
-  const borderA = airy
+  const borderA = isCong
+    ? 0.38
+    : airy
     ? 0.32
     : tier === 'STRONG'
       ? 0.95
       : tier === 'MEDIUM'
         ? 0.72
         : 0.45
-  const borderW = highlighted ? 2 : airy ? 1 : tier === 'STRONG' ? 1.5 : 1
+  const borderW = highlighted ? 2 : isCong || airy ? 1 : tier === 'STRONG' ? 1.5 : 1
   const stripeW = airy ? 2 : tier === 'STRONG' ? 4 : tier === 'MEDIUM' ? 3 : 2
 
   return {
-    fillA: airy
+    fillA: isCong
+      ? 0.16
+      : airy
       ? Math.min(0.1, Math.max(0.035, op))
       : Math.min(0.5, Math.max(0.08, op)),
     borderA: highlighted ? 1 : borderA,
@@ -102,6 +111,7 @@ function strengthVisual(
     stripeW,
     tier,
     isFib141,
+    isCong,
   }
 }
 
@@ -231,10 +241,22 @@ const ChartOverlay = ({
           Boolean(highlightId) && !highlighted ? 0.45 : 1
 
         const div = document.createElement('div')
-        const minH = vis.isFib141 || highlighted ? 5 : 3
-        const fillStart = vis.isFib141 ? vis.fillA * 0.7 * dimmed : vis.fillA * 1.15 * dimmed
-        const fillMid = vis.isFib141 ? vis.fillA * 0.45 * dimmed : vis.fillA * 0.55 * dimmed
-        const fillEnd = vis.isFib141 ? vis.fillA * 0.2 * dimmed : vis.fillA * 0.25 * dimmed
+        const minH = vis.isFib141 || vis.isCong || highlighted ? 5 : 3
+        const fillStart = vis.isCong
+          ? vis.fillA * dimmed
+          : vis.isFib141
+            ? vis.fillA * 0.7 * dimmed
+            : vis.fillA * 1.15 * dimmed
+        const fillMid = vis.isCong
+          ? vis.fillA * 0.92 * dimmed
+          : vis.isFib141
+            ? vis.fillA * 0.45 * dimmed
+            : vis.fillA * 0.55 * dimmed
+        const fillEnd = vis.isCong
+          ? vis.fillA * 0.78 * dimmed
+          : vis.isFib141
+            ? vis.fillA * 0.2 * dimmed
+            : vis.fillA * 0.25 * dimmed
         div.style.cssText = `
           position: absolute;
           left: ${left}px;

@@ -45,8 +45,11 @@ const StructureOverlay = ({
     }
     if (!showPath || !read || read.chartPath.length < 2 || !lastCandleTs) return
 
-    const color =
-      read.bias === 'BULLISH'
+    const color = !read.structureHeld
+      ? read.preferredSide === 'SHORT'
+        ? '#fb7185'
+        : '#34d399'
+      : read.bias === 'BULLISH'
         ? '#34d399'
         : read.bias === 'BEARISH'
           ? '#fb7185'
