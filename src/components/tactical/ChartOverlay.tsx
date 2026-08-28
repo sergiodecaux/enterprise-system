@@ -80,6 +80,7 @@ function strengthVisual(
     ((zone.id ?? '').includes('141') || (zone.label ?? '').includes('141'))
   const isCong = (zone.id ?? '').startsWith('cong_')
 
+  const isAction = zone.type === 'FVG' || zone.type === 'ORDER_BLOCK'
   const airy = isFib141 || ((zone.id ?? '').startsWith('sr_') && !isCong)
   const tierMul = tier === 'STRONG' ? 1.15 : tier === 'MEDIUM' ? 0.85 : 0.55
   let op = (baseOpacityPct / 100) * tierMul
@@ -90,6 +91,8 @@ function strengthVisual(
 
   const borderA = isCong
     ? 0.38
+    : isAction
+      ? highlighted ? 0.85 : 0.62
     : airy
     ? 0.32
     : tier === 'STRONG'
@@ -103,6 +106,10 @@ function strengthVisual(
   return {
     fillA: isCong
       ? 0.16
+      : isAction
+        ? highlighted
+          ? 0.26
+          : 0.16
       : airy
       ? Math.min(0.1, Math.max(0.035, op))
       : Math.min(0.5, Math.max(0.08, op)),
@@ -112,6 +119,7 @@ function strengthVisual(
     tier,
     isFib141,
     isCong,
+    isAction,
   }
 }
 
@@ -119,52 +127,23 @@ function rgba(c: Rgba, a: number): string {
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`
 }
 
-function zoneTitle(zone: LiquidityZone): string {
-  const kind =
-    zone.type === 'SSL' || zone.type === 'LIQ'
-      ? 'ПОДДЕРЖКА'
-      : zone.type === 'BSL'
-        ? 'СОПРОТИВЛЕНИЕ'
-        : zone.type === 'FIBONACCI'
-          ? zone.label?.includes('141')
-            ? 'FIB 1.41 магнит'
-            : 'FIB'
-          : zone.type === 'OTE'
-            ? 'OTE вход'
-            : zone.type === 'ORDER_BLOCK'
-              ? zone.side === 'BULLISH'
-                ? 'OB лонг'
-                : 'OB шорт'
-              : zone.type === 'FVG'
-                ? zone.side === 'BULLISH'
-                  ? 'FVG ↑'
-                  : 'FVG ↓'
-                : zone.label?.split('·')[0]?.trim() || zone.type
-
-  const action =
-    zone.side === 'BULLISH' || zone.type === 'SSL' || zone.type === 'LIQ'
-      ? 'лонг отсюда ↑'
-      : zone.side === 'BEARISH' || zone.type === 'BSL'
-        ? 'шорт отсюда ↓'
-        : ''
-
-  const lost =
-    zone.invalidation != null
-      ? zone.side === 'BULLISH' || zone.type === 'SSL' || zone.type === 'LIQ'
-        ? `слом < ${fmtPx(zone.invalidation)}`
-        : `слом > ${fmtPx(zone.invalidation)}`
-      : ''
-
-  if (zone.contextHint || zone.type === 'SSL' || zone.type === 'BSL') {
-    return [kind, action, lost].filter(Boolean).join(' · ')
+function compactLabel(zone: LiquidityZone): string {
+  if (zone.contextHint) return zone.contextHint
+  if (zone.type === 'FVG') {
+    return zone.side === 'BULLISH' ? 'FVG · лонг с отката' : 'FVG · шорт с отката'
   }
-  return [kind, action].filter(Boolean).join(' · ') || zone.label || zone.type
+  if (zone.type === 'ORDER_BLOCK') {
+    return zone.side === 'BULLISH' ? 'OB · лонг с отката' : 'OB · шорт с отката'
+  }
+  return zone.label || zone.type
 }
 
-function fmtPx(p: number): string {
-  if (p >= 1000) return p.toFixed(2)
-  if (p >= 1) return p.toFixed(4)
-  return p.toPrecision(5)
+function isActionZone(zone: LiquidityZone): boolean {
+  return (
+    zone.type === 'FVG' ||
+    zone.type === 'ORDER_BLOCK' ||
+    Boolean(zone.contextHint && !(zone.id ?? '').startsWith('cong_'))
+  )
 }
 
 const ChartOverlay = ({
@@ -203,9 +182,12 @@ const ChartOverlay = ({
           const ah = a.id === highlightId ? 1 : 0
           const bh = b.id === highlightId ? 1 : 0
           if (ah !== bh) return bh - ah
+          const ak = isActionZone(a) ? 1 : 0
+          const bk = isActionZone(b) ? 1 : 0
+          if (ak !== bk) return bk - ak
           return (b.strength ?? 5) - (a.strength ?? 5)
         })
-        .slice(0, 10)
+        .slice(0, 12)
 
       for (const zone of visibleZones) {
         const topY = series.priceToCoordinate(zone.top)
@@ -237,11 +219,16 @@ const ChartOverlay = ({
         const highlighted = Boolean(highlightId && zone.id === highlightId)
         const hue = baseHue(zone)
         const vis = strengthVisual(zone, opacity, highlighted)
+        const actionable = vis.isAction || isActionZone(zone)
         const dimmed =
-          Boolean(highlightId) && !highlighted ? 0.45 : 1
+          Boolean(highlightId) && !highlighted
+            ? actionable
+              ? 0.78
+              : 0.42
+            : 1
 
         const div = document.createElement('div')
-        const minH = vis.isFib141 || vis.isCong || highlighted ? 5 : 3
+        const minH = vis.isFib141 || vis.isCong || vis.isAction || highlighted ? 5 : 3
         const fillStart = vis.isCong
           ? vis.fillA * dimmed
           : vis.isFib141
@@ -263,12 +250,11 @@ const ChartOverlay = ({
           top: ${yPos}px;
           width: ${width}px;
           height: ${Math.max(height, minH)}px;
-          background: linear-gradient(
-            90deg,
-            ${rgba(hue, fillStart)} 0%,
-            ${rgba(hue, fillMid)} 55%,
-            ${rgba(hue, fillEnd)} 100%
-          );
+          background: ${
+            vis.isAction
+              ? `repeating-linear-gradient(-52deg, ${rgba(hue, vis.fillA * dimmed)} 0px, ${rgba(hue, vis.fillA * dimmed)} 5px, ${rgba(hue, vis.fillA * 0.45 * dimmed)} 5px, ${rgba(hue, vis.fillA * 0.45 * dimmed)} 10px)`
+              : `linear-gradient(90deg, ${rgba(hue, fillStart)} 0%, ${rgba(hue, fillMid)} 55%, ${rgba(hue, fillEnd)} 100%)`
+          };
           border-top: ${vis.borderW}px ${vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
           border-bottom: ${vis.borderW}px ${vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
           box-shadow: ${
@@ -285,7 +271,33 @@ const ChartOverlay = ({
           border-radius: 2px;
         `
 
-        if (!quiet) {
+        if (actionable && (width >= 48 || highlighted)) {
+          const pill = document.createElement('div')
+          pill.textContent = compactLabel(zone)
+          pill.style.cssText = `
+            position: absolute;
+            left: 6px;
+            top: 50%;
+            transform: translateY(-50%);
+            max-width: ${Math.max(64, Math.min(200, width - 12))}px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: ${highlighted ? '10px' : '9px'};
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-weight: ${highlighted ? '700' : '600'};
+            letter-spacing: 0.01em;
+            color: rgba(255,255,255,0.95);
+            background: rgba(0,0,0,0.58);
+            border: 1px solid ${rgba(hue, highlighted ? 0.75 : 0.5)};
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+          `
+          div.appendChild(pill)
+        }
+
+        if (!quiet && !actionable) {
         const stripe = document.createElement('div')
         stripe.style.cssText = `
           position: absolute;
@@ -330,7 +342,7 @@ const ChartOverlay = ({
 
         if (showPill) {
           const pill = document.createElement('div')
-          pill.textContent = zoneTitle(zone)
+          pill.textContent = compactLabel(zone)
           pill.style.cssText = `
             position: absolute;
             left: ${vis.stripeW + 6}px;

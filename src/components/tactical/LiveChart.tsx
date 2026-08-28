@@ -72,6 +72,7 @@ import {
   readTfStructure,
   type StructureTf,
 } from '../../engine/smc/structureRead'
+import { pickActionZones } from '../../engine/smc/entryZones'
 import { horizonToStyle } from '../../engine/zones/horizonProfiles'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
@@ -322,7 +323,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const newsScore = coinSentiment?.score ?? 0
 
   const indicators = useChartIndicators(candles, chartPreferences.indicators)
-  const { liquidityZones: baseZones, priceLevels: basePriceLevels } = useChartZones(
+  const { priceLevels: basePriceLevels } = useChartZones(
     candles,
     chartPreferences.zones
   )
@@ -430,7 +431,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
 
-  /** Проторговка (розовый диапазон) + Fib 141 по кнопкам ТФ */
+  /** Проторговка + FVG/OB откуда лонг/шорт с отката */
+  const actionPick = useMemo(
+    () =>
+      pickActionZones({
+        candles,
+        price: currentPrice,
+        side: structureRead?.preferredSide ?? null,
+      }),
+    [candles, currentPrice, structureRead?.preferredSide]
+  )
+
   const liquidityZones = useMemo((): LiquidityZone[] => {
     const visibleEnd =
       candles.length > 0
@@ -498,22 +509,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     if (zonesMode && foundChartZones.length) {
       zones.push(...foundChartZones)
     }
-    if (!cleanMode) {
-      zones.push(
-        ...baseZones
-          .filter((z) => z.type === 'ORDER_BLOCK' || z.type === 'FVG')
-          .slice(0, 4)
-      )
-    }
+    zones.push(...actionPick.zones)
     return zones
   }, [
-    baseZones,
+    actionPick.zones,
     candles,
     chartStructure,
     showSrZones,
     fibTfs,
     fibMaps,
-    cleanMode,
     zonesMode,
     foundChartZones,
   ])
@@ -1821,7 +1825,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         showLabels: false,
         zones: {
           ...chartPreferences.zones,
-          fvg: false,
+          fvg: true,
           poc: false,
           valueArea: false,
           fibonacci: false,
@@ -2370,7 +2374,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             containerRef={containerRef}
             opacity={14}
             showLabels={false}
-            highlightId={highlightedZoneId}
+            highlightId={highlightedZoneId ?? actionPick.launchId}
             quiet
           />
         )}

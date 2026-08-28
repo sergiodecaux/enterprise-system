@@ -134,7 +134,7 @@ export const DEFAULT_CHART_PREFERENCES: ChartPreferences = {
   },
   zones: {
     orderBlocks: true,
-    fvg: false,
+    fvg: true,
     fibonacci: true,
     poc: false,
     valueArea: false,
