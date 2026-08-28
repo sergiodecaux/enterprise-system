@@ -41,7 +41,7 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
 
-function barSec(tf: string): number {
+export function timeframeBarSeconds(tf: string): number {
   if (tf === '1m') return 60
   if (tf === '5m') return 300
   if (tf === '15m') return 900
@@ -54,6 +54,29 @@ function kindOf(z: LiquidityZone): ZoneAdvisorBrief['kind'] {
   if (z.type === 'FVG') return 'FVG'
   if (z.type === 'ORDER_BLOCK') return 'OB'
   return 'RANGE'
+}
+
+/** Smallest / most actionable painted band under a tap (price). Time is ignored — FVG/OB are drawn out to the right. */
+export function hitZoneAt(
+  zones: LiquidityZone[],
+  price: number,
+  _timeSec?: number | null
+): LiquidityZone | null {
+  if (!(price > 0) || !zones.length) return null
+  const hits = zones.filter((z) => price <= z.top && price >= z.bottom)
+  if (!hits.length) return null
+  hits.sort((a, b) => {
+    const rank = (z: LiquidityZone) => {
+      if (z.type === 'FVG') return 0
+      if (z.type === 'ORDER_BLOCK') return 1
+      if (z.contextHint) return 2
+      return 3
+    }
+    const d = rank(a) - rank(b)
+    if (d !== 0) return d
+    return a.top - a.bottom - (b.top - b.bottom)
+  })
+  return hits[0]
 }
 
 function bounceSide(z: LiquidityZone, price: number): 'LONG' | 'SHORT' {
@@ -191,7 +214,7 @@ export function analyzeZoneTap(opts: {
 
   const kind = kindOf(zone)
   const side = bounceSide(zone, price)
-  const bar = barSec(timeframe)
+  const bar = timeframeBarSeconds(timeframe)
   const pHold = holdProbability(zone, side, price, structure)
   const pBreak = 100 - pHold
 

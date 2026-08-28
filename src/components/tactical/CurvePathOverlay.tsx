@@ -1,9 +1,10 @@
 /**
  * Smooth (Catmull-Rom) flight paths — not straight polylines.
+ * Maps future offsets via logical coordinates so arrows render past the last candle.
  */
 
 import { useEffect, useRef } from 'react'
-import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi, Logical } from 'lightweight-charts'
 import type { PathPoint } from '../../engine/prediction/types'
 
 export interface CurvePath {
@@ -18,7 +19,8 @@ interface Props {
   chart: IChartApi | null
   series: ISeriesApi<'Candlestick'> | null
   containerRef: React.RefObject<HTMLDivElement>
-  lastCandleTs: number
+  lastLogicalIndex: number
+  barSeconds: number
   paths: CurvePath[]
 }
 
@@ -58,7 +60,8 @@ const CurvePathOverlay = ({
   chart,
   series,
   containerRef,
-  lastCandleTs,
+  lastLogicalIndex,
+  barSeconds,
   paths,
 }: Props) => {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -67,6 +70,19 @@ const CurvePathOverlay = ({
     if (!chart || !series || !svgRef.current || !containerRef.current) return
     const svg = svgRef.current
     const timeScale = chart.timeScale()
+    const bar = Math.max(1, barSeconds)
+
+    const maxBars = Math.max(
+      0,
+      ...paths.flatMap((p) => p.points.map((pt) => pt.timeOffsetSeconds / bar))
+    )
+    const extra = Math.min(40, Math.ceil(maxBars) + 6)
+    try {
+      const current = timeScale.options().rightOffset ?? 8
+      if (extra > current + 1) timeScale.applyOptions({ rightOffset: extra })
+    } catch {
+      /* ignore */
+    }
 
     const redraw = () => {
       const w = containerRef.current!.clientWidth
@@ -75,7 +91,7 @@ const CurvePathOverlay = ({
       svg.setAttribute('width', String(w))
       svg.setAttribute('height', String(h))
       svg.innerHTML = ''
-      if (!lastCandleTs || !paths.length) return
+      if (lastLogicalIndex < 0 || !paths.length) return
       let priceScaleW = 56
       try {
         const pw = chart.priceScale('right').width()
@@ -89,13 +105,12 @@ const CurvePathOverlay = ({
         if (path.points.length < 2) continue
         const coords: { x: number; y: number }[] = []
         for (const p of path.points) {
-          const t = (lastCandleTs + p.timeOffsetSeconds) as Time
-          const x = timeScale.timeToCoordinate(t)
+          const logical = (lastLogicalIndex +
+            p.timeOffsetSeconds / bar) as Logical
+          const x = timeScale.logicalToCoordinate(logical)
           const y = series.priceToCoordinate(p.price)
           if (x == null || y == null) continue
-          const xn = Number(x)
-          if (xn > plotRight + 8) continue
-          coords.push({ x: xn, y: Number(y) })
+          coords.push({ x: Number(x), y: Number(y) })
         }
         if (coords.length < 2) continue
 
@@ -122,7 +137,8 @@ const CurvePathOverlay = ({
         const mid = coords[Math.floor(coords.length * 0.55)]
         if (mid && path.label) {
           const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-          text.setAttribute('x', String(mid.x + 6))
+          const tx = Math.min(mid.x + 6, plotRight - 28)
+          text.setAttribute('x', String(tx))
           text.setAttribute('y', String(mid.y - 6))
           text.setAttribute('fill', path.color)
           text.setAttribute('font-size', '10')
@@ -136,18 +152,20 @@ const CurvePathOverlay = ({
     }
 
     redraw()
+    const raf = window.requestAnimationFrame(redraw)
     const onVis = () => redraw()
     timeScale.subscribeVisibleLogicalRangeChange(onVis)
     chart.subscribeCrosshairMove(onVis)
     const ro = new ResizeObserver(() => redraw())
     ro.observe(containerRef.current)
     return () => {
+      window.cancelAnimationFrame(raf)
       timeScale.unsubscribeVisibleLogicalRangeChange(onVis)
       chart.unsubscribeCrosshairMove(onVis)
       ro.disconnect()
       svg.innerHTML = ''
     }
-  }, [chart, series, containerRef, lastCandleTs, paths])
+  }, [chart, series, containerRef, lastLogicalIndex, barSeconds, paths])
 
   if (!paths.length) return null
   return (
