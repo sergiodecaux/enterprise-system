@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import {
   createChart,
@@ -180,6 +180,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartShellRef = useRef<HTMLDivElement>(null)
+  const expandSlotRef = useRef<HTMLDivElement>(null)
+  const [expandHost] = useState<HTMLDivElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    const el = document.createElement('div')
+    el.setAttribute('data-live-chart-host', '')
+    return el
+  })
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const lineRefs = useRef<Record<string, ISeriesApi<'Line'>>>({})
@@ -277,25 +284,63 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     }
   }, [chartExpanded])
 
+  const resizeLiveChart = useCallback(() => {
+    const chart = chartRef.current
+    const box = containerRef.current
+    if (!chart || !box) return
+    const w = Math.floor(box.clientWidth)
+    const h = Math.floor(box.clientHeight)
+    if (w < 16 || h < 16) return
+    try {
+      chart.applyOptions({ width: w, height: h })
+    } catch {
+      /* chart may be mid-move */
+    }
+  }, [])
+
   useEffect(() => {
-    const h = chartExpanded
-      ? Math.max(
-          180,
-          chartShellRef.current?.clientHeight || chartHeight
-        )
-      : chartHeight
-    chartRef.current?.applyOptions({
-      height: h,
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: true,
-      },
-      crosshair: { mode: CrosshairMode.Magnet },
-      timeScale: { rightOffset: tallChart ? 22 : 16 },
+    return () => {
+      expandHost?.remove()
+    }
+  }, [expandHost])
+
+  useLayoutEffect(() => {
+    const host = expandHost
+    const slot = expandSlotRef.current
+    if (!host || !slot) return
+    userPanningRef.current = false
+    if (chartExpanded) {
+      host.style.cssText =
+        'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;background:#0c0e12;padding-top:env(safe-area-inset-top);'
+      document.body.appendChild(host)
+    } else {
+      host.style.cssText = 'position:relative;display:block;width:100%;'
+      slot.appendChild(host)
+    }
+    window.requestAnimationFrame(() => {
+      resizeLiveChart()
+      window.requestAnimationFrame(resizeLiveChart)
     })
-  }, [chartHeight, tallChart, chartExpanded])
+  }, [chartExpanded, expandHost, resizeLiveChart])
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    try {
+      chartRef.current.applyOptions({
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: true,
+        },
+        crosshair: { mode: CrosshairMode.Magnet },
+        timeScale: { rightOffset: tallChart ? 22 : 16 },
+      })
+    } catch {
+      /* ignore */
+    }
+    resizeLiveChart()
+  }, [chartHeight, tallChart, chartExpanded, resizeLiveChart])
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -1413,9 +1458,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return
-    fittedKeyRef.current = ''
 
-    const chart = createChart(containerRef.current, {
+    const el = containerRef.current
+    const startW = Math.max(50, Math.floor(el.clientWidth || el.parentElement?.clientWidth || 320))
+    const startH = Math.max(160, Math.floor(el.clientHeight || chartHeightRef.current || CHART_HEIGHT))
+
+    const chart = createChart(el, {
       layout: {
         background: { color: '#0c0e12' },
         textColor: 'rgba(220, 230, 240, 0.55)',
@@ -1458,8 +1506,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         entireTextOnly: true,
         alignLabels: true,
       },
-      width: containerRef.current.clientWidth,
-      height: chartHeightRef.current,
+      width: startW,
+      height: startH,
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -1498,15 +1546,19 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     setChartReady((n) => n + 1)
 
     const syncSize = () => {
-      const el = containerRef.current
-      if (!el || !chartRef.current) return
-      const w = el.clientWidth
-      const h = el.clientHeight
+      const box = containerRef.current
+      if (!box || !chartRef.current) return
+      const w = box.clientWidth
+      const h = box.clientHeight
       if (w > 8 && h > 8) {
-        chart.applyOptions({
-          width: Math.floor(w),
-          height: Math.floor(h),
-        })
+        try {
+          chart.applyOptions({
+            width: Math.floor(w),
+            height: Math.floor(h),
+          })
+        } catch {
+          /* ignore */
+        }
       }
     }
     window.requestAnimationFrame(syncSize)
@@ -1530,12 +1582,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       if (!entries.length || !chartRef.current) return
       const w = Math.floor(entries[0].contentRect.width)
       const h = Math.floor(entries[0].contentRect.height)
-      if (w <= 0) return
+      if (w < 16) return
       if (userPanningRef.current) return
-      chart.applyOptions({
-        width: w,
-        height: Math.max(160, h || chartHeightRef.current),
-      })
+      try {
+        chart.applyOptions({
+          width: w,
+          height: Math.max(160, h || chartHeightRef.current),
+        })
+      } catch {
+        /* ignore */
+      }
     })
     ro.observe(containerRef.current)
 
@@ -1553,12 +1609,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       lineRefs.current = {}
       priceLineRefs.current = []
       liqLineRefs.current = []
-      chart.remove()
+      try {
+        chart.remove()
+      } catch {
+        /* ignore */
+      }
       chartRef.current = null
       candleRef.current = null
       setChartInstance(null)
     }
-  }, [chartExpanded])
+  }, [])
 
   useEffect(() => {
     if (!candleRef.current || !lwcData.length) return
@@ -2104,7 +2164,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     <div
       className={
         chartExpanded
-          ? 'fixed inset-0 z-[200] flex flex-col bg-[#0c0e12] pt-[env(safe-area-inset-top)]'
+          ? 'flex h-full min-h-0 flex-col bg-[#0c0e12]'
           : 'space-y-2'
       }
     >
@@ -2795,7 +2855,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           график на весь экран
         </div>
       )}
-      {chartExpanded ? createPortal(ui, document.body) : ui}
+      <div
+        ref={expandSlotRef}
+        className={chartExpanded ? 'hidden' : 'relative w-full'}
+      />
+      {expandHost ? createPortal(ui, expandHost) : ui}
     </>
   )
 }

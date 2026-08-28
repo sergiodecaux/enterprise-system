@@ -109,30 +109,34 @@ const CurvePathOverlay = ({
     for (const path of paths) {
       const data = densify(path.points, lastCandleTs)
       if (data.length < 2) continue
-      const line = chart.addLineSeries({
-        color: path.color,
-        lineWidth: path.emphasis ? 2 : 1,
-        lineStyle: path.emphasis ? 0 : 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-        title: '',
-      })
-      line.setData(data)
-      const first = data[0].value
-      const last = data[data.length - 1]
-      const down = last.value < first
-      const markers: SeriesMarker<Time>[] = [
-        {
-          time: last.time,
-          position: 'inBar',
+      try {
+        const line = chart.addLineSeries({
           color: path.color,
-          shape: down ? 'arrowDown' : 'arrowUp',
-          text: path.label,
-        },
-      ]
-      line.setMarkers(markers)
-      seriesRef.current.push(line)
+          lineWidth: path.emphasis ? 2 : 1,
+          lineStyle: path.emphasis ? 0 : 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          title: '',
+        })
+        line.setData(data)
+        const first = data[0].value
+        const last = data[data.length - 1]
+        const down = last.value < first
+        const markers: SeriesMarker<Time>[] = [
+          {
+            time: last.time,
+            position: 'inBar',
+            color: path.color,
+            shape: down ? 'arrowDown' : 'arrowUp',
+            text: path.label,
+          },
+        ]
+        line.setMarkers(markers)
+        seriesRef.current.push(line)
+      } catch {
+        /* disposed chart or duplicate timestamps */
+      }
     }
 
     return () => {
