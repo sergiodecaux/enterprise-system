@@ -13,6 +13,7 @@ interface Props {
   highlightId?: string | null
   /** TradingView-style: no in-chart pills / tags (prices live on the right axis) */
   quiet?: boolean
+  onZoneClick?: (zoneId: string) => void
 }
 
 type Rgba = { r: number; g: number; b: number }
@@ -155,6 +156,7 @@ const ChartOverlay = ({
   showLabels,
   highlightId = null,
   quiet = true,
+  onZoneClick,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -269,7 +271,17 @@ const ChartOverlay = ({
           box-sizing: border-box;
           overflow: hidden;
           border-radius: 2px;
+          pointer-events: auto;
+          cursor: pointer;
         `
+        div.dataset.zoneId = zone.id
+        if (onZoneClick) {
+          div.addEventListener('click', (ev) => {
+            ev.preventDefault()
+            ev.stopPropagation()
+            onZoneClick(zone.id)
+          })
+        }
 
         if (actionable && (width >= 48 || highlighted)) {
           const pill = document.createElement('div')
@@ -426,6 +438,7 @@ const ChartOverlay = ({
     containerRef,
     highlightId,
     quiet,
+    onZoneClick,
   ])
 
   return (

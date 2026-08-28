@@ -57,10 +57,13 @@ import {
   pushJewelEntryAlert,
   pushProbableTradesAck,
   pushZoneWatchAck,
+  pushZoneAdvisorAlert,
 } from '../../api/telegram/formatters'
 import ZonePathOverlay from './ZonePathOverlay'
 import StructureHud from './StructureHud'
 import StructureOverlay from './StructureOverlay'
+import CurvePathOverlay from './CurvePathOverlay'
+import ZoneAdvisorCard from './ZoneAdvisorCard'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
 import ProbableTradesPanel from './ProbableTradesPanel'
 import SignalNowPanel from './SignalNowPanel'
@@ -73,6 +76,7 @@ import {
   type StructureTf,
 } from '../../engine/smc/structureRead'
 import { pickActionZones } from '../../engine/smc/entryZones'
+import { analyzeZoneTap, type ZoneAdvisorBrief } from '../../engine/smc/zoneAdvisor'
 import { horizonToStyle } from '../../engine/zones/horizonProfiles'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
@@ -146,10 +150,9 @@ function isPhoneLandscapeNow(): boolean {
   return w > h && (coarse || h < 560)
 }
 
-function paneHeight(fullscreen: boolean, landscape: boolean, vh: number): number {
+function paneHeight(fullscreen: boolean, vh: number): number {
   if (!fullscreen) return CHART_HEIGHT
-  if (landscape) return Math.max(160, Math.round(vh - 42))
-  return Math.min(Math.round(vh * 0.9), 920)
+  return Math.max(180, Math.round(vh))
 }
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
@@ -180,7 +183,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const chartHeightRef = useRef(CHART_HEIGHT)
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
-  const [chartExpanded, setChartExpanded] = useState(false)
+  const [chartExpanded, setChartExpanded] = useState(() => {
+    try {
+      return window.matchMedia('(pointer: coarse)').matches
+    } catch {
+      return false
+    }
+  })
   const [phoneLandscape, setPhoneLandscape] = useState(isPhoneLandscapeNow)
   const [viewportH, setViewportH] = useState(
     () =>
@@ -218,6 +227,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [watchBusy, setWatchBusy] = useState(false)
   const [fibTfs, setFibTfs] = useState<Set<string>>(() => new Set())
   const [showSrZones, setShowSrZones] = useState(true)
+  const [advisor, setAdvisor] = useState<ZoneAdvisorBrief | null>(null)
+  const [advisorBot, setAdvisorBot] = useState<'idle' | 'sent' | 'fail'>('idle')
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
   const [foundChartZones, setFoundChartZones] = useState<LiquidityZone[]>([])
   const [zonesMode, setZonesMode] = useState(false)
@@ -230,7 +241,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const jewelSentRef = useRef<Set<string>>(new Set())
 
   const fullscreen = chartExpanded || phoneLandscape
-  const chartHeight = paneHeight(fullscreen, phoneLandscape, viewportH)
+  const chartHeight = paneHeight(fullscreen, viewportH)
   chartHeightRef.current = chartHeight
 
   useEffect(() => {
@@ -608,6 +619,58 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     if (telegramSettings.subscribedChatId) return telegramSettings.subscribedChatId
     return null
   }, [userId, telegramSettings])
+
+  const handleZoneTap = useCallback(
+    (zoneId: string) => {
+      const zone = liquidityZones.find((z) => z.id === zoneId)
+      if (!zone || !(currentPrice > 0)) return
+      const brief = analyzeZoneTap({
+        zone,
+        price: currentPrice,
+        structure: structureRead,
+        timeframe,
+      })
+      if (!brief) return
+      setAdvisor(brief)
+      setAdvisorBot('idle')
+      haptic.impact()
+      const chatId = resolveChatId()
+      void (async () => {
+        if (!isTelegramAlertsConfigured() || chatId == null) {
+          setAdvisorBot('fail')
+          return
+        }
+        try {
+          await subscribeTelegramAlerts({
+            chatId,
+            sniper: telegramSettings.sniper !== false,
+            meme: false,
+          })
+        } catch {
+          /* best-effort */
+        }
+        const r = await pushZoneAdvisorAlert({
+          symbol: flatSymbol,
+          displayName: signal?.displayName,
+          price: currentPrice,
+          brief,
+          chatId,
+        })
+        setAdvisorBot(r.ok ? 'sent' : 'fail')
+      })()
+    },
+    [
+      liquidityZones,
+      currentPrice,
+      structureRead,
+      timeframe,
+      haptic,
+      resolveChatId,
+      telegramSettings.sniper,
+      flatSymbol,
+      signal?.displayName,
+    ]
+  )
 
   const handlePickSetups = useCallback(() => {
     if (!signal) {
@@ -1855,6 +1918,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const showSessions = sessionSettings.enabled && !cleanMode
   /** Zones / Сделки / Сигнал draw their own chartPath — hide A/B/C to avoid double story */
   const pathModeActive = zonesMode || tradesMode || signalMode
+  const curvePaths = useMemo(() => {
+    if (!advisor) return []
+    return [
+      {
+        id: 'hold',
+        points: advisor.primary.path,
+        color: advisor.primary.side === 'LONG' ? '#34d399' : '#fb7185',
+        label: `${advisor.primary.probability}%`,
+        emphasis: true,
+      },
+      {
+        id: 'break',
+        points: advisor.alternate.path,
+        color: '#94a3b8',
+        label: `${advisor.alternate.probability}%`,
+        emphasis: false,
+      },
+    ]
+  }, [advisor])
   const showPredictionPaths = showForecast && !pathModeActive
   const showGhost =
     !!signal?.direction &&
@@ -1904,49 +1986,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     <div
       className={
         fullscreen
-          ? phoneLandscape
-            ? 'fixed inset-0 z-[80] flex flex-col overflow-hidden bg-[#0c0e12]'
-            : 'fixed inset-0 z-[80] flex flex-col gap-2 overflow-y-auto bg-[#0a0a0a] p-2 pb-4'
+          ? 'fixed inset-0 z-[80] flex flex-col overflow-hidden bg-[#0c0e12]'
           : 'space-y-2'
       }
     >
-      {chartExpanded && !phoneLandscape && (
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-hull-border bg-hull px-3 py-2">
-          <div className="min-w-0 font-mono text-[11px] font-bold uppercase tracking-wider text-holo/80">
-            {flatSymbol.replace('USDT', '/USDT')} · {timeframe}
-            {showDirection && (
-              <span
-                className={`ml-2 ${
-                  directionConsensus.bias === 'UP'
-                    ? 'text-emerald-400'
-                    : directionConsensus.bias === 'DOWN'
-                      ? 'text-rose-400'
-                      : 'text-holo/40'
-                }`}
-              >
-                {directionConsensus.bias === 'UP'
-                  ? '↑'
-                  : directionConsensus.bias === 'DOWN'
-                    ? '↓'
-                    : '·'}{' '}
-                {directionConsensus.confidence}%
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setChartExpanded(false)
-              haptic.impact()
-            }}
-            className="inline-flex items-center gap-1.5 rounded-md border border-matrix/40 bg-matrix/15 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase text-matrix"
-          >
-            <Minimize2 className="h-3.5 w-3.5" />
-            Свернуть
-          </button>
-        </div>
-      )}
-      {!phoneLandscape && (
+      {!fullscreen && (
         <ProcessStrip
           symbol={symbol}
           regime={chartRegime}
@@ -1955,7 +1999,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         />
       )}
 
-      {!phoneLandscape && (
+      {!fullscreen && (
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-xs uppercase tracking-wider text-holo/50">
@@ -2059,6 +2103,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       </div>
       )}
 
+      {!fullscreen && (
+      <>
       {/* Tool rail — ТФ + режиссёрский набор */}
       <div className={`${phoneLandscape ? 'px-1 py-0.5' : '-mx-1 px-1'} space-y-1`}>
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -2278,15 +2324,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
       </div>
 
-      {!phoneLandscape && <StructureHud read={structureRead} />}
+      {!fullscreen && <StructureHud read={structureRead} />}
+      </>
+      )}
 
       <div
         className={`relative w-full overflow-hidden bg-[#0c0e12] ${
-          phoneLandscape
+          fullscreen
             ? 'rounded-none border-0'
-            : `rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
-                fullscreen ? 'ring-1 ring-emerald-500/30' : ''
-              }`
+            : `rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]`
         }`}
         style={{
           height: chartHeight,
@@ -2310,8 +2356,71 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           className="h-full w-full"
           style={{ touchAction: 'pan-x pinch-zoom' }}
         />
+        {fullscreen && (
+          <div className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-center gap-1 overflow-x-auto bg-gradient-to-b from-[#0c0e12] to-transparent px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {CHART_TIMEFRAMES.map((tf) => (
+              <button
+                key={tf.id}
+                type="button"
+                onClick={() => setTimeframe(tf.id)}
+                className={`rounded px-2 py-1 font-mono text-[10px] font-semibold ${
+                  timeframe === tf.id
+                    ? 'bg-emerald-500/25 text-emerald-300'
+                    : 'text-white/50'
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={resetChartView}
+              className="rounded px-2 py-1 font-mono text-[10px] uppercase text-white/45"
+            >
+              Fit
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowSrZones((v) => !v)
+                haptic.impact()
+              }}
+              className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase ${
+                showSrZones ? 'bg-pink-500/20 text-pink-200' : 'text-white/45'
+              }`}
+            >
+              Зоны
+            </button>
+            {FIB_TF_BUTTONS.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => toggleFibTf(b.id)}
+                className={`rounded px-1.5 py-1 font-mono text-[10px] font-bold ${
+                  fibTfs.has(b.id) ? 'text-amber-200' : 'text-white/35'
+                }`}
+              >
+                {b.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setChartExpanded(false)
+                haptic.impact()
+              }}
+              className="ml-auto rounded px-2 py-1 font-mono text-[10px] text-white/50"
+            >
+              <Minimize2 className="inline h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         {lwcData.length > 0 && (
-          <div className="pointer-events-none absolute left-2 top-1.5 z-20 flex flex-wrap items-baseline gap-x-2 font-mono text-[10px] text-white/70">
+          <div
+            className={`pointer-events-none absolute left-2 z-20 flex flex-wrap items-baseline gap-x-2 font-mono text-[10px] text-white/70 ${
+              fullscreen ? 'top-9' : 'top-1.5'
+            }`}
+          >
             {(() => {
               const bar = lwcData[lwcData.length - 1]
               const pct = bar.open ? ((bar.close - bar.open) / bar.open) * 100 : 0
@@ -2345,7 +2454,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             })()}
           </div>
         )}
-        {structureRead && !pathModeActive && (
+        {structureRead && !pathModeActive && !advisor && !fullscreen && (
           <div
             className={`pointer-events-none absolute bottom-1.5 left-2 z-20 max-w-[62%] font-mono text-[10px] leading-tight ${
               structureRead.structureHeld ? 'text-emerald-200/80' : 'text-rose-200/85'
@@ -2374,11 +2483,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             containerRef={containerRef}
             opacity={14}
             showLabels={false}
-            highlightId={highlightedZoneId ?? actionPick.launchId}
+            highlightId={advisor?.zoneId ?? highlightedZoneId ?? actionPick.launchId}
             quiet
+            onZoneClick={handleZoneTap}
           />
         )}
-        {chartReady > 0 && lastCandleTs > 0 && !pathModeActive && (
+        {chartReady > 0 && lastCandleTs > 0 && !pathModeActive && !advisor && (
           <StructureOverlay
             chart={chartInstance}
             read={structureRead}
@@ -2386,7 +2496,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             showPath
           />
         )}
-        {chartReady > 0 && !cleanMode && (
+        {chartReady > 0 && lastCandleTs > 0 && advisor && (
+          <CurvePathOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            lastCandleTs={lastCandleTs}
+            paths={curvePaths}
+          />
+        )}
+        {advisor && (
+          <ZoneAdvisorCard
+            brief={advisor}
+            botStatus={advisorBot}
+            onClose={() => {
+              setAdvisor(null)
+              setAdvisorBot('idle')
+            }}
+          />
+        )}
+        {chartReady > 0 && !cleanMode && !fullscreen && (
           <WhaleLevelsOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -2396,7 +2525,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             priceCeil={candlePriceSpan.ceil}
           />
         )}
-        {chartReady > 0 && (
+        {chartReady > 0 && !fullscreen && (
           <SequenceProcessOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -2473,18 +2602,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
       </div>
 
-      {!phoneLandscape && (
+      {!fullscreen && (
       <DeltaSparkline
         symbol={symbol}
         refreshKey={processRefreshKey}
-        height={fullscreen ? 44 : 32}
+        height={32}
       />
       )}
 
-      {!phoneLandscape &&
+      {!fullscreen &&
         chartPreferences.indicators.volume &&
         indicators.volume.length > 0 && (
-          <VolumePanel volumeData={indicators.volume} height={fullscreen ? 56 : 44} />
+          <VolumePanel volumeData={indicators.volume} height={44} />
         )}
 
       {!fullscreen &&

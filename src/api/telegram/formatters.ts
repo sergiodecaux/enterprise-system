@@ -1,6 +1,7 @@
 import type { CoinSignal, MemeSignal } from '../../engine/types'
 import type { SniperSignal } from '../../engine/sniperMode'
 import type { ConditionalSetup } from '../../engine/setups/types'
+import type { ZoneAdvisorBrief } from '../../engine/smc/zoneAdvisor'
 import { sendTelegramAlert } from '../../api/telegram/alerts'
 import { assertUsdtPerpetual } from '../../api/mexc/perpetualGuard'
 import { toApiSymbol } from '../../api/mexc'
@@ -578,4 +579,59 @@ export async function pushJewelEntryAlert(opts: {
     dedupeKey: `jewel:${contract}:${setup.side}:${setup.limitEntry.toPrecision(6)}`,
     chatId: opts.chatId,
   })
+}
+
+/** Tap-a-zone SMC brief → Telegram */
+export async function pushZoneAdvisorAlert(opts: {
+  symbol: string
+  displayName?: string
+  price: number
+  brief: ZoneAdvisorBrief
+  chatId?: number
+}): Promise<{ ok: boolean; reason?: string }> {
+  const apiSymbol = toApiSymbol(opts.symbol)
+  if (!apiSymbol.endsWith('_USDT') || apiSymbol.length < 7) {
+    return { ok: false, reason: `bad_symbol:${opts.symbol}` }
+  }
+  if (opts.chatId == null) {
+    return { ok: false, reason: 'no_chat_id' }
+  }
+
+  const name = opts.displayName ?? opts.symbol.replace('_USDT', '/USDT')
+  const a = opts.brief.primary
+  const b = opts.brief.alternate
+  const icon = a.side === 'LONG' ? '🟢' : '🔴'
+  const result = await sendTelegramAlert({
+    type: 'SETUP_WATCH',
+    title: `${icon} Зона · ${name} · ${a.side === 'LONG' ? 'лонг' : 'шорт'} ${a.probability}%`,
+    text: [
+      `${name} (${apiSymbol}) · ${opts.brief.timeframe}`,
+      `Цена сейчас: ${fmt(opts.price)}`,
+      opts.brief.summary,
+      '',
+      `Основной сценарий (${a.probability}%): ${a.title}`,
+      a.wait,
+      `Зона входа: ${fmt(a.entryBottom)} – ${fmt(a.entryTop)}`,
+      `Лимитка: ${fmt(a.entry)}`,
+      a.invalidationHint,
+      `Цель: ${fmt(a.targetPrice)} (${a.targetLabel})`,
+      a.magnetPrice != null
+        ? `Если пойдёт дальше: ${fmt(a.magnetPrice)} (${a.magnetLabel ?? ''})`
+        : null,
+      '',
+      `Альтернатива (${b.probability}%): ${b.title}`,
+      b.wait,
+      `Тогда цель: ${fmt(b.targetPrice)} (${b.targetLabel})`,
+      '',
+      'Не входи маркет. Сначала касание зоны и закреп. Если сломали — сценарий меняется.',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    dedupeKey: `zone_adv:${apiSymbol}:${opts.brief.zoneId}:${opts.chatId}:${Math.floor(Date.now() / 20_000)}`,
+    chatId: opts.chatId,
+  })
+  if (!result.ok) {
+    return { ok: false, reason: result.reason }
+  }
+  return { ok: true }
 }
