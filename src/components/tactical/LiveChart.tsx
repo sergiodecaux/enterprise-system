@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import {
   createChart,
   CrosshairMode,
@@ -155,10 +156,10 @@ function isPhoneLandscapeNow(): boolean {
   return w > h && (coarse || h < 560)
 }
 
-function paneHeight(tall: boolean, landscape: boolean, vh: number): number {
-  if (!tall) return CHART_HEIGHT
+function paneHeight(expanded: boolean, landscape: boolean, vh: number): number {
+  if (expanded) return Math.max(280, Math.round(vh - 152))
   if (landscape) return Math.max(200, Math.round(vh * 0.58))
-  return Math.max(380, Math.round(Math.min(vh * 0.52, 620)))
+  return CHART_HEIGHT
 }
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
@@ -242,7 +243,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const jewelSentRef = useRef<Set<string>>(new Set())
 
   const tallChart = chartExpanded || phoneLandscape
-  const chartHeight = paneHeight(tallChart, phoneLandscape, viewportH)
+  const chartHeight = paneHeight(chartExpanded, phoneLandscape, viewportH)
   chartHeightRef.current = chartHeight
 
   useEffect(() => {
@@ -263,8 +264,28 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   }, [])
 
   useEffect(() => {
+    if (!chartExpanded) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setChartExpanded(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prev
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [chartExpanded])
+
+  useEffect(() => {
+    const h = chartExpanded
+      ? Math.max(
+          180,
+          chartShellRef.current?.clientHeight || chartHeight
+        )
+      : chartHeight
     chartRef.current?.applyOptions({
-      height: chartHeight,
+      height: h,
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -274,7 +295,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       crosshair: { mode: CrosshairMode.Magnet },
       timeScale: { rightOffset: tallChart ? 22 : 16 },
     })
-  }, [chartHeight, tallChart])
+  }, [chartHeight, tallChart, chartExpanded])
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -1392,6 +1413,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return
+    fittedKeyRef.current = ''
 
     const chart = createChart(containerRef.current, {
       layout: {
@@ -1475,6 +1497,20 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     setChartInstance(chart)
     setChartReady((n) => n + 1)
 
+    const syncSize = () => {
+      const el = containerRef.current
+      if (!el || !chartRef.current) return
+      const w = el.clientWidth
+      const h = el.clientHeight
+      if (w > 8 && h > 8) {
+        chart.applyOptions({
+          width: Math.floor(w),
+          height: Math.floor(h),
+        })
+      }
+    }
+    window.requestAnimationFrame(syncSize)
+
     const onTouchStart = () => {
       userPanningRef.current = true
     }
@@ -1493,12 +1529,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const ro = new ResizeObserver((entries) => {
       if (!entries.length || !chartRef.current) return
       const w = Math.floor(entries[0].contentRect.width)
+      const h = Math.floor(entries[0].contentRect.height)
       if (w <= 0) return
       if (userPanningRef.current) return
-      // Width from RO; height from expand / compact mode
       chart.applyOptions({
         width: w,
-        height: chartHeightRef.current,
+        height: Math.max(160, h || chartHeightRef.current),
       })
     })
     ro.observe(containerRef.current)
@@ -1522,7 +1558,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       candleRef.current = null
       setChartInstance(null)
     }
-  }, [])
+  }, [chartExpanded])
 
   useEffect(() => {
     if (!candleRef.current || !lwcData.length) return
@@ -1539,7 +1575,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       })
       fittedKeyRef.current = key
     }
-  }, [lwcData, symbol, timeframe])
+  }, [lwcData, symbol, timeframe, chartReady])
 
   useEffect(() => {
     if (!candleRef.current || !ticker || !lwcData.length) return
@@ -2064,16 +2100,24 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   void handleFindZones
 
-  return (
-    <div className="space-y-2">
+  const ui = (
+    <div
+      className={
+        chartExpanded
+          ? 'fixed inset-0 z-[200] flex flex-col bg-[#0c0e12] pt-[env(safe-area-inset-top)]'
+          : 'space-y-2'
+      }
+    >
+      {!chartExpanded && (
       <ProcessStrip
         symbol={symbol}
         regime={chartRegime}
         sequence={activeSequence}
         refreshKey={processRefreshKey}
       />
+      )}
 
-      <div className="flex items-center justify-between gap-2">
+      <div className={`flex shrink-0 items-center justify-between gap-2 ${chartExpanded ? 'px-2 pt-1' : ''}`}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-xs uppercase tracking-wider text-holo/50">
             {t('chart_title')}
@@ -2175,8 +2219,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </div>
       </div>
 
-      {/* Tool rail — всегда на виду при скролле к графику */}
-      <div className="sticky top-0 z-20 space-y-1 bg-space/95 py-1 backdrop-blur-sm">
+      {/* Tool rail — ТФ и режимы всегда с графиком */}
+      <div
+        className={`shrink-0 space-y-1 bg-[#0c0e12] py-1 ${
+          chartExpanded ? 'px-2' : 'sticky top-0 z-20 bg-space/95 backdrop-blur-sm'
+        }`}
+      >
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             {CHART_TIMEFRAMES.map((tf) => (
@@ -2392,16 +2440,24 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </div>
       </div>
 
+      <div className={`shrink-0 ${chartExpanded ? 'px-2' : ''}`}>
       <StructureHud read={structureRead} />
+      </div>
+      {!chartExpanded && (
       <p className="px-1 font-mono text-[9px] text-white/35">
         Двойной тап по зоне — сценарий, стрелки и сообщение в бота
       </p>
+      )}
 
       <div
         ref={chartShellRef}
-        className="relative w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#0c0e12] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+        className={`relative w-full overflow-hidden bg-[#0c0e12] ${
+          chartExpanded
+            ? 'min-h-0 flex-1 rounded-none border-0'
+            : 'rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+        }`}
         style={{
-          height: chartHeight,
+          height: chartExpanded ? undefined : chartHeight,
           touchAction: 'none',
         }}
         onTouchStart={(e) => e.stopPropagation()}
@@ -2424,34 +2480,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           className="h-full w-full"
           style={{ touchAction: 'none' }}
         />
-        <div
-          className="absolute right-[52px] top-1 z-20 flex max-w-[calc(100%-7rem)] flex-wrap justify-end gap-0.5"
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          {CHART_TIMEFRAMES.map((tf) => (
-            <button
-              key={`ov-${tf.id}`}
-              type="button"
-              onClick={() => setTimeframe(tf.id)}
-              className={`rounded-md px-1.5 py-1 font-mono text-[10px] font-semibold backdrop-blur-sm ${
-                timeframe === tf.id
-                  ? 'bg-emerald-500/85 text-black'
-                  : 'bg-black/55 text-white/75 hover:text-white'
-              }`}
-            >
-              {tf.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={resetChartView}
-            className="rounded-md bg-black/55 px-1.5 py-1 font-mono text-[10px] font-bold uppercase text-white/70 backdrop-blur-sm hover:text-white"
-          >
-            Fit
-          </button>
-        </div>
         {lwcData.length > 0 && (
           <div className="pointer-events-none absolute left-2 top-1.5 z-20 flex flex-wrap items-baseline gap-x-2 font-mono text-[10px] text-white/70">
             {(() => {
@@ -2531,9 +2559,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         {chartReady > 0 && lastCandleTs > 0 && advisor && (
           <CurvePathOverlay
             chart={chartInstance}
-            series={candleRef.current}
-            containerRef={containerRef}
-            lastLogicalIndex={Math.max(0, lwcData.length - 1)}
+            lastCandleTs={lastCandleTs}
             barSeconds={timeframeBarSeconds(timeframe)}
             paths={curvePaths}
           />
@@ -2587,6 +2613,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           />
         )}
         {showDirection &&
+          !advisor &&
           chartReady > 0 &&
           lastCandleTs > 0 &&
           currentPrice > 0 && (
@@ -2635,6 +2662,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
       </div>
 
+      {!chartExpanded && (
+        <>
       <DeltaSparkline
         symbol={symbol}
         refreshKey={processRefreshKey}
@@ -2658,22 +2687,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             height={60}
           />
         ))}
-
-      {chartExpanded && !phoneLandscape && oscillators.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {oscillators.map((mode) => (
-            <OscillatorPanel
-              key={mode}
-              mode={mode}
-              rsiData={indicators.rsi}
-              macdData={indicators.macd}
-              stochasticData={indicators.stochastic}
-              atrData={indicators.atr}
-              height={72}
-            />
-          ))}
-        </div>
-      )}
 
       {!cleanMode && (
         <MultiTFPanel alignment={alignment} isLoading={mtfLoading} />
@@ -2765,9 +2778,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             onUnwatch={handleUnwatchSetup}
           />
         )}
+        </>
+      )}
 
       <ChartSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
+  )
+
+  return (
+    <>
+      {chartExpanded && (
+        <div
+          className="flex h-[440px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#0c0e12] font-mono text-[10px] text-white/35"
+          aria-hidden
+        >
+          график на весь экран
+        </div>
+      )}
+      {chartExpanded ? createPortal(ui, document.body) : ui}
+    </>
   )
 }
 

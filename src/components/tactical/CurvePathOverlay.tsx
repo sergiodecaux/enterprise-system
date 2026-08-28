@@ -1,10 +1,16 @@
 /**
- * Smooth (Catmull-Rom) flight paths — not straight polylines.
- * Maps future offsets via logical coordinates so arrows render past the last candle.
+ * Scenario paths as native chart series so they stay glued to candles while panning.
+ * Catmull-Rom is densified in time/price, then drawn by lightweight-charts.
  */
 
 import { useEffect, useRef } from 'react'
-import type { IChartApi, ISeriesApi, Logical } from 'lightweight-charts'
+import type {
+  IChartApi,
+  ISeriesApi,
+  LineData,
+  SeriesMarker,
+  Time,
+} from 'lightweight-charts'
 import type { PathPoint } from '../../engine/prediction/types'
 
 export interface CurvePath {
@@ -17,164 +23,131 @@ export interface CurvePath {
 
 interface Props {
   chart: IChartApi | null
-  series: ISeriesApi<'Candlestick'> | null
-  containerRef: React.RefObject<HTMLDivElement>
-  lastLogicalIndex: number
+  lastCandleTs: number
   barSeconds: number
   paths: CurvePath[]
 }
 
-function catmullToBezier(pts: { x: number; y: number }[]): string {
-  if (pts.length < 2) return ''
-  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i]
-    const p1 = pts[i]
-    const p2 = pts[i + 1]
-    const p3 = pts[i + 2] ?? p2
-    const c1x = p1.x + (p2.x - p0.x) / 6
-    const c1y = p1.y + (p2.y - p0.y) / 6
-    const c2x = p2.x - (p3.x - p1.x) / 6
-    const c2y = p2.y - (p3.y - p1.y) / 6
-    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
-  }
-  return d
+function cr(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t
+  const t3 = t2 * t
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  )
 }
 
-function arrowPoints(
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  size = 8
-): string {
-  const ang = Math.atan2(to.y - from.y, to.x - from.x)
-  const a1 = ang - Math.PI / 7
-  const a2 = ang + Math.PI / 7
-  const x1 = to.x - size * Math.cos(a1)
-  const y1 = to.y - size * Math.sin(a1)
-  const x2 = to.x - size * Math.cos(a2)
-  const y2 = to.y - size * Math.sin(a2)
-  return `M ${to.x} ${to.y} L ${x1} ${y1} L ${x2} ${y2} Z`
+function densify(points: PathPoint[], anchor: number): LineData[] {
+  if (points.length < 2) return []
+  const raw: { t: number; v: number }[] = []
+  const steps = 8
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i - 1] ?? points[i]
+    const b = points[i]
+    const c = points[i + 1]
+    const d = points[i + 2] ?? c
+    for (let s = 0; s < steps; s++) {
+      const u = s / steps
+      raw.push({
+        t: cr(a.timeOffsetSeconds, b.timeOffsetSeconds, c.timeOffsetSeconds, d.timeOffsetSeconds, u),
+        v: cr(a.price, b.price, c.price, d.price, u),
+      })
+    }
+  }
+  const last = points[points.length - 1]
+  raw.push({ t: last.timeOffsetSeconds, v: last.price })
+
+  const out: LineData[] = []
+  let prev = Number.NEGATIVE_INFINITY
+  for (const p of raw) {
+    let time = Math.round(anchor + p.t)
+    if (time <= prev) time = prev + 1
+    prev = time
+    if (!(p.v > 0)) continue
+    out.push({ time: time as Time, value: p.v })
+  }
+  return out
 }
 
 const CurvePathOverlay = ({
   chart,
-  series,
-  containerRef,
-  lastLogicalIndex,
+  lastCandleTs,
   barSeconds,
   paths,
 }: Props) => {
-  const svgRef = useRef<SVGSVGElement>(null)
+  const seriesRef = useRef<ISeriesApi<'Line'>[]>([])
 
   useEffect(() => {
-    if (!chart || !series || !svgRef.current || !containerRef.current) return
-    const svg = svgRef.current
-    const timeScale = chart.timeScale()
-    const bar = Math.max(1, barSeconds)
+    if (!chart) return
+    for (const s of seriesRef.current) {
+      try {
+        chart.removeSeries(s)
+      } catch {
+        /* ignore */
+      }
+    }
+    seriesRef.current = []
+    if (!lastCandleTs || !paths.length) return
 
+    const bar = Math.max(1, barSeconds)
     const maxBars = Math.max(
       0,
       ...paths.flatMap((p) => p.points.map((pt) => pt.timeOffsetSeconds / bar))
     )
-    const extra = Math.min(40, Math.ceil(maxBars) + 6)
     try {
-      const current = timeScale.options().rightOffset ?? 8
-      if (extra > current + 1) timeScale.applyOptions({ rightOffset: extra })
+      const ts = chart.timeScale()
+      const current = ts.options().rightOffset ?? 8
+      const extra = Math.min(40, Math.ceil(maxBars) + 6)
+      if (extra > current + 1) ts.applyOptions({ rightOffset: extra })
     } catch {
       /* ignore */
     }
 
-    const redraw = () => {
-      const w = containerRef.current!.clientWidth
-      const h = containerRef.current!.clientHeight
-      svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
-      svg.setAttribute('width', String(w))
-      svg.setAttribute('height', String(h))
-      svg.innerHTML = ''
-      if (lastLogicalIndex < 0 || !paths.length) return
-      let priceScaleW = 56
-      try {
-        const pw = chart.priceScale('right').width()
-        if (typeof pw === 'number' && pw > 8) priceScaleW = pw
-      } catch {
-        /* ignore */
-      }
-      const plotRight = Math.max(40, w - priceScaleW - 2)
-
-      for (const path of paths) {
-        if (path.points.length < 2) continue
-        const coords: { x: number; y: number }[] = []
-        for (const p of path.points) {
-          const logical = (lastLogicalIndex +
-            p.timeOffsetSeconds / bar) as Logical
-          const x = timeScale.logicalToCoordinate(logical)
-          const y = series.priceToCoordinate(p.price)
-          if (x == null || y == null) continue
-          coords.push({ x: Number(x), y: Number(y) })
-        }
-        if (coords.length < 2) continue
-
-        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-        const stroke = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-        stroke.setAttribute('d', catmullToBezier(coords))
-        stroke.setAttribute('fill', 'none')
-        stroke.setAttribute('stroke', path.color)
-        stroke.setAttribute('stroke-width', path.emphasis ? '2.4' : '1.5')
-        stroke.setAttribute('stroke-linecap', 'round')
-        stroke.setAttribute('stroke-linejoin', 'round')
-        stroke.setAttribute('opacity', path.emphasis ? '0.95' : '0.55')
-        if (!path.emphasis) stroke.setAttribute('stroke-dasharray', '5 4')
-        g.appendChild(stroke)
-
-        const last = coords[coords.length - 1]
-        const prev = coords[coords.length - 2]
-        const head = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-        head.setAttribute('d', arrowPoints(prev, last, path.emphasis ? 9 : 7))
-        head.setAttribute('fill', path.color)
-        head.setAttribute('opacity', path.emphasis ? '0.95' : '0.55')
-        g.appendChild(head)
-
-        const mid = coords[Math.floor(coords.length * 0.55)]
-        if (mid && path.label) {
-          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-          const tx = Math.min(mid.x + 6, plotRight - 28)
-          text.setAttribute('x', String(tx))
-          text.setAttribute('y', String(mid.y - 6))
-          text.setAttribute('fill', path.color)
-          text.setAttribute('font-size', '10')
-          text.setAttribute('font-family', 'ui-monospace, Menlo, monospace')
-          text.setAttribute('font-weight', '700')
-          text.textContent = path.label
-          g.appendChild(text)
-        }
-        svg.appendChild(g)
-      }
+    for (const path of paths) {
+      const data = densify(path.points, lastCandleTs)
+      if (data.length < 2) continue
+      const line = chart.addLineSeries({
+        color: path.color,
+        lineWidth: path.emphasis ? 2 : 1,
+        lineStyle: path.emphasis ? 0 : 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        title: '',
+      })
+      line.setData(data)
+      const first = data[0].value
+      const last = data[data.length - 1]
+      const down = last.value < first
+      const markers: SeriesMarker<Time>[] = [
+        {
+          time: last.time,
+          position: 'inBar',
+          color: path.color,
+          shape: down ? 'arrowDown' : 'arrowUp',
+          text: path.label,
+        },
+      ]
+      line.setMarkers(markers)
+      seriesRef.current.push(line)
     }
 
-    redraw()
-    const raf = window.requestAnimationFrame(redraw)
-    const onVis = () => redraw()
-    timeScale.subscribeVisibleLogicalRangeChange(onVis)
-    chart.subscribeCrosshairMove(onVis)
-    const ro = new ResizeObserver(() => redraw())
-    ro.observe(containerRef.current)
     return () => {
-      window.cancelAnimationFrame(raf)
-      timeScale.unsubscribeVisibleLogicalRangeChange(onVis)
-      chart.unsubscribeCrosshairMove(onVis)
-      ro.disconnect()
-      svg.innerHTML = ''
+      for (const s of seriesRef.current) {
+        try {
+          chart.removeSeries(s)
+        } catch {
+          /* ignore */
+        }
+      }
+      seriesRef.current = []
     }
-  }, [chart, series, containerRef, lastLogicalIndex, barSeconds, paths])
+  }, [chart, lastCandleTs, barSeconds, paths])
 
-  if (!paths.length) return null
-  return (
-    <svg
-      ref={svgRef}
-      className="pointer-events-none absolute inset-0"
-      style={{ zIndex: 6 }}
-    />
-  )
+  return null
 }
 
 export default CurvePathOverlay
