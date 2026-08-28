@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react'
-import { Magnet, X, Lock } from 'lucide-react'
+import { Magnet, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/useAppStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
@@ -28,7 +28,6 @@ import PO3Panel from './PO3Panel'
 import TapeMomentumIndicator from './TapeMomentumIndicator'
 import BuyerAggressionIndicator from './BuyerAggressionIndicator'
 import AbsorptionPanel from './AbsorptionPanel'
-import MemePulsePanel from '../meme/MemePulsePanel'
 import CompositeAnalysisPanel from '../composite/CompositeAnalysisPanel'
 import { buildCompositeAnalysis } from '../../engine/composite'
 import { useBuyerAggression } from '../../hooks/useBuyerAggression'
@@ -390,13 +389,12 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
 
 const TacticalDrawer = () => {
   const { t } = useTranslation()
-  const { haptic, showAlert } = useTelegramWebApp()
+  const { haptic } = useTelegramWebApp()
   const selectedCoin = useAppStore((state) => state.selectedCoin)
   const isDrawerOpen = useAppStore((state) => state.isDrawerOpen)
   const signals = useAppStore((state) => state.signals)
   const setDrawerOpen = useAppStore((state) => state.setDrawerOpen)
   const selectCoin = useAppStore((state) => state.selectCoin)
-  const addTrade = useAppStore((state) => state.addTrade)
   const newsSettings = useAppStore((state) => state.newsSettings)
   const newsIntel = useAppStore((state) => state.newsIntel)
   const liquidityMaps = useAppStore((state) => state.liquidityMaps)
@@ -669,127 +667,6 @@ const TacticalDrawer = () => {
           <div className="flex justify-center">
             <ProbabilityGauge value={probability} direction={direction} />
           </div>
-
-          {signal.memePulse && (
-            <CollapsibleSection title="Meme pulse" defaultOpen>
-              <MemePulsePanel meme={signal.memePulse} />
-              <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                disabled={!!signal.memePulse.longBlocked || !signal.sl || !signal.tp1}
-                onClick={() => {
-                  if (signal.memePulse?.longBlocked) {
-                    showAlert(
-                      '⚠️ LONG ЗАБЛОКИРОВАН: Bid Void / Distribution / Toxic. Не лови ножи и не становись exit liquidity.'
-                    )
-                    return
-                  }
-                  if (!signal.sl || !signal.tp1) return
-                  haptic.impact()
-                  addTrade({
-                    symbol: signal.symbol,
-                    internalSymbol: signal.internalSymbol,
-                    direction: 'LONG',
-                    entryPrice: signal.price,
-                    entryTime: Date.now(),
-                    sl: signal.sl,
-                    tp1: signal.tp1,
-                    tp2: signal.tp2,
-                    status: 'ACTIVE',
-                    currentPrice: signal.price,
-                    pnlPercent: 0,
-                    pnlUsd: null,
-                    confidenceScore: signal.probabilityPct,
-                    confidenceFactors: signal.zones.slice(0, 4),
-                    positionSizeUsd: null,
-                    breakevenAlertShown: false,
-                    invalidationAlertShown: false,
-                    wallAlertShown: false,
-                    tradeStyle: 'SCALP',
-                    isMemeTrade: true,
-                    trailingStop: null,
-                    peakPrice: signal.price,
-                    trailingAlertShown: false,
-                  })
-                  showAlert(
-                    `🚀 MEME LONG открыт (shadow trailing).\n${signal.memePulse?.setupTag ?? ''}`
-                  )
-                }}
-                className={`rounded-xl px-3 py-3 font-mono text-xs font-black uppercase tracking-wide transition-all active:scale-95 ${
-                  signal.memePulse.longBlocked
-                    ? 'cursor-not-allowed border border-hull-border bg-hull/50 text-holo/30'
-                    : 'border border-matrix/50 bg-matrix/20 text-matrix shadow-[0_0_12px_rgba(0,255,65,0.2)]'
-                }`}
-              >
-                {signal.memePulse.longBlocked ? (
-                  <span className="inline-flex items-center gap-1">
-                    <Lock className="h-3 w-3" /> LONG
-                  </span>
-                ) : (
-                  '🚀 LONG'
-                )}
-              </button>
-
-              <button
-                type="button"
-                disabled={
-                  !!signal.memePulse.shortBlocked || !signal.sl || !signal.tp1
-                }
-                onClick={() => {
-                  if (signal.memePulse?.shortBlocked) {
-                    showAlert(
-                      '⚠️ ЗАПРЕЩЕНО: Высокий риск шорт-сквиза. Толпа шортит, маркетмейкер готовит ликвидации вверх. Дождись слома структуры.'
-                    )
-                    return
-                  }
-                  if (!signal.sl || !signal.tp1) return
-                  haptic.impact()
-                  addTrade({
-                    symbol: signal.symbol,
-                    internalSymbol: signal.internalSymbol,
-                    direction: 'SHORT',
-                    entryPrice: signal.price,
-                    entryTime: Date.now(),
-                    sl: signal.sl,
-                    tp1: signal.tp1,
-                    tp2: signal.tp2,
-                    status: 'ACTIVE',
-                    currentPrice: signal.price,
-                    pnlPercent: 0,
-                    pnlUsd: null,
-                    confidenceScore: signal.probabilityPct,
-                    confidenceFactors: signal.zones.slice(0, 4),
-                    positionSizeUsd: null,
-                    breakevenAlertShown: false,
-                    invalidationAlertShown: false,
-                    wallAlertShown: false,
-                    tradeStyle: 'SCALP',
-                    isMemeTrade: true,
-                    trailingStop: null,
-                    peakPrice: signal.price,
-                    trailingAlertShown: false,
-                  })
-                  showAlert(
-                    `🎯 MEME SHORT открыт (shadow trailing).\n${signal.memePulse?.setupTag ?? ''}`
-                  )
-                }}
-                className={`rounded-xl px-3 py-3 font-mono text-xs font-black uppercase tracking-wide transition-all active:scale-95 ${
-                  signal.memePulse.shortBlocked
-                    ? 'cursor-not-allowed border border-hull-border bg-hull/50 text-holo/30'
-                    : 'border border-alert/50 bg-alert/20 text-alert shadow-[0_0_12px_rgba(255,0,60,0.25)]'
-                }`}
-              >
-                {signal.memePulse.shortBlocked ? (
-                  <span className="inline-flex items-center gap-1">
-                    <Lock className="h-3 w-3" /> SHORT
-                  </span>
-                ) : (
-                  '🎯 SHORT'
-                )}
-              </button>
-            </div>
-            </CollapsibleSection>
-          )}
 
           {newsSettings.enabled && newsSettings.showInDrawer && (
             <CollapsibleSection title="Новости">

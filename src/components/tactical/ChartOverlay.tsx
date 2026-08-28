@@ -11,13 +11,19 @@ interface Props {
   showLabels: boolean
   /** Highlight this zone id (selected setup / found zone) */
   highlightId?: string | null
-  /** Always show SSL/BSL/Fib context pills */
-  forceContextLabels?: boolean
+  /** TradingView-style: no in-chart pills / tags (prices live on the right axis) */
+  quiet?: boolean
 }
 
 type Rgba = { r: number; g: number; b: number }
 
 function baseHue(zone: LiquidityZone): Rgba {
+  if ((zone.id ?? '').startsWith('sr_premium')) {
+    return { r: 148, g: 163, b: 184 }
+  }
+  if ((zone.id ?? '').startsWith('sr_discount')) {
+    return { r: 45, g: 180, b: 175 }
+  }
   switch (zone.type) {
     case 'ORDER_BLOCK':
       return zone.side === 'BULLISH'
@@ -70,19 +76,27 @@ function strengthVisual(
     zone.type === 'FIBONACCI' &&
     ((zone.id ?? '').includes('141') || (zone.label ?? '').includes('141'))
 
+  const airy = isFib141 || (zone.id ?? '').startsWith('sr_')
   const tierMul = tier === 'STRONG' ? 1.15 : tier === 'MEDIUM' ? 0.85 : 0.55
   let op = (baseOpacityPct / 100) * tierMul
-  if (isFib141) op = Math.max(op, 0.32)
+  if (airy) op = Math.min(0.09, op * 0.28)
   if (highlighted) op = Math.min(0.55, op * 1.45)
   else op *= 0.92
 
-  const borderA =
-    tier === 'STRONG' ? 0.95 : tier === 'MEDIUM' ? 0.72 : 0.45
-  const borderW = highlighted ? 2 : tier === 'STRONG' ? 1.5 : 1
-  const stripeW = tier === 'STRONG' ? 4 : tier === 'MEDIUM' ? 3 : 2
+  const borderA = airy
+    ? 0.32
+    : tier === 'STRONG'
+      ? 0.95
+      : tier === 'MEDIUM'
+        ? 0.72
+        : 0.45
+  const borderW = highlighted ? 2 : airy ? 1 : tier === 'STRONG' ? 1.5 : 1
+  const stripeW = airy ? 2 : tier === 'STRONG' ? 4 : tier === 'MEDIUM' ? 3 : 2
 
   return {
-    fillA: Math.min(0.5, Math.max(0.08, op)),
+    fillA: airy
+      ? Math.min(0.1, Math.max(0.035, op))
+      : Math.min(0.5, Math.max(0.08, op)),
     borderA: highlighted ? 1 : borderA,
     borderW,
     stripeW,
@@ -151,7 +165,7 @@ const ChartOverlay = ({
   opacity,
   showLabels,
   highlightId = null,
-  forceContextLabels = false,
+  quiet = true,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -165,6 +179,14 @@ const ChartOverlay = ({
       overlay.innerHTML = ''
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
+      let priceScaleW = 56
+      try {
+        const w = chart.priceScale('right').width()
+        if (typeof w === 'number' && w > 8) priceScaleW = w
+      } catch {
+        /* ignore */
+      }
+      const plotRight = Math.max(80, containerWidth - priceScaleW)
 
       const visibleZones = [...zones]
         .sort((a, b) => {
@@ -173,7 +195,7 @@ const ChartOverlay = ({
           if (ah !== bh) return bh - ah
           return (b.strength ?? 5) - (a.strength ?? 5)
         })
-        .slice(0, forceContextLabels ? 6 : 8)
+        .slice(0, 10)
 
       for (const zone of visibleZones) {
         const topY = series.priceToCoordinate(zone.top)
@@ -184,7 +206,7 @@ const ChartOverlay = ({
         )
 
         const startXNum = rawStartX == null ? 0 : Number(rawStartX)
-        const endXNum = endX == null ? containerWidth : Number(endX)
+        const endXNum = endX == null ? plotRight : Number(endX)
 
         if (topY == null || bottomY == null) continue
 
@@ -192,12 +214,15 @@ const ChartOverlay = ({
         const yPos = Math.min(Number(topY), Number(bottomY))
         const left = Math.max(0, startXNum)
         const width = Math.min(
-          Math.max(endXNum > startXNum ? endXNum - startXNum : containerWidth - startXNum, 8),
-          containerWidth - left
+          Math.max(
+            endXNum > startXNum ? endXNum - startXNum : plotRight - startXNum,
+            8
+          ),
+          plotRight - left
         )
 
         if (height < 1 || yPos < -80 || yPos > containerHeight + 80) continue
-        if (startXNum > containerWidth) continue
+        if (startXNum > plotRight) continue
 
         const highlighted = Boolean(highlightId && zone.id === highlightId)
         const hue = baseHue(zone)
@@ -207,6 +232,9 @@ const ChartOverlay = ({
 
         const div = document.createElement('div')
         const minH = vis.isFib141 || highlighted ? 5 : 3
+        const fillStart = vis.isFib141 ? vis.fillA * 0.7 * dimmed : vis.fillA * 1.15 * dimmed
+        const fillMid = vis.isFib141 ? vis.fillA * 0.45 * dimmed : vis.fillA * 0.55 * dimmed
+        const fillEnd = vis.isFib141 ? vis.fillA * 0.2 * dimmed : vis.fillA * 0.25 * dimmed
         div.style.cssText = `
           position: absolute;
           left: ${left}px;
@@ -215,16 +243,16 @@ const ChartOverlay = ({
           height: ${Math.max(height, minH)}px;
           background: linear-gradient(
             90deg,
-            ${rgba(hue, vis.fillA * 1.15 * dimmed)} 0%,
-            ${rgba(hue, vis.fillA * 0.55 * dimmed)} 55%,
-            ${rgba(hue, vis.fillA * 0.25 * dimmed)} 100%
+            ${rgba(hue, fillStart)} 0%,
+            ${rgba(hue, fillMid)} 55%,
+            ${rgba(hue, fillEnd)} 100%
           );
-          border-top: ${vis.borderW}px solid ${rgba(hue, vis.borderA * dimmed)};
-          border-bottom: ${vis.borderW}px solid ${rgba(hue, vis.borderA * dimmed)};
+          border-top: ${vis.borderW}px ${vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
+          border-bottom: ${vis.borderW}px ${vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
           box-shadow: ${
             highlighted
               ? `0 0 12px ${rgba(hue, 0.35)}, inset 0 0 0 1px ${rgba(hue, 0.4)}`
-              : vis.tier === 'STRONG'
+              : vis.tier === 'STRONG' && !vis.isFib141
                 ? `inset 0 0 0 1px ${rgba(hue, 0.2)}`
                 : 'none'
           };
@@ -235,7 +263,7 @@ const ChartOverlay = ({
           border-radius: 2px;
         `
 
-        // Left strength stripe + direction chevron for SSL/BSL
+        if (!quiet) {
         const stripe = document.createElement('div')
         stripe.style.cssText = `
           position: absolute;
@@ -273,7 +301,6 @@ const ChartOverlay = ({
           zone.type === 'OTE' ||
           highlighted
         const showPill =
-          forceContextLabels ||
           showLabels ||
           vis.isFib141 ||
           highlighted ||
@@ -284,10 +311,10 @@ const ChartOverlay = ({
           pill.textContent = zoneTitle(zone)
           pill.style.cssText = `
             position: absolute;
-            right: 4px;
+            left: ${vis.stripeW + 6}px;
             top: 50%;
             transform: translateY(-50%);
-            max-width: ${Math.max(80, width - 10)}px;
+            max-width: ${Math.max(72, Math.min(180, width - 48))}px;
             padding: 1px 6px;
             border-radius: 4px;
             font-size: ${highlighted || vis.isFib141 ? '10px' : '9px'};
@@ -335,6 +362,8 @@ const ChartOverlay = ({
           div.appendChild(badge)
         }
 
+        } // !quiet decorations
+
         overlay.appendChild(div)
       }
     }
@@ -362,7 +391,7 @@ const ChartOverlay = ({
     showLabels,
     containerRef,
     highlightId,
-    forceContextLabels,
+    quiet,
   ])
 
   return (

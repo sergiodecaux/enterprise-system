@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { Target, Radar as RadarIcon, Activity, Flame, Zap } from 'lucide-react'
+import { Target, Radar as RadarIcon, Activity, Zap } from 'lucide-react'
 import Header from './components/layout/Header'
 import RadarView from './components/radar/RadarView'
 import SniperView from './components/sniper/SniperView'
 import TradesView from './components/trades/TradesView'
-import MemePulseView from './components/meme/MemePulseView'
 import SignalsView from './components/signals/SignalsView'
 import TacticalDrawer from './components/tactical/TacticalDrawer'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -16,7 +15,7 @@ import { useTelegramAlerts } from './hooks/useTelegramAlerts'
 import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
 import { useAppStore } from './store/useAppStore'
 
-type ActiveTab = 'sniper' | 'meme' | 'trades' | 'radar' | 'signals'
+type ActiveTab = 'sniper' | 'trades' | 'radar' | 'signals'
 
 function App() {
   useTelegramWebApp()
@@ -50,19 +49,6 @@ function App() {
             >
               <Target className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               Снайпер
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('meme')}
-              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
-                activeTab === 'meme'
-                  ? 'border-alert text-alert'
-                  : 'border-transparent text-holo/40 hover:text-holo/70'
-              }`}
-            >
-              <Flame className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              Мемы
             </button>
 
             <button
@@ -109,7 +95,6 @@ function App() {
         <main className="px-0 pb-20">
           {showStrip && <NewsStrip items={newsItems} />}
           {activeTab === 'sniper' && <SniperView />}
-          {activeTab === 'meme' && <MemePulseView />}
           {activeTab === 'trades' && <TradesView />}
           {activeTab === 'radar' && <RadarView />}
           {activeTab === 'signals' && <SignalsView />}

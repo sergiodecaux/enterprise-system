@@ -105,11 +105,9 @@ const PredictionOverlay = ({
         lineWidth: widthByHorizon as 1 | 2 | 3 | 4,
         lineStyle: LINE_STYLE_MAP[sc.id] ?? 1,
         crosshairMarkerVisible: false,
-        lastValueVisible: isPrimary,
+        lastValueVisible: false,
         priceLineVisible: false,
-        title: isPrimary
-          ? `${horizon === 'SCALP' ? '⚡' : horizon === 'SWING' || horizon === 'MACRO' ? '🕯' : '🎯'} A ${sc.probability}%`
-          : `${sc.id}`,
+        title: '',
       })
 
       lineSeries.setData(data)

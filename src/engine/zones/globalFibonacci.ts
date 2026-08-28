@@ -369,12 +369,12 @@ function toPriceLevels(levels: GlobalFibLevel[]): PriceLevel[] {
         price: l.price,
         label: is141 ? '141' : is161 ? '161' : `${fibPercentLabel(l.ratio)}%`,
         color: is141
-          ? 'rgba(251, 191, 36, 0.98)'
+          ? 'rgba(251, 191, 36, 0.45)'
           : is161
-            ? 'rgba(251, 191, 36, 0.8)'
+            ? 'rgba(251, 191, 36, 0.32)'
             : isExt
-              ? 'rgba(168, 85, 247, 0.55)'
-              : 'rgba(148, 163, 184, 0.4)',
+              ? 'rgba(168, 85, 247, 0.4)'
+              : 'rgba(148, 163, 184, 0.35)',
         lineStyle: (is141 || is161 ? 0 : 2) as 0 | 1 | 2,
       }
     })

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   createChart,
+  CrosshairMode,
   type IChartApi,
   type ISeriesApi,
   type IPriceLine,
   type CandlestickData,
   type LineData,
   type Time,
+  type SeriesMarker,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
 import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX } from 'lucide-react'
@@ -57,10 +59,17 @@ import {
   pushZoneWatchAck,
 } from '../../api/telegram/formatters'
 import ZonePathOverlay from './ZonePathOverlay'
+import StructureHud from './StructureHud'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
 import ProbableTradesPanel from './ProbableTradesPanel'
 import SignalNowPanel from './SignalNowPanel'
-import { buildGlobalFibonacci } from '../../engine/zones/globalFibonacci'
+import { buildGlobalFibonacci, type GlobalFibonacciMap } from '../../engine/zones/globalFibonacci'
+import {
+  composeStructureRead,
+  markersForChart,
+  readTfStructure,
+  type StructureTf,
+} from '../../engine/smc/structureRead'
 import { horizonToStyle } from '../../engine/zones/horizonProfiles'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
@@ -91,12 +100,12 @@ interface LiveChartProps {
 }
 
 const CANDLE_LIMIT: Record<MexcTimeframe, number> = {
-  '1m': 120,
-  '5m': 120,
-  '15m': 120,
-  '1h': 120,
-  '4h': 100,
-  '1d': 90,
+  '1m': 160,
+  '5m': 140,
+  '15m': 140,
+  '1h': 160,
+  '4h': 120,
+  '1d': 100,
 }
 
 const INDICATOR_COLORS: Record<string, string> = {
@@ -110,6 +119,18 @@ const INDICATOR_COLORS: Record<string, string> = {
   bb_middle: '#94a3b8',
   bb_lower: '#64748b',
   vwap: '#f97316',
+}
+
+const FIB_TF_BUTTONS: Array<{ id: '1h' | '4h' | '1d'; label: string }> = [
+  { id: '1h', label: '141 1ч' },
+  { id: '4h', label: '141 4ч' },
+  { id: '1d', label: '141 1д' },
+]
+
+function structureTfOf(tf: MexcTimeframe): StructureTf {
+  if (tf === '4h') return '4h'
+  if (tf === '1d') return '1d'
+  return '1h'
 }
 
 const CHART_HEIGHT = 440
@@ -145,7 +166,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [chartExpanded, setChartExpanded] = useState(false)
-  const [showDirection, setShowDirection] = useState(true)
+  const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
   const [audioOn, setAudioOn] = useState(() => {
     try {
@@ -161,7 +182,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [chartReady, setChartReady] = useState(0)
   const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
-  const [showForecast, setShowForecast] = useState(true)
+  const [showForecast, setShowForecast] = useState(false)
   /** INTRA = текущий ТФ · MACRO = недельная картина A/B/C */
   const [forecastHorizon, setForecastHorizon] = useState<ForecastHorizon>('INTRA')
   /** По умолчанию только A — B/C включаются вручную, меньше каши */
@@ -173,7 +194,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [pickedSetups, setPickedSetups] = useState<ConditionalSetup[]>([])
   const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
-  const [fibPanelOpen, setFibPanelOpen] = useState(false)
+  const [fibTfs, setFibTfs] = useState<Set<string>>(() => new Set())
+  const [showSrZones, setShowSrZones] = useState(true)
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
   const [foundChartZones, setFoundChartZones] = useState<LiquidityZone[]>([])
   const [zonesMode, setZonesMode] = useState(false)
@@ -197,8 +219,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         horzTouchDrag: true,
         vertTouchDrag: chartExpanded,
       },
-      crosshair: { mode: chartExpanded ? 1 : 0 },
-      timeScale: { rightOffset: chartExpanded ? 12 : 6 },
+      crosshair: { mode: CrosshairMode.Magnet },
+      timeScale: { rightOffset: chartExpanded ? 22 : 16 },
     })
   }, [chartHeight, chartExpanded])
 
@@ -280,19 +302,19 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     alignment,
     liquidityMap,
     candles1d,
+    candles4h,
     candles1h,
+    candles1w,
     isLoading: mtfLoading,
   } = useMultiTFAnalysis(symbol, currentPrice, true)
 
   const globalFib = useMemo(() => {
-    // Chart TF first: last swing H/L on what user sees; daily only if too few bars
     const src =
       candles.length >= 40
         ? candles
         : candles1d.length >= 20
           ? candles1d
           : candles
-    // Stabilize vs ticker noise — round to ~0.02% so fib doesn't rebuild every tick
     const px =
       currentPrice > 0
         ? Number(currentPrice.toPrecision(6))
@@ -300,9 +322,83 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     return buildGlobalFibonacci(src, px || 0)
   }, [candles, candles1d, currentPrice])
 
+  const chartStructure = useMemo(
+    () =>
+      candles.length >= 16
+        ? readTfStructure(candles, structureTfOf(timeframe))
+        : null,
+    [candles, timeframe]
+  )
+
+  const fibMaps = useMemo(() => {
+    const px = currentPrice > 0 ? Number(currentPrice.toPrecision(6)) : 0
+    const src: Record<string, OhlcvCandle[]> = {
+      '1h':
+        candles1h.length >= 20
+          ? candles1h
+          : timeframe === '1h'
+            ? candles
+            : [],
+      '4h':
+        candles4h.length >= 16
+          ? candles4h
+          : timeframe === '4h'
+            ? candles
+            : [],
+      '1d':
+        candles1d.length >= 16
+          ? candles1d
+          : timeframe === '1d'
+            ? candles
+            : [],
+    }
+    const maps: Record<string, GlobalFibonacciMap> = {}
+    for (const [tf, c] of Object.entries(src)) {
+      if (c.length < 20) continue
+      const m = buildGlobalFibonacci(c, px)
+      if (m) maps[tf] = m
+    }
+    return maps
+  }, [candles, candles1h, candles4h, candles1d, timeframe, currentPrice])
+
+  const toggleFibTf = useCallback((tf: string) => {
+    setFibTfs((prev) => {
+      const next = new Set(prev)
+      if (next.has(tf)) next.delete(tf)
+      else next.add(tf)
+      return next
+    })
+  }, [])
+
+  const structureRead = useMemo(() => {
+    const h1src = candles1h.length >= 20 ? candles1h : timeframe === '1h' ? candles : candles1h
+    const h4src = candles4h.length >= 16 ? candles4h : timeframe === '4h' ? candles : candles4h
+    const dSrc = candles1d.length >= 16 ? candles1d : timeframe === '1d' ? candles : candles1d
+    if (h1src.length < 16 && h4src.length < 16 && dSrc.length < 16) return null
+    const px =
+      currentPrice > 0 ? Number(currentPrice.toPrecision(6)) : currentPrice
+    return composeStructureRead({
+      price: px || 0,
+      candles1h: h1src.length >= 16 ? h1src : undefined,
+      candles4h: h4src.length >= 16 ? h4src : undefined,
+      candles1d: dSrc.length >= 16 ? dSrc : undefined,
+      candles1w: candles1w.length >= 8 ? candles1w : undefined,
+      fib: globalFib,
+    })
+  }, [
+    candles,
+    candles1h,
+    candles4h,
+    candles1d,
+    candles1w,
+    timeframe,
+    currentPrice,
+    globalFib,
+  ])
+
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
 
-  /** OTE Killzone Box + signal-linked zones + global Fib reaction */
+  /** S/R dealing range + optional Fib 141 per TF — no auto clutter */
   const liquidityZones = useMemo((): LiquidityZone[] => {
     const visibleStart =
       candles.length > 0
@@ -310,92 +406,113 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         : ((Date.now() / 1000) as Time)
     const visibleEnd =
       candles.length > 0
-        ? ((Math.floor(candles[candles.length - 1][0] / 1000) + 86400) as Time)
+        ? ((Math.floor(candles[candles.length - 1][0] / 1000) + 86400 * 2) as Time)
         : ((Date.now() / 1000 + 86400) as Time)
 
-    const fibZones = (globalFib?.chartZones ?? []).map((z) => ({
-      ...z,
-      // Anchor fib bands to visible chart range so overlay can draw them
-      startTime: visibleStart,
-      endTime: visibleEnd,
-    }))
+    const zones: LiquidityZone[] = []
 
-    if (cleanMode) {
-      // В чистом режиме — OTE + сильнейший OB + активные Fib-зоны
-      const zones: LiquidityZone[] = []
-      const obs = baseZones
-        .filter((z) => z.type === 'ORDER_BLOCK')
-        .sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
-        .slice(0, 1)
-      zones.push(...obs)
-      // Always keep 141 band on chart (главный магнит), even if price far
-      const fib141 = fibZones.filter(
-        (z) =>
-          (z.id ?? '').includes('141') || (z.label ?? '').includes('141')
-      )
-      zones.push(...fib141.slice(0, 2))
-      // Secondary active fib only if no 141 drawn
-      if (!fib141.length) {
-        zones.push(
-          ...fibZones.filter((z) => (z.label ?? '').includes('◎')).slice(0, 1)
-        )
-      }
-      if (signal?.ote?.isActive && candles.length > 0) {
-        const start = candles[Math.max(0, candles.length - 40)]
-        const end = candles[candles.length - 1]
+    if (showSrZones && chartStructure) {
+      const hi = chartStructure.dealingHigh
+      const lo = chartStructure.dealingLow
+      if (hi > lo && hi > 0) {
+        const eq = (hi + lo) / 2
         zones.push({
-          id: 'ote_killzone',
-          type: 'OTE',
-          side: signal.direction === 'SHORT' ? 'BEARISH' : 'BULLISH',
-          top: signal.ote.zoneTop,
-          bottom: signal.ote.zoneBottom,
-          startTime: (start[0] / 1000) as Time,
-          endTime: (end[0] / 1000) as Time,
-          strength: 12,
-          label: signal.ote.priceInZone
-            ? 'OTE — набирай сеткой'
-            : 'OTE Zone',
+          id: 'sr_premium',
+          type: 'BSL',
+          side: 'BEARISH',
+          top: hi,
+          bottom: eq,
+          startTime: visibleStart,
+          endTime: visibleEnd,
+          strength: 7,
+          label: 'R',
+        })
+        zones.push({
+          id: 'sr_discount',
+          type: 'SSL',
+          side: 'BULLISH',
+          top: eq,
+          bottom: lo,
+          startTime: visibleStart,
+          endTime: visibleEnd,
+          strength: 7,
+          label: 'S',
         })
       }
-      if (zonesMode && foundChartZones.length) {
-        return [...foundChartZones, ...zones]
-      }
-      return zones
     }
 
-    const zones = [...baseZones, ...fibZones]
-    if (signal?.ote?.isActive && candles.length > 0) {
-      const start = candles[Math.max(0, candles.length - 40)]
-      const end = candles[candles.length - 1]
+    for (const tf of fibTfs) {
+      const fib = fibMaps[tf]
+      if (!fib) continue
+      const band = fib.chartZones.find(
+        (z) => (z.id ?? '').includes('ext_141') || (z.id ?? '').includes('141')
+      )
+      if (!band) continue
       zones.push({
-        id: 'ote_killzone',
-        type: 'OTE',
-        side: signal.direction === 'SHORT' ? 'BEARISH' : 'BULLISH',
-        top: signal.ote.zoneTop,
-        bottom: signal.ote.zoneBottom,
-        startTime: (start[0] / 1000) as Time,
-        endTime: (end[0] / 1000) as Time,
-        strength: 12,
-        label: signal.ote.priceInZone
-          ? 'OTE — набирай сеткой'
-          : 'OTE Zone',
+        ...band,
+        id: `fib141_${tf}`,
+        startTime: visibleStart,
+        endTime: visibleEnd,
+        label: `141 ${tf}`,
       })
     }
+
     if (zonesMode && foundChartZones.length) {
-      return [...foundChartZones, ...zones]
+      zones.push(...foundChartZones)
+    }
+    if (!cleanMode) {
+      zones.push(
+        ...baseZones
+          .filter((z) => z.type === 'ORDER_BLOCK' || z.type === 'FVG')
+          .slice(0, 4)
+      )
     }
     return zones
-  }, [baseZones, signal, candles, globalFib, cleanMode, zonesMode, foundChartZones])
+  }, [
+    baseZones,
+    candles,
+    chartStructure,
+    showSrZones,
+    fibTfs,
+    fibMaps,
+    cleanMode,
+    zonesMode,
+    foundChartZones,
+  ])
 
   const priceLevels = useMemo(() => {
-    const fibLines = globalFib?.priceLevels ?? []
-    if (!fibLines.length) return basePriceLevels
-    // Prefer global HTF fib grid over local candle fib duplicates
-    const withoutLocalFib = basePriceLevels.filter(
-      (l) => !l.id.startsWith('fib_')
-    )
-    return [...withoutLocalFib, ...fibLines]
-  }, [basePriceLevels, globalFib])
+    const tfLabel = (tf: string) =>
+      tf === '1h' ? '1ч' : tf === '4h' ? '4ч' : '1д'
+    const colors: Record<string, string> = {
+      '1h': 'rgba(251, 191, 36, 0.75)',
+      '4h': 'rgba(34, 211, 238, 0.75)',
+      '1d': 'rgba(167, 139, 250, 0.75)',
+    }
+    const out: typeof basePriceLevels = []
+    for (const tf of fibTfs) {
+      const fib = fibMaps[tf]
+      if (!fib?.price141) continue
+      out.push({
+        id: `gfib_${tf}_141`,
+        type: 'FIB_OTE',
+        price: fib.price141,
+        label: `141 ${tfLabel(tf)}`,
+        color: colors[tf] ?? 'rgba(251, 191, 36, 0.6)',
+        lineStyle: 2,
+      })
+      if (fib.price161 && fibTfs.size <= 2) {
+        out.push({
+          id: `gfib_${tf}_161`,
+          type: 'FIB_OTE',
+          price: fib.price161,
+          label: `161 ${tfLabel(tf)}`,
+          color: colors[tf] ?? 'rgba(251, 191, 36, 0.4)',
+          lineStyle: 3,
+        })
+      }
+    }
+    return out
+  }, [fibTfs, fibMaps, basePriceLevels])
 
   const forecast = usePriceForecast(
     candles,
@@ -696,6 +813,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       fearGreed: fearGreedValue,
       maxTrades: 8,
       tradeStyle,
+      structure: structureRead,
     })
 
     setFoundZones(result.zones)
@@ -836,6 +954,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     telegramSettings.sniper,
     telegramSettings.meme,
     forecastHorizon,
+    structureRead,
   ])
 
   const handleFindLiveSignal = useCallback(() => {
@@ -1082,17 +1201,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     return match?.id ?? null
   }, [selectedSetupId, selectedSetup, foundZones])
 
-  const zoneGuide = useMemo(() => {
-    if (!foundZones.length || !(currentPrice > 0)) return null
-    const below = foundZones
-      .filter((z) => z.side === 'LONG' && z.mid <= currentPrice * 1.002)
-      .sort((a, b) => b.mid - a.mid)[0]
-    const above = foundZones
-      .filter((z) => z.side === 'SHORT' && z.mid >= currentPrice * 0.998)
-      .sort((a, b) => a.mid - b.mid)[0]
-    return { below, above }
-  }, [foundZones, currentPrice])
-
   useEffect(() => {
     if (!selectedSetup?.chartPath || !forecast) return
     if (
@@ -1185,15 +1293,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         horzLines: { color: 'rgba(255,255,255,0.045)' },
       },
       crosshair: {
-        mode: 1,
+        mode: CrosshairMode.Magnet,
         vertLine: {
-          color: 'rgba(148, 163, 184, 0.35)',
+          color: 'rgba(148, 163, 184, 0.45)',
           width: 1,
           style: 2,
           labelBackgroundColor: '#1e293b',
         },
         horzLine: {
-          color: 'rgba(148, 163, 184, 0.35)',
+          color: 'rgba(148, 163, 184, 0.45)',
           width: 1,
           style: 2,
           labelBackgroundColor: '#1e293b',
@@ -1203,16 +1311,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 8,
-        barSpacing: 7,
-        minBarSpacing: 3,
+        rightOffset: 16,
+        barSpacing: 8,
+        minBarSpacing: 2,
         lockVisibleTimeRangeOnResize: true,
+        shiftVisibleRangeOnNewBar: true,
       },
       rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.08)',
-        scaleMargins: { top: 0.08, bottom: 0.1 },
+        borderColor: 'rgba(255,255,255,0.1)',
+        scaleMargins: { top: 0.12, bottom: 0.12 },
         autoScale: true,
         entireTextOnly: true,
+        alignLabels: true,
       },
       width: containerRef.current.clientWidth,
       height: chartHeightRef.current,
@@ -1230,7 +1340,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       },
       kineticScroll: {
         touch: true,
-        mouse: false,
+        mouse: true,
       },
     })
 
@@ -1308,7 +1418,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const needFit = fittedKeyRef.current !== key
     candleRef.current.setData(lwcData)
     if (needFit) {
-      chartRef.current?.timeScale().fitContent()
+      const vis =
+        timeframe === '1m' || timeframe === '5m' ? 90 : 70
+      const from = Math.max(-2, lwcData.length - vis)
+      chartRef.current?.timeScale().setVisibleLogicalRange({
+        from,
+        to: lwcData.length + 14,
+      })
       fittedKeyRef.current = key
     }
   }, [lwcData, symbol, timeframe])
@@ -1329,6 +1445,24 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       low: Math.min(last.low, p),
     })
   }, [ticker?.price, lwcData, timeframe])
+
+  useEffect(() => {
+    const series = candleRef.current
+    if (!series || !structureRead || !lwcData.length) {
+      series?.setMarkers([])
+      return
+    }
+    const times = lwcData.map((c) => c.time as number)
+    const mapped = markersForChart(structureRead, times)
+    const markers: SeriesMarker<Time>[] = mapped.map((m) => ({
+      time: m.time as Time,
+      position: m.position,
+      color: m.color,
+      shape: m.shape,
+      text: m.text,
+    }))
+    series.setMarkers(markers)
+  }, [structureRead, lwcData, chartReady])
 
   const updateLineSeries = useCallback(() => {
     const chart = chartRef.current
@@ -1402,12 +1536,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     }
     priceLineRefs.current = []
 
-    const fmt = (p: number) => {
-      if (p >= 1000) return p.toFixed(2)
-      if (p >= 1) return p.toFixed(4)
-      return p.toPrecision(5)
-    }
-
     const addLine = (
       price: number,
       color: string,
@@ -1424,7 +1552,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           color,
           lineWidth: opts?.lineWidth ?? 1,
           lineStyle: opts?.lineStyle ?? 2,
-          // Fib: no axis label (не путает с SL/TP справа)
+          // 141/161: show price on the right axis so the band is readable
           axisLabelVisible: opts?.axisLabel ?? false,
           title,
         })
@@ -1434,110 +1562,105 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
-    // Fib first — without right-axis price tags
+    // Fib 141/161 — short axis tags only
     for (const level of priceLevels) {
-      const is141 = level.label === '141' || level.id.includes('1.414')
-      if (cleanMode && !is141 && level.label !== '161' && level.label !== '100%') {
-        continue
-      }
-      addLine(level.price, level.color, is141 ? 'F141' : level.label, {
+      addLine(level.price, level.color, level.label, {
         lineStyle: level.lineStyle ?? 2,
-        lineWidth: is141 ? 2 : 1,
-        axisLabel: false,
-      })
-    }
-
-    // Trade levels last — clear titles + axis labels on the right
-    const entry =
-      signal?.surgicalEntry?.status === 'READY' &&
-      signal.surgicalEntry.limitEntry != null
-        ? signal.surgicalEntry.limitEntry
-        : null
-    if (entry != null) {
-      addLine(entry, 'rgba(56, 189, 248, 0.95)', `IN ${fmt(entry)}`, {
-        lineStyle: 0,
-        lineWidth: 2,
-        axisLabel: true,
-      })
-    }
-    if (signal?.sl != null) {
-      addLine(signal.sl, 'rgba(239, 68, 68, 0.95)', `SL ${fmt(signal.sl)}`, {
-        lineStyle: 0,
-        lineWidth: 2,
-        axisLabel: true,
-      })
-    }
-    if (signal?.tp1 != null) {
-      addLine(signal.tp1, 'rgba(34, 197, 94, 0.95)', `TP1 ${fmt(signal.tp1)}`, {
-        lineStyle: 0,
-        lineWidth: 2,
-        axisLabel: true,
-      })
-    }
-    if (signal?.tp2 != null) {
-      addLine(signal.tp2, 'rgba(34, 197, 94, 0.65)', `TP2 ${fmt(signal.tp2)}`, {
-        lineStyle: 2,
         lineWidth: 1,
         axisLabel: true,
       })
     }
-    if (signal?.tpDaily != null) {
-      addLine(
-        signal.tpDaily,
-        'rgba(100, 200, 255, 0.7)',
-        `TPd ${fmt(signal.tpDaily)}`,
-        { lineStyle: 2, lineWidth: 1, axisLabel: false }
-      )
-    }
-    if (signal?.invalidationPrice != null) {
-      const invTitle = signal.invalidationMessage?.includes('4H')
-        ? 'Inv4H'
-        : signal.invalidationMessage?.includes('1H')
-          ? 'Inv1H'
-          : 'Inv'
-      addLine(
-        signal.invalidationPrice,
-        'rgba(251, 191, 36, 0.95)',
-        `${invTitle} ${fmt(signal.invalidationPrice)}`,
-        { lineStyle: 1, lineWidth: 1, axisLabel: true }
-      )
+
+    if (showSrZones && chartStructure) {
+      const hi = chartStructure.dealingHigh
+      const lo = chartStructure.dealingLow
+      if (hi > lo) {
+        const eq = (hi + lo) / 2
+        const brokeUp = currentPrice > hi
+        const brokeDn = currentPrice < lo
+        addLine(
+          hi,
+          'rgba(148, 163, 184, 0.85)',
+          brokeUp ? 'BOS↑' : 'R',
+          { lineStyle: 2, lineWidth: 1, axisLabel: true }
+        )
+        addLine(eq, 'rgba(148, 163, 184, 0.45)', 'EQ', {
+          lineStyle: 3,
+          lineWidth: 1,
+          axisLabel: true,
+        })
+        addLine(
+          lo,
+          'rgba(45, 180, 175, 0.9)',
+          brokeDn ? 'BOS↓' : 'S',
+          { lineStyle: 2, lineWidth: 1, axisLabel: true }
+        )
+      }
     }
 
-    // Selected zone setup: где слом / куда цель
-    if (selectedSetup) {
-      if (selectedSetup.limitEntry > 0) {
-        addLine(
-          selectedSetup.limitEntry,
-          'rgba(56, 189, 248, 0.95)',
-          `вход ${fmt(selectedSetup.limitEntry)}`,
-          { lineStyle: 0, lineWidth: 2, axisLabel: true }
-        )
+    // SL / TP / вход только в режиме сигнала или выбранного сетапа
+    if (signalMode || selectedSetup) {
+      const entry =
+        signal?.surgicalEntry?.status === 'READY' &&
+        signal.surgicalEntry.limitEntry != null
+          ? signal.surgicalEntry.limitEntry
+          : null
+      if (entry != null) {
+        addLine(entry, 'rgba(56, 189, 248, 0.95)', 'IN', {
+          lineStyle: 0,
+          lineWidth: 2,
+          axisLabel: true,
+        })
       }
-      if (selectedSetup.invalidation > 0) {
-        addLine(
-          selectedSetup.invalidation,
-          'rgba(251, 113, 133, 0.95)',
-          `слом ${fmt(selectedSetup.invalidation)}`,
-          { lineStyle: 1, lineWidth: 2, axisLabel: true }
-        )
+      if (signal?.sl != null) {
+        addLine(signal.sl, 'rgba(239, 68, 68, 0.95)', 'SL', {
+          lineStyle: 0,
+          lineWidth: 2,
+          axisLabel: true,
+        })
       }
-      if (selectedSetup.target > 0) {
-        addLine(
-          selectedSetup.target,
-          'rgba(45, 212, 191, 0.95)',
-          `цель ${fmt(selectedSetup.target)}`,
-          { lineStyle: 2, lineWidth: 2, axisLabel: true }
-        )
+      if (signal?.tp1 != null) {
+        addLine(signal.tp1, 'rgba(34, 197, 94, 0.95)', 'TP1', {
+          lineStyle: 0,
+          lineWidth: 2,
+          axisLabel: true,
+        })
+      }
+      if (selectedSetup) {
+        if (selectedSetup.limitEntry > 0) {
+          addLine(selectedSetup.limitEntry, 'rgba(56, 189, 248, 0.95)', 'вход', {
+            lineStyle: 0,
+            lineWidth: 2,
+            axisLabel: true,
+          })
+        }
+        if (selectedSetup.invalidation > 0) {
+          addLine(
+            selectedSetup.invalidation,
+            'rgba(251, 113, 133, 0.95)',
+            'слом',
+            { lineStyle: 1, lineWidth: 1, axisLabel: true }
+          )
+        }
+        if (selectedSetup.target > 0) {
+          addLine(selectedSetup.target, 'rgba(45, 212, 191, 0.95)', 'цель', {
+            lineStyle: 2,
+            lineWidth: 1,
+            axisLabel: true,
+          })
+        }
       }
     }
   }, [
     priceLevels,
-    chartPreferences.showLabels,
     chartReady,
     lwcData,
     signal,
-    cleanMode,
     selectedSetup,
+    signalMode,
+    showSrZones,
+    chartStructure,
+    currentPrice,
   ])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
@@ -1554,7 +1677,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     }
     liqLineRefs.current = []
 
-    if (!eqLiquidityMap) return
+    if (!eqLiquidityMap || cleanMode) return
 
     const drawLiqLevel = (level: EqualLevel) => {
       const isBSL = level.type === 'HIGH'
@@ -1576,14 +1699,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
       const lineStyle = styleMap[level.strength]
 
-      const typeLabel = isBSL ? 'BSL' : 'SSL'
-      const hold = isBSL ? 'удерж↓' : 'удерж↑'
-      const touchLabel = `×${level.touches}`
-      const distLabel = `${level.distancePct.toFixed(1)}%`
-      const title =
-        chartPreferences.showLabels || zonesMode
-          ? `${typeLabel} ${hold} ${touchLabel} ${distLabel}`
-          : ''
+      const title = isBSL ? 'R' : 'S'
 
       try {
         const line = series.createPriceLine({
@@ -1637,9 +1753,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const chart = chartRef.current
     if (!chart) return
     chart.priceScale('right').applyOptions({ autoScale: true })
-    chart.timeScale().fitContent()
+    const n = lwcData.length
+    if (n > 2) {
+      const vis = timeframe === '1m' || timeframe === '5m' ? 90 : 70
+      chart.timeScale().setVisibleLogicalRange({
+        from: Math.max(-2, n - vis),
+        to: n + 14,
+      })
+    } else {
+      chart.timeScale().fitContent()
+    }
     haptic.impact()
-  }, [haptic])
+  }, [haptic, lwcData.length, timeframe])
 
   const oscillators: Array<'rsi' | 'macd' | 'stochastic' | 'atr'> = []
   if (!cleanMode) {
@@ -1722,6 +1847,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         bookImbalance: bookForForecast,
         newsBias,
         timeframe,
+        structure: structureRead,
       }),
     [
       signal,
@@ -1730,12 +1856,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       bookForForecast,
       newsBias,
       timeframe,
+      structureRead,
     ]
   )
 
   const chartRegime = signal?.marketRegime ?? 'RANGING'
-  const toolsBounceOk =
-    chartRegime === 'RANGING' || chartRegime === 'TRENDING_WEAK'
   const toolsTrendOk =
     chartRegime === 'TRENDING_STRONG' || chartRegime === 'TRENDING_WEAK'
   const toolsChop = chartRegime === 'VOLATILE_CHOP'
@@ -1744,6 +1869,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const processRefreshKey =
     (sequenceHit?.detectedAt ?? 0) +
     Math.round((ticker?.timestamp ?? 0) / 15_000)
+
+  void handleFindZones
 
   return (
     <div
@@ -1911,8 +2038,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 className={`rounded-md px-2.5 py-1.5 font-mono text-[11px] font-semibold transition-colors ${
                   timeframe === tf.id
                     ? 'bg-emerald-500/20 text-emerald-300'
-                    : 'text-white/40 hover:text-white/70'
+                    : tf.id === '1h' || tf.id === '4h'
+                      ? 'text-white/55 hover:text-white/80'
+                      : 'text-white/40 hover:text-white/70'
                 }`}
+                title={
+                  tf.id === '1h'
+                    ? '1H — главный ТФ структуры (BOS / закреп)'
+                    : tf.id === '4h'
+                      ? '4H — подтверждение структуры'
+                      : undefined
+                }
               >
                 {tf.label}
               </button>
@@ -1926,6 +2062,30 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           >
             Fit
           </button>
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+            {FIB_TF_BUTTONS.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => {
+                  toggleFibTf(b.id)
+                  haptic.impact()
+                }}
+                className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                  fibTfs.has(b.id)
+                    ? b.id === '1h'
+                      ? 'bg-amber-500/20 text-amber-200'
+                      : b.id === '4h'
+                        ? 'bg-cyan-500/20 text-cyan-200'
+                        : 'bg-violet-500/20 text-violet-200'
+                    : 'text-white/40 hover:text-white/70'
+                }`}
+                title={`Fibonacci 141 на ${b.label.replace('141 ', '')}`}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
           <button
             id="live-signal-cta"
             type="button"
@@ -1989,33 +2149,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             </button>
             <button
               type="button"
-              disabled={toolsChop}
               onClick={() => {
-                if (zonesMode) {
-                  setZonesMode(false)
-                  setFoundChartZones([])
-                  setFoundZones([])
-                  haptic.impact()
-                  return
-                }
-                setSignalMode(false)
-                setLiveSignal(null)
-                void handleFindZones()
+                setShowSrZones((v) => !v)
+                haptic.impact()
               }}
               className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                zonesMode
+                showSrZones
                   ? 'bg-emerald-500/20 text-emerald-300'
-                  : toolsBounceOk && !toolsChop
-                    ? 'text-white/55 hover:text-white/80'
-                    : 'text-white/20'
+                  : 'text-white/55 hover:text-white/80'
               }`}
-              title={
-                toolsChop
-                  ? 'CHOP — зоны отключены'
-                  : 'Зоны лучше в RANGE / слабом тренде'
-              }
+              title="Поддержка / сопротивление: серый премиум · бирюза дисконт. Слом = BOS↑ / BOS↓"
             >
-              Зоны{foundZones.length > 0 && zonesMode ? ` ${foundZones.length}` : ''}
+              Зоны
             </button>
             <button
               type="button"
@@ -2098,6 +2243,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         </div>
       </div>
 
+      <StructureHud read={structureRead} />
+
       <div
         className={`relative w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#0c0e12] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${
           chartExpanded ? 'ring-1 ring-emerald-500/30' : ''
@@ -2124,38 +2271,40 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           className="h-full w-full"
           style={{ touchAction: 'pan-x pinch-zoom' }}
         />
-        {globalFib && (
-          <button
-            type="button"
-            onClick={() => setFibPanelOpen((v) => !v)}
-            className={`absolute left-2 top-2 z-20 max-w-[68%] rounded border bg-black/75 px-2 py-1 text-left font-mono text-[9px] shadow-lg ${
-              globalFib.in141 || globalFib.near141
-                ? 'border-amber-400/50 text-amber-200'
-                : 'border-amber-400/25 text-amber-100/80'
-            }`}
-          >
-            <span className="font-bold text-amber-300">
-              FIB {globalFib.impulse === 'UP' ? '↑' : '↓'}
-            </span>
-            {' · '}
-            <span>
-              →{globalFib.entryBias ?? '—'} · 141{' '}
-              {globalFib.price141?.toPrecision(5) ?? '—'}
-            </span>
-            {fibPanelOpen && (
-              <span className="mt-0.5 block text-[8px] leading-snug text-holo/50">
-                H {globalFib.swingHigh.toPrecision(5)} · L{' '}
-                {globalFib.swingLow.toPrecision(5)} · от последнего свинга
-                {globalFib.distTo141Pct != null && (
-                  <>
-                    {' · Δ'}
-                    {globalFib.distTo141Pct >= 0 ? '+' : ''}
-                    {globalFib.distTo141Pct.toFixed(1)}%
-                  </>
-                )}
-              </span>
-            )}
-          </button>
+        {lwcData.length > 0 && (
+          <div className="pointer-events-none absolute left-2 top-1.5 z-20 flex flex-wrap items-baseline gap-x-2 font-mono text-[10px] text-white/70">
+            {(() => {
+              const bar = lwcData[lwcData.length - 1]
+              const pct = bar.open ? ((bar.close - bar.open) / bar.open) * 100 : 0
+              const up = pct >= 0
+              const fmt = (p: number) =>
+                p >= 1000 ? p.toFixed(2) : p >= 1 ? p.toFixed(4) : p.toPrecision(5)
+              return (
+                <>
+                  <span className="font-bold text-white/85">{timeframe}</span>
+                  <span>
+                    O <span className="text-white/90">{fmt(bar.open)}</span>
+                  </span>
+                  <span>
+                    H <span className="text-emerald-300/90">{fmt(bar.high)}</span>
+                  </span>
+                  <span>
+                    L <span className="text-rose-300/90">{fmt(bar.low)}</span>
+                  </span>
+                  <span>
+                    C{' '}
+                    <span className={up ? 'text-emerald-300' : 'text-rose-300'}>
+                      {fmt(bar.close)}
+                    </span>
+                  </span>
+                  <span className={up ? 'text-emerald-400' : 'text-rose-400'}>
+                    {up ? '+' : ''}
+                    {pct.toFixed(2)}%
+                  </span>
+                </>
+              )
+            })()}
+          </div>
         )}
         {chartReady > 0 && showSessions && (
           <SessionOverlay
@@ -2175,18 +2324,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             series={candleRef.current}
             zones={liquidityZones}
             containerRef={containerRef}
-            opacity={Math.max(
-              chartPreferences.opacity,
-              zonesMode ? 32 : 20
-            )}
-            showLabels={chartPreferences.showLabels || zonesMode || chartExpanded}
+            opacity={14}
+            showLabels={false}
             highlightId={highlightedZoneId}
-            forceContextLabels={
-              zonesMode || chartExpanded || Boolean(highlightedZoneId)
-            }
+            quiet
           />
         )}
-        {chartReady > 0 && (
+        {chartReady > 0 && !cleanMode && (
           <WhaleLevelsOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -2237,59 +2381,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
               lastPrice={currentPrice}
               visible={showDirection}
             />
-          )}
-        {zonesMode &&
-          chartReady > 0 &&
-          (zoneGuide?.below || zoneGuide?.above) && (
-            <div className="pointer-events-none absolute right-2 top-12 z-[3] flex max-w-[58%] flex-col gap-1.5">
-              {zoneGuide?.below && (
-                <div className="rounded-md border border-teal-400/45 bg-black/70 px-2 py-1 font-mono text-[9px] text-teal-200 shadow-lg backdrop-blur-sm">
-                  <span className="font-bold">▼ ПОДДЕРЖКА · лонг ↑</span>
-                  <span className="text-teal-100/80">
-                    {' '}
-                    @{' '}
-                    {zoneGuide.below.mid >= 1
-                      ? zoneGuide.below.mid.toFixed(4)
-                      : zoneGuide.below.mid.toPrecision(5)}
-                  </span>
-                  <span className="block text-[8px] text-teal-100/55">
-                    слом &lt;{' '}
-                    {zoneGuide.below.invalidation >= 1
-                      ? zoneGuide.below.invalidation.toFixed(4)
-                      : zoneGuide.below.invalidation.toPrecision(5)}{' '}
-                    · цель{' '}
-                    {zoneGuide.below.target >= 1
-                      ? zoneGuide.below.target.toFixed(4)
-                      : zoneGuide.below.target.toPrecision(5)}
-                  </span>
-                </div>
-              )}
-              {zoneGuide?.above && (
-                <div className="rounded-md border border-rose-400/45 bg-black/70 px-2 py-1 font-mono text-[9px] text-rose-200 shadow-lg backdrop-blur-sm">
-                  <span className="font-bold">▲ СОПРОТИВЛЕНИЕ · шорт ↓</span>
-                  <span className="text-rose-100/80">
-                    {' '}
-                    @{' '}
-                    {zoneGuide.above.mid >= 1
-                      ? zoneGuide.above.mid.toFixed(4)
-                      : zoneGuide.above.mid.toPrecision(5)}
-                  </span>
-                  <span className="block text-[8px] text-rose-100/55">
-                    слом &gt;{' '}
-                    {zoneGuide.above.invalidation >= 1
-                      ? zoneGuide.above.invalidation.toFixed(4)
-                      : zoneGuide.above.invalidation.toPrecision(5)}{' '}
-                    · цель{' '}
-                    {zoneGuide.above.target >= 1
-                      ? zoneGuide.above.target.toFixed(4)
-                      : zoneGuide.above.target.toPrecision(5)}
-                  </span>
-                </div>
-              )}
-              <div className="rounded-md border border-white/10 bg-black/50 px-2 py-1 font-mono text-[8px] text-white/45">
-                ●●● сильная · ●● средняя · тусклая = слабая
-              </div>
-            </div>
           )}
         {showPredictionPaths && forecast && chartReady > 0 && (
           <PredictionOverlay

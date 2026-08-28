@@ -21,7 +21,6 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
     volatilityLevel,
     confluenceBreakdown,
     tacticalAdvice,
-    memeContext,
     altContext,
   } = analysis
 
@@ -253,32 +252,6 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
           </div>
         )}
       </div>
-
-      {memeContext && (
-        <div className="rounded-lg border border-alert/20 bg-alert/5 p-2.5">
-          <div className="mb-2 font-mono text-xs font-bold uppercase text-alert">
-            🔥 Контекст мема
-          </div>
-          <div className="grid grid-cols-2 gap-2 font-mono text-xs text-holo/70">
-            <div>
-              Нагрев:{' '}
-              <span className="font-bold text-alert">
-                {memeContext.heatScore}/100
-              </span>
-            </div>
-            <div>
-              Объём:{' '}
-              <span className="font-bold">
-                ×{memeContext.volumeMultiplier.toFixed(1)}
-              </span>
-            </div>
-            <div className="col-span-2">
-              Ожидаемое:{' '}
-              <span className="text-holo">{memeContext.expectedMoveRange}</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {altContext && (
         <div className="rounded-lg border border-matrix/20 bg-matrix/5 p-2.5">

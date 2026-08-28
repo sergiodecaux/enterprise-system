@@ -6,6 +6,7 @@ import {
 } from '../engine/prediction/multiTFAnalyzer'
 import { buildLiquidityMap } from '../engine/prediction/liquidityMap'
 import type { MultiTFAlignment, LiquidityLevel } from '../engine/prediction/types'
+import { aggregateWeekly } from '../engine/smc/structureRead'
 import { logger } from '../utils/logger'
 
 interface MultiTFData {
@@ -14,6 +15,7 @@ interface MultiTFData {
   candles1d: OhlcvCandle[]
   candles4h: OhlcvCandle[]
   candles1h: OhlcvCandle[]
+  candles1w: OhlcvCandle[]
   isLoading: boolean
   error: string | null
   lastUpdate: number
@@ -26,6 +28,7 @@ const empty: MultiTFData = {
   candles1d: [],
   candles4h: [],
   candles1h: [],
+  candles1w: [],
   isLoading: false,
   error: null,
   lastUpdate: 0,
@@ -57,6 +60,7 @@ export function useMultiTFAnalysis(
       const daily = analyzeTFSnapshot(candles1d, '1d')
       const h4 = analyzeTFSnapshot(candles4h, '4h')
       const h1 = analyzeTFSnapshot(candles1h, '1h')
+      const candles1w = aggregateWeekly(candles1d)
       const alignment = calculateMTFAlignment(daily, h4, h1, price)
       const liquidityMap = buildLiquidityMap(candles1d, candles4h, candles1h, price)
 
@@ -66,6 +70,7 @@ export function useMultiTFAnalysis(
         candles1d,
         candles4h,
         candles1h,
+        candles1w,
         isLoading: false,
         error: null,
         lastUpdate: Date.now(),

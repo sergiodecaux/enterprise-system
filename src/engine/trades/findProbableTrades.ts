@@ -21,6 +21,8 @@ import { buildConditionalSetups } from '../setups/buildConditionalSetups'
 import { findTradeZones, type FoundTradeZone } from '../zones/findTradeZones'
 import { buildGlobalFibonacci } from '../zones/globalFibonacci'
 import { buildLadderPath, computeTargetLadder } from './targetLadder'
+import type { StructureRead } from '../smc/structureRead'
+import type { PathPoint } from '../prediction/types'
 
 export interface ProbableTradesResult {
   trades: ConditionalSetup[]
@@ -128,10 +130,26 @@ function buildGlobalView(opts: {
   btcRs?: number | null
   fearGreed?: number | null
   magnet: TradeMagnet | null
+  structure?: StructureRead | null
 }): TradeGlobalView {
   const factors: string[] = []
   let bull = 0
   let bear = 0
+
+  const st = opts.structure
+  if (st) {
+    if (st.bias === 'BULLISH') {
+      bull += 3
+      factors.push(`SMC 1H/4H: ${st.summary}`)
+    } else if (st.bias === 'BEARISH') {
+      bear += 3
+      factors.push(`SMC 1H/4H: ${st.summary}`)
+    } else {
+      factors.push(st.summary)
+    }
+    for (const f of st.factors.slice(0, 3)) factors.push(f)
+    if (st.fib141) factors.push(st.fib141.narrative)
+  }
 
   const side = opts.mm?.preferredSide ?? opts.signal?.direction ?? null
   if (side === 'LONG') {
@@ -189,17 +207,44 @@ function buildGlobalView(opts: {
     bull - bear >= 2 ? 'BULLISH' : bear - bull >= 2 ? 'BEARISH' : 'NEUTRAL'
 
   const summary =
-    bias === 'BULLISH'
-      ? 'Рынок глобально смотрит вверх — приоритет LONG у поддержки / SSL'
-      : bias === 'BEARISH'
-        ? 'Рынок глобально смотрит вниз — приоритет SHORT у сопротивления / BSL'
-        : 'Нет явного глобального вектора — берём ближайшие зоны с лучшим Score'
+    st && st.bias !== 'NEUTRAL'
+      ? st.summary
+      : bias === 'BULLISH'
+        ? 'Рынок глобально смотрит вверх — приоритет LONG у поддержки / SSL'
+        : bias === 'BEARISH'
+          ? 'Рынок глобально смотрит вниз — приоритет SHORT у сопротивления / BSL'
+          : 'Нет явного глобального вектора — берём ближайшие зоны с лучшим Score'
 
   return {
     bias,
     summary,
-    factors: factors.slice(0, 6),
+    factors: factors.slice(0, 8),
   }
+}
+
+function blendStructurePath(
+  ladderPath: PathPoint[],
+  structure: StructureRead | null | undefined,
+  side: 'LONG' | 'SHORT'
+): PathPoint[] {
+  if (!structure || structure.preferredSide !== side || structure.chartPath.length < 2) {
+    return ladderPath
+  }
+  const struct = structure.chartPath
+  const lastLadder = ladderPath[ladderPath.length - 1]
+  const lastStruct = struct[struct.length - 1]
+  const extra: PathPoint[] = []
+  if (
+    lastLadder &&
+    lastStruct &&
+    Math.abs(lastLadder.price - lastStruct.price) / Math.max(lastStruct.price, 1e-9) > 0.004
+  ) {
+    extra.push({
+      ...lastLadder,
+      timeOffsetSeconds: lastStruct.timeOffsetSeconds + 3600 * 4,
+    })
+  }
+  return [...struct, ...extra]
 }
 
 function enrichSetup(
@@ -210,6 +255,7 @@ function enrichSetup(
     map?: LiquidityMap | null
     fib141?: number | null
     globalView: TradeGlobalView
+    structure?: StructureRead | null
   }
 ): ConditionalSetup {
   const magnet = pickMagnet({
@@ -232,22 +278,26 @@ function enrichSetup(
   })
 
   const zoneMid = (setup.entryZone.top + setup.entryZone.bottom) / 2
-  const chartPath = buildLadderPath({
+  const ladderPath = buildLadderPath({
     price: opts.price,
     entry: setup.limitEntry,
     zoneMid,
     ladder,
     magnetLabel: magnet?.label,
   })
+  const chartPath = blendStructurePath(ladderPath, opts.structure, setup.side)
 
   const why = [
     ...setup.reasoning.slice(0, 2),
+    opts.structure?.fib141?.narrative,
+    opts.structure?.h1?.narrative ? `1H: ${opts.structure.h1.narrative}` : null,
+    opts.structure?.h4?.narrative ? `4H: ${opts.structure.h4.narrative}` : null,
     `Лестница: 1R ~${ladder.pReach1}% → 2R ~${ladder.pReach2}% → 3R ~${ladder.pReach3}%`,
     magnet
       ? `Магнит полёта: ${magnet.label} @ ${magnet.price.toPrecision(6)}`
       : 'Магнит: структурная ликвидность по R-лестнице',
     opts.globalView.summary,
-  ]
+  ].filter((x): x is string => Boolean(x))
 
   return {
     ...setup,
@@ -298,6 +348,7 @@ export function findProbableTrades(input: {
   fearGreed?: number | null
   maxTrades?: number
   tradeStyle?: SetupTradeStyle
+  structure?: StructureRead | null
 }): ProbableTradesResult {
   const price = input.price
   const tradeStyle: SetupTradeStyle = input.tradeStyle ?? 'INTRADAY'
@@ -401,6 +452,7 @@ export function findProbableTrades(input: {
     btcRs: input.signal?.btcDivergence?.relativeStrength ?? null,
     fearGreed: input.fearGreed,
     magnet: draftMagnet,
+    structure: input.structure,
   })
 
   // Soft rank boost when trade aligns with global bias
@@ -426,6 +478,7 @@ export function findProbableTrades(input: {
         map: zoneResult.liquidityMap,
         fib141,
         globalView,
+        structure: input.structure,
       })
     })
     .sort((a, b) => b.probability - a.probability)

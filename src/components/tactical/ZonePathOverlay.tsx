@@ -87,9 +87,9 @@ const ZonePathOverlay = ({
         lineWidth: isSel ? 2 : 1,
         lineStyle: s.kind === 'STOP_THEN_REVERSE' ? 2 : 0,
         priceLineVisible: false,
-        lastValueVisible: isSel,
+        lastValueVisible: false,
         crosshairMarkerVisible: isSel,
-        title: isSel ? s.title.slice(0, 18) : '',
+        title: '',
       })
       line.setData(toLineData(s.chartPath!, lastCandleTs))
       refs.current[s.id] = line

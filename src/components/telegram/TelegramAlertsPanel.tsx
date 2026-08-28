@@ -57,7 +57,7 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
       const ok = await subscribeTelegramAlerts({
         chatId,
         sniper: settings.sniper,
-        meme: settings.meme,
+        meme: false,
       })
       if (ok) {
         setSettings({
@@ -154,16 +154,6 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
           </label>
 
           <label className="flex items-center justify-between">
-            <span className="font-mono text-xs text-holo/80">Мемы</span>
-            <input
-              type="checkbox"
-              checked={settings.meme}
-              onChange={(e) => setSettings({ meme: e.target.checked })}
-              className="accent-matrix"
-            />
-          </label>
-
-          <label className="flex items-center justify-between">
             <span className="font-mono text-xs text-holo/80">Слежение за сетапами</span>
             <input
               type="checkbox"
@@ -186,22 +176,6 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
                 setSettings({ minSniperConfidence: Number(e.target.value) })
               }
               className="h-1 w-full accent-matrix"
-            />
-          </div>
-
-          <div>
-            <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
-              Мин. Heat мем: {settings.minMemeHeat}
-            </div>
-            <input
-              type="range"
-              min={30}
-              max={90}
-              value={settings.minMemeHeat}
-              onChange={(e) =>
-                setSettings({ minMemeHeat: Number(e.target.value) })
-              }
-              className="h-1 w-full accent-alert"
             />
           </div>
 

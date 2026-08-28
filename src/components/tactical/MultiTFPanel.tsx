@@ -145,9 +145,9 @@ const MultiTFPanel = ({ alignment, isLoading }: Props) => {
       </div>
 
       <div className="rounded-lg bg-hull-light/20 px-3">
-        <TFRow snap={alignment.daily} />
-        <TFRow snap={alignment.h4} />
         <TFRow snap={alignment.h1} />
+        <TFRow snap={alignment.h4} />
+        <TFRow snap={alignment.daily} />
       </div>
 
       {alignment.agreement && (

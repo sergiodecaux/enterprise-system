@@ -4,6 +4,7 @@
 
 import type { CoinSignal } from '../types'
 import type { MultiTFAlignment, PriceForecast } from '../prediction/types'
+import type { StructureRead } from '../smc/structureRead'
 
 export type ArrowBias = 'UP' | 'DOWN' | 'FLAT'
 
@@ -59,10 +60,45 @@ export function computeDirectionConsensus(input: {
   bookImbalance?: number | null
   newsBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   timeframe?: string
+  structure?: StructureRead | null
 }): DirectionConsensus {
   const votes: DirectionVote[] = []
   const s = input.signal
   const tf = input.timeframe ?? '1h'
+
+  const st = input.structure
+  if (st) {
+    const smcSide = sideFromBias(st.bias)
+    const w = 1.55 * Math.min(1, st.confidence / 90)
+    pushVote(
+      votes,
+      'smc1h',
+      '1H SMC',
+      smcSide,
+      w,
+      st.h1?.narrative ?? st.summary
+    )
+    if (st.h4?.trend && st.h4.trend !== 'RANGING') {
+      pushVote(
+        votes,
+        'smc4h',
+        '4H SMC',
+        sideFromBias(st.h4.trend),
+        1.15,
+        st.h4.narrative
+      )
+    }
+    if (st.fib141 && (st.fib141.state === 'BOUNCE' || st.fib141.state === 'RECLAIM')) {
+      pushVote(
+        votes,
+        'fib141',
+        '141',
+        sideFromTrade(st.fib141.bias),
+        1.05,
+        st.fib141.narrative
+      )
+    }
+  }
 
   if (s?.htfTrend) {
     const side = sideFromBias(s.htfTrend.bias)
