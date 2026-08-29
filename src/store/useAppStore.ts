@@ -42,6 +42,7 @@ import {
   resolveJournalByTrade,
 } from '../engine/journal'
 import { CORE_WATCHLIST } from '../api/mexc'
+import { DEFAULT_RADAR141_FILTERS } from '../engine/radar141'
 
 const defaultMarketContext: MarketContext = {
   dailyDirection: 'BOTH',
@@ -210,6 +211,15 @@ export const useAppStore = create<AppState>()(
     obDelta: {},
     liveTapeCvd: {},
     watchedSetups: loadWatchedSetups(),
+    radar141Rows: [],
+    radar141Meta: {
+      scanning: false,
+      progress: '',
+      lastScanAt: null,
+      universeSize: 0,
+      error: null,
+    },
+    radar141Filters: DEFAULT_RADAR141_FILTERS,
 
     selectedCoin: null,
     isDrawerOpen: false,
@@ -625,6 +635,22 @@ export const useAppStore = create<AppState>()(
         saveWatchedSetups(next)
         return { watchedSetups: next }
       })
+    },
+
+    setRadar141Rows: (rows) => {
+      set({ radar141Rows: rows, lastUpdate: Date.now() })
+    },
+
+    setRadar141Meta: (partial) => {
+      set((state) => ({
+        radar141Meta: { ...state.radar141Meta, ...partial },
+      }))
+    },
+
+    setRadar141Filters: (partial) => {
+      set((state) => ({
+        radar141Filters: { ...state.radar141Filters, ...partial },
+      }))
     },
 }))
 )

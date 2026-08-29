@@ -5,7 +5,7 @@ import {
   isTelegramAlertsConfigured,
   subscribeTelegramAlerts,
 } from '../api/telegram/alerts'
-import { pushCoinSignalAlert, pushMemeAlert } from '../api/telegram/formatters'
+import { pushCoinSignalAlert, pushMemeAlert, pushRadar141Alert } from '../api/telegram/formatters'
 import { isSniperQuality, toSniperSignal } from '../engine/sniperMode'
 import { logger } from '../utils/logger'
 
@@ -18,9 +18,11 @@ export function useTelegramAlerts() {
   const setSettings = useAppStore((s) => s.setTelegramAlertSettings)
   const signals = useAppStore((s) => s.signals)
   const memeSignals = useAppStore((s) => s.memeSignals)
+  const radar141Rows = useAppStore((s) => s.radar141Rows)
 
   const sentSniperRef = useRef<Set<string>>(new Set())
   const sentMemeRef = useRef<Set<string>>(new Set())
+  const sentRadarRef = useRef<Set<string>>(new Set())
   const subscribeOnceRef = useRef(false)
 
   const resolveChatId = useCallback((): number | null => {
@@ -123,4 +125,22 @@ export function useTelegramAlerts() {
     settings.minMemeHeat,
     resolveChatId,
   ])
+
+  useEffect(() => {
+    if (!settings.enabled || settings.radar141 === false) return
+    if (!isTelegramAlertsConfigured()) return
+    const chatId = resolveChatId() ?? undefined
+
+    for (const row of radar141Rows) {
+      let kind: 'touch' | 'exit' | 'bounce' | null = null
+      if (row.trigger === 'INSIDE_141') kind = 'touch'
+      else if (row.trigger === 'EXIT_141') kind = 'exit'
+      else if (row.trigger === 'IN_GAP' && row.gapPct >= 1.2) kind = 'bounce'
+      if (!kind) continue
+      const key = `${row.internalSymbol}:${kind}:${row.trigger}`
+      if (sentRadarRef.current.has(key)) continue
+      sentRadarRef.current.add(key)
+      void pushRadar141Alert({ row, kind, chatId })
+    }
+  }, [radar141Rows, settings.enabled, settings.radar141, resolveChatId])
 }

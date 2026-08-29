@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { Radar, Radio } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/useAppStore'
 import CoinRow from './CoinRow'
 import CoinSearch from './CoinSearch'
 import FearGreedGauge from '../news/FearGreedGauge'
+import Radar141Board from './Radar141Board'
+
+type RadarMode = 'setups' | 'scan' | 'map' | 'watch'
 
 const RadarView = () => {
   const { t } = useTranslation()
@@ -16,6 +20,7 @@ const RadarView = () => {
   const fearGreed = useAppStore((state) => state.newsIntel.fearGreed)
   const selectCoin = useAppStore((state) => state.selectCoin)
   const setDrawerOpen = useAppStore((state) => state.setDrawerOpen)
+  const [mode, setMode] = useState<RadarMode>('scan')
 
   const handleCoinClick = (symbol: string) => {
     selectCoin(symbol)
@@ -96,6 +101,34 @@ const RadarView = () => {
 
       <CoinSearch />
 
+      <div className="flex gap-1 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {(
+          [
+            ['scan', '141 скан'],
+            ['watch', 'Watch 141'],
+            ['map', 'Карта'],
+            ['setups', 'Сетапы'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setMode(id)}
+            className={`shrink-0 rounded-md px-2.5 py-1 font-mono text-[10px] font-bold uppercase ${
+              mode === id
+                ? 'bg-emerald-500/20 text-emerald-200'
+                : 'bg-white/5 text-white/40'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode !== 'setups' ? (
+        <Radar141Board mode={mode === 'map' ? 'map' : mode === 'watch' ? 'watch' : 'scan'} />
+      ) : (
+        <>
       <div className="border-b border-hull-border/30 px-4 py-2">
         <div className="flex items-center gap-3 font-mono text-xs uppercase text-holo/30">
           <div className="w-6 text-right">#</div>
@@ -160,6 +193,8 @@ const RadarView = () => {
             {t('footer_pairs')}
           </p>
         </div>
+      )}
+        </>
       )}
     </div>
   )

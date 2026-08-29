@@ -154,6 +154,16 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
           </label>
 
           <label className="flex items-center justify-between">
+            <span className="font-mono text-xs text-holo/80">141 радар</span>
+            <input
+              type="checkbox"
+              checked={settings.radar141 !== false}
+              onChange={(e) => setSettings({ radar141: e.target.checked })}
+              className="accent-matrix"
+            />
+          </label>
+
+          <label className="flex items-center justify-between">
             <span className="font-mono text-xs text-holo/80">Слежение за сетапами</span>
             <input
               type="checkbox"

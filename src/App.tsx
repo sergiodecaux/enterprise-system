@@ -10,6 +10,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import NewsStrip from './components/news/NewsStrip'
 import { useMexcScanner } from './hooks/useMexcScanner'
 import { useNewsIntelligence } from './hooks/useNewsIntelligence'
+import { useRadar141Screener } from './hooks/useRadar141Screener'
 import { useTelegramWebApp } from './hooks/useTelegramWebApp'
 import { useTelegramAlerts } from './hooks/useTelegramAlerts'
 import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
@@ -22,6 +23,7 @@ function App() {
   useTelegramAlerts()
   useMexcScanner()
   useNewsIntelligence()
+  useRadar141Screener()
   useSignalJournalResolver()
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('sniper')

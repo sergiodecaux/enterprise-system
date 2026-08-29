@@ -2,6 +2,7 @@ import type { CoinSignal, MemeSignal } from '../../engine/types'
 import type { SniperSignal } from '../../engine/sniperMode'
 import type { ConditionalSetup } from '../../engine/setups/types'
 import type { ZoneAdvisorBrief } from '../../engine/smc/zoneAdvisor'
+import type { Radar141Row } from '../../engine/radar141'
 import { sendTelegramAlert } from '../../api/telegram/alerts'
 import { assertUsdtPerpetual } from '../../api/mexc/perpetualGuard'
 import { toApiSymbol } from '../../api/mexc'
@@ -633,5 +634,43 @@ export async function pushZoneAdvisorAlert(opts: {
   if (!result.ok) {
     return { ok: false, reason: result.reason }
   }
+  return { ok: true }
+}
+
+export async function pushRadar141Alert(opts: {
+  row: Radar141Row
+  kind: 'touch' | 'exit' | 'bounce'
+  chatId?: number
+}): Promise<{ ok: boolean; reason?: string }> {
+  const row = opts.row
+  const apiSymbol = toApiSymbol(row.internalSymbol)
+  const title =
+    opts.kind === 'touch'
+      ? `141 · касание ${row.displayName}`
+      : opts.kind === 'exit'
+        ? `141 · выход ${row.displayName}`
+        : `141 · реакция ${row.displayName}`
+  const result = await sendTelegramAlert({
+    type: 'SYSTEM',
+    title,
+    text: [
+      `${row.displayName} · ${row.triggerLabel}`,
+      `Цена: ${fmt(row.price)}`,
+      row.dist141Pct != null
+        ? `Dist→141: ${row.dist141Pct >= 0 ? '+' : ''}${row.dist141Pct.toFixed(2)}% (${row.dist141Atr?.toFixed(1) ?? '—'} ATR)`
+        : null,
+      `Gap: ${row.gapPct.toFixed(1)}% / ${row.gapAtr.toFixed(1)} ATR · путь ${row.freePathScore}`,
+      row.scoreWhy,
+      row.preferredSide
+        ? `Сторона: ${row.preferredSide === 'LONG' ? 'лонг Strong' : 'шорт Weak'}`
+        : null,
+      row.gap ? `План: ${row.gap.plan.breakout}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    dedupeKey: `r141:${apiSymbol}:${opts.kind}:${row.trigger}`,
+    chatId: opts.chatId,
+  })
+  if (!result.ok) return { ok: false, reason: result.reason }
   return { ok: true }
 }

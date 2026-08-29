@@ -402,6 +402,12 @@ export interface AppState {
   setWatchedSetups: (watches: import('./setups').WatchedSetup[]) => void
   upsertWatchedSetup: (watch: import('./setups').WatchedSetup) => void
   removeWatchedSetupLocal: (watchId: string) => void
+  radar141Rows: import('./radar141').Radar141Row[]
+  radar141Meta: import('./radar141').Radar141Meta
+  radar141Filters: import('./radar141').Radar141Filters
+  setRadar141Rows: (rows: import('./radar141').Radar141Row[]) => void
+  setRadar141Meta: (partial: Partial<import('./radar141').Radar141Meta>) => void
+  setRadar141Filters: (partial: Partial<import('./radar141').Radar141Filters>) => void
 }
 
 export interface MemeUniverseMeta {
