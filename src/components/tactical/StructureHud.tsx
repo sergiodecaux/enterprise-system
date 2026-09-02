@@ -37,43 +37,47 @@ const StructureHud = ({ read }: Props) => {
   const lead = board?.scenarios[0] ?? null
   const list = board?.scenarios ?? []
 
-  const tone = lead?.kind === 'RECLAIM_CONTINUE'
-    ? 'border-emerald-400/30 bg-emerald-950/35 text-emerald-100'
-    : lead?.kind === 'RANGE_CHOP'
-      ? 'border-white/15 bg-black/30 text-white/80'
-      : 'border-cyan-400/25 bg-slate-950/50 text-cyan-100'
+  const nest = read.cascade
+  const regime =
+    nest?.regime === 'TREND'
+      ? 'Тренд'
+      : nest?.regime === 'PULLBACK'
+        ? 'Откат / топливо'
+        : nest?.regime === 'COUNTERTREND'
+          ? 'Контртренд'
+          : 'Пила'
+  const tone =
+    nest?.regime === 'TREND'
+      ? 'border-emerald-400/30 bg-emerald-950/35 text-emerald-100'
+      : nest?.regime === 'PULLBACK'
+        ? 'border-amber-400/30 bg-amber-950/30 text-amber-100'
+        : nest?.regime === 'COUNTERTREND'
+          ? 'border-rose-400/30 bg-rose-950/30 text-rose-100'
+          : 'border-cyan-400/25 bg-slate-950/50 text-cyan-100'
 
   return (
     <div className={`rounded-xl border px-3 py-2 ${tone}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-mono text-[11px] font-bold uppercase tracking-wide text-white/90">
-            {lead
-              ? `Ведёт ${lead.id} · ${lead.title}`
-              : 'Сценарии ещё собираются'}
-            {lead ? ` · ${lead.probability}%` : ''}
+            {regime}
+            {lead ? ` · ${lead.id} ${lead.title} · ${lead.probability}%` : ''}
           </div>
           <p className="mt-0.5 font-mono text-[11px] leading-snug text-white/75">
             {board?.now ?? read.summary}
           </p>
+          {read.fuel && (
+            <p className="mt-0.5 font-mono text-[10px] text-white/55">
+              Топливо: {read.fuel.label} {read.fuel.price >= 1000 ? read.fuel.price.toFixed(1) : read.fuel.price.toPrecision(5)}
+              {nest?.entrySide ? ' · 15м только вход' : ''}
+            </p>
+          )}
         </div>
         <div className="shrink-0 text-right font-mono text-[9px] text-white/40">
+          <div>{tfBit(read.w1)}</div>
+          <div>{tfBit(read.d1)}</div>
           <div>{tfBit(read.h4)}</div>
           <div>{tfBit(read.h1)}</div>
-          {read.cascade?.m15 && (
-            <div>
-              15м{' '}
-              {read.cascade.m15.quality === 'DISPLACEMENT_UP'
-                ? 'тело↑'
-                : read.cascade.m15.quality === 'DISPLACEMENT_DOWN'
-                  ? 'тело↓'
-                  : read.cascade.m15.quality === 'REJECT_HIGH'
-                    ? 'отказ хая'
-                    : read.cascade.m15.quality === 'REJECT_LOW'
-                      ? 'отказ лоя'
-                      : 'пила'}
-            </div>
-          )}
         </div>
       </div>
 

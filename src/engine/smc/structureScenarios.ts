@@ -35,6 +35,7 @@ export type StructureScenarioKind =
   | 'FAILED_RANGE_BREAK'
   | 'RANGE_HOLD'
   | 'TAKE_STOPS'
+  | 'PULLBACK_FUEL'
 
 export interface StructureScenario {
   id: 'A' | 'B' | 'C' | 'D'
@@ -318,6 +319,7 @@ type ScenarioCtx = {
   btcRs: number | null
   isBtc: boolean
   cascade: CloseCascade | null
+  fuel: { price: number; label: string } | null
 }
 
 function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
@@ -331,35 +333,40 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
 
   const cas = ctx.cascade
   if (cas) {
-    t += cas.execution * 7.4 * dir
-    t += cas.global * 8.2 * dir
-    if (cas.aligned) {
-      const withClose =
-        (cas.execution > 0 && s.side === 'LONG') ||
-        (cas.execution < 0 && s.side === 'SHORT')
-      t += withClose ? 9 : -11
+    t += cas.execution * 8.4 * dir
+    t += cas.global * 6.6 * dir
+    t += cas.intraday * 3.2 * dir
+    const trend = cas.globalSide ?? cas.actionSide
+    const withTrend =
+      (trend === 'LONG' && s.side === 'LONG') || (trend === 'SHORT' && s.side === 'SHORT')
+    if (cas.regime === 'TREND') {
+      t += withTrend ? 10 : -12
+      if (s.kind === 'HTF_CONTINUE' || s.kind === 'PULLBACK_FUEL') t += 6
     }
-    if (cas.ltfFightsHtf) {
-      if (s.kind === 'HUNT_REVERSE' || s.kind === 'SNAP_BACK' || s.kind === 'FAILED_RANGE_BREAK') {
-        t += 6
+    if (cas.regime === 'PULLBACK') {
+      if (s.kind === 'PULLBACK_FUEL' || s.kind === 'SNAP_BACK' || s.kind === 'HTF_CONTINUE') t += 11
+      if (s.kind === 'IMPULSE' || s.kind === 'BREAKOUT' || s.kind === 'HTF_CONTINUE') {
+        const followLtf =
+          (cas.entrySide === 'LONG' && s.side === 'LONG') ||
+          (cas.entrySide === 'SHORT' && s.side === 'SHORT')
+        if (followLtf && !withTrend) t -= 12
       }
-      const follow15 =
-        (cas.m15 && cas.m15.score > 0.28 && s.side === 'LONG') ||
-        (cas.m15 && cas.m15.score < -0.28 && s.side === 'SHORT')
-      if (follow15 && (s.kind === 'IMPULSE' || s.kind === 'HTF_CONTINUE' || s.kind === 'BREAKOUT')) {
-        t -= 8
-      }
+      t += withTrend ? 7 : -9
     }
+    if (cas.regime === 'COUNTERTREND') {
+      if (withTrend) t += 8
+      else t -= 10
+      if (s.kind === 'IMPULSE' && !withTrend) t -= 8
+    }
+    if (cas.aligned && withTrend) t += 5
     const q4 = cas.h4?.quality
     const q1 = cas.h1?.quality
     const q15 = cas.m15?.quality
-    if (q4 === 'DISPLACEMENT_DOWN' && s.side === 'LONG') t -= 7
-    if (q4 === 'DISPLACEMENT_UP' && s.side === 'SHORT') t -= 7
-    if (q1 === 'REJECT_HIGH' && s.side === 'LONG') t -= 4
-    if (q1 === 'REJECT_LOW' && s.side === 'SHORT') t -= 4
-    if (q15 === 'INDECISION' && (s.kind === 'IMPULSE' || s.kind === 'BREAKOUT')) t -= 3.5
-    if (q15 === 'DISPLACEMENT_DOWN' && q1 === 'DISPLACEMENT_DOWN' && s.side === 'SHORT') t += 5
-    if (q15 === 'DISPLACEMENT_UP' && q1 === 'DISPLACEMENT_UP' && s.side === 'LONG') t += 5
+    if (q4 === 'DISPLACEMENT_DOWN' && s.side === 'LONG') t -= 6
+    if (q4 === 'DISPLACEMENT_UP' && s.side === 'SHORT') t -= 6
+    if (q1 === 'REJECT_HIGH' && s.side === 'LONG') t -= 3
+    if (q1 === 'REJECT_LOW' && s.side === 'SHORT') t -= 3
+    if (q15 === 'INDECISION' && (s.kind === 'IMPULSE' || s.kind === 'BREAKOUT')) t -= 4
   }
 
   if (mag >= 1.05) {
@@ -693,6 +700,7 @@ export function buildStructureScenarios(input: {
   btcRs?: number | null
   isBtc?: boolean
   cascade?: CloseCascade | null
+  fuel?: { price: number; label: string } | null
   tapeBarMs?: number
 }): StructureScenarioBoard {
   const price = input.price
@@ -763,8 +771,40 @@ export function buildStructureScenarios(input: {
     btcRs: input.btcRs ?? null,
     isBtc: Boolean(input.isBtc),
     cascade: input.cascade ?? null,
+    fuel: input.fuel ?? null,
   }
   const raw: RawScenario[] = []
+
+  const cas = input.cascade ?? null
+  const fuel = input.fuel ?? null
+  const trendSide = cas?.globalSide ?? cas?.actionSide ?? null
+  if (fuel && trendSide && (cas?.regime === 'PULLBACK' || cas?.regime === 'TREND')) {
+    const up = trendSide === 'LONG'
+    const cont = up
+      ? shorts?.price ?? h4?.nextBsl ?? h4?.dealingHigh ?? origin + atr1 * 1.8
+      : longs?.price ?? h4?.nextSsl ?? h4?.dealingLow ?? origin - atr1 * 1.8
+    const pullW =
+      (cas?.regime === 'PULLBACK' ? 40 : 22) +
+      (h4 && ((up && h4.trend === 'BULLISH') || (!up && h4.trend === 'BEARISH')) ? 8 : 0)
+    raw.push({
+      kind: 'PULLBACK_FUEL',
+      weight: pullW,
+      title: up
+        ? 'Откат в топливо лонгов → дальше по 4ч'
+        : 'Откат в топливо шортов → дальше по 4ч',
+      why: `${cas?.line ?? ''} 15м — место входа, не тренд. Небольшой откат в ${fuel.label} ${fmt(fuel.price)}, оттуда топливо на ход к ${fmt(cont)}.`,
+      invalidation: up
+        ? `Слом тренда: 4ч закроется телом под ${fmt(h4?.lastSwingLow?.price ?? fuel.price)}.`
+        : `Слом тренда: 4ч закроется телом над ${fmt(h4?.lastSwingHigh?.price ?? fuel.price)}.`,
+      side: trendSide,
+      target: cont,
+      path: path([
+        [0, origin, 'сейчас'],
+        [H * 1.2, fuel.price, fuel.label],
+        [H * 3.6, cont, up ? 'по тренду вверх' : 'по тренду вниз'],
+      ]),
+    })
+  }
 
   if (auction) {
     const { top, bottom, mid, stopsHigh, stopsLow } = auction
@@ -1223,11 +1263,11 @@ export function buildStructureScenarios(input: {
       : h4.nextSsl ?? longs?.price ?? price - atr1 * 2.2
     raw.push({
       kind: 'HTF_CONTINUE',
-      weight: w,
+      weight: w + (cas?.regime === 'TREND' ? 10 : cas?.regime === 'PULLBACK' ? 6 : 0),
       title: up ? '4ч бычий — час могут крутить вниз' : '4ч медвежий — час могут крутить вверх',
       why: up
-        ? `Старший ТФ вверх. Сливы часа часто охота на лонги, не смена дня. Истинный ход — к ${fmt(target)}, если час не закроет телом ниже 4ч структуры.`
-        : `Старший ТФ вниз. Отскоки часа часто корм шортам. Истинный ход — к ${fmt(target)}, пока 4ч не закрепит обратно.`,
+        ? `Матрёшка: неделя/день и 4ч вверх. Слив часа — откат за топливом, не шорт дня. Ход к ${fmt(target)}${fuel ? `, топливо у ${fmt(fuel.price)}` : ''}.`
+        : `Матрёшка: неделя/день и 4ч вниз. Отскок часа — корм шортам. Ход к ${fmt(target)}${fuel ? `, топливо у ${fmt(fuel.price)}` : ''}.`,
       invalidation: up
         ? `Слом: 4ч закроется телом ниже ${fmt(h4.lastSwingLow?.price ?? h4.dealingLow)}.`
         : `Слом: 4ч закроется телом выше ${fmt(h4.lastSwingHigh?.price ?? h4.dealingHigh)}.`,
@@ -1235,8 +1275,14 @@ export function buildStructureScenarios(input: {
       target,
       path: path([
         [0, origin, 'сейчас'],
-        [H * 1.6, lerp(origin, up ? price - atr1 * 0.5 : price + atr1 * 0.5, 0.8), 'шум часа'],
-        [H * 5.5, target, 'ход 4ч'],
+        [
+          H * 1.4,
+          fuel
+            ? fuel.price
+            : lerp(origin, up ? price - atr1 * 0.5 : price + atr1 * 0.5, 0.8),
+          fuel ? fuel.label : 'шум часа',
+        ],
+        [H * 4.2, target, 'ход 4ч'],
       ]),
     })
   }

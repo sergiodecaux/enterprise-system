@@ -1,8 +1,6 @@
 /**
- * Smart Money market structure: BOS / CHoCH / reclaim / sweep,
- * Fib 141 reaction, and a HTF-weighted flight path.
- *
- * Weight: 1H (execution) > 4H (confirm) > Daily > Weekly (bias).
+ * Smart Money market structure: nested TFs like a matryoshka.
+ * Week + day = global trend. 4H then 1H carry the move. 15m is the entry.
  */
 
 import type { OhlcvCandle } from '../../api/mexc'
@@ -116,6 +114,7 @@ export interface StructureRead {
   trap: MmTrapThesis | null
   scenarios: StructureScenarioBoard | null
   cascade: CloseCascade | null
+  fuel: { price: number; label: string } | null
 }
 
 export interface CongestionZone {
@@ -127,10 +126,10 @@ export interface CongestionZone {
 }
 
 const TF_WEIGHT: Record<StructureTf, number> = {
-  '1h': 0.42,
-  '4h': 0.33,
-  '1d': 0.16,
-  '1w': 0.09,
+  '1h': 0.32,
+  '4h': 0.38,
+  '1d': 0.18,
+  '1w': 0.12,
 }
 
 function atrApprox(candles: OhlcvCandle[], period = 14): number {
@@ -672,6 +671,62 @@ function pickMagnet(
   return cands[0] ?? null
 }
 
+/** Modest pullback pocket the trend still needs as fuel. */
+export function pickFuel(input: {
+  price: number
+  trend: 'LONG' | 'SHORT'
+  h1: TfStructure | null
+  h4: TfStructure | null
+  d1: TfStructure | null
+  trap: MmTrapThesis | null
+  liq?: { longClusters: Array<{ price: number }>; shortClusters: Array<{ price: number }> } | null
+  equalHighs?: Array<{ price: number; isActive?: boolean }>
+  equalLows?: Array<{ price: number; isActive?: boolean }>
+}): { price: number; label: string } | null {
+  const { price, trend } = input
+  if (!(price > 0)) return null
+  const maxPct = 2.6
+  const cands: { price: number; label: string; dist: number }[] = []
+  const add = (p: number | null | undefined, label: string, below: boolean) => {
+    if (p == null || !(p > 0)) return
+    if (below && !(p < price)) return
+    if (!below && !(p > price)) return
+    const dist = (Math.abs(p - price) / price) * 100
+    if (dist > maxPct || dist < 0.08) return
+    cands.push({ price: p, label, dist })
+  }
+  const below = trend === 'LONG'
+  if (below) {
+    add(input.trap?.crowdLongs, 'стопы лонгов', true)
+    add(input.h1?.lastSwingLow?.price, 'лой часа', true)
+    add(input.h4?.lastSwingLow?.price, 'лой 4ч', true)
+    add(input.h4?.dealingLow, 'дисконт 4ч', true)
+    add(input.h1?.nextSsl, 'SSL часа', true)
+    add(input.h4?.nextSsl, 'SSL 4ч', true)
+    add(input.d1?.dealingLow, 'лой дня', true)
+    for (const c of input.liq?.longClusters ?? []) add(c.price, 'кластер лонгов', true)
+    for (const e of input.equalLows ?? []) {
+      if (e.isActive !== false) add(e.price, 'равные лои', true)
+    }
+  } else {
+    add(input.trap?.crowdShorts, 'стопы шортов', false)
+    add(input.h1?.lastSwingHigh?.price, 'хай часа', false)
+    add(input.h4?.lastSwingHigh?.price, 'хай 4ч', false)
+    add(input.h4?.dealingHigh, 'премиум 4ч', false)
+    add(input.h1?.nextBsl, 'BSL часа', false)
+    add(input.h4?.nextBsl, 'BSL 4ч', false)
+    add(input.d1?.dealingHigh, 'хай дня', false)
+    for (const c of input.liq?.shortClusters ?? []) add(c.price, 'кластер шортов', false)
+    for (const e of input.equalHighs ?? []) {
+      if (e.isActive !== false) add(e.price, 'равные хаи', false)
+    }
+  }
+  if (!cands.length) return null
+  cands.sort((a, b) => a.dist - b.dist)
+  const nearest = cands[0]
+  return nearest ? { price: nearest.price, label: nearest.label } : null
+}
+
 function lastStructureEvent(tf: TfStructure | null): StructureEvent | null {
   if (!tf) return null
   const evs = [tf.lastReclaim, tf.lastChoch, tf.lastBos].filter(
@@ -924,6 +979,8 @@ export function composeStructureRead(input: {
   const fibSrc = h1src.length ? h1src : h4src.length ? h4src : d1src
   const fib141 = readFib141Reaction(fibSrc, input.fib ?? null)
 
+  const actionStack = scoreTf(h4) * 0.58 + scoreTf(h1) * 0.42
+  const globalStack = scoreTf(w1) * 0.55 + scoreTf(d1) * 0.45
   const weighted =
     scoreTf(h1) * TF_WEIGHT['1h'] +
     scoreTf(h4) * TF_WEIGHT['4h'] +
@@ -939,9 +996,21 @@ export function composeStructureRead(input: {
     fibTilt = fib141.bias === 'LONG' ? 0.2 : -0.2
   }
 
-  const net = weighted + fibTilt * 0.28 + cascade.execution * 0.22 + cascade.global * 0.18
+  const net =
+    globalStack * 0.34 +
+    actionStack * 0.66 +
+    fibTilt * 0.2 +
+    cascade.global * 0.12
   const bias: StructureRead['bias'] =
-    net >= 0.28 ? 'BULLISH' : net <= -0.28 ? 'BEARISH' : 'NEUTRAL'
+    cascade.globalSide === 'LONG'
+      ? 'BULLISH'
+      : cascade.globalSide === 'SHORT'
+        ? 'BEARISH'
+        : net >= 0.28
+          ? 'BULLISH'
+          : net <= -0.28
+            ? 'BEARISH'
+            : 'NEUTRAL'
 
   const trap = buildMmTrapThesis({
     price,
@@ -953,11 +1022,36 @@ export function composeStructureRead(input: {
     liq: input.liq ?? null,
   })
 
-  const hold = structureHoldState(h1, price)
+  const hold = structureHoldState(h4 ?? h1, price)
+  const trendSide =
+    cascade.regime === 'COUNTERTREND'
+      ? cascade.globalSide
+      : cascade.actionSide ?? cascade.globalSide ?? hold.side
+  const fuel =
+    trendSide != null
+      ? pickFuel({
+          price,
+          trend: trendSide,
+          h1,
+          h4,
+          d1,
+          trap,
+          liq: input.liq ?? null,
+          equalHighs: input.equalHighs,
+          equalLows: input.equalLows,
+        })
+      : null
   const tradeReady = trap.phase === 'TRADE_READY' && trap.tradeSide != null
-  const preferredSide = tradeReady ? trap.tradeSide : null
-  const pathSide = trap.huntSide ?? trap.tradeSide ?? hold.side
-  const structureHeld = tradeReady
+  const preferredSide =
+    cascade.regime === 'PULLBACK' || cascade.regime === 'TREND'
+      ? trendSide
+      : cascade.regime === 'COUNTERTREND'
+        ? cascade.globalSide
+        : tradeReady
+          ? trap.tradeSide
+          : trendSide
+  const pathSide = preferredSide ?? trap.huntSide ?? hold.side
+  const structureHeld = tradeReady || cascade.regime === 'TREND'
 
   const factors: string[] = [...trap.factors]
   if (cascade.line) factors.unshift(cascade.line)
@@ -977,16 +1071,19 @@ export function composeStructureRead(input: {
     )
   }
 
-  const magnet = pathSide
-    ? pickMagnet(h1, h4, d1, w1, fib141, pathSide, trap)
-    : null
+  const magnet =
+    cascade.regime === 'PULLBACK' && fuel
+      ? fuel
+      : pathSide
+        ? pickMagnet(h1, h4, d1, w1, fib141, pathSide, trap)
+        : fuel
 
   const invalidation =
     trap.weaknessLevel ??
     (preferredSide === 'LONG'
-      ? h1?.lastSwingLow?.price ?? h4?.lastSwingLow?.price ?? null
+      ? h4?.lastSwingLow?.price ?? h1?.lastSwingLow?.price ?? fuel?.price ?? null
       : preferredSide === 'SHORT'
-        ? h1?.lastSwingHigh?.price ?? h4?.lastSwingHigh?.price ?? null
+        ? h4?.lastSwingHigh?.price ?? h1?.lastSwingHigh?.price ?? fuel?.price ?? null
         : null)
 
   const confidence = tradeReady
@@ -1013,6 +1110,7 @@ export function composeStructureRead(input: {
       htfStack: weighted,
       fib: fib141,
       trap,
+      fuel,
       bookImbalance: input.bookImbalance,
       mmDrive: input.mmDrive,
       mmStopHunt: input.mmStopHunt,
@@ -1102,6 +1200,7 @@ export function composeStructureRead(input: {
     trap,
     scenarios: board,
     cascade,
+    fuel,
   }
 }
 

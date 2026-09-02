@@ -1,12 +1,15 @@
 /**
- * How bars actually closed — 15m then 1h then 4h.
- * Day / week / month are the global picture, not a 15m flip.
+ * Nested closes like a matryoshka:
+ * week + day = global trend, 4h then 1h = real weight of the move,
+ * 15m = entry only. A 15m close never rewrites the doll above it.
  */
 
 import type { OhlcvCandle } from '../../api/mexc'
 import { readCloseQuality, type CloseQuality } from './mmTrapThesis'
 
 export type CascadeTf = '15m' | '1h' | '4h' | '1d' | '1w' | '1M'
+export type NestSide = 'LONG' | 'SHORT' | null
+export type NestRegime = 'TREND' | 'PULLBACK' | 'COUNTERTREND' | 'RANGE'
 
 export interface ClosedBar {
   tf: CascadeTf
@@ -28,11 +31,17 @@ export interface CloseCascade {
   d1: ClosedBar | null
   w1: ClosedBar | null
   m1: ClosedBar | null
-  /** 15m + 1h + 4h, 4h/1h dominate, 15m confirms */
+  /** 4H then 1H — the live dolls that actually move price */
   execution: number
-  /** Closed day + week + month */
+  /** Week + day — foundation, not the trade */
   global: number
-  /** 15m fights 4h / day — hunt, not a new trend */
+  /** Day + 4H + 1H */
+  intraday: number
+  globalSide: NestSide
+  actionSide: NestSide
+  entrySide: NestSide
+  regime: NestRegime
+  /** 15m / 1h fights 4h / day — pullback, not a new trend */
   ltfFightsHtf: boolean
   aligned: boolean
   line: string
@@ -187,6 +196,12 @@ function sign(n: number): 1 | -1 | 0 {
   return 0
 }
 
+function sideOf(n: number): NestSide {
+  if (n >= 0.28) return 'LONG'
+  if (n <= -0.28) return 'SHORT'
+  return null
+}
+
 export function readCloseCascade(input: {
   candles15m?: OhlcvCandle[]
   candles1h?: OhlcvCandle[]
@@ -205,52 +220,62 @@ export function readCloseCascade(input: {
   const h4s = h4?.score ?? 0
   const h1s = h1?.score ?? 0
   const m15s = m15?.score ?? 0
+  const d1s = d1?.score ?? 0
+  const w1s = w1?.score ?? 0
+  const m1s = m1?.score ?? 0
+
+  const global = w1s * 0.55 + d1s * 0.45 + m1s * 0.12
+  const execution = h4s * 0.58 + h1s * 0.42
+  const intraday = d1s * 0.22 + h4s * 0.48 + h1s * 0.3
+
+  const globalSide = sideOf(global) ?? sideOf(d1s) ?? sideOf(w1s)
+  const actionSide = sideOf(h4s) ?? sideOf(h1s)
+  const entrySide = sideOf(m15s)
   const h4Sign = sign(h4s)
   const h1Sign = sign(h1s)
   const m15Sign = sign(m15s)
 
-  let execution = h4s * 1.05
-  if (h1) {
-    execution += h4Sign !== 0 && h1Sign === h4Sign ? h1s * 0.9 : h1s * 0.28
+  let regime: NestRegime = 'RANGE'
+  if (globalSide && actionSide && actionSide !== globalSide) {
+    regime = 'COUNTERTREND'
+  } else if (globalSide || actionSide) {
+    const trend = globalSide ?? actionSide
+    const ltfAgainst =
+      (h1Sign !== 0 && trend === 'LONG' && h1Sign < 0) ||
+      (h1Sign !== 0 && trend === 'SHORT' && h1Sign > 0) ||
+      (m15Sign !== 0 && trend === 'LONG' && m15Sign < 0) ||
+      (m15Sign !== 0 && trend === 'SHORT' && m15Sign > 0)
+    const h4With =
+      !h4Sign ||
+      (trend === 'LONG' && h4Sign > 0) ||
+      (trend === 'SHORT' && h4Sign < 0)
+    regime = ltfAgainst && h4With ? 'PULLBACK' : 'TREND'
   }
-  if (m15) {
-    const followHour = h1Sign !== 0 && m15Sign === h1Sign
-    execution += followHour ? m15s * 0.55 : m15s * 0.16
-  }
 
-  const global =
-    (d1?.score ?? 0) * 0.48 + (w1?.score ?? 0) * 0.34 + (m1?.score ?? 0) * 0.18
-
-  const gSign = sign(global)
-  const ltfFightsHtf =
-    (h4Sign !== 0 && m15Sign !== 0 && m15Sign !== h4Sign) ||
-    (gSign !== 0 && m15Sign !== 0 && m15Sign !== gSign)
-
+  const ltfFightsHtf = regime === 'PULLBACK' || regime === 'COUNTERTREND'
   const aligned =
-    h4Sign !== 0 &&
-    h1Sign === h4Sign &&
-    (m15Sign === 0 || m15Sign === h4Sign) &&
-    (gSign === 0 || gSign === h4Sign)
+    !!globalSide &&
+    actionSide === globalSide &&
+    (!entrySide || entrySide === globalSide)
 
-  const bits = [
-    ru(m1, 'месяц'),
+  const nest = [
     ru(w1, 'неделя'),
     ru(d1, 'день'),
     ru(h4, '4ч'),
     ru(h1, 'час'),
-    ru(m15, '15м'),
+    ru(m15, '15м вход'),
   ].filter((x): x is string => x != null)
 
-  let line = bits.slice(0, 4).join(' · ')
-  if (aligned) {
-    line +=
-      h4Sign > 0
-        ? '. Закрытия 15м→1ч→4ч в одну сторону вверх — это не пила.'
-        : '. Закрытия 15м→1ч→4ч в одну сторону вниз — это не пила.'
-  } else if (ltfFightsHtf) {
-    line +=
-      '. 15м против 4ч/дня — сначала охота, глобальную картину свеча 15м не ломает.'
-  }
+  const regimeRu =
+    regime === 'TREND'
+      ? 'Тренд по старшим. 4ч и час внутри него.'
+      : regime === 'PULLBACK'
+        ? 'Контртренд младших — откат за топливом, не смена недели/дня.'
+        : regime === 'COUNTERTREND'
+          ? '4ч против недели/дня. Это контртренд, пока день не закроет в ту же сторону.'
+          : 'Нет ясной матрёшки — пила, ждут тело 4ч.'
+
+  const line = `${regimeRu} ${nest.slice(0, 4).join(' · ')}`.trim()
 
   const anchorKey = [
     m15?.timeMs ?? 0,
@@ -269,6 +294,11 @@ export function readCloseCascade(input: {
     m1,
     execution,
     global,
+    intraday,
+    globalSide,
+    actionSide,
+    entrySide,
+    regime,
     ltfFightsHtf,
     aligned,
     line,
