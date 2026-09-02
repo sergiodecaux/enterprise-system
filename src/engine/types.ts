@@ -298,6 +298,9 @@ export interface AppState {
   isScanning: boolean
   /** Extra symbols added via search (internal format) */
   extraWatchlist: string[]
+  /** Radar starred coins (internal symbols) */
+  radarFavorites: string[]
+  toggleRadarFavorite: (internalSymbol: string) => void
   chartPreferences: ChartPreferences
   sessionSettings: SessionSettings
   newsSettings: NewsSettings

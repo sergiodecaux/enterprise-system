@@ -69,6 +69,12 @@ export default defineConfig({
                 secure: true,
                 rewrite: (path) => path.replace(/^\/mexc/, ''),
             },
+            '/mexc-spot': {
+                target: 'https://api.mexc.com',
+                changeOrigin: true,
+                secure: true,
+                rewrite: (path) => path.replace(/^\/mexc-spot/, ''),
+            },
             '/news/panic': {
                 target: 'https://cryptopanic.com',
                 changeOrigin: true,

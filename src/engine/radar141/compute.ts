@@ -126,6 +126,8 @@ export function buildRadar141Row(input: {
   newsRisk: boolean
   newsNote: string | null
   prevTrigger?: TriggerState | null
+  /** From BTC.D × TOTAL3 — tilts alt long/short */
+  altBias?: 'LONG' | 'SHORT' | 'NEUTRAL' | null
 }): Radar141Row {
   const {
     internalSymbol,
@@ -142,6 +144,7 @@ export function buildRadar141Row(input: {
     newsRisk,
     newsNote,
     prevTrigger,
+    altBias,
   } = input
 
   const atr = calculateAtr(candles1h, 14) ?? price * 0.008
@@ -225,8 +228,8 @@ export function buildRadar141Row(input: {
   const rsMarket = alt1d - marketChange1d
 
   let rsLabel: RsLabel = 'NEUTRAL'
-  if (rs1d.relativeStrength >= 2.2 || rsMarket >= 1.8) rsLabel = 'STRONG'
-  if (rs1d.relativeStrength <= -2.2 || rsMarket <= -1.8) rsLabel = 'WEAK'
+  if (rs1d.relativeStrength >= 1.0 || rsMarket >= 0.8) rsLabel = 'STRONG'
+  if (rs1d.relativeStrength <= -1.0 || rsMarket <= -0.8) rsLabel = 'WEAK'
 
   const d1chg = changePct(candles1d, Math.min(5, candles1d.length - 1))
   const h4chg = changePct(candles4h, Math.min(6, candles4h.length - 1))
@@ -249,7 +252,7 @@ export function buildRadar141Row(input: {
         ? 'THIN'
         : 'OK'
 
-  const preferredSide: 'LONG' | 'SHORT' | null =
+  let preferredSide: 'LONG' | 'SHORT' | null =
     gapSide === 'UP' && rsLabel !== 'WEAK'
       ? 'LONG'
       : gapSide === 'DOWN' && rsLabel !== 'STRONG'
@@ -259,6 +262,15 @@ export function buildRadar141Row(input: {
           : rsLabel === 'WEAK'
             ? 'SHORT'
             : fib?.entryBias ?? null
+
+  const isBtc = internalSymbol.startsWith('BTC/')
+  if (!isBtc && altBias === 'SHORT') {
+    if (rsLabel === 'WEAK') preferredSide = 'SHORT'
+    else if (rsLabel === 'NEUTRAL' && preferredSide !== 'LONG') preferredSide = 'SHORT'
+  } else if (!isBtc && altBias === 'LONG') {
+    if (rsLabel === 'STRONG') preferredSide = 'LONG'
+    else if (rsLabel === 'NEUTRAL' && preferredSide !== 'SHORT') preferredSide = 'LONG'
+  }
 
   const liqPts = grade === 'A' ? 100 : grade === 'B' ? 72 : grade === 'C' ? 42 : 18
   const rsPts =
@@ -283,7 +295,11 @@ export function buildRadar141Row(input: {
       (volRegime === 'OK' ? 10 : -10) +
       (trendAlign ? 8 : 0) +
       (rsLabel === 'STRONG' && preferredSide === 'LONG' ? 10 : 0) +
-      (rsLabel === 'WEAK' && preferredSide === 'SHORT' ? 10 : 0) -
+      (rsLabel === 'WEAK' && preferredSide === 'SHORT' ? 10 : 0) +
+      (!isBtc && altBias === 'LONG' && preferredSide === 'LONG' ? 6 : 0) +
+      (!isBtc && altBias === 'SHORT' && preferredSide === 'SHORT' ? 6 : 0) -
+      (!isBtc && altBias === 'SHORT' && preferredSide === 'LONG' ? 8 : 0) -
+      (!isBtc && altBias === 'LONG' && preferredSide === 'SHORT' ? 8 : 0) -
       clutter * 4,
     12,
     86
@@ -335,7 +351,11 @@ export function buildRadar141Row(input: {
     /* false exit tracked in hook */
   }
 
-  const scoreWhy = `Score ${opportunityScore}: gap ${gapPct.toFixed(1)}%, RS ${rsLabel.toLowerCase()}, liquidity ${grade}`
+  const scoreWhy = `Score ${opportunityScore}: gap ${gapPct.toFixed(1)}%, RS ${rsLabel.toLowerCase()}, liquidity ${grade}${
+    !isBtc && altBias && altBias !== 'NEUTRAL'
+      ? `, макро ${altBias === 'LONG' ? 'лонг альты' : 'шорт альты'}`
+      : ''
+  }`
 
   return {
     symbol: displayName,
@@ -412,4 +432,35 @@ export function sortByExpectedTravel(rows: Radar141Row[]): Radar141Row[] {
 export function isWatchNear141(row: Radar141Row): boolean {
   if (row.trigger === 'INSIDE_141' || row.trigger === 'APPROACH_141') return true
   return row.dist141Pct != null && Math.abs(row.dist141Pct) <= 0.8
+}
+
+/** Relative leaders vs BTC — always fills lists from scanned universe. */
+export function splitStrongWeak(
+  rows: Radar141Row[],
+  limit = 8
+): { strong: Radar141Row[]; weak: Radar141Row[] } {
+  if (rows.length === 0) return { strong: [], weak: [] }
+  const sorted = [...rows].sort((a, b) => {
+    if (b.rsBtc1d !== a.rsBtc1d) return b.rsBtc1d - a.rsBtc1d
+    return b.rsMarket - a.rsMarket
+  })
+  const labeledStrong = sorted.filter((r) => r.rsLabel === 'STRONG')
+  const labeledWeak = sorted.filter((r) => r.rsLabel === 'WEAK')
+  const byRsStrong = sorted.filter((r) => r.rsBtc1d > 0)
+  const byRsWeak = [...sorted].filter((r) => r.rsBtc1d < 0).reverse()
+  const take = Math.min(limit, Math.max(3, Math.ceil(sorted.length / 2)))
+  const strong =
+    labeledStrong.length > 0
+      ? labeledStrong.slice(0, limit)
+      : (byRsStrong.length > 0 ? byRsStrong : sorted).slice(0, take)
+  const weakSource =
+    labeledWeak.length > 0
+      ? labeledWeak
+      : byRsWeak.length > 0
+        ? byRsWeak
+        : [...sorted].reverse()
+  const weak = weakSource
+    .filter((r) => !strong.includes(r) || labeledWeak.length > 0)
+    .slice(0, limit)
+  return { strong, weak }
 }

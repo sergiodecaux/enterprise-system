@@ -1,9 +1,10 @@
+import { getProxyBaseUrl } from '../proxyBase'
 import type { NewsItem, NewsSource } from '../../engine/sentiment/types'
 import { analyzeText } from '../../engine/sentiment/analyzer'
 import { extractMentionedCoins } from '../../engine/sentiment/relevance'
 
 function getBase(): string {
-  return (import.meta.env.VITE_MEXC_PROXY_URL as string | undefined) ?? ''
+  return getProxyBaseUrl()
 }
 
 interface CPPost {

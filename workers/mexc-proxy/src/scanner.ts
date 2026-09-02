@@ -1457,6 +1457,12 @@ export async function runMarketScan(
           coinNews: {},
           btcDominance: null,
           btcDomDelta24h: null,
+          ethDominance: null,
+          total3Usd: null,
+          total3Delta24h: null,
+          totalMcapDelta24h: null,
+          altRegime: 'NEUTRAL',
+          altBias: 'NEUTRAL',
           fetchedAt: Date.now(),
           lines: ['Meme order-flow: внешний контекст не блокирует сигнал'],
         }

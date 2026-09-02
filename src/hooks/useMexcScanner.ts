@@ -48,8 +48,8 @@ import { buildMarketContextBoost, pushSignalSnapshot } from '../engine/analysis'
 
 const BTC = 'BTC/USDT:USDT'
 const SCAN_PAUSE_MS = 75_000
-const COIN_DELAY_MS = 220
-const TICKER_POLL_MS = 5_000
+const COIN_DELAY_MS = 80
+const TICKER_POLL_MS = 12_000
 
 /**
  * MEXC scanner — BTC+8 альтов (CORE_WATCHLIST) + монеты из поиска.
@@ -115,8 +115,12 @@ export const useMexcScanner = () => {
     syncWatchlist()
 
     try {
-      // 0. Daily bias BTC 1D — NO_TRADE больше не убивает весь скан (scalp/LTF живут)
-      const candles1d = await fetchOhlcv(BTC, '1d', 60)
+      // 0–1. BTC daily bias + HTF structure in one round-trip burst
+      const [candles1d, btc4h, btc1h] = await Promise.all([
+        fetchOhlcv(BTC, '1d', 60),
+        fetchOhlcv(BTC, '4h', 100),
+        fetchOhlcv(BTC, '1h', 300),
+      ])
       let dailyBias = resolveDailyBias(candles1d)
 
       if (dailyBias.direction === 'NO_TRADE') {
@@ -129,12 +133,6 @@ export const useMexcScanner = () => {
         logger.info('Daily bias soft NO_TRADE → BOTH for LTF/scalp scan')
       }
 
-      await sleep(COIN_DELAY_MS)
-
-      // 1. BTC structure 4H + EMA200 1H
-      const btc4h = await fetchOhlcv(BTC, '4h', 100)
-      await sleep(COIN_DELAY_MS)
-      const btc1h = await fetchOhlcv(BTC, '1h', 300)
       // Сохраняем в ref чтобы передать в analyzeSymbol каждой монеты
       btc1hRef.current = btc1h
 
@@ -204,17 +202,15 @@ export const useMexcScanner = () => {
 
         try {
           await sleep(COIN_DELAY_MS)
-          const ohlcv4h = await fetchOhlcv(symbol, '4h', 100)
-          await sleep(200)
-          const ohlcv1d = await fetchOhlcv(symbol, '1d', 120)
-          await sleep(150)
-          const ohlcv1h = await fetchOhlcv(symbol, '1h', 720)
-          await sleep(200)
-          const ohlcv15m = await fetchOhlcv(symbol, '15m', 50)
-          await sleep(150)
-          const ohlcv5m = await fetchOhlcv(symbol, '5m', 120)
-          await sleep(150)
-          const ohlcv1m = await fetchOhlcv(symbol, '1m', 100)
+          const [ohlcv4h, ohlcv1d, ohlcv1h, ohlcv15m, ohlcv5m, ohlcv1m] =
+            await Promise.all([
+              fetchOhlcv(symbol, '4h', 100),
+              fetchOhlcv(symbol, '1d', 120),
+              fetchOhlcv(symbol, '1h', 720),
+              fetchOhlcv(symbol, '15m', 50),
+              fetchOhlcv(symbol, '5m', 120),
+              fetchOhlcv(symbol, '1m', 100),
+            ])
 
           const baseSym = symbol.split('/')[0]
           const localNewsBoost =

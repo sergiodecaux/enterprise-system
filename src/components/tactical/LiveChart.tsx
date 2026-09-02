@@ -12,7 +12,7 @@ import {
   type SeriesMarker,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX } from 'lucide-react'
+import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX, Flame } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import type { EqualLevel } from '../../engine/types'
 import {
@@ -100,7 +100,9 @@ import {
   subscribeTelegramAlerts,
 } from '../../api/telegram/alerts'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
+import { useLiqHeatmap } from '../../hooks/useLiqHeatmap'
 import WhaleLevelsOverlay from './WhaleLevelsOverlay'
+import LiqHeatmapOverlay from './LiqHeatmapOverlay'
 import SequenceProcessOverlay from './SequenceProcessOverlay'
 import ProcessStrip from './ProcessStrip'
 import ChartHintsOverlay from './ChartHintsOverlay'
@@ -208,6 +210,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   )
   const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
+  const [showLiqMap, setShowLiqMap] = useState(() => {
+    try {
+      return localStorage.getItem('enterprise_liq_map') !== '0'
+    } catch {
+      return true
+    }
+  })
   const [audioOn, setAudioOn] = useState(() => {
     try {
       return localStorage.getItem('enterprise_process_audio') === '1'
@@ -349,6 +358,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { showAlert, haptic, userId } = useTelegramWebApp()
 
   const currentPrice = ticker?.price ?? signal?.price ?? 0
+  const lastClose = candles.length ? candles[candles.length - 1][4] : 0
+  const mapPrice = currentPrice > 0 ? currentPrice : lastClose
+  const liqModel = useLiqHeatmap(symbol, candles, mapPrice, showLiqMap)
   const liveBookImbalance =
     orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
   /** 5% OBI buckets — forecast ignores sub-bucket noise */
@@ -2634,6 +2646,46 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             }}
           />
         )}
+        {chartReady > 0 && showLiqMap && (
+          <LiqHeatmapOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            model={liqModel}
+            visible={showLiqMap}
+          />
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setShowLiqMap((v) => {
+              const next = !v
+              try {
+                localStorage.setItem('enterprise_liq_map', next ? '1' : '0')
+              } catch {
+                /* ignore */
+              }
+              return next
+            })
+            haptic.impact()
+          }}
+          className={`absolute bottom-9 left-2 z-30 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-md transition-colors ${
+            showLiqMap
+              ? 'border-emerald-400/40 bg-emerald-950/80 text-emerald-200'
+              : 'border-white/15 bg-black/65 text-white/55 hover:text-white/85'
+          }`}
+          title="Карта лонгов, шортов и ликвидаций"
+        >
+          <Flame className="h-3.5 w-3.5" />
+          L/S
+          <span
+            className={`rounded px-1 py-px text-[8px] ${
+              showLiqMap ? 'bg-emerald-400/20' : 'bg-white/10'
+            }`}
+          >
+            {showLiqMap ? 'ON' : 'OFF'}
+          </span>
+        </button>
         {chartReady > 0 && !cleanMode && (
           <WhaleLevelsOverlay
             chart={chartInstance}

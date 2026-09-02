@@ -1,11 +1,7 @@
-import { useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Target, Radar as RadarIcon, Activity, Zap } from 'lucide-react'
 import Header from './components/layout/Header'
-import RadarView from './components/radar/RadarView'
 import SniperView from './components/sniper/SniperView'
-import TradesView from './components/trades/TradesView'
-import SignalsView from './components/signals/SignalsView'
-import TacticalDrawer from './components/tactical/TacticalDrawer'
 import ErrorBoundary from './components/ErrorBoundary'
 import NewsStrip from './components/news/NewsStrip'
 import { useMexcScanner } from './hooks/useMexcScanner'
@@ -16,6 +12,11 @@ import { useTelegramAlerts } from './hooks/useTelegramAlerts'
 import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
 import { useAppStore } from './store/useAppStore'
 
+const RadarView = lazy(() => import('./components/radar/RadarView'))
+const TradesView = lazy(() => import('./components/trades/TradesView'))
+const SignalsView = lazy(() => import('./components/signals/SignalsView'))
+const TacticalDrawer = lazy(() => import('./components/tactical/TacticalDrawer'))
+
 type ActiveTab = 'sniper' | 'trades' | 'radar' | 'signals'
 
 function App() {
@@ -23,15 +24,28 @@ function App() {
   useTelegramAlerts()
   useMexcScanner()
   useNewsIntelligence()
-  useRadar141Screener()
   useSignalJournalResolver()
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('sniper')
+  const [radarArmed, setRadarArmed] = useState(false)
+  const [drawerMounted, setDrawerMounted] = useState(false)
 
+  useRadar141Screener(radarArmed)
+
+  const isDrawerOpen = useAppStore((s) => s.isDrawerOpen)
   const newsSettings = useAppStore((s) => s.newsSettings)
   const newsItems = useAppStore((s) => s.newsIntel.items)
   const showStrip =
     newsSettings.enabled && newsSettings.showStrip && newsItems.length > 0
+
+  useEffect(() => {
+    if (isDrawerOpen) setDrawerMounted(true)
+  }, [isDrawerOpen])
+
+  const selectTab = (tab: ActiveTab) => {
+    setActiveTab(tab)
+    if (tab === 'radar') setRadarArmed(true)
+  }
 
   return (
     <ErrorBoundary>
@@ -42,7 +56,7 @@ function App() {
           <div className="flex">
             <button
               type="button"
-              onClick={() => setActiveTab('sniper')}
+              onClick={() => selectTab('sniper')}
               className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'sniper'
                   ? 'border-matrix text-matrix'
@@ -55,7 +69,7 @@ function App() {
 
             <button
               type="button"
-              onClick={() => setActiveTab('trades')}
+              onClick={() => selectTab('trades')}
               className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'trades'
                   ? 'border-matrix text-matrix'
@@ -68,7 +82,7 @@ function App() {
 
             <button
               type="button"
-              onClick={() => setActiveTab('radar')}
+              onClick={() => selectTab('radar')}
               className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'radar'
                   ? 'border-matrix text-matrix'
@@ -81,7 +95,7 @@ function App() {
 
             <button
               type="button"
-              onClick={() => setActiveTab('signals')}
+              onClick={() => selectTab('signals')}
               className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
                 activeTab === 'signals'
                   ? 'border-amber-400 text-amber-300'
@@ -97,12 +111,18 @@ function App() {
         <main className="px-0 pb-20">
           {showStrip && <NewsStrip items={newsItems} />}
           {activeTab === 'sniper' && <SniperView />}
-          {activeTab === 'trades' && <TradesView />}
-          {activeTab === 'radar' && <RadarView />}
-          {activeTab === 'signals' && <SignalsView />}
+          <Suspense fallback={null}>
+            {activeTab === 'trades' && <TradesView />}
+            {activeTab === 'radar' && <RadarView />}
+            {activeTab === 'signals' && <SignalsView />}
+          </Suspense>
         </main>
 
-        <TacticalDrawer />
+        {drawerMounted && (
+          <Suspense fallback={null}>
+            <TacticalDrawer />
+          </Suspense>
+        )}
       </div>
     </ErrorBoundary>
   )

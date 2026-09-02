@@ -4,6 +4,8 @@ import {
   fetchOhlcv,
   fetchTickers,
   sleep,
+  toBaseTicker,
+  toDisplayName,
   toFlatSymbol,
 } from '../api/mexc'
 import { useAppStore } from '../store/useAppStore'
@@ -16,25 +18,28 @@ import {
   type TriggerState,
 } from '../engine/radar141'
 import { logger } from '../utils/logger'
+import { loadWorkerMarketContext } from './useWorkerMarketContext'
+import { deriveAltMacro } from '../engine/analysis/altMacro'
 
 const BTC = 'BTC/USDT:USDT'
 const SCAN_MS = 120_000
-const COIN_DELAY = 180
+const COIN_DELAY = 80
 const MAX_UNIVERSE = 22
 const BASKET = ['ETH/USDT:USDT', 'SOL/USDT:USDT', 'BNB/USDT:USDT'] as const
 
 const RISK_RE = /delist|делист|hack|взлом|sec\b|ban|lawsuit|halt|suspend/i
 
 function displayOf(internal: string): string {
-  return toFlatSymbol(internal).replace('_USDT', '/USDT')
+  return toDisplayName(internal)
 }
 
-export function useRadar141Screener() {
+export function useRadar141Screener(enabled = true) {
   const mounted = useRef(true)
   const prevTrigger = useRef<Record<string, TriggerState>>({})
   const prevPrice = useRef<Record<string, number>>({})
 
   useEffect(() => {
+    if (!enabled) return
     mounted.current = true
     let cancelled = false
 
@@ -49,13 +54,14 @@ export function useRadar141Screener() {
         const tickers = await fetchTickers()
         if (cancelled || !mounted.current) return
         const extra = store.extraWatchlist
+        const favs = store.radarFavorites
         const bySym = new Map(tickers.map((t) => [t.symbol, t]))
 
         const liquid = tickers
           .filter((t) => t.volume24h >= 4_000_000 && t.lastPrice > 0)
           .sort((a, b) => b.volume24h - a.volume24h)
 
-        const pinned = new Set<string>([...CORE_WATCHLIST, ...extra])
+        const pinned = new Set<string>([...CORE_WATCHLIST, ...extra, ...favs])
         const universe: string[] = []
         for (const s of pinned) {
           if (!universe.includes(s)) universe.push(s)
@@ -80,6 +86,8 @@ export function useRadar141Screener() {
 
         const news = store.newsIntel
         const rows: Radar141Row[] = []
+        const workerCtx = await loadWorkerMarketContext()
+        const altBias = deriveAltMacro(workerCtx ?? {}).altBias
 
         for (let i = 0; i < universe.length; i++) {
           if (cancelled || !mounted.current) return
@@ -105,7 +113,7 @@ export function useRadar141Screener() {
               await sleep(COIN_DELAY)
               continue
             }
-            const base = displayOf(internal).replace('/USDT', '')
+            const base = toBaseTicker(internal)
             const sent = news.coinSentiments[base]
             const newsHit = news.items.some((it) => {
               const blob = `${it.title} ${it.summary ?? ''}`
@@ -138,6 +146,7 @@ export function useRadar141Screener() {
               newsRisk,
               newsNote,
               prevTrigger: prev,
+              altBias: internal.startsWith('BTC/') ? 'NEUTRAL' : altBias,
             })
 
             const lastPx = prevPrice.current[internal]
@@ -188,5 +197,5 @@ export function useRadar141Screener() {
       mounted.current = false
       window.clearInterval(id)
     }
-  }, [])
+  }, [enabled])
 }

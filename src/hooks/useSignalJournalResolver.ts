@@ -96,10 +96,13 @@ export function useSignalJournalResolver() {
 
   useEffect(() => {
     isMounted.current = true
-    tick()
-    intervalRef.current = setInterval(tick, RESOLVE_INTERVAL_MS)
+    const boot = window.setTimeout(() => {
+      void tick()
+      intervalRef.current = setInterval(tick, RESOLVE_INTERVAL_MS)
+    }, 12_000)
     return () => {
       isMounted.current = false
+      window.clearTimeout(boot)
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
   }, [tick])

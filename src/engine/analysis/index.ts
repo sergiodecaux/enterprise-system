@@ -3,6 +3,13 @@ export {
   type MarketContextBoost,
 } from './marketContextBoost'
 export {
+  deriveAltMacro,
+  altBiasLabel,
+  fmtTotal3Usd,
+  fmtSigned,
+  type AltMacro,
+} from './altMacro'
+export {
   pushSignalSnapshot,
   getWhatChanged,
   type WhatChanged,

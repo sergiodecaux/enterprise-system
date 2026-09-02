@@ -232,6 +232,28 @@ const CoinAnalysisUpgradePanel = ({
               {workerCtx.btcDominance != null && (
                 <span className="rounded border border-hull-border px-1.5 py-0.5">
                   BTC.D {workerCtx.btcDominance.toFixed(1)}%
+                  {workerCtx.btcDomDelta24h != null
+                    ? ` ${workerCtx.btcDomDelta24h >= 0 ? '+' : ''}${workerCtx.btcDomDelta24h.toFixed(2)}пп`
+                    : ''}
+                </span>
+              )}
+              {(workerCtx.total3Usd != null || workerCtx.total3Delta24h != null) && (
+                <span className="rounded border border-hull-border px-1.5 py-0.5">
+                  TOTAL3{' '}
+                  {workerCtx.total3Delta24h != null
+                    ? `${workerCtx.total3Delta24h >= 0 ? '+' : ''}${workerCtx.total3Delta24h.toFixed(1)}%`
+                    : 'ex BTC+ETH'}
+                </span>
+              )}
+              {workerCtx.altBias && workerCtx.altBias !== 'NEUTRAL' && (
+                <span
+                  className={`rounded border px-1.5 py-0.5 ${
+                    workerCtx.altBias === 'LONG'
+                      ? 'border-emerald-400/30 text-emerald-300'
+                      : 'border-rose-400/30 text-rose-300'
+                  }`}
+                >
+                  {workerCtx.altBias === 'LONG' ? 'лонг альты' : 'шорт альты'}
                 </span>
               )}
               {workerCtx.fearGreed != null && (

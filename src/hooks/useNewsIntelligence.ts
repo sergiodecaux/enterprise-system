@@ -12,6 +12,7 @@ import { useAppStore } from '../store/useAppStore'
 import { CORE_WATCHLIST } from '../api/mexc'
 
 const REFRESH_INTERVAL = 5 * 60 * 1000
+const NEWS_BOOT_DELAY_MS = 8_000
 
 function extractSymbol(internalSymbol: string): string {
   return internalSymbol.split('/')[0]
@@ -99,9 +100,12 @@ export function useNewsIntelligence() {
   }, [signals, extraWatchlist, newsSettings, setNewsIntel])
 
   useEffect(() => {
-    refresh()
-    timerRef.current = setInterval(refresh, REFRESH_INTERVAL)
+    const boot = window.setTimeout(() => {
+      void refresh()
+      timerRef.current = setInterval(refresh, REFRESH_INTERVAL)
+    }, NEWS_BOOT_DELAY_MS)
     return () => {
+      window.clearTimeout(boot)
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [refresh])

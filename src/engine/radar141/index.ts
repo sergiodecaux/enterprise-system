@@ -17,6 +17,7 @@ export {
   isWatchNear141,
   rowPassesFilters,
   sortByExpectedTravel,
+  splitStrongWeak,
 } from './compute'
 export {
   emptyStats,

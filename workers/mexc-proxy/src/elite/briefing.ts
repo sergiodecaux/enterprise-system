@@ -329,8 +329,25 @@ function formatHourlyHtml(
     mctx.btcDominance != null
       ? `BTC.D: <b>${mctx.btcDominance.toFixed(2)}%</b>${
           mctx.btcDomDelta24h != null
-            ? ` (${mctx.btcDomDelta24h >= 0 ? '+' : ''}${mctx.btcDomDelta24h.toFixed(2)}%)`
+            ? ` (${mctx.btcDomDelta24h >= 0 ? '+' : ''}${mctx.btcDomDelta24h.toFixed(2)}пп)`
             : ''
+        }`
+      : null,
+    mctx.total3Usd != null
+      ? `TOTAL3: <b>${
+          mctx.total3Usd >= 1e12
+            ? `$${(mctx.total3Usd / 1e12).toFixed(2)}T`
+            : `$${(mctx.total3Usd / 1e9).toFixed(0)}B`
+        }</b>${
+          mctx.total3Delta24h != null
+            ? ` (${mctx.total3Delta24h >= 0 ? '+' : ''}${mctx.total3Delta24h.toFixed(1)}%)`
+            : ''
+        } · ${
+          mctx.altBias === 'LONG'
+            ? 'лонг альты'
+            : mctx.altBias === 'SHORT'
+              ? 'шорт альты'
+              : 'нейтрал'
         }`
       : null,
     '',
@@ -388,6 +405,16 @@ function formatDailyHtml(
   const head = [
     `🌙 <b>ELITE DAILY CLOSE</b> · ${when} UTC`,
     fearLine(mctx),
+    mctx.btcDominance != null
+      ? `BTC.D ${mctx.btcDominance.toFixed(1)}%${
+          mctx.btcDomDelta24h != null
+            ? ` ${mctx.btcDomDelta24h >= 0 ? '+' : ''}${mctx.btcDomDelta24h.toFixed(2)}пп`
+            : ''
+        }`
+      : '',
+    mctx.altBias !== 'NEUTRAL'
+      ? `Альты: <b>${mctx.altBias === 'LONG' ? 'лонг' : 'шорт'}</b> · ${escapeHtml(mctx.lines.find((l) => l.includes('TOTAL3') || l.includes('альт')) ?? '')}`
+      : '',
     `Новости дня: <b>${mctx.newsLabel}</b>`,
     ...mctx.newsHeadlines.slice(0, 2).map((h) => `• ${escapeHtml(h.slice(0, 100))}`),
     '',

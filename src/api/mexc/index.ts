@@ -1,4 +1,5 @@
 import type { OrderBookLevel, OrderBookSnapshot } from '../../engine/types'
+import { getProxyBaseUrl } from '../proxyBase'
 
 /** Candle in ccxt-compatible format: [timestamp_ms, open, high, low, close, volume] */
 export type OhlcvCandle = [number, number, number, number, number, number]
@@ -75,21 +76,16 @@ export const CORE_WATCHLIST = [
 export const LITE_WATCHLIST = CORE_WATCHLIST
 
 export function getMexcBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
-  if (envUrl && envUrl.trim()) {
-    // Worker routes MEXC under /mexc → contract.mexc.com
-    return `${envUrl.replace(/\/$/, '')}/mexc`
-  }
-  // Dev: Vite proxy; prod without worker still tries relative /mexc (will fail CORS unless proxied)
+  const proxy = getProxyBaseUrl()
+  if (proxy) return `${proxy}/mexc`
+  // Dev: Vite proxy
   return '/mexc'
 }
 
 /** Spot REST (api.mexc.com) via worker `/mexc-spot` or Vite proxy */
 export function getMexcSpotBaseUrl(): string {
-  const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
-  if (envUrl && envUrl.trim()) {
-    return `${envUrl.replace(/\/$/, '')}/mexc-spot`
-  }
+  const proxy = getProxyBaseUrl()
+  if (proxy) return `${proxy}/mexc-spot`
   return '/mexc-spot'
 }
 
@@ -123,23 +119,41 @@ export function toDisplayName(internal: string): string {
   return internal.replace(':USDT', '')
 }
 
+/** Base ticker: BTC/USDT:USDT → BTC */
+export function toBaseTicker(internal: string): string {
+  const s = (internal || '').trim().toUpperCase()
+  if (!s) return s
+  if (s.includes('/')) return s.split('/')[0]
+  if (s.endsWith('_USDT')) return s.slice(0, -5)
+  if (s.endsWith('USDT') && s.length > 4) return s.slice(0, -4)
+  return s
+}
+
 export function toFlatSymbol(internal: string): string {
   // BTC/USDT:USDT → BTCUSDT
   return internal.replace('/USDT:USDT', 'USDT').replace('/', '')
 }
 
+const FETCH_TIMEOUT_MS = 18_000
+
 async function mexcGet<T>(path: string): Promise<T> {
   const base = getMexcBaseUrl()
   const url = `${base}${path.startsWith('/') ? path : `/${path}`}`
-  const res = await fetch(url)
-  if (!res.ok) {
-    throw new Error(`MEXC HTTP ${res.status}: ${path}`)
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal })
+    if (!res.ok) {
+      throw new Error(`MEXC HTTP ${res.status}: ${path}`)
+    }
+    const json = await res.json()
+    if (json && typeof json === 'object' && 'success' in json && json.success === false) {
+      throw new Error(`MEXC API error: ${json.message ?? json.code ?? 'unknown'}`)
+    }
+    return json as T
+  } finally {
+    window.clearTimeout(timer)
   }
-  const json = await res.json()
-  if (json && typeof json === 'object' && 'success' in json && json.success === false) {
-    throw new Error(`MEXC API error: ${json.message ?? json.code ?? 'unknown'}`)
-  }
-  return json as T
 }
 
 interface MexcKlineResponse {
@@ -249,25 +263,41 @@ export async function fetchDepth(
   }
 }
 
-export async function fetchTickers(): Promise<MexcTicker[]> {
-  const json = await mexcGet<MexcTickerResponse>('/api/v1/contract/ticker')
-  const rows = Array.isArray(json.data) ? json.data : json.data ? [json.data] : []
+const TICKERS_TTL_MS = 12_000
+let tickersCache: { at: number; data: MexcTicker[] } | null = null
+let tickersInflight: Promise<MexcTicker[]> | null = null
 
-  return rows
-    .filter((row) => row.symbol?.endsWith('_USDT') && !STABLE_BLACKLIST.has(row.symbol))
-    .map((row) => ({
-      symbol: toInternalSymbol(row.symbol),
-      apiSymbol: row.symbol,
-      lastPrice: Number(row.lastPrice),
-      // riseFallRate is fraction (e.g. -0.0028 → -0.28%)
-      priceChangePercent: Number(row.riseFallRate) * 100,
-      volume24h: Number(row.amount24 ?? row.volume24 ?? 0),
-      high24h: Number(row.high24Price),
-      low24h: Number(row.lower24Price),
-      timestamp: Number(row.timestamp),
-      openInterest: row.holdVol != null ? Number(row.holdVol) : undefined,
-      fundingRate: row.fundingRate != null ? Number(row.fundingRate) : undefined,
-    }))
+export async function fetchTickers(): Promise<MexcTicker[]> {
+  if (tickersCache && Date.now() - tickersCache.at < TICKERS_TTL_MS) {
+    return tickersCache.data
+  }
+  if (tickersInflight) return tickersInflight
+
+  tickersInflight = (async () => {
+    const json = await mexcGet<MexcTickerResponse>('/api/v1/contract/ticker')
+    const rows = Array.isArray(json.data) ? json.data : json.data ? [json.data] : []
+    const data = rows
+      .filter((row) => row.symbol?.endsWith('_USDT') && !STABLE_BLACKLIST.has(row.symbol))
+      .map((row) => ({
+        symbol: toInternalSymbol(row.symbol),
+        apiSymbol: row.symbol,
+        lastPrice: Number(row.lastPrice),
+        // riseFallRate is fraction (e.g. -0.0028 → -0.28%)
+        priceChangePercent: Number(row.riseFallRate) * 100,
+        volume24h: Number(row.amount24 ?? row.volume24 ?? 0),
+        high24h: Number(row.high24Price),
+        low24h: Number(row.lower24Price),
+        timestamp: Number(row.timestamp),
+        openInterest: row.holdVol != null ? Number(row.holdVol) : undefined,
+        fundingRate: row.fundingRate != null ? Number(row.fundingRate) : undefined,
+      }))
+    tickersCache = { at: Date.now(), data }
+    return data
+  })().finally(() => {
+    tickersInflight = null
+  })
+
+  return tickersInflight
 }
 
 export async function fetchTicker(symbol: string): Promise<MexcTicker | null> {

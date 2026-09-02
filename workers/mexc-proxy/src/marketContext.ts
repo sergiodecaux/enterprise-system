@@ -1,7 +1,12 @@
 /**
- * Shared market context: Fear&Greed, coin-relevant news, BTC dominance.
+ * Shared market context: Fear&Greed, coin-relevant news, BTC.D, TOTAL3.
  * Cached ~8 min per Worker isolate.
  */
+
+import { kvPutThrottled } from './kvWrite'
+
+export type AltRegime = 'ALT_ON' | 'ALT_OFF' | 'BTC_LEAD' | 'RISK_OFF' | 'NEUTRAL'
+export type AltBias = 'LONG' | 'SHORT' | 'NEUTRAL'
 
 export interface CoinNewsHit {
   score: number
@@ -19,13 +24,22 @@ export interface MarketContext {
   /** Per-base-asset news (BTC, ETH, SOL, …) */
   coinNews: Record<string, CoinNewsHit>
   btcDominance: number | null
+  /** BTC.D change vs ~24h snapshot, percentage points */
   btcDomDelta24h: number | null
+  ethDominance: number | null
+  /** Alt mcap excluding BTC + ETH */
+  total3Usd: number | null
+  total3Delta24h: number | null
+  totalMcapDelta24h: number | null
+  altRegime: AltRegime
+  altBias: AltBias
   fetchedAt: number
   lines: string[]
 }
 
 const FG_URL = 'https://api.alternative.me/fng/?limit=2'
 const CG_GLOBAL = 'https://api.coingecko.com/api/v3/global'
+const LORE_GLOBAL = 'https://api.coinlore.net/api/global/'
 const CP_URL =
   'https://cryptopanic.com/api/v1/posts/?public=true&kind=news&limit=25'
 
@@ -85,6 +99,148 @@ const BEAR = [
 
 let cache: MarketContext | null = null
 const CACHE_MS = 8 * 60_000
+const SNAP_KV_KEY = 'market_ctx:macro_snaps'
+const SNAP_CACHE_REQ = new Request(
+  'https://enterprise-system-runtime.invalid/macro-snaps'
+)
+const SNAP_MIN_GAP_MS = 25 * 60_000
+
+interface MacroSnap {
+  at: number
+  btcD: number
+  ethD: number
+  total3: number
+}
+
+function deriveAltMacro(input: {
+  btcDominance: number | null
+  btcDomDelta24h: number | null
+  total3Delta24h: number | null
+  totalMcapDelta24h: number | null
+}): { altRegime: AltRegime; altBias: AltBias; line: string } {
+  const btcD = input.btcDominance
+  const dBtcRaw = input.btcDomDelta24h
+  const altDelta =
+    input.total3Delta24h != null ? input.total3Delta24h : input.totalMcapDelta24h
+  const dBtc = dBtcRaw == null ? 0 : dBtcRaw >= 0.2 ? 1 : dBtcRaw <= -0.2 ? -1 : 0
+  const dAlt = altDelta == null ? 0 : altDelta >= 1 ? 1 : altDelta <= -1 ? -1 : 0
+
+  let altRegime: AltRegime = 'NEUTRAL'
+  if (dBtc !== 0 && dAlt !== 0) {
+    if (dBtc > 0 && dAlt < 0) altRegime = 'ALT_OFF'
+    else if (dBtc < 0 && dAlt > 0) altRegime = 'ALT_ON'
+    else if (dBtc > 0 && dAlt > 0) altRegime = 'BTC_LEAD'
+    else altRegime = 'RISK_OFF'
+  } else if (btcD != null) {
+    if (btcD >= 56 && dAlt < 0) altRegime = 'ALT_OFF'
+    else if (btcD <= 48 && dAlt > 0) altRegime = 'ALT_ON'
+    else if (btcD >= 56 && dAlt > 0) altRegime = 'BTC_LEAD'
+    else if (btcD <= 48 && dAlt < 0) altRegime = 'RISK_OFF'
+    else if (btcD >= 56) altRegime = 'ALT_OFF'
+    else if (btcD <= 48) altRegime = 'ALT_ON'
+  }
+
+  const altBias: AltBias =
+    altRegime === 'ALT_ON'
+      ? 'LONG'
+      : altRegime === 'ALT_OFF' || altRegime === 'RISK_OFF'
+        ? 'SHORT'
+        : 'NEUTRAL'
+
+  const btcBit =
+    btcD != null
+      ? `BTC.D ${btcD.toFixed(1)}%${
+          dBtcRaw != null ? ` ${dBtcRaw >= 0 ? '+' : ''}${dBtcRaw.toFixed(2)}пп` : ''
+        }`
+      : 'BTC.D н/д'
+  const t3Bit =
+    altDelta != null
+      ? `TOTAL3 ${altDelta >= 0 ? '+' : ''}${altDelta.toFixed(1)}%`
+      : 'TOTAL3 н/д'
+  const line =
+    altRegime === 'ALT_ON'
+      ? `${btcBit} ↓ · ${t3Bit} ↑ → альтсезон, лонги альтов`
+      : altRegime === 'ALT_OFF'
+        ? `${btcBit} ↑ · ${t3Bit} ↓ → отток в BTC, шорты альтов`
+        : altRegime === 'BTC_LEAD'
+          ? `${btcBit} ↑ · ${t3Bit} ↑ → рост ведёт BTC, альты отстают`
+          : altRegime === 'RISK_OFF'
+            ? `${btcBit} ↓ · ${t3Bit} ↓ → риск-офф, не ловить альты`
+            : `${btcBit} · ${t3Bit} — смешанно`
+
+  return { altRegime, altBias, line }
+}
+
+function fmtTotal3(n: number): string {
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(0)}B`
+  return `$${(n / 1e6).toFixed(0)}M`
+}
+
+async function loadSnaps(kv?: KVNamespace): Promise<MacroSnap[]> {
+  try {
+    const cached = await caches.default.match(SNAP_CACHE_REQ)
+    if (cached) {
+      const parsed = (await cached.json()) as MacroSnap[]
+      if (Array.isArray(parsed)) return parsed
+    }
+  } catch {
+    /* fall through */
+  }
+  if (kv) {
+    try {
+      const raw = await kv.get(SNAP_KV_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as MacroSnap[]
+        if (Array.isArray(parsed)) return parsed
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return []
+}
+
+async function saveSnaps(snaps: MacroSnap[], kv?: KVNamespace): Promise<void> {
+  const body = JSON.stringify(snaps)
+  try {
+    await caches.default.put(
+      SNAP_CACHE_REQ,
+      new Response(body, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=172800',
+        },
+      })
+    )
+  } catch {
+    /* isolate only */
+  }
+  if (kv) {
+    await kvPutThrottled(kv, SNAP_KV_KEY, body, SNAP_MIN_GAP_MS, {
+      expirationTtl: 3 * 24 * 3600,
+    })
+  }
+}
+
+function pickRefSnap(snaps: MacroSnap[], now: number): MacroSnap | null {
+  const target = now - 24 * 3600_000
+  let best: MacroSnap | null = null
+  let bestDist = Infinity
+  for (const s of snaps) {
+    const age = now - s.at
+    if (age < 18 * 3600_000 || age > 40 * 3600_000) continue
+    const dist = Math.abs(s.at - target)
+    if (dist < bestDist) {
+      best = s
+      bestDist = dist
+    }
+  }
+  if (best) return best
+  const older = snaps.filter((s) => now - s.at >= 4 * 3600_000)
+  if (!older.length) return null
+  return older.reduce((a, b) => (a.at < b.at ? a : b))
+}
 
 function toneOf(title: string): number {
   const low = title.toLowerCase()
@@ -118,16 +274,18 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   }
 }
 
-export async function getMarketContext(): Promise<MarketContext> {
+export async function getMarketContext(kv?: KVNamespace): Promise<MarketContext> {
   if (cache && Date.now() - cache.fetchedAt < CACHE_MS) return cache
 
-  const [fg, global, panic] = await Promise.all([
+  const [fg, global, panic, lore] = await Promise.all([
     fetchJson<{
       data?: Array<{ value: string; value_classification: string }>
     }>(FG_URL),
     fetchJson<{
       data?: {
-        market_cap_percentage?: { btc?: number }
+        total_market_cap?: { usd?: number }
+        market_cap_percentage?: { btc?: number; eth?: number }
+        market_cap_change_percentage_24h_usd?: number
       }
     }>(CG_GLOBAL),
     fetchJson<{
@@ -136,6 +294,14 @@ export async function getMarketContext(): Promise<MarketContext> {
         currencies?: Array<{ code?: string }>
       }>
     }>(CP_URL),
+    fetchJson<
+      Array<{
+        total_mcap?: number
+        btc_d?: string
+        eth_d?: string
+        mcap_change?: string
+      }>
+    >(LORE_GLOBAL),
   ])
 
   const fearGreed = fg?.data?.[0] ? parseInt(fg.data[0].value, 10) : null
@@ -183,13 +349,87 @@ export async function getMarketContext(): Promise<MarketContext> {
     }
   }
 
-  const btcDominance = global?.data?.market_cap_percentage?.btc ?? null
+  const now = Date.now()
+  const loreRow = Array.isArray(lore) ? lore[0] : undefined
+  const loreBtc = loreRow?.btc_d != null ? Number(loreRow.btc_d) : NaN
+  const loreEth = loreRow?.eth_d != null ? Number(loreRow.eth_d) : NaN
+  const loreMcap = loreRow?.total_mcap
+  const loreChg = loreRow?.mcap_change != null ? Number(loreRow.mcap_change) : NaN
+
+  let btcDominance = global?.data?.market_cap_percentage?.btc ?? null
+  let ethDominance = global?.data?.market_cap_percentage?.eth ?? null
+  let totalMcap = global?.data?.total_market_cap?.usd ?? null
+  let totalMcapDelta24h =
+    global?.data?.market_cap_change_percentage_24h_usd ?? null
+  if (btcDominance == null && Number.isFinite(loreBtc)) btcDominance = loreBtc
+  if (ethDominance == null && Number.isFinite(loreEth)) ethDominance = loreEth
+  if (totalMcap == null && typeof loreMcap === 'number' && loreMcap > 0) {
+    totalMcap = loreMcap
+  }
+  if (totalMcapDelta24h == null && Number.isFinite(loreChg)) {
+    totalMcapDelta24h = loreChg
+  }
+  const total3Usd =
+    totalMcap != null && btcDominance != null && ethDominance != null
+      ? totalMcap * (100 - btcDominance - ethDominance) / 100
+      : null
+
+  let btcDomDelta24h: number | null = null
+  let total3Delta24h: number | null = null
+  if (btcDominance != null && total3Usd != null) {
+    const snaps = await loadSnaps(kv)
+    const ref = pickRefSnap(snaps, now)
+    if (ref && ref.btcD > 0 && ref.total3 > 0) {
+      btcDomDelta24h = btcDominance - ref.btcD
+      total3Delta24h = ((total3Usd - ref.total3) / ref.total3) * 100
+    }
+    const last = snaps[snaps.length - 1]
+    if (!last || now - last.at >= SNAP_MIN_GAP_MS) {
+      const next = snaps
+        .filter((s) => now - s.at < 40 * 3600_000)
+        .concat({
+          at: now,
+          btcD: btcDominance,
+          ethD: ethDominance ?? 0,
+          total3: total3Usd,
+        })
+      await saveSnaps(next, kv)
+    }
+  }
+
+  const macro = deriveAltMacro({
+    btcDominance,
+    btcDomDelta24h,
+    total3Delta24h,
+    totalMcapDelta24h,
+  })
+
   const lines: string[] = []
   if (fearGreed != null) lines.push(`Fear&Greed: ${fearGreed} (${fearGreedLabel})`)
   lines.push(
     `Новости (глоб.): ${labelOf(newsScore)} (${newsScore >= 0 ? '+' : ''}${newsScore.toFixed(2)})`
   )
-  if (btcDominance != null) lines.push(`BTC.D: ${btcDominance.toFixed(1)}%`)
+  if (btcDominance != null) {
+    lines.push(
+      `BTC.D: ${btcDominance.toFixed(1)}%${
+        btcDomDelta24h != null
+          ? ` ${btcDomDelta24h >= 0 ? '+' : ''}${btcDomDelta24h.toFixed(2)}пп`
+          : ''
+      }`
+    )
+  }
+  if (total3Usd != null) {
+    lines.push(
+      `TOTAL3: ${fmtTotal3(total3Usd)}${
+        total3Delta24h != null
+          ? ` ${total3Delta24h >= 0 ? '+' : ''}${total3Delta24h.toFixed(1)}%`
+          : totalMcapDelta24h != null
+            ? ` (TOTAL ${totalMcapDelta24h >= 0 ? '+' : ''}${totalMcapDelta24h.toFixed(1)}%)`
+            : ''
+      }`
+    )
+  }
+  lines.push(macro.line)
   if (titles[0]) lines.push(`Headline: ${titles[0].slice(0, 80)}`)
 
   cache = {
@@ -200,8 +440,14 @@ export async function getMarketContext(): Promise<MarketContext> {
     newsHeadlines: titles.slice(0, 3),
     coinNews,
     btcDominance,
-    btcDomDelta24h: null,
-    fetchedAt: Date.now(),
+    btcDomDelta24h,
+    ethDominance,
+    total3Usd,
+    total3Delta24h,
+    totalMcapDelta24h,
+    altRegime: macro.altRegime,
+    altBias: macro.altBias,
+    fetchedAt: now,
     lines,
   }
   return cache
@@ -312,8 +558,38 @@ export function contextProbabilityAdj(opts: {
     }
   }
 
-  if (ctx.btcDominance != null) {
-    if (!opts.isBtc) {
+  if (!opts.isBtc) {
+    const regime = ctx.altRegime
+    if (regime === 'ALT_ON') {
+      if (opts.side === 'LONG') {
+        adj += 4
+        factors.push('+4% TOTAL3↑ BTC.D↓ альтсезон → лонг альтов')
+      } else {
+        adj -= 3
+        factors.push('−3% альтсезон против шорта альта')
+      }
+    } else if (regime === 'ALT_OFF') {
+      if (opts.side === 'SHORT') {
+        adj += 4
+        factors.push('+4% TOTAL3↓ BTC.D↑ → шорт альтов')
+      } else {
+        adj -= 4
+        factors.push('−4% отток в BTC против лонга альта')
+      }
+    } else if (regime === 'BTC_LEAD') {
+      if (opts.side === 'LONG') {
+        adj -= 2
+        factors.push('−2% рост ведёт BTC, альты отстают')
+      }
+    } else if (regime === 'RISK_OFF') {
+      if (opts.side === 'LONG') {
+        adj -= 3
+        factors.push('−3% риск-офф, не ловить альты')
+      } else {
+        adj += 2
+        factors.push('+2% риск-офф поддерживает шорт альта')
+      }
+    } else if (ctx.btcDominance != null) {
       if (ctx.btcDominance >= 55 && opts.side === 'LONG') {
         adj -= 2
         factors.push(`−2% BTC.D ${ctx.btcDominance.toFixed(0)}% давит альты`)
@@ -321,10 +597,10 @@ export function contextProbabilityAdj(opts: {
         adj += 2
         factors.push(`+2% BTC.D ${ctx.btcDominance.toFixed(0)}% — пространство альтам`)
       }
-    } else if (opts.isBtc && ctx.btcDominance >= 54 && opts.side === 'LONG') {
-      adj += 1
-      factors.push('+1% высокая доминация поддерживает BTC')
     }
+  } else if (opts.isBtc && ctx.btcDominance != null && ctx.btcDominance >= 54 && opts.side === 'LONG') {
+    adj += 1
+    factors.push('+1% высокая доминация поддерживает BTC')
   }
 
   return { adj: Math.max(-8, Math.min(8, adj)), factors }

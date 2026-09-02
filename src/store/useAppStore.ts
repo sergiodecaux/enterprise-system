@@ -60,6 +60,7 @@ const defaultMarketContext: MarketContext = {
 }
 
 const EXTRA_KEY = 'enterprise_extra_watchlist'
+const FAV_KEY = 'enterprise_radar_favorites'
 const CHART_PREFS_KEY = 'enterprise_chart_preferences'
 const SESSION_SETTINGS_KEY = 'enterprise_session_settings'
 const NEWS_SETTINGS_KEY = 'enterprise_news_settings'
@@ -120,6 +121,25 @@ function loadExtraWatchlist(): string[] {
 function saveExtraWatchlist(list: string[]) {
   try {
     localStorage.setItem(EXTRA_KEY, JSON.stringify(list))
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadRadarFavorites(): string[] {
+  try {
+    const raw = localStorage.getItem(FAV_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as string[]
+    return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function saveRadarFavorites(list: string[]) {
+  try {
+    localStorage.setItem(FAV_KEY, JSON.stringify(list))
   } catch {
     /* ignore */
   }
@@ -187,6 +207,7 @@ export const useAppStore = create<AppState>()(
     marketContext: defaultMarketContext,
     isScanning: false,
     extraWatchlist: loadExtraWatchlist(),
+    radarFavorites: loadRadarFavorites(),
     chartPreferences: loadChartPreferences(),
     sessionSettings: loadSessionSettings(),
     newsSettings: loadNewsSettings(),
@@ -281,6 +302,17 @@ export const useAppStore = create<AppState>()(
         extraWatchlist: next,
         signals: get().signals.filter((s) => s.internalSymbol !== internalSymbol),
       })
+    },
+
+    toggleRadarFavorite: (internalSymbol: string) => {
+      const current = get().radarFavorites
+      const on = current.includes(internalSymbol)
+      const next = on
+        ? current.filter((s) => s !== internalSymbol)
+        : [...current, internalSymbol]
+      saveRadarFavorites(next)
+      set({ radarFavorites: next })
+      if (!on) get().addToWatchlist(internalSymbol)
     },
 
     selectCoin: (symbol: string | null) => {

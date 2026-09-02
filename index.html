@@ -7,7 +7,17 @@
     <meta name="theme-color" content="#0a0a0a" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>" />
     <title>Enterprise System</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function () {
+        var host = location.hostname
+        var capacitor = location.protocol === 'https:' && (host === 'localhost' || host === '127.0.0.1')
+        if (capacitor) return
+        var s = document.createElement('script')
+        s.src = 'https://telegram.org/js/telegram-web-app.js'
+        s.async = true
+        document.head.appendChild(s)
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

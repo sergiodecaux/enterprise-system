@@ -1,7 +1,8 @@
+import { getProxyBaseUrl } from '../proxyBase'
 import type { FearGreedData, FearGreedLabel } from '../../engine/sentiment/types'
 
 function getBase(): string {
-  return (import.meta.env.VITE_MEXC_PROXY_URL as string | undefined) ?? ''
+  return getProxyBaseUrl()
 }
 
 interface FGResponse {

@@ -2,6 +2,8 @@
  * Bot journal types + fetch from Cloudflare Worker for Lab sync.
  */
 
+import { getProxyBaseUrl } from '../proxyBase'
+
 export interface BotJournalEntryDto {
   id: string
   symbol: string
@@ -123,9 +125,7 @@ export function saveCachedBotJournal(payload: BotJournalPayload): void {
 }
 
 function getProxyBase(): string {
-  const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
-  if (envUrl && envUrl.trim()) return envUrl.replace(/\/$/, '')
-  return ''
+  return getProxyBaseUrl()
 }
 
 export async function fetchBotJournal(): Promise<BotJournalPayload | null> {

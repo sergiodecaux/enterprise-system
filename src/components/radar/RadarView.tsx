@@ -7,7 +7,7 @@ import CoinSearch from './CoinSearch'
 import FearGreedGauge from '../news/FearGreedGauge'
 import Radar141Board from './Radar141Board'
 
-type RadarMode = 'setups' | 'scan' | 'map' | 'watch'
+type RadarMode = 'setups' | 'scan' | 'map' | 'watch' | 'fav'
 
 const RadarView = () => {
   const { t } = useTranslation()
@@ -105,8 +105,9 @@ const RadarView = () => {
         {(
           [
             ['scan', '141 скан'],
+            ['map', 'Сильные / слабые'],
+            ['fav', 'Избранное'],
             ['watch', 'Watch 141'],
-            ['map', 'Карта'],
             ['setups', 'Сетапы'],
           ] as const
         ).map(([id, label]) => (
@@ -126,7 +127,17 @@ const RadarView = () => {
       </div>
 
       {mode !== 'setups' ? (
-        <Radar141Board mode={mode === 'map' ? 'map' : mode === 'watch' ? 'watch' : 'scan'} />
+        <Radar141Board
+          mode={
+            mode === 'map'
+              ? 'map'
+              : mode === 'watch'
+                ? 'watch'
+                : mode === 'fav'
+                  ? 'fav'
+                  : 'scan'
+          }
+        />
       ) : (
         <>
       <div className="border-b border-hull-border/30 px-4 py-2">

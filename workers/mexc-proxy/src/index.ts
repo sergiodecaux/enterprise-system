@@ -390,7 +390,7 @@ export default {
 
     if (path === '/market-context' || path === '/market-context/') {
       const { getMarketContext } = await import('./marketContext')
-      const ctx = await getMarketContext()
+      const ctx = await getMarketContext(env.SUBSCRIBERS)
       return json(ctx)
     }
 

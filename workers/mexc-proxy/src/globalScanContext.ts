@@ -116,7 +116,10 @@ export function buildGlobalScanContext(opts: {
     if (fg <= 30) riskOnOff += 1
     if (fg >= 70) riskOnOff -= 1
   }
-  if (btcD != null) {
+  if (opts.marketCtx.altRegime === 'ALT_ON') riskOnOff += 1
+  else if (opts.marketCtx.altRegime === 'ALT_OFF' || opts.marketCtx.altRegime === 'RISK_OFF') {
+    riskOnOff -= 1
+  } else if (btcD != null) {
     if (btcD <= 48) riskOnOff += 1
     if (btcD >= 55) riskOnOff -= 1
   }
@@ -150,8 +153,14 @@ export function buildGlobalScanContext(opts: {
     fg != null
       ? `F&G ${fg} (${opts.marketCtx.fearGreedLabel}) · BTC.D ${
           btcD != null ? `${btcD.toFixed(1)}%` : 'н/д'
-        } · risk ${riskOnOff >= 0 ? '+' : ''}${riskOnOff}`
-      : `BTC.D ${btcD != null ? `${btcD.toFixed(1)}%` : 'н/д'} · risk ${
+        } · TOTAL3 ${
+          opts.marketCtx.total3Delta24h != null
+            ? `${opts.marketCtx.total3Delta24h >= 0 ? '+' : ''}${opts.marketCtx.total3Delta24h.toFixed(1)}%`
+            : 'н/д'
+        } · ${opts.marketCtx.altBias === 'LONG' ? 'лонг альты' : opts.marketCtx.altBias === 'SHORT' ? 'шорт альты' : 'нейтрал'} · risk ${riskOnOff >= 0 ? '+' : ''}${riskOnOff}`
+      : `BTC.D ${btcD != null ? `${btcD.toFixed(1)}%` : 'н/д'} · альты ${
+          opts.marketCtx.altBias === 'LONG' ? 'лонг' : opts.marketCtx.altBias === 'SHORT' ? 'шорт' : 'нейтрал'
+        } · risk ${
           riskOnOff >= 0 ? '+' : ''
         }${riskOnOff}`,
     `Ищем: INTRA ${preferIntraSide ?? '—'} · SWING ${preferSwingSide ?? '—'}`,

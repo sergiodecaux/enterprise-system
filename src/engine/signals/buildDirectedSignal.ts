@@ -21,6 +21,8 @@ import {
   blendConfidenceWithHist,
   evaluateHistWrPolicy,
 } from '../analysis/histWrPolicy'
+import { deriveAltMacro } from '../analysis/altMacro'
+import type { AltBias, AltRegime } from '../../api/marketContext'
 
 export type SignalSide = 'LONG' | 'SHORT'
 
@@ -67,28 +69,69 @@ export function buildWatchFactors(opts: {
   coinNewsHeadlines?: string[]
   dailyBias?: string | null
   btcTrend?: string | null
+  total3Usd?: number | null
+  total3Delta24h?: number | null
+  btcDomDelta24h?: number | null
+  altRegime?: AltRegime | null
+  altBias?: AltBias | null
+  isBtc?: boolean
 }): WatchFactor[] {
   const factors: WatchFactor[] = []
   const { side, signal } = opts
+  const isBtc = opts.isBtc ?? false
+  const macro = deriveAltMacro({
+    btcDominance: opts.btcDominance,
+    btcDomDelta24h: opts.btcDomDelta24h,
+    total3Usd: opts.total3Usd,
+    total3Delta24h: opts.total3Delta24h,
+    altRegime: opts.altRegime,
+    altBias: opts.altBias,
+  })
 
   if (opts.btcDominance != null) {
     const d = opts.btcDominance
+    const delta =
+      opts.btcDomDelta24h != null
+        ? ` ${opts.btcDomDelta24h >= 0 ? '+' : ''}${opts.btcDomDelta24h.toFixed(2)}пп`
+        : ''
     let tone: WatchFactor['tone'] = 'neutral'
-    let detail = `${d.toFixed(1)}%`
-    if (side === 'LONG' && d >= 56) {
-      tone = 'bad'
-      detail = `${d.toFixed(1)}% — давит альты (LONG рискованнее)`
-    } else if (side === 'LONG' && d <= 48) {
-      tone = 'ok'
-      detail = `${d.toFixed(1)}% — пространство альтам`
-    } else if (side === 'SHORT' && d >= 55) {
-      tone = 'ok'
-      detail = `${d.toFixed(1)}% — давление на альты поддерживает SHORT`
-    } else if (side === 'SHORT' && d <= 48) {
-      tone = 'warn'
-      detail = `${d.toFixed(1)}% — альты сильны, SHORT осторожнее`
+    let detail = `${d.toFixed(1)}%${delta}`
+    if (!isBtc) {
+      if (side === 'LONG' && (macro.regime === 'ALT_OFF' || d >= 56)) {
+        tone = 'bad'
+        detail = `${d.toFixed(1)}%${delta} — давит альты (LONG рискованнее)`
+      } else if (side === 'LONG' && (macro.regime === 'ALT_ON' || d <= 48)) {
+        tone = 'ok'
+        detail = `${d.toFixed(1)}%${delta} — пространство альтам`
+      } else if (side === 'SHORT' && (macro.regime === 'ALT_OFF' || d >= 55)) {
+        tone = 'ok'
+        detail = `${d.toFixed(1)}%${delta} — давление на альты поддерживает SHORT`
+      } else if (side === 'SHORT' && (macro.regime === 'ALT_ON' || d <= 48)) {
+        tone = 'warn'
+        detail = `${d.toFixed(1)}%${delta} — альты сильны, SHORT осторожнее`
+      }
     }
     factors.push({ id: 'btc_d', label: 'BTC.D', detail, tone })
+  }
+
+  if (opts.total3Usd != null || opts.total3Delta24h != null || macro.regime !== 'NEUTRAL') {
+    let tone: WatchFactor['tone'] = 'neutral'
+    if (!isBtc) {
+      if (macro.altBias === 'LONG' && side === 'LONG') tone = 'ok'
+      else if (macro.altBias === 'SHORT' && side === 'SHORT') tone = 'ok'
+      else if (macro.altBias === 'LONG' && side === 'SHORT') tone = 'warn'
+      else if (macro.altBias === 'SHORT' && side === 'LONG') tone = 'bad'
+    }
+    const t3d =
+      opts.total3Delta24h != null
+        ? `${opts.total3Delta24h >= 0 ? '+' : ''}${opts.total3Delta24h.toFixed(1)}%`
+        : ''
+    factors.push({
+      id: 'total3',
+      label: 'TOTAL3',
+      detail: t3d ? `${t3d} · ${macro.line}` : macro.line,
+      tone,
+    })
   }
 
   if (opts.fearGreed != null) {
@@ -209,6 +252,11 @@ export function buildDirectedSignal(input: {
   coinNewsHeadlines?: string[]
   dailyBias?: string | null
   btcTrend?: string | null
+  total3Usd?: number | null
+  total3Delta24h?: number | null
+  btcDomDelta24h?: number | null
+  altRegime?: AltRegime | null
+  altBias?: AltBias | null
 }): DirectedSignalResult {
   const live = findLiveSignal({
     candles: input.candles,
@@ -354,6 +402,12 @@ export function buildDirectedSignal(input: {
     coinNewsHeadlines: input.coinNewsHeadlines,
     dailyBias: input.dailyBias,
     btcTrend: input.btcTrend,
+    total3Usd: input.total3Usd,
+    total3Delta24h: input.total3Delta24h,
+    btcDomDelta24h: input.btcDomDelta24h,
+    altRegime: input.altRegime,
+    altBias: input.altBias,
+    isBtc: baseFromSymbol(input.symbol) === 'BTC',
   })
 
   let targetMovePct: number | null = null

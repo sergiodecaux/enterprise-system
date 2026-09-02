@@ -3,6 +3,7 @@
  */
 
 import type { ConditionalSetup, WatchedSetup } from '../../engine/setups'
+import { getProxyBaseUrl } from '../proxyBase'
 
 export type AlertType = 'SNIPER' | 'MEME' | 'SYSTEM' | 'SETUP_WATCH'
 
@@ -15,11 +16,7 @@ export interface TelegramAlertPayload {
 }
 
 function getProxyBase(): string {
-  const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
-  if (envUrl && envUrl.trim()) {
-    return envUrl.replace(/\/$/, '')
-  }
-  return ''
+  return getProxyBaseUrl()
 }
 
 function getAlertSecret(): string {

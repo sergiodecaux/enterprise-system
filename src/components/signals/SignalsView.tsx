@@ -49,6 +49,7 @@ import {
   pushSignalSnapshot,
 } from '../../engine/analysis'
 import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
+import { AltMacroStrip } from '../market/AltMacroStrip'
 
 const BTC = 'BTC/USDT:USDT'
 
@@ -307,6 +308,11 @@ const SignalsView = () => {
         fearGreedLabel:
           workerCtx?.fearGreedLabel ?? newsIntel.fearGreed?.label ?? null,
         btcDominance: workerCtx?.btcDominance ?? null,
+        btcDomDelta24h: workerCtx?.btcDomDelta24h ?? null,
+        total3Usd: workerCtx?.total3Usd ?? null,
+        total3Delta24h: workerCtx?.total3Delta24h ?? null,
+        altRegime: workerCtx?.altRegime ?? null,
+        altBias: workerCtx?.altBias ?? null,
         newsLabel: workerCtx?.newsLabel ?? null,
         newsHeadlines: workerCtx?.newsHeadlines,
         coinNewsLabel: coinNews?.label ?? coinSent?.label ?? null,
@@ -470,27 +476,12 @@ const SignalsView = () => {
       </div>
 
       {/* Market strip */}
-      <div className="grid grid-cols-3 gap-2 border-b border-hull-border px-4 py-3">
-        <div className="rounded-lg border border-hull-border bg-hull/50 px-2 py-2 text-center">
-          <div className="font-mono text-[9px] uppercase text-holo/40">BTC.D</div>
-          <div className="font-mono text-sm font-bold text-holo">
-            {workerCtx?.btcDominance != null
-              ? `${workerCtx.btcDominance.toFixed(1)}%`
-              : '—'}
-          </div>
-        </div>
-        <div className="rounded-lg border border-hull-border bg-hull/50 px-2 py-2 text-center">
-          <div className="font-mono text-[9px] uppercase text-holo/40">F&G</div>
-          <div className="font-mono text-sm font-bold text-holo">
-            {workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? '—'}
-          </div>
-        </div>
-        <div className="rounded-lg border border-hull-border bg-hull/50 px-2 py-2 text-center">
-          <div className="font-mono text-[9px] uppercase text-holo/40">News</div>
-          <div className="font-mono text-sm font-bold text-holo">
-            {workerCtx?.newsLabel ?? '—'}
-          </div>
-        </div>
+      <div className="border-b border-hull-border px-4 py-3">
+        <AltMacroStrip ctx={workerCtx} />
+        <p className="mt-1.5 text-center font-mono text-[9px] text-holo/35">
+          F&G {workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? '—'}
+          {workerCtx?.newsLabel ? ` · News ${workerCtx.newsLabel}` : ''}
+        </p>
       </div>
 
       {/* Search */}

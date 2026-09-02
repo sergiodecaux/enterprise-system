@@ -3,6 +3,7 @@
  */
 
 import type { WorkerMarketContext } from '../../api/marketContext'
+import { deriveAltMacro } from './altMacro'
 
 export interface MarketContextBoost {
   /** Added to PE score via newsSentimentBoost channel (−1.5…+1.5) */
@@ -79,22 +80,39 @@ export function buildMarketContextBoost(opts: {
       }
     }
 
-    const d = ctx.btcDominance
-    if (d != null && side) {
+    const macro = deriveAltMacro(ctx)
+    if (side) {
       if (!isBtc) {
-        if (d >= 55 && side === 'LONG') {
-          marketCtxBoost -= 0.35
-          notes.push(`BTC.D ${d.toFixed(0)}% давит альты (LONG)`)
-        } else if (d <= 48 && side === 'LONG') {
-          marketCtxBoost += 0.25
-          notes.push(`BTC.D ${d.toFixed(0)}% — пространство альтам`)
-        } else if (d >= 55 && side === 'SHORT') {
-          marketCtxBoost += 0.15
-          notes.push(`BTC.D ${d.toFixed(0)}% поддерживает SHORT альта`)
+        if (macro.regime === 'ALT_ON') {
+          marketCtxBoost += side === 'LONG' ? 0.4 : -0.35
+          notes.push(macro.line)
+        } else if (macro.regime === 'ALT_OFF') {
+          marketCtxBoost += side === 'SHORT' ? 0.4 : -0.4
+          notes.push(macro.line)
+        } else if (macro.regime === 'BTC_LEAD') {
+          if (side === 'LONG') marketCtxBoost -= 0.2
+          notes.push(macro.line)
+        } else if (macro.regime === 'RISK_OFF') {
+          marketCtxBoost += side === 'LONG' ? -0.35 : 0.15
+          notes.push(macro.line)
+        } else {
+          const d = ctx.btcDominance
+          if (d != null) {
+            if (d >= 55 && side === 'LONG') {
+              marketCtxBoost -= 0.35
+              notes.push(`BTC.D ${d.toFixed(0)}% давит альты (LONG)`)
+            } else if (d <= 48 && side === 'LONG') {
+              marketCtxBoost += 0.25
+              notes.push(`BTC.D ${d.toFixed(0)}% — пространство альтам`)
+            } else if (d >= 55 && side === 'SHORT') {
+              marketCtxBoost += 0.15
+              notes.push(`BTC.D ${d.toFixed(0)}% поддерживает SHORT альта`)
+            }
+          }
         }
-      } else if (d >= 54 && side === 'LONG') {
+      } else if (ctx.btcDominance != null && ctx.btcDominance >= 54 && side === 'LONG') {
         marketCtxBoost += 0.15
-        notes.push(`BTC.D ${d.toFixed(0)}% поддерживает BTC LONG`)
+        notes.push(`BTC.D ${ctx.btcDominance.toFixed(0)}% поддерживает BTC LONG`)
       }
     }
   }

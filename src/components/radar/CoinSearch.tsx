@@ -34,6 +34,8 @@ const CoinSearch = () => {
 
   const extraWatchlist = useAppStore((s) => s.extraWatchlist)
   const addToWatchlist = useAppStore((s) => s.addToWatchlist)
+  const toggleRadarFavorite = useAppStore((s) => s.toggleRadarFavorite)
+  const radarFavorites = useAppStore((s) => s.radarFavorites)
   const upsertSignal = useAppStore((s) => s.upsertSignal)
   const updateTicker = useAppStore((s) => s.updateTicker)
   const selectCoin = useAppStore((s) => s.selectCoin)
@@ -78,6 +80,9 @@ const CoinSearch = () => {
     try {
       void loadWorkerMarketContext()
       addToWatchlist(ticker.symbol)
+      if (!radarFavorites.includes(ticker.symbol)) {
+        toggleRadarFavorite(ticker.symbol)
+      }
 
       updateTicker({
         symbol: toFlatSymbol(ticker.symbol),

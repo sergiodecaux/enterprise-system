@@ -19,12 +19,12 @@ export interface Radar141Filters {
 }
 
 export const DEFAULT_RADAR141_FILTERS: Radar141Filters = {
-  topLiquidityOnly: true,
-  minGapPct: 3,
-  minGapAtr: 2,
-  maxDist141Pct: 0.8,
-  minAtrPct: 0.35,
-  excludeNewsRisk: true,
+  topLiquidityOnly: false,
+  minGapPct: 0,
+  minGapAtr: 0,
+  maxDist141Pct: 99,
+  minAtrPct: 0,
+  excludeNewsRisk: false,
 }
 
 export interface GapCard {

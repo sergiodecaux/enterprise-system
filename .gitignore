@@ -27,3 +27,18 @@ dist-ssr
 scripts/.env
 .env
 .env.local
+
+# Android / Capacitor local build
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/captures/
+android/app/release/
+*.apk
+*.aab
+*.apks
+
+# Cloudflare wrangler local cache
+workers/mexc-proxy/.wrangler/
+workers/mexc-proxy/.wrangler-dry/

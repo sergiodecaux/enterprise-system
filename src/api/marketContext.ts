@@ -1,6 +1,11 @@
 /**
- * Shared market context from worker: Fear&Greed, news, BTC.D.
+ * Shared market context from worker: Fear&Greed, news, BTC.D, TOTAL3.
  */
+
+import { getProxyBaseUrl } from './proxyBase'
+
+export type AltRegime = 'ALT_ON' | 'ALT_OFF' | 'BTC_LEAD' | 'RISK_OFF' | 'NEUTRAL'
+export type AltBias = 'LONG' | 'SHORT' | 'NEUTRAL'
 
 export interface CoinNewsHit {
   score: number
@@ -16,21 +21,22 @@ export interface WorkerMarketContext {
   newsHeadlines: string[]
   coinNews: Record<string, CoinNewsHit>
   btcDominance: number | null
+  /** BTC.D change vs ~24h snapshot, percentage points */
   btcDomDelta24h: number | null
+  ethDominance?: number | null
+  /** Alt mcap excluding BTC + ETH */
+  total3Usd?: number | null
+  /** TOTAL3 24h %, from snapshot when available */
+  total3Delta24h?: number | null
+  totalMcapDelta24h?: number | null
+  altRegime?: AltRegime | null
+  altBias?: AltBias | null
   fetchedAt: number
   lines: string[]
 }
 
-function getProxyBase(): string {
-  const envUrl = import.meta.env.VITE_MEXC_PROXY_URL as string | undefined
-  if (envUrl && envUrl.trim()) {
-    return envUrl.replace(/\/$/, '')
-  }
-  return ''
-}
-
 export async function fetchWorkerMarketContext(): Promise<WorkerMarketContext | null> {
-  const base = getProxyBase()
+  const base = getProxyBaseUrl()
   if (!base) return null
   try {
     const res = await fetch(`${base}/market-context`, {

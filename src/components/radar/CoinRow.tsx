@@ -1,9 +1,10 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { CoinSignal } from '../../engine/types'
 import { useAppStore } from '../../store/useAppStore'
 import WinRateBar from './WinRateBar'
 import SentimentBadge from './SentimentBadge'
+import { toBaseTicker } from '../../api/mexc'
 
 interface CoinRowProps {
   signal: CoinSignal
@@ -15,20 +16,10 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
   const { t } = useTranslation()
   const newsSettings = useAppStore((s) => s.newsSettings)
   const coinSentiments = useAppStore((s) => s.newsIntel.coinSentiments)
-  const liqMap = useAppStore(
-    (s) => s.liquidityMaps[signal.internalSymbol] ?? null
-  )
-  const whaleState = useAppStore(
-    (s) => s.whaleWatcher[signal.internalSymbol] ?? null
-  )
-  const hasWhaleAlert = (whaleState?.alerts ?? []).some(
-    (a) => a.isActive && !a.isExpired
-  )
-  const dna = useAppStore(
-    (s) => s.sessionDNA[signal.internalSymbol] ?? null
-  )
-  const personalityIcon =
-    dna?.personality !== 'UNKNOWN' ? dna?.personalityIcon : null
+  const favorites = useAppStore((s) => s.radarFavorites)
+  const toggleFav = useAppStore((s) => s.toggleRadarFavorite)
+  const isFav = favorites.includes(signal.internalSymbol)
+  const ticker = toBaseTicker(signal.internalSymbol)
   const baseSym = signal.internalSymbol.split('/')[0]
   const sentiment =
     newsSettings.enabled && newsSettings.showSentimentBadge
@@ -79,18 +70,35 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
 
   return (
     <div
-      className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 border-b border-hull-border/50 px-4 py-3 transition-colors duration-200 hover:bg-hull-light/50 sm:gap-3"
+      className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 border-b border-hull-border/50 px-3 py-3 transition-colors duration-200 hover:bg-hull-light/50 sm:px-4"
       onClick={onClick}
     >
+      <button
+        type="button"
+        className={`shrink-0 rounded-md p-1 ${
+          isFav ? 'text-amber-300' : 'text-holo/25'
+        }`}
+        title={isFav ? 'Убрать из избранного' : 'В избранное'}
+        onClick={(e) => {
+          e.stopPropagation()
+          toggleFav(signal.internalSymbol)
+        }}
+      >
+        <Star className="h-4 w-4" fill={isFav ? 'currentColor' : 'none'} />
+      </button>
+
       <div className="w-6 shrink-0 text-right font-mono text-xs text-holo/30">
         {String(rank).padStart(2, '0')}
       </div>
 
-      <div className="min-w-0 flex-1 overflow-hidden">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <div className="truncate font-mono text-sm font-bold text-holo">
-            {signal.displayName}
-          </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-1">
+          <span className="whitespace-nowrap font-mono text-sm font-bold text-holo">
+            {ticker}
+          </span>
+          <span className="shrink-0 font-mono text-[10px] text-holo/35">
+            USDT
+          </span>
           <SentimentBadge sentiment={sentiment} />
         </div>
         <div className="flex items-center gap-2 font-mono text-xs">
@@ -104,99 +112,20 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
       </div>
 
       <div
-        className={`w-[4.5rem] shrink-0 truncate rounded border px-1.5 py-0.5 text-center font-mono text-[10px] uppercase ${getSignalBadgeClass()}`}
+        className={`w-[3.6rem] shrink-0 rounded border px-1 py-0.5 text-center font-mono text-[10px] uppercase ${getSignalBadgeClass()}`}
         title={getSignalText()}
       >
         {getSignalText()}
       </div>
 
-      <div className="flex w-[5.75rem] shrink-0 flex-col items-end justify-center gap-0.5 overflow-hidden">
-        <div className="flex items-center justify-end gap-0.5">
-          <WinRateBar value={signal.probabilityPct} compact label="Score" />
-          <span
-            className={`inline-flex w-4 justify-center font-mono text-[9px] font-bold ${
-              signal.scoreCard
-                ? signal.scoreCard.ready
-                  ? 'text-matrix'
-                  : signal.scoreCard.grade === 'B'
-                    ? 'text-yellow-400'
-                    : 'text-holo/40'
-                : 'invisible'
-            }`}
-            title={
-              signal.scoreCard
-                ? `ScoreCard ${signal.scoreCard.totalScore}/${signal.scoreCard.maxScore}`
-                : undefined
-            }
-          >
-            {signal.scoreCard?.grade ?? '·'}
-          </span>
-        </div>
+      <div className="flex w-[4.5rem] shrink-0 flex-col items-end justify-center gap-0.5">
+        <WinRateBar value={signal.probabilityPct} compact label="Score" />
         <span className="font-mono text-[8px] uppercase tracking-wide text-holo/30">
           Score
         </span>
       </div>
 
-      <div className="flex shrink-0 items-center gap-0.5">
-        <span
-          className={`inline-flex w-3.5 justify-center text-[9px] ${
-            liqMap && liqMap.liquidityBoost > 0.5 ? 'text-yellow-400' : 'invisible'
-          }`}
-          title={
-            liqMap && liqMap.liquidityBoost > 0.5
-              ? `Магнит ликвидности: +${liqMap.liquidityBoost.toFixed(1)}`
-              : undefined
-          }
-        >
-          🧲
-        </span>
-        <span
-          className={`inline-flex w-3.5 justify-center text-[9px] ${
-            signal.btcDivergence?.type === 'BULL_DIV'
-              ? 'text-matrix'
-              : signal.btcDivergence?.type === 'BEAR_DIV'
-                ? 'text-alert'
-                : 'invisible'
-          }`}
-          title={signal.btcDivergence?.label}
-        >
-          {signal.btcDivergence?.type === 'BEAR_DIV' ? '🔻' : '⚡'}
-        </span>
-        <span
-          className={`inline-flex w-3.5 justify-center text-[9px] ${
-            hasWhaleAlert ? 'text-cyan-400' : 'invisible'
-          }`}
-          title={
-            hasWhaleAlert
-              ? `Кит: ${
-                  whaleState?.strongestSupport
-                    ? `Поддержка $${(whaleState.strongestSupport.volumeUsd / 1e6).toFixed(1)}M`
-                    : whaleState?.strongestResistance
-                      ? `Сопротивление $${(whaleState.strongestResistance.volumeUsd / 1e6).toFixed(1)}M`
-                      : 'Активен'
-                }`
-              : undefined
-          }
-        >
-          🐋
-        </span>
-        <span
-          className={`inline-flex w-3.5 justify-center text-[9px] ${
-            personalityIcon && dna ? '' : 'invisible'
-          }`}
-          title={
-            dna
-              ? `ДНК сессии: ${dna.personalityLabel} — ${dna.keyInsight}`
-              : undefined
-          }
-        >
-          {personalityIcon ?? '·'}
-        </span>
-      </div>
-
-      <div className="flex-shrink-0">
-        <ChevronRight className="h-4 w-4 text-holo/20" />
-      </div>
+      <ChevronRight className="h-4 w-4 shrink-0 text-holo/20" />
     </div>
   )
 }
