@@ -966,11 +966,11 @@ export function composeStructureRead(input: {
   if (h4?.lastChoch) pushMark(h4.lastChoch, '4H')
 
   const chartPath =
-    pathSide && input.price > 0
+    tradeReady && pathSide && input.price > 0
       ? buildFlightPath({
           price: input.price,
           side: pathSide,
-          held: structureHeld,
+          held: true,
           h1,
           h4,
           fib: fib141,

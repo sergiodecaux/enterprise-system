@@ -2595,22 +2595,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             })()}
           </div>
         )}
-        {structureRead && !pathModeActive && !advisor && (
-          <div
-            className={`pointer-events-none absolute bottom-1.5 left-2 z-20 max-w-[72%] font-mono text-[10px] leading-tight ${
-              structureRead.trap?.phase === 'TRADE_READY'
-                ? 'text-emerald-200/80'
-                : structureRead.trap?.phase === 'TRAP'
-                  ? 'text-amber-200/85'
-                  : 'text-sky-200/80'
-            }`}
-          >
-            <div>{structureRead.summary}</div>
-            {structureRead.trap?.forecast && (
-              <div className="mt-0.5 text-white/45">{structureRead.trap.forecast}</div>
-            )}
-          </div>
-        )}
         {chartReady > 0 && showSessions && (
           <SessionOverlay
             chart={chartInstance}
@@ -2638,9 +2622,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         {chartReady > 0 && lastCandleTs > 0 && !pathModeActive && !advisor && (
           <StructureOverlay
             chart={chartInstance}
+            series={candleRef.current}
             read={structureRead}
             lastCandleTs={lastCandleTs}
-            showPath
+            showPath={structureRead?.trap?.phase === 'TRADE_READY'}
           />
         )}
         {chartReady > 0 && lastCandleTs > 0 && advisor && (
