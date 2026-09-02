@@ -1,5 +1,5 @@
 /**
- * Compact structure strip: закреп vs слом, then 1H → 4H → D.
+ * Compact structure strip: hunt / trap / reclaim, then 1H → 4H → D.
  */
 
 import type { StructureRead, TfStructure } from '../../engine/smc/structureRead'
@@ -58,28 +58,66 @@ function chip(tf: TfStructure | null, primary: boolean) {
   )
 }
 
+function phaseLabel(read: StructureRead): { text: string; cls: string } {
+  const p = read.trap?.phase
+  if (p === 'TRADE_READY') {
+    return {
+      text: read.preferredSide === 'SHORT' ? 'Факт шорт' : 'Факт лонг',
+      cls: 'text-emerald-300',
+    }
+  }
+  if (p === 'TRAP') {
+    return { text: 'Развод ММ', cls: 'text-amber-300' }
+  }
+  if (p === 'HUNTING') {
+    return { text: 'Охота', cls: 'text-violet-300' }
+  }
+  if (p === 'SWEPT') {
+    return { text: 'Сняли — ждём закреп', cls: 'text-sky-300' }
+  }
+  return { text: 'Ждём факт', cls: 'text-white/50' }
+}
+
 const StructureHud = ({ read }: Props) => {
   if (!read) return null
-  const held = read.structureHeld
+  const phase = phaseLabel(read)
+  const trap = read.trap
   const dest = read.magnet
-  const fly = read.preferredSide === 'LONG'
 
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] px-2 py-1">
-      <span
-        className={`font-mono text-[9px] font-bold uppercase ${
-          held ? 'text-emerald-300' : 'text-rose-300'
-        }`}
-      >
-        {held ? 'Закреп держит' : 'Структура потеряна'}
-      </span>
-      {chip(read.h1, true)}
-      {chip(read.h4, false)}
-      {chip(read.d1, false)}
-      {dest && (
-        <span className="ml-auto font-mono text-[9px] text-white/55">
-          {held ? 'цель' : fly ? 'полёт к' : 'падение к'} {fmtPx(dest.price)}
+    <div className="space-y-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] px-2 py-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className={`font-mono text-[9px] font-bold uppercase ${phase.cls}`}>
+          {phase.text}
         </span>
+        {chip(read.h1, true)}
+        {chip(read.h4, false)}
+        {chip(read.d1, false)}
+        {dest && (
+          <span className="ml-auto font-mono text-[9px] text-white/55">
+            {trap?.phase === 'TRADE_READY' ? 'цель' : 'охота'} {fmtPx(dest.price)}
+          </span>
+        )}
+      </div>
+      {trap && (trap.reclaimLevel != null || trap.weaknessLevel != null) && (
+        <div className="font-mono text-[9px] text-white/45">
+          {trap.reclaimLevel != null && (
+            <span>
+              закреп {fmtPx(trap.reclaimLevel)}
+            </span>
+          )}
+          {trap.weaknessLevel != null && (
+            <span>
+              {trap.reclaimLevel != null ? ' · ' : ''}слабость {fmtPx(trap.weaknessLevel)}
+            </span>
+          )}
+          {trap.crowdLongs != null && (
+            <span> · лонги {fmtPx(trap.crowdLongs)}</span>
+          )}
+          {trap.crowdShorts != null && (
+            <span> · шорты {fmtPx(trap.crowdShorts)}</span>
+          )}
+        </div>
       )}
     </div>
   )

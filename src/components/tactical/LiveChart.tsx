@@ -101,6 +101,7 @@ import {
 } from '../../api/telegram/alerts'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { useLiqHeatmap } from '../../hooks/useLiqHeatmap'
+import { buildLiqHeatmap } from '../../engine/derivatives/liqHeatmap'
 import WhaleLevelsOverlay from './WhaleLevelsOverlay'
 import LiqHeatmapOverlay from './LiqHeatmapOverlay'
 import SequenceProcessOverlay from './SequenceProcessOverlay'
@@ -361,6 +362,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const lastClose = candles.length ? candles[candles.length - 1][4] : 0
   const mapPrice = currentPrice > 0 ? currentPrice : lastClose
   const liqModel = useLiqHeatmap(symbol, candles, mapPrice, showLiqMap)
+  const liqFromCandles = useMemo(
+    () => buildLiqHeatmap({ candles, currentPrice: mapPrice }),
+    [candles, mapPrice]
+  )
+  const liqForStructure = liqModel ?? liqFromCandles
   const liveBookImbalance =
     orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
   /** 5% OBI buckets — forecast ignores sub-bucket noise */
@@ -493,6 +499,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       candles1d: dSrc.length >= 16 ? dSrc : undefined,
       candles1w: candles1w.length >= 8 ? candles1w : undefined,
       fib: globalFib,
+      liq: liqForStructure,
     })
   }, [
     candles,
@@ -503,6 +510,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     timeframe,
     currentPrice,
     globalFib,
+    liqForStructure,
   ])
 
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
@@ -2589,11 +2597,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         )}
         {structureRead && !pathModeActive && !advisor && (
           <div
-            className={`pointer-events-none absolute bottom-1.5 left-2 z-20 max-w-[62%] font-mono text-[10px] leading-tight ${
-              structureRead.structureHeld ? 'text-emerald-200/80' : 'text-rose-200/85'
+            className={`pointer-events-none absolute bottom-1.5 left-2 z-20 max-w-[72%] font-mono text-[10px] leading-tight ${
+              structureRead.trap?.phase === 'TRADE_READY'
+                ? 'text-emerald-200/80'
+                : structureRead.trap?.phase === 'TRAP'
+                  ? 'text-amber-200/85'
+                  : 'text-sky-200/80'
             }`}
           >
-            {structureRead.summary}
+            <div>{structureRead.summary}</div>
+            {structureRead.trap?.forecast && (
+              <div className="mt-0.5 text-white/45">{structureRead.trap.forecast}</div>
+            )}
           </div>
         )}
         {chartReady > 0 && showSessions && (

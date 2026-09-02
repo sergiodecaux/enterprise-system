@@ -45,20 +45,21 @@ const StructureOverlay = ({
     }
     if (!showPath || !read || read.chartPath.length < 2 || !lastCandleTs) return
 
-    const color = !read.structureHeld
-      ? read.preferredSide === 'SHORT'
-        ? '#fb7185'
-        : '#34d399'
-      : read.bias === 'BULLISH'
-        ? '#34d399'
-        : read.bias === 'BEARISH'
+    const hunting = read.trap?.phase !== 'TRADE_READY'
+    const color = hunting
+      ? '#f59e0b'
+      : !read.structureHeld
+        ? read.preferredSide === 'SHORT'
           ? '#fb7185'
-          : '#94a3b8'
+          : '#34d399'
+        : read.preferredSide === 'SHORT'
+          ? '#fb7185'
+          : '#34d399'
 
     const line = chart.addLineSeries({
       color,
-      lineWidth: 2,
-      lineStyle: 0,
+      lineWidth: hunting ? 1 : 2,
+      lineStyle: hunting ? 2 : 0,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: true,

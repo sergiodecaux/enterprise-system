@@ -8,6 +8,8 @@
 import type { OhlcvCandle } from '../../api/mexc'
 import type { PathPoint } from '../prediction/types'
 import type { GlobalFibonacciMap } from '../zones/globalFibonacci'
+import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
+import { buildMmTrapThesis, type MmTrapThesis } from './mmTrapThesis'
 
 export type StructureTf = '1h' | '4h' | '1d' | '1w'
 export type StructureTrend = 'BULLISH' | 'BEARISH' | 'RANGING'
@@ -99,6 +101,7 @@ export interface StructureRead {
   markers: StructureMarker[]
   magnet: { price: number; label: string } | null
   invalidation: number | null
+  trap: MmTrapThesis | null
 }
 
 export interface CongestionZone {
@@ -614,11 +617,21 @@ function pickMagnet(
   d1: TfStructure | null,
   w1: TfStructure | null,
   fib: Fib141Reaction | null,
-  side: 'LONG' | 'SHORT'
+  side: 'LONG' | 'SHORT',
+  trap: MmTrapThesis | null
 ): { price: number; label: string } | null {
   const cands: { price: number; label: string; rank: number }[] = []
   const push = (price: number | null | undefined, label: string, rank: number) => {
     if (price != null && price > 0) cands.push({ price, label, rank })
+  }
+  if (trap?.phase !== 'TRADE_READY') {
+    if (side === 'LONG') {
+      push(trap?.crowdShorts, 'шорты / охота', 12)
+      push(trap?.swept?.kind === 'BSL' ? trap.swept.price : null, 'BSL', 11)
+    } else {
+      push(trap?.crowdLongs, 'лонги / охота', 12)
+      push(trap?.swept?.kind === 'SSL' ? trap.swept.price : null, 'SSL', 11)
+    }
   }
   if (side === 'LONG') {
     push(h4?.nextBsl, 'сопротивление 4ч', 8)
@@ -847,6 +860,7 @@ export function composeStructureRead(input: {
   candles1d?: OhlcvCandle[]
   candles1w?: OhlcvCandle[]
   fib?: GlobalFibonacciMap | null
+  liq?: LiqHeatmapModel | null
 }): StructureRead {
   const h1 = input.candles1h?.length ? readTfStructure(input.candles1h, '1h') : null
   const h4 = input.candles4h?.length ? readTfStructure(input.candles4h, '4h') : null
@@ -873,48 +887,59 @@ export function composeStructureRead(input: {
   const net = weighted + fibTilt * 0.28
   const bias: StructureRead['bias'] =
     net >= 0.28 ? 'BULLISH' : net <= -0.28 ? 'BEARISH' : 'NEUTRAL'
-  const preferredSide: 'LONG' | 'SHORT' | null =
-    bias === 'BULLISH' ? 'LONG' : bias === 'BEARISH' ? 'SHORT' : fib141?.bias ?? null
 
-  const factors: string[] = []
-  if (h1) factors.push(`1H ${h1.narrative}`)
-  if (h4) factors.push(`4H ${h4.narrative}`)
-  if (d1) factors.push(`D ${d1.trend === 'RANGING' ? 'флэт' : d1.trend === 'BULLISH' ? 'бычий' : 'медвежий'} · ${d1.inDiscount ? 'дисконт' : 'премиум'}`)
-  if (w1) factors.push(`W ${w1.trend === 'BULLISH' ? 'бычий' : w1.trend === 'BEARISH' ? 'медвежий' : 'флэт'}`)
-  if (fib141) factors.push(fib141.narrative)
+  const trap = buildMmTrapThesis({
+    price: input.price,
+    candles1h: input.candles1h,
+    h1,
+    h4,
+    d1,
+    fib: fib141,
+    liq: input.liq ?? null,
+  })
 
   const hold = structureHoldState(h1, input.price)
-  const pathSide = hold.side ?? preferredSide
-  const structureHeld = hold.held
+  const tradeReady = trap.phase === 'TRADE_READY' && trap.tradeSide != null
+  const preferredSide = tradeReady ? trap.tradeSide : null
+  const pathSide = trap.huntSide ?? trap.tradeSide ?? hold.side
+  const structureHeld = tradeReady
+
+  const factors: string[] = [...trap.factors]
+  if (h4) {
+    factors.push(
+      `4H ${h4.trend === 'RANGING' ? 'флэт' : h4.trend === 'BULLISH' ? 'бычий' : 'медвежий'}`
+    )
+  }
+  if (d1) {
+    factors.push(
+      `D ${d1.trend === 'RANGING' ? 'флэт' : d1.trend === 'BULLISH' ? 'бычий' : 'медвежий'} · ${d1.inDiscount ? 'дисконт' : 'премиум'}`
+    )
+  }
 
   const magnet = pathSide
-    ? pickMagnet(h1, h4, d1, w1, fib141, pathSide)
+    ? pickMagnet(h1, h4, d1, w1, fib141, pathSide, trap)
     : null
 
   const invalidation =
-    pathSide === 'LONG'
+    trap.weaknessLevel ??
+    (preferredSide === 'LONG'
       ? h1?.lastSwingLow?.price ?? h4?.lastSwingLow?.price ?? null
-      : pathSide === 'SHORT'
+      : preferredSide === 'SHORT'
         ? h1?.lastSwingHigh?.price ?? h4?.lastSwingHigh?.price ?? null
-        : null
+        : null)
 
-  const confidence = Math.round(
-    Math.min(
-      92,
-      38 + Math.abs(net) * 55 + (h1?.lastBos?.held || h1?.lastReclaim?.held ? 8 : 0) +
-        (h4 && h1 && h4.trend === h1.trend && h1.trend !== 'RANGING' ? 10 : 0) +
-        (structureHeld ? 6 : -6)
-    )
-  )
+  const confidence = tradeReady
+    ? Math.round(
+        Math.min(
+          78,
+          44 +
+            Math.abs(net) * 28 +
+            (h4 && h1 && h4.trend === h1.trend && h1.trend !== 'RANGING' ? 8 : 0)
+        )
+      )
+    : Math.round(Math.min(46, 22 + Math.abs(net) * 20))
 
-  const dest = magnet?.label ?? (pathSide === 'LONG' ? 'ликвидность сверху' : 'ликвидность снизу')
-  const summary = !pathSide
-    ? 'Структура смешанная — ждём закреп'
-    : structureHeld
-      ? `Закреп держит · цель ${dest}`
-      : pathSide === 'SHORT'
-        ? `Структура потеряна · падение к ${dest}`
-        : `Структура потеряна · полёт к ${dest}`
+  const summary = trap.summary
 
   const markers: StructureMarker[] = []
   const pushMark = (ev: StructureEvent | null, tf: string) => {
@@ -962,7 +987,7 @@ export function composeStructureRead(input: {
     fib141,
     bias,
     confidence,
-    preferredSide: pathSide,
+    preferredSide,
     structureHeld,
     summary,
     factors: factors.slice(0, 6),
@@ -970,6 +995,7 @@ export function composeStructureRead(input: {
     markers,
     magnet,
     invalidation,
+    trap,
   }
 }
 
