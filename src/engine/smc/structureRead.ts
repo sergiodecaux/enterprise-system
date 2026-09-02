@@ -10,6 +10,10 @@ import type { PathPoint } from '../prediction/types'
 import type { GlobalFibonacciMap } from '../zones/globalFibonacci'
 import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
 import { buildMmTrapThesis, type MmTrapThesis } from './mmTrapThesis'
+import {
+  buildStructureScenarios,
+  type StructureScenarioBoard,
+} from './structureScenarios'
 
 export type StructureTf = '1h' | '4h' | '1d' | '1w'
 export type StructureTrend = 'BULLISH' | 'BEARISH' | 'RANGING'
@@ -102,6 +106,7 @@ export interface StructureRead {
   magnet: { price: number; label: string } | null
   invalidation: number | null
   trap: MmTrapThesis | null
+  scenarios: StructureScenarioBoard | null
 }
 
 export interface CongestionZone {
@@ -859,8 +864,11 @@ export function composeStructureRead(input: {
   candles4h?: OhlcvCandle[]
   candles1d?: OhlcvCandle[]
   candles1w?: OhlcvCandle[]
+  candlesTape?: OhlcvCandle[]
   fib?: GlobalFibonacciMap | null
   liq?: LiqHeatmapModel | null
+  bookImbalance?: number | null
+  mmDrive?: 'UP' | 'DOWN' | 'NEUTRAL' | null
 }): StructureRead {
   const h1 = input.candles1h?.length ? readTfStructure(input.candles1h, '1h') : null
   const h4 = input.candles4h?.length ? readTfStructure(input.candles4h, '4h') : null
@@ -939,7 +947,25 @@ export function composeStructureRead(input: {
       )
     : Math.round(Math.min(46, 22 + Math.abs(net) * 20))
 
-  const summary = trap.summary
+  let board: StructureScenarioBoard | null = null
+  try {
+    board = buildStructureScenarios({
+      price: input.price,
+      candlesTape: input.candlesTape,
+      candles1h: input.candles1h,
+      h1,
+      h4,
+      d1,
+      fib: fib141,
+      trap,
+      bookImbalance: input.bookImbalance,
+      mmDrive: input.mmDrive,
+    })
+  } catch {
+    board = null
+  }
+  const lead = board?.scenarios[0] ?? null
+  const summary = board?.now ?? trap.summary
 
   const markers: StructureMarker[] = []
   const pushMark = (ev: StructureEvent | null, tf: string) => {
@@ -966,18 +992,20 @@ export function composeStructureRead(input: {
   if (h4?.lastChoch) pushMark(h4.lastChoch, '4H')
 
   const chartPath =
-    tradeReady && pathSide && input.price > 0
-      ? buildFlightPath({
-          price: input.price,
-          side: pathSide,
-          held: true,
-          h1,
-          h4,
-          fib: fib141,
-          magnet,
-          invalidation,
-        })
-      : []
+    lead && lead.path.length >= 2
+      ? lead.path
+      : tradeReady && pathSide && input.price > 0
+        ? buildFlightPath({
+            price: input.price,
+            side: pathSide,
+            held: true,
+            h1,
+            h4,
+            fib: fib141,
+            magnet,
+            invalidation,
+          })
+        : []
 
   return {
     h1,
@@ -986,7 +1014,9 @@ export function composeStructureRead(input: {
     w1,
     fib141,
     bias,
-    confidence,
+    confidence: lead
+      ? Math.min(82, Math.max(18, lead.probability))
+      : confidence,
     preferredSide,
     structureHeld,
     summary,
@@ -996,6 +1026,7 @@ export function composeStructureRead(input: {
     magnet,
     invalidation,
     trap,
+    scenarios: board,
   }
 }
 

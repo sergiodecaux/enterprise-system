@@ -118,6 +118,7 @@ const CurvePathOverlay = ({
           lastValueVisible: false,
           crosshairMarkerVisible: false,
           title: '',
+          autoscaleInfoProvider: () => null,
         })
         line.setData(data)
         const first = data[0].value

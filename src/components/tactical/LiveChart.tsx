@@ -494,7 +494,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       const h4src = candles4h.length >= 16 ? candles4h : timeframe === '4h' ? candles : candles4h
       const dSrc = candles1d.length >= 16 ? candles1d : timeframe === '1d' ? candles : candles1d
       if (h1src.length < 16 && h4src.length < 16 && dSrc.length < 16) return null
-      const px = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
+      const px = lastClose > 0 ? lastClose : Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
       if (!(px > 0) && candles.length < 16) return null
       return composeStructureRead({
         price: px || (candles.length ? candles[candles.length - 1][4] : 0),
@@ -502,8 +502,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         candles4h: h4src.length >= 16 ? h4src : undefined,
         candles1d: dSrc.length >= 16 ? dSrc : undefined,
         candles1w: candles1w.length >= 8 ? candles1w : undefined,
+        candlesTape: candles.length >= 8 ? candles : undefined,
         fib: globalFib,
         liq: liqForStructure,
+        bookImbalance: bookForForecast,
+        mmDrive: mmSnap?.drive ?? null,
       })
     } catch (err) {
       logger.warn('structure read failed', err)
@@ -516,9 +519,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     candles1d,
     candles1w,
     timeframe,
-    currentPrice,
+    lastClose,
     globalFib,
     liqForStructure,
+    bookForForecast,
+    mmSnap?.drive,
   ])
 
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
@@ -2639,9 +2644,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           <StructureOverlay
             chart={chartInstance}
             series={candleRef.current}
+            containerRef={containerRef}
             read={structureRead}
             lastCandleTs={lastCandleTs}
-            showPath={structureRead?.trap?.phase === 'TRADE_READY'}
+            showPath={!pathModeActive}
           />
         )}
         {chartReady > 0 && lastCandleTs > 0 && advisor && (

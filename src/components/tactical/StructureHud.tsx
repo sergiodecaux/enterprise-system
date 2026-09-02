@@ -1,17 +1,11 @@
 /**
- * MM trap board: hunt vs actual trade. Visible on purpose — not a 9px chip.
+ * Live scenario board: which path is leading, and why — not a binary reclaim line.
  */
 
 import type { StructureRead, TfStructure } from '../../engine/smc/structureRead'
 
 interface Props {
   read: StructureRead | null
-}
-
-function fmtPx(p: number): string {
-  if (p >= 1000) return p.toFixed(1)
-  if (p >= 1) return p.toFixed(4)
-  return p.toPrecision(5)
 }
 
 function tfBit(tf: TfStructure | null): string {
@@ -39,42 +33,28 @@ function tfBit(tf: TfStructure | null): string {
 
 const StructureHud = ({ read }: Props) => {
   if (!read) return null
-  const trap = read.trap
-  const phase = trap?.phase ?? 'NEUTRAL'
-  const ready = phase === 'TRADE_READY'
-  const trapLong = trap?.trapSide === 'LONG'
+  const board = read.scenarios
+  const lead = board?.scenarios[0] ?? null
+  const list = board?.scenarios ?? []
 
-  const headline = ready
-    ? trap?.tradeSide === 'SHORT'
-      ? 'СДЕЛКА: ШОРТ'
-      : 'СДЕЛКА: ЛОНГ'
-    : phase === 'TRAP'
-      ? trapLong
-        ? 'ММ КОРМИТ ЛОНГИ'
-        : 'ММ КОРМИТ ШОРТЫ'
-      : phase === 'HUNTING'
-        ? trap?.huntSide === 'LONG'
-          ? 'ОХОТА НА ШОРТЫ — НЕ ЛОНГ'
-          : 'ОХОТА НА ЛОНГИ — НЕ ШОРТ'
-        : phase === 'SWEPT'
-          ? 'СНЯЛИ — ЖДЁМ ЗАКРЕП'
-          : 'НЕТ СДЕЛКИ'
-
-  const tone = ready
-    ? 'border-emerald-400/35 bg-emerald-950/40 text-emerald-200'
-    : phase === 'TRAP'
-      ? 'border-amber-400/40 bg-amber-950/45 text-amber-200'
-      : 'border-violet-400/30 bg-violet-950/35 text-violet-100'
+  const tone = lead?.kind === 'RECLAIM_CONTINUE'
+    ? 'border-emerald-400/30 bg-emerald-950/35 text-emerald-100'
+    : lead?.kind === 'RANGE_CHOP'
+      ? 'border-white/15 bg-black/30 text-white/80'
+      : 'border-cyan-400/25 bg-slate-950/50 text-cyan-100'
 
   return (
     <div className={`rounded-xl border px-3 py-2 ${tone}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-mono text-[12px] font-bold uppercase tracking-wide">
-            {headline}
+          <div className="font-mono text-[11px] font-bold uppercase tracking-wide text-white/90">
+            {lead
+              ? `Ведёт ${lead.id} · ${lead.title}`
+              : 'Сценарии ещё собираются'}
+            {lead ? ` · ${lead.probability}%` : ''}
           </div>
           <p className="mt-0.5 font-mono text-[11px] leading-snug text-white/75">
-            {trap?.summary ?? read.summary}
+            {board?.now ?? read.summary}
           </p>
         </div>
         <div className="shrink-0 text-right font-mono text-[9px] text-white/40">
@@ -84,48 +64,39 @@ const StructureHud = ({ read }: Props) => {
         </div>
       </div>
 
-      <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-[10px]">
-        <div className="rounded-lg border border-white/10 bg-black/25 px-2 py-1.5">
-          <div className="text-[8px] uppercase tracking-wider text-white/35">
-            Для сделки
-          </div>
-          {ready ? (
-            <div className="text-emerald-200">
-              {trap?.tradeSide === 'SHORT' ? 'шорт' : 'лонг'}
-              {trap?.reclaimLevel != null
-                ? ` · держать ${fmtPx(trap.reclaimLevel)}`
-                : ''}
-            </div>
-          ) : (
-            <div className="text-white/70">
-              {trap?.reclaimLevel != null
-                ? `закреп ${fmtPx(trap.reclaimLevel)}`
-                : 'нет закрепа — не входим'}
-            </div>
-          )}
-          {trap?.weaknessLevel != null && (
-            <div className="text-rose-300/80">
-              слабость {fmtPx(trap.weaknessLevel)}
-            </div>
-          )}
+      {list.length > 0 && (
+        <div className="mt-2 max-h-[24vh] space-y-1.5 overflow-y-auto">
+          {list.map((sc, i) => {
+            const leadRow = i === 0
+            return (
+              <div
+                key={sc.id}
+                className={`rounded-lg border px-2 py-1.5 ${
+                  leadRow
+                    ? 'border-white/20 bg-black/35'
+                    : 'border-white/10 bg-black/20'
+                }`}
+              >
+                <div className="flex items-baseline gap-2 font-mono text-[10px]">
+                  <span
+                    className="mt-0.5 h-2 w-2 shrink-0 rounded-full"
+                    style={{ background: sc.color }}
+                  />
+                  <span className="font-bold" style={{ color: sc.color }}>
+                    {sc.id} {sc.probability}%
+                  </span>
+                  <span className="text-white/85">{sc.title}</span>
+                </div>
+                <p className="mt-0.5 pl-4 font-mono text-[10px] leading-snug text-white/60">
+                  {sc.why}
+                </p>
+                <p className="mt-0.5 pl-4 font-mono text-[9px] text-white/40">
+                  {sc.invalidation}
+                </p>
+              </div>
+            )
+          })}
         </div>
-        <div className="rounded-lg border border-white/10 bg-black/25 px-2 py-1.5">
-          <div className="text-[8px] uppercase tracking-wider text-white/35">
-            Где висит толпа
-          </div>
-          <div className="text-emerald-300/90">
-            лонги {trap?.crowdLongs != null ? fmtPx(trap.crowdLongs) : '—'}
-          </div>
-          <div className="text-rose-300/90">
-            шорты {trap?.crowdShorts != null ? fmtPx(trap.crowdShorts) : '—'}
-          </div>
-        </div>
-      </div>
-
-      {trap?.forecast && (
-        <p className="mt-1.5 font-mono text-[10px] leading-snug text-white/55">
-          {trap.forecast}
-        </p>
       )}
     </div>
   )
