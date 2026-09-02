@@ -13,6 +13,8 @@ import type { Fib141Reaction, TfStructure } from './structureRead'
 import { deriveAltMacro } from '../analysis/altMacro'
 import type { AltBias, AltRegime } from '../../api/marketContext'
 import { readAuction, type AuctionRange } from './auction'
+import type { CloseCascade } from './closeCascade'
+import { closedSlice } from './closeCascade'
 
 export const SCENARIO_COLORS = ['#22d3ee', '#f472b6', '#a78bfa', '#fbbf24'] as const
 
@@ -272,12 +274,13 @@ function chopIn(
 ): Array<[number, number, string?]> {
   const pts: Array<[number, number, string?]> = []
   let t = startT
-  for (let i = 0; i < waves; i++) {
+  const n = Math.min(waves, 2)
+  for (let i = 0; i < n; i++) {
     t += step
     const toLo = i % 2 === 0
     const depth = 0.22 + (i % 3) * 0.12
     const px = toLo ? lerp(origin, lo, depth) : lerp(origin, hi, depth)
-    pts.push([t, px, i === 0 ? 'набор' : i === waves - 1 ? 'ещё в боковике' : undefined])
+    pts.push([t, px, i === 0 ? 'набор' : undefined])
   }
   return pts
 }
@@ -314,6 +317,7 @@ type ScenarioCtx = {
   newsScore: number
   btcRs: number | null
   isBtc: boolean
+  cascade: CloseCascade | null
 }
 
 function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
@@ -324,6 +328,39 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
   }
   let t = 0
   t += ctx.stack * 5.2 * dir
+
+  const cas = ctx.cascade
+  if (cas) {
+    t += cas.execution * 7.4 * dir
+    t += cas.global * 8.2 * dir
+    if (cas.aligned) {
+      const withClose =
+        (cas.execution > 0 && s.side === 'LONG') ||
+        (cas.execution < 0 && s.side === 'SHORT')
+      t += withClose ? 9 : -11
+    }
+    if (cas.ltfFightsHtf) {
+      if (s.kind === 'HUNT_REVERSE' || s.kind === 'SNAP_BACK' || s.kind === 'FAILED_RANGE_BREAK') {
+        t += 6
+      }
+      const follow15 =
+        (cas.m15 && cas.m15.score > 0.28 && s.side === 'LONG') ||
+        (cas.m15 && cas.m15.score < -0.28 && s.side === 'SHORT')
+      if (follow15 && (s.kind === 'IMPULSE' || s.kind === 'HTF_CONTINUE' || s.kind === 'BREAKOUT')) {
+        t -= 8
+      }
+    }
+    const q4 = cas.h4?.quality
+    const q1 = cas.h1?.quality
+    const q15 = cas.m15?.quality
+    if (q4 === 'DISPLACEMENT_DOWN' && s.side === 'LONG') t -= 7
+    if (q4 === 'DISPLACEMENT_UP' && s.side === 'SHORT') t -= 7
+    if (q1 === 'REJECT_HIGH' && s.side === 'LONG') t -= 4
+    if (q1 === 'REJECT_LOW' && s.side === 'SHORT') t -= 4
+    if (q15 === 'INDECISION' && (s.kind === 'IMPULSE' || s.kind === 'BREAKOUT')) t -= 3.5
+    if (q15 === 'DISPLACEMENT_DOWN' && q1 === 'DISPLACEMENT_DOWN' && s.side === 'SHORT') t += 5
+    if (q15 === 'DISPLACEMENT_UP' && q1 === 'DISPLACEMENT_UP' && s.side === 'LONG') t += 5
+  }
 
   if (mag >= 1.05) {
     const withHtf =
@@ -389,7 +426,7 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
     t += 3.5
   }
 
-  t += ctx.book * 7 * dir
+  t += ctx.book * 2.2 * dir
   if (ctx.drive === 'UP') t += dir * 3
   if (ctx.drive === 'DOWN') t -= dir * 3
 
@@ -491,7 +528,8 @@ function nowCopy(
   d1: TfStructure | null,
   w1: TfStructure | null,
   auction: AuctionRange | null,
-  stack: number
+  stack: number,
+  cascade: CloseCascade | null
 ): string {
   const bits: string[] = []
   if (auction) {
@@ -549,8 +587,68 @@ function nowCopy(
     )
   }
 
-  bits.push(stackLine(h1, h4, d1, w1, stack))
-  return bits.slice(0, 4).join(' ')
+  if (cascade?.line) bits.unshift(cascade.line)
+  else bits.push(stackLine(h1, h4, d1, w1, stack))
+  return bits.slice(0, 3).join(' ')
+}
+
+function compactPath(pts: PathPoint[]): PathPoint[] {
+  if (pts.length <= 3) return pts
+  const first = pts[0]
+  const last = pts[pts.length - 1]
+  if (!first || !last) return pts
+  let bend = pts[Math.floor(pts.length / 2)] ?? last
+  let best = 0
+  const dt = last.timeOffsetSeconds - first.timeOffsetSeconds || 1
+  const dp = last.price - first.price
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i]
+    const t = (p.timeOffsetSeconds - first.timeOffsetSeconds) / dt
+    const line = first.price + dp * t
+    const d = Math.abs(p.price - line)
+    if (d >= best) {
+      best = d
+      bend = p
+    }
+  }
+  return [first, bend, last]
+}
+
+function spreadProbs(weights: number[]): number[] {
+  if (!weights.length) return []
+  if (weights.length === 1) return [100]
+  const pow = weights.map((w) => Math.pow(Math.max(0.5, w), 1.9))
+  const sum = pow.reduce((a, b) => a + b, 0) || 1
+  const pcts = pow.map((p) => (p / sum) * 100)
+  if (pcts[0] < 54) {
+    const bump = 54 - pcts[0]
+    const rest = pcts.slice(1).reduce((a, b) => a + b, 0) || 1
+    pcts[0] = 54
+    for (let i = 1; i < pcts.length; i++) pcts[i] -= bump * (pcts[i] / rest)
+  }
+  if (pcts.length >= 2 && pcts[0] - pcts[1] < 16) {
+    const gap = (16 - (pcts[0] - pcts[1])) / 2
+    pcts[0] += gap
+    pcts[1] -= gap
+  }
+  const rounded = pcts.map((p) => Math.max(8, Math.round(p)))
+  const drift = rounded.reduce((a, b) => a + b, 0) - 100
+  rounded[0] = Math.max(8, rounded[0] - drift)
+  return rounded
+}
+
+function pickBoard(sorted: RawScenario[]): RawScenario[] {
+  if (!sorted[0]) return []
+  const lead = sorted[0]
+  const picked: RawScenario[] = [lead]
+  const leadNet = netOf(lead.path)
+  const opp = sorted.find(
+    (s) => s !== lead && netOf(s.path) !== 'FLAT' && netOf(s.path) !== leadNet
+  )
+  if (opp && opp.weight >= lead.weight * 0.4) picked.push(opp)
+  else if (sorted[1] && sorted[1].weight >= lead.weight * 0.62) picked.push(sorted[1])
+  if (lead.weight >= (sorted[1]?.weight ?? 0) * 1.7) return picked.slice(0, Math.min(2, picked.length))
+  return picked.slice(0, 2)
 }
 
 interface RawScenario {
@@ -594,14 +692,17 @@ export function buildStructureScenarios(input: {
   newsScore?: number
   btcRs?: number | null
   isBtc?: boolean
+  cascade?: CloseCascade | null
+  tapeBarMs?: number
 }): StructureScenarioBoard {
   const price = input.price
-  const tapeSrc =
+  const tapeRaw =
     input.candlesTape && input.candlesTape.length >= 8
       ? input.candlesTape
       : input.candles1h ?? []
-  const tape = readTape(tapeSrc)
-  const last = tapeSrc[tapeSrc.length - 1] ?? input.candles1h?.[input.candles1h.length - 1]
+  const tapeSrc = closedSlice(tapeRaw, input.tapeBarMs ?? 3_600_000)
+  const tape = readTape(tapeSrc.length >= 6 ? tapeSrc : tapeRaw)
+  const last = tapeSrc[tapeSrc.length - 1] ?? tapeRaw[tapeRaw.length - 1]
   const origin =
     last && Number.isFinite(last[4]) && last[4] > 0 ? last[4] : price
   const trap = input.trap
@@ -661,6 +762,7 @@ export function buildStructureScenarios(input: {
     newsScore: input.newsScore ?? 0,
     btcRs: input.btcRs ?? null,
     isBtc: Boolean(input.isBtc),
+    cascade: input.cascade ?? null,
   }
   const raw: RawScenario[] = []
 
@@ -1278,47 +1380,25 @@ export function buildStructureScenarios(input: {
 
   for (const s of raw) {
     s.weight = tiltWeight(s, tiltCtx)
+    s.path = compactPath(s.path)
   }
 
   const sorted = raw
-    .filter((s) => s.weight >= 6 && s.path.length >= 3)
+    .filter((s) => s.weight >= 6 && s.path.length >= 2)
     .sort((a, b) => b.weight - a.weight)
 
-  const picked: RawScenario[] = []
-  if (sorted[0]) picked.push(sorted[0])
-  const leadNet = picked[0] ? netOf(picked[0].path) : 'FLAT'
-  const want = leadNet === 'UP' ? 'DOWN' : leadNet === 'DOWN' ? 'UP' : null
-  if (want) {
-    const opp = sorted.find((s) => !picked.includes(s) && netOf(s.path) === want)
-    if (opp) picked.push(opp)
-  }
-  for (const s of sorted) {
-    if (picked.length >= 3) break
-    if (picked.includes(s)) continue
-    const n = netOf(s.path)
-    const sameDirSameKind = picked.some(
-      (p) => p.kind === s.kind && netOf(p.path) === n
-    )
-    if (sameDirSameKind) continue
-    const sameDirCount = picked.filter((p) => netOf(p.path) === n).length
-    if (n !== 'FLAT' && sameDirCount >= 2) continue
-    picked.push(s)
-  }
+  const picked = pickBoard(sorted)
 
   if (!picked.length) {
     return {
-      now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack),
+      now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null),
       leadId: 'A',
-      leadTitle: 'Ждём факт на ленте',
+      leadTitle: 'Ждём закрытие 15м / часа',
       scenarios: [],
     }
   }
 
-  const weights = picked.map((s) => Math.max(1, s.weight))
-  const sumW = weights.reduce((a, b) => a + b, 0) || 1
-  const rounded = weights.map((w) => Math.max(1, Math.round((w / sumW) * 100)))
-  const drift = rounded.reduce((a, b) => a + b, 0) - 100
-  rounded[0] = Math.max(1, rounded[0] - drift)
+  const rounded = spreadProbs(picked.map((s) => Math.max(1, s.weight)))
   const scenarios: StructureScenario[] = picked
     .map((s, i) => ({
       id: 'A' as StructureScenario['id'],
@@ -1341,7 +1421,7 @@ export function buildStructureScenarios(input: {
 
   const lead = scenarios[0]
   return {
-    now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack),
+    now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null),
     leadId: lead?.id ?? 'A',
     leadTitle: lead?.title ?? 'Ждём факт',
     scenarios,

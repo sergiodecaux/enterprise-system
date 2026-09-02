@@ -74,8 +74,10 @@ import {
   findCongestionZones,
   markersForChart,
   readTfStructure,
+  type StructureRead,
   type StructureTf,
 } from '../../engine/smc/structureRead'
+import { lastClosedBar } from '../../engine/smc/closeCascade'
 import { pickActionZones } from '../../engine/smc/entryZones'
 import {
   analyzeZoneTap,
@@ -200,6 +202,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const fittedKeyRef = useRef<string>('')
   const userPanningRef = useRef(false)
   const chartHeightRef = useRef(CHART_HEIGHT)
+  const structureStickyRef = useRef<{ key: string; read: StructureRead | null } | null>(null)
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [chartExpanded, setChartExpanded] = useState(false)
@@ -363,16 +366,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const lastClose = candles.length ? candles[candles.length - 1][4] : 0
   const mapPrice = currentPrice > 0 ? currentPrice : lastClose
   const liqModel = useLiqHeatmap(symbol, candles, mapPrice, showLiqMap)
-  const liqFromCandles = useMemo(() => {
-    try {
-      if (!(mapPrice > 0) || candles.length < 8) return null
-      return buildLiqHeatmap({ candles, currentPrice: mapPrice })
-    } catch (err) {
-      logger.warn('liq heatmap failed', err)
-      return null
-    }
-  }, [candles, mapPrice])
-  const liqForStructure = liqModel ?? liqFromCandles
   const liveBookImbalance =
     orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
   /** 5% OBI buckets — forecast ignores sub-bucket noise */
@@ -429,20 +422,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     candles4h,
     candles1h,
     candles1w,
+    candles15m,
     isLoading: mtfLoading,
   } = useMultiTFAnalysis(symbol, currentPrice, true)
-
-  const globalFib = useMemo(() => {
-    const src =
-      candles.length >= 40
-        ? candles
-        : candles1d.length >= 20
-          ? candles1d
-          : candles
-    const px =
-      Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
-    return buildGlobalFibonacci(src, px)
-  }, [candles, candles1d, currentPrice])
 
   const chartStructure = useMemo(
     () =>
@@ -492,24 +474,72 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     })
   }, [])
 
+  const src15m =
+    candles15m.length >= 12
+      ? candles15m
+      : timeframe === '15m' || timeframe === '5m' || timeframe === '1m'
+        ? candles
+        : candles15m
+  const structureAnchor = [
+    lastClosedBar(src15m, 900_000)?.[0] ?? 0,
+    lastClosedBar(
+      candles1h.length >= 16 ? candles1h : timeframe === '1h' ? candles : candles1h,
+      3_600_000
+    )?.[0] ?? 0,
+    lastClosedBar(
+      candles4h.length >= 16 ? candles4h : timeframe === '4h' ? candles : candles4h,
+      14_400_000
+    )?.[0] ?? 0,
+    lastClosedBar(
+      candles1d.length >= 16 ? candles1d : timeframe === '1d' ? candles : candles1d,
+      86_400_000
+    )?.[0] ?? 0,
+    workerCtx?.altBias ?? 'N',
+    Math.round((fearGreedValue ?? workerCtx?.fearGreed ?? 50) / 8),
+  ].join('|')
+
   const structureRead = useMemo(() => {
+    if (structureStickyRef.current?.key === structureAnchor) {
+      return structureStickyRef.current.read
+    }
     try {
       const h1src = candles1h.length >= 20 ? candles1h : timeframe === '1h' ? candles : candles1h
       const h4src = candles4h.length >= 16 ? candles4h : timeframe === '4h' ? candles : candles4h
       const dSrc = candles1d.length >= 16 ? candles1d : timeframe === '1d' ? candles : candles1d
-      if (h1src.length < 16 && h4src.length < 16 && dSrc.length < 16) return null
-      const px = lastClose > 0 ? lastClose : Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
-      if (!(px > 0) && candles.length < 16) return null
-      return composeStructureRead({
-        price: px || (candles.length ? candles[candles.length - 1][4] : 0),
+      if (h1src.length < 16 && h4src.length < 16 && dSrc.length < 16) {
+        structureStickyRef.current = { key: structureAnchor, read: null }
+        return null
+      }
+      const closedPx =
+        lastClosedBar(src15m, 900_000)?.[4] ??
+        lastClosedBar(h1src, 3_600_000)?.[4] ??
+        lastClosedBar(dSrc, 86_400_000)?.[4] ??
+        0
+      if (!(closedPx > 0) && candles.length < 16) {
+        structureStickyRef.current = { key: structureAnchor, read: null }
+        return null
+      }
+      const px = closedPx > 0 ? closedPx : candles[candles.length - 1]?.[4] ?? 0
+      const fibSrc = candles.length >= 40 ? candles : dSrc
+      const fib = buildGlobalFibonacci(fibSrc, px)
+      let liq = null
+      try {
+        if (candles.length >= 8 && px > 0) {
+          liq = buildLiqHeatmap({ candles, currentPrice: px })
+        }
+      } catch {
+        liq = null
+      }
+      const next = composeStructureRead({
+        price: px,
         candles1h: h1src.length >= 16 ? h1src : undefined,
         candles4h: h4src.length >= 16 ? h4src : undefined,
         candles1d: dSrc.length >= 16 ? dSrc : undefined,
         candles1w: candles1w.length >= 8 ? candles1w : undefined,
-        candlesTape: candles.length >= 8 ? candles : undefined,
-        fib: globalFib,
-        liq: liqForStructure,
-        bookImbalance: bookForForecast,
+        candles15m: src15m.length >= 12 ? src15m : undefined,
+        candlesTape: src15m.length >= 8 ? src15m : candles.length >= 8 ? candles : undefined,
+        fib,
+        liq,
         mmDrive: mmSnap?.drive ?? null,
         mmStopHunt: mmHunt?.microIsStopHunt,
         mmHuntSide: mmHunt?.preferredSide ?? null,
@@ -528,21 +558,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         btcRs,
         isBtc: isBtcPair,
       })
+      structureStickyRef.current = { key: structureAnchor, read: next }
+      return next
     } catch (err) {
       logger.warn('structure read failed', err)
+      structureStickyRef.current = { key: structureAnchor, read: null }
       return null
     }
   }, [
+    structureAnchor,
     candles,
     candles1h,
     candles4h,
     candles1d,
     candles1w,
+    src15m,
     timeframe,
-    lastClose,
-    globalFib,
-    liqForStructure,
-    bookForForecast,
     mmSnap?.drive,
     mmHunt?.microIsStopHunt,
     mmHunt?.preferredSide,
@@ -563,6 +594,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     btcRs,
     isBtcPair,
   ])
+
+  useEffect(() => {
+    structureStickyRef.current = null
+  }, [symbol])
 
   /** Проторговка + FVG/OB откуда лонг/шорт с отката */
   const actionPick = useMemo(
@@ -2683,6 +2718,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             containerRef={containerRef}
             read={structureRead}
             lastCandleTs={lastCandleTs}
+            barSeconds={timeframeBarSeconds(timeframe)}
             showPath={!pathModeActive}
           />
         )}

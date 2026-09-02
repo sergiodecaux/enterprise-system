@@ -58,9 +58,22 @@ const StructureHud = ({ read }: Props) => {
           </p>
         </div>
         <div className="shrink-0 text-right font-mono text-[9px] text-white/40">
-          <div>{tfBit(read.h1)}</div>
           <div>{tfBit(read.h4)}</div>
-          <div>{tfBit(read.d1)}</div>
+          <div>{tfBit(read.h1)}</div>
+          {read.cascade?.m15 && (
+            <div>
+              15м{' '}
+              {read.cascade.m15.quality === 'DISPLACEMENT_UP'
+                ? 'тело↑'
+                : read.cascade.m15.quality === 'DISPLACEMENT_DOWN'
+                  ? 'тело↓'
+                  : read.cascade.m15.quality === 'REJECT_HIGH'
+                    ? 'отказ хая'
+                    : read.cascade.m15.quality === 'REJECT_LOW'
+                      ? 'отказ лоя'
+                      : 'пила'}
+            </div>
+          )}
         </div>
       </div>
 

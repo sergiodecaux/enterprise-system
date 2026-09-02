@@ -15,6 +15,13 @@ import {
   buildStructureScenarios,
   type StructureScenarioBoard,
 } from './structureScenarios'
+import {
+  aggregateMonthly,
+  cascadePrice,
+  closedSlice,
+  readCloseCascade,
+  type CloseCascade,
+} from './closeCascade'
 
 export type StructureTf = '1h' | '4h' | '1d' | '1w'
 export type StructureTrend = 'BULLISH' | 'BEARISH' | 'RANGING'
@@ -108,6 +115,7 @@ export interface StructureRead {
   invalidation: number | null
   trap: MmTrapThesis | null
   scenarios: StructureScenarioBoard | null
+  cascade: CloseCascade | null
 }
 
 export interface CongestionZone {
@@ -869,6 +877,7 @@ export function composeStructureRead(input: {
   candles4h?: OhlcvCandle[]
   candles1d?: OhlcvCandle[]
   candles1w?: OhlcvCandle[]
+  candles15m?: OhlcvCandle[]
   candlesTape?: OhlcvCandle[]
   fib?: GlobalFibonacciMap | null
   liq?: LiqHeatmapModel | null
@@ -891,11 +900,28 @@ export function composeStructureRead(input: {
   btcRs?: number | null
   isBtc?: boolean
 }): StructureRead {
-  const h1 = input.candles1h?.length ? readTfStructure(input.candles1h, '1h') : null
-  const h4 = input.candles4h?.length ? readTfStructure(input.candles4h, '4h') : null
-  const d1 = input.candles1d?.length ? readTfStructure(input.candles1d, '1d') : null
-  const w1 = input.candles1w?.length ? readTfStructure(input.candles1w, '1w') : null
-  const fibSrc = input.candles1h ?? input.candles4h ?? input.candles1d ?? []
+  const h1src = closedSlice(input.candles1h, 3_600_000)
+  const h4src = closedSlice(input.candles4h, 14_400_000)
+  const d1src = closedSlice(input.candles1d, 86_400_000)
+  const w1src = closedSlice(
+    input.candles1w ?? (d1src.length ? aggregateWeekly(d1src) : []),
+    604_800_000
+  )
+  const m1src = d1src.length ? aggregateMonthly(d1src) : []
+  const h1 = h1src.length ? readTfStructure(h1src, '1h') : null
+  const h4 = h4src.length ? readTfStructure(h4src, '4h') : null
+  const d1 = d1src.length ? readTfStructure(d1src, '1d') : null
+  const w1 = w1src.length ? readTfStructure(w1src, '1w') : null
+  const cascade = readCloseCascade({
+    candles15m: input.candles15m,
+    candles1h: input.candles1h,
+    candles4h: input.candles4h,
+    candles1d: input.candles1d,
+    candles1w: w1src,
+    candles1M: m1src,
+  })
+  const price = cascadePrice(cascade, input.price)
+  const fibSrc = h1src.length ? h1src : h4src.length ? h4src : d1src
   const fib141 = readFib141Reaction(fibSrc, input.fib ?? null)
 
   const weighted =
@@ -913,13 +939,13 @@ export function composeStructureRead(input: {
     fibTilt = fib141.bias === 'LONG' ? 0.2 : -0.2
   }
 
-  const net = weighted + fibTilt * 0.28
+  const net = weighted + fibTilt * 0.28 + cascade.execution * 0.22 + cascade.global * 0.18
   const bias: StructureRead['bias'] =
     net >= 0.28 ? 'BULLISH' : net <= -0.28 ? 'BEARISH' : 'NEUTRAL'
 
   const trap = buildMmTrapThesis({
-    price: input.price,
-    candles1h: input.candles1h,
+    price,
+    candles1h: h1src.length ? h1src : input.candles1h,
     h1,
     h4,
     d1,
@@ -927,13 +953,14 @@ export function composeStructureRead(input: {
     liq: input.liq ?? null,
   })
 
-  const hold = structureHoldState(h1, input.price)
+  const hold = structureHoldState(h1, price)
   const tradeReady = trap.phase === 'TRADE_READY' && trap.tradeSide != null
   const preferredSide = tradeReady ? trap.tradeSide : null
   const pathSide = trap.huntSide ?? trap.tradeSide ?? hold.side
   const structureHeld = tradeReady
 
   const factors: string[] = [...trap.factors]
+  if (cascade.line) factors.unshift(cascade.line)
   if (h4) {
     factors.push(
       `4H ${h4.trend === 'RANGING' ? 'флэт' : h4.trend === 'BULLISH' ? 'бычий' : 'медвежий'}`
@@ -976,9 +1003,9 @@ export function composeStructureRead(input: {
   let board: StructureScenarioBoard | null = null
   try {
     board = buildStructureScenarios({
-      price: input.price,
-      candlesTape: input.candlesTape,
-      candles1h: input.candles1h,
+      price,
+      candlesTape: input.candles15m ?? input.candlesTape,
+      candles1h: h1src.length ? h1src : input.candles1h,
       h1,
       h4,
       d1,
@@ -1005,6 +1032,8 @@ export function composeStructureRead(input: {
       newsScore: input.newsScore,
       btcRs: input.btcRs,
       isBtc: input.isBtc,
+      cascade,
+      tapeBarMs: 900_000,
     })
   } catch {
     board = null
@@ -1039,9 +1068,9 @@ export function composeStructureRead(input: {
   const chartPath =
     lead && lead.path.length >= 2
       ? lead.path
-      : tradeReady && pathSide && input.price > 0
+      : tradeReady && pathSide && price > 0
         ? buildFlightPath({
-            price: input.price,
+            price,
             side: pathSide,
             held: true,
             h1,
@@ -1072,6 +1101,7 @@ export function composeStructureRead(input: {
     invalidation,
     trap,
     scenarios: board,
+    cascade,
   }
 }
 

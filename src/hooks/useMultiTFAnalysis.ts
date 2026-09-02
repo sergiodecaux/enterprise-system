@@ -16,6 +16,7 @@ interface MultiTFData {
   candles4h: OhlcvCandle[]
   candles1h: OhlcvCandle[]
   candles1w: OhlcvCandle[]
+  candles15m: OhlcvCandle[]
   isLoading: boolean
   error: string | null
   lastUpdate: number
@@ -29,6 +30,7 @@ const empty: MultiTFData = {
   candles4h: [],
   candles1h: [],
   candles1w: [],
+  candles15m: [],
   isLoading: false,
   error: null,
   lastUpdate: 0,
@@ -51,10 +53,11 @@ export function useMultiTFAnalysis(
     setData((prev) => ({ ...prev, isLoading: true, error: null }))
 
     try {
-      const [candles1d, candles4h, candles1h] = await Promise.all([
-        fetchOhlcv(symbol, '1d', 60),
+      const [candles1d, candles4h, candles1h, candles15m] = await Promise.all([
+        fetchOhlcv(symbol, '1d', 90),
         fetchOhlcv(symbol, '4h', 100),
         fetchOhlcv(symbol, '1h', 120),
+        fetchOhlcv(symbol, '15m', 96),
       ])
 
       const daily = analyzeTFSnapshot(candles1d, '1d')
@@ -71,6 +74,7 @@ export function useMultiTFAnalysis(
         candles4h,
         candles1h,
         candles1w,
+        candles15m,
         isLoading: false,
         error: null,
         lastUpdate: Date.now(),
