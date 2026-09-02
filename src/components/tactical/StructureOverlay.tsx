@@ -60,10 +60,15 @@ function toXy(
     if (!(p.price > 0) || !Number.isFinite(p.price)) continue
     const t = clamp(p.timeOffsetSeconds / maxT, 0, 1)
     const yRaw = yOf(p.price)
-    if (yRaw == null || !Number.isFinite(yRaw)) continue
+    let y: number
+    if (yRaw == null || !Number.isFinite(yRaw)) {
+      y = p.price >= points[0].price ? 16 : h - 18
+    } else {
+      y = yRaw
+    }
     out.push({
       x: x0 + (x1 - x0) * t,
-      y: clamp(yRaw, 10, h - 14),
+      y,
     })
   }
   return out
@@ -127,7 +132,8 @@ const StructureOverlay = ({
 
         for (let i = list.length - 1; i >= 0; i--) {
           const sc = list[i]
-          const pts = toXy(sc.path, x0, x1, yOf, h)
+          const xEnd = Math.max(x0 + 40, x1 - i * 14)
+          const pts = toXy(sc.path, x0, xEnd, yOf, h)
           if (pts.length < 2) continue
           const lead = i === 0
           ctx.beginPath()

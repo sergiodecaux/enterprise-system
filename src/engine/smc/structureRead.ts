@@ -9,6 +9,7 @@ import type { OhlcvCandle } from '../../api/mexc'
 import type { PathPoint } from '../prediction/types'
 import type { GlobalFibonacciMap } from '../zones/globalFibonacci'
 import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
+import type { AltBias, AltRegime } from '../../api/marketContext'
 import { buildMmTrapThesis, type MmTrapThesis } from './mmTrapThesis'
 import {
   buildStructureScenarios,
@@ -595,6 +596,10 @@ export function aggregateWeekly(daily: OhlcvCandle[]): OhlcvCandle[] {
   return weeks
 }
 
+export function scoreStructureTf(tf: TfStructure | null): number {
+  return scoreTf(tf)
+}
+
 function scoreTf(tf: TfStructure | null): number {
   if (!tf) return 0
   let s = 0
@@ -869,6 +874,22 @@ export function composeStructureRead(input: {
   liq?: LiqHeatmapModel | null
   bookImbalance?: number | null
   mmDrive?: 'UP' | 'DOWN' | 'NEUTRAL' | null
+  mmStopHunt?: boolean
+  mmHuntSide?: 'LONG' | 'SHORT' | null
+  mmMicroTarget?: number | null
+  mmMacroTarget?: number | null
+  equalHighs?: Array<{ price: number; strength: string; isActive: boolean }>
+  equalLows?: Array<{ price: number; strength: string; isActive: boolean }>
+  altBias?: AltBias | null
+  altRegime?: AltRegime | null
+  fearGreed?: number | null
+  btcDominance?: number | null
+  btcDomDelta24h?: number | null
+  total3Delta24h?: number | null
+  newsBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  newsScore?: number
+  btcRs?: number | null
+  isBtc?: boolean
 }): StructureRead {
   const h1 = input.candles1h?.length ? readTfStructure(input.candles1h, '1h') : null
   const h4 = input.candles4h?.length ? readTfStructure(input.candles4h, '4h') : null
@@ -923,6 +944,11 @@ export function composeStructureRead(input: {
       `D ${d1.trend === 'RANGING' ? 'флэт' : d1.trend === 'BULLISH' ? 'бычий' : 'медвежий'} · ${d1.inDiscount ? 'дисконт' : 'премиум'}`
     )
   }
+  if (w1) {
+    factors.push(
+      `W ${w1.trend === 'RANGING' ? 'флэт' : w1.trend === 'BULLISH' ? 'бычий' : 'медвежий'}`
+    )
+  }
 
   const magnet = pathSide
     ? pickMagnet(h1, h4, d1, w1, fib141, pathSide, trap)
@@ -956,10 +982,29 @@ export function composeStructureRead(input: {
       h1,
       h4,
       d1,
+      w1,
+      htfStack: weighted,
       fib: fib141,
       trap,
       bookImbalance: input.bookImbalance,
       mmDrive: input.mmDrive,
+      mmStopHunt: input.mmStopHunt,
+      mmHuntSide: input.mmHuntSide,
+      mmMicroTarget: input.mmMicroTarget,
+      mmMacroTarget: input.mmMacroTarget,
+      liq: input.liq ?? null,
+      equalHighs: input.equalHighs,
+      equalLows: input.equalLows,
+      altBias: input.altBias,
+      altRegime: input.altRegime,
+      fearGreed: input.fearGreed,
+      btcDominance: input.btcDominance,
+      btcDomDelta24h: input.btcDomDelta24h,
+      total3Delta24h: input.total3Delta24h,
+      newsBias: input.newsBias,
+      newsScore: input.newsScore,
+      btcRs: input.btcRs,
+      isBtc: input.isBtc,
     })
   } catch {
     board = null

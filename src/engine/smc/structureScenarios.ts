@@ -6,9 +6,13 @@
 
 import type { OhlcvCandle } from '../../api/mexc'
 import type { PathPoint } from '../prediction/types'
+import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
 import type { MmTrapThesis } from './mmTrapThesis'
 import { readCloseQuality } from './mmTrapThesis'
 import type { Fib141Reaction, TfStructure } from './structureRead'
+import { deriveAltMacro } from '../analysis/altMacro'
+import type { AltBias, AltRegime } from '../../api/marketContext'
+import { readAuction, type AuctionRange } from './auction'
 
 export const SCENARIO_COLORS = ['#22d3ee', '#f472b6', '#a78bfa', '#fbbf24'] as const
 
@@ -26,6 +30,9 @@ export type StructureScenarioKind =
   | 'FIB_MAGNET'
   | 'DISTRIBUTION'
   | 'ACCUMULATION'
+  | 'FAILED_RANGE_BREAK'
+  | 'RANGE_HOLD'
+  | 'TAKE_STOPS'
 
 export interface StructureScenario {
   id: 'A' | 'B' | 'C' | 'D'
@@ -255,39 +262,278 @@ function reclaimLost(
   return tape.grind === 'UP' || tape.higherLows
 }
 
+function chopIn(
+  origin: number,
+  lo: number,
+  hi: number,
+  startT: number,
+  waves: number,
+  step: number
+): Array<[number, number, string?]> {
+  const pts: Array<[number, number, string?]> = []
+  let t = startT
+  for (let i = 0; i < waves; i++) {
+    t += step
+    const toLo = i % 2 === 0
+    const depth = 0.22 + (i % 3) * 0.12
+    const px = toLo ? lerp(origin, lo, depth) : lerp(origin, hi, depth)
+    pts.push([t, px, i === 0 ? 'набор' : i === waves - 1 ? 'ещё в боковике' : undefined])
+  }
+  return pts
+}
+
+function netOf(pts: PathPoint[]): 'UP' | 'DOWN' | 'FLAT' {
+  if (pts.length < 2) return 'FLAT'
+  const a = pts[0].price
+  const b = pts[pts.length - 1].price
+  if (b > a * 1.0015) return 'UP'
+  if (b < a * 0.9985) return 'DOWN'
+  return 'FLAT'
+}
+
+type ScenarioCtx = {
+  stack: number
+  h1: TfStructure | null
+  h4: TfStructure | null
+  d1: TfStructure | null
+  w1: TfStructure | null
+  trap: MmTrapThesis | null
+  fib?: Fib141Reaction | null
+  book: number
+  drive: 'UP' | 'DOWN' | 'NEUTRAL'
+  mmStopHunt: boolean
+  mmHuntSide: 'LONG' | 'SHORT' | null
+  mmMicroTarget: number | null
+  mmMacroTarget: number | null
+  altBias: AltBias | null
+  altRegime: AltRegime | null
+  fearGreed: number | null
+  btcDominance: number | null
+  total3Delta: number | null
+  newsBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  newsScore: number
+  btcRs: number | null
+  isBtc: boolean
+}
+
+function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
+  const dir = s.side === 'LONG' ? 1 : s.side === 'SHORT' ? -1 : 0
+  const mag = Math.abs(ctx.stack)
+  if (dir === 0) {
+    return Math.max(5, s.weight + (mag < 0.28 ? 3 : -4))
+  }
+  let t = 0
+  t += ctx.stack * 5.2 * dir
+
+  if (mag >= 1.05) {
+    const withHtf =
+      (ctx.stack > 0 && s.side === 'LONG') || (ctx.stack < 0 && s.side === 'SHORT')
+    t += withHtf ? 5 : -8
+  } else if (mag < 0.22) {
+    if (
+      s.kind === 'RANGE_CHOP' ||
+      s.kind === 'RANGE_HOLD' ||
+      s.kind === 'TAKE_STOPS' ||
+      s.kind === 'FAILED_RANGE_BREAK'
+    ) {
+      t += 4
+    }
+  }
+
+  const h4dAgree =
+    ctx.h4 &&
+    ctx.d1 &&
+    ctx.h4.trend !== 'RANGING' &&
+    ctx.h4.trend === ctx.d1.trend
+  if (h4dAgree) {
+    t += (ctx.h4!.trend === 'BULLISH' ? 1 : -1) * dir * 4
+  }
+  if (ctx.w1?.trend === 'BULLISH') t += dir * 2.4
+  if (ctx.w1?.trend === 'BEARISH') t -= dir * 2.4
+  if (ctx.d1?.inDiscount && s.side === 'LONG') t += 2
+  if (ctx.d1?.inPremium && s.side === 'SHORT') t += 2
+  if (ctx.w1?.inDiscount && s.side === 'LONG') t += 1.4
+  if (ctx.w1?.inPremium && s.side === 'SHORT') t += 1.4
+
+  if (
+    ctx.h1 &&
+    ctx.h4 &&
+    ctx.h1.trend !== 'RANGING' &&
+    ctx.h4.trend !== 'RANGING' &&
+    ctx.h1.trend !== ctx.h4.trend
+  ) {
+    const follow1h =
+      (ctx.h1.trend === 'BULLISH' && s.side === 'LONG') ||
+      (ctx.h1.trend === 'BEARISH' && s.side === 'SHORT')
+    const follow4h =
+      (ctx.h4.trend === 'BULLISH' && s.side === 'LONG') ||
+      (ctx.h4.trend === 'BEARISH' && s.side === 'SHORT')
+    if (follow1h) t -= 5
+    if (follow4h) t += 6
+  }
+
+  if (ctx.trap?.tradeSide === s.side) t += 5
+  if (ctx.trap?.trapSide === s.side) t -= 4.5
+  if (ctx.trap?.phase === 'TRADE_READY' && ctx.trap.tradeSide === s.side) t += 3
+  if (ctx.trap?.phase === 'HUNTING' || ctx.trap?.phase === 'TRAP') {
+    if (s.kind === 'HUNT_REVERSE' || s.kind === 'SNAP_BACK') t += 3.5
+    if (s.kind === 'IMPULSE' && ctx.trap.huntSide === s.side) t -= 3
+  }
+
+  const fib = ctx.fib
+  if (fib?.state === 'INSIDE' || fib?.state === 'APPROACHING') {
+    if (fib.bias === 'SHORT' && s.side === 'LONG') t -= 3.2
+    if (fib.bias === 'LONG' && s.side === 'SHORT') t -= 3.2
+  }
+  if ((fib?.state === 'BOUNCE' || fib?.state === 'RECLAIM') && fib.bias === s.side) {
+    t += 3.5
+  }
+
+  t += ctx.book * 7 * dir
+  if (ctx.drive === 'UP') t += dir * 3
+  if (ctx.drive === 'DOWN') t -= dir * 3
+
+  if (ctx.mmStopHunt) {
+    if (s.kind === 'HUNT_REVERSE' || s.kind === 'SNAP_BACK' || s.kind === 'FAILED_RANGE_BREAK') {
+      t += 4
+    }
+    if (s.kind === 'IMPULSE' || s.kind === 'HTF_CONTINUE' || s.kind === 'BREAKOUT') {
+      t -= 3.5
+    }
+  }
+  if (ctx.mmHuntSide) {
+    const reverse = ctx.mmHuntSide === 'LONG' ? 'SHORT' : 'LONG'
+    if (s.kind === 'HUNT_REVERSE' && s.side === reverse) t += 3.5
+    if (s.kind === 'TAKE_STOPS' && s.side === ctx.mmHuntSide) t += 2.5
+  }
+  if (ctx.mmMicroTarget != null && s.target != null && pct(s.target, ctx.mmMicroTarget) < 0.45) {
+    t += ctx.mmStopHunt ? (s.kind === 'TAKE_STOPS' || s.kind === 'HUNT_REVERSE' ? 3 : -2) : 1.5
+  }
+  if (ctx.mmMacroTarget != null && s.target != null && pct(s.target, ctx.mmMacroTarget) < 0.7) {
+    if (s.kind === 'HTF_CONTINUE' || s.kind === 'IMPULSE') t += 2
+  }
+
+  if (!ctx.isBtc) {
+    if (ctx.altBias === 'LONG') t += dir * 3.4
+    if (ctx.altBias === 'SHORT') t -= dir * 3.4
+    if (ctx.altRegime === 'ALT_ON') t += dir * 2.2
+    if (ctx.altRegime === 'ALT_OFF' || ctx.altRegime === 'RISK_OFF') t -= dir * 2.6
+    if (ctx.altRegime === 'BTC_LEAD') t -= dir * 1.5
+    if (ctx.btcDominance != null) {
+      if (ctx.btcDominance >= 55) t -= dir * 2.4
+      else if (ctx.btcDominance <= 48) t += dir * 2
+    }
+    if (ctx.total3Delta != null) {
+      if (ctx.total3Delta >= 1) t += dir * 1.8
+      if (ctx.total3Delta <= -1) t -= dir * 1.8
+    }
+    if (ctx.btcRs != null) {
+      if (ctx.btcRs >= 2) t += dir * 2
+      if (ctx.btcRs <= -2) t -= dir * 2
+    }
+  } else if (ctx.btcDominance != null && ctx.btcDominance >= 54) {
+    t += dir * 1.3
+  }
+
+  const fg = ctx.fearGreed
+  if (fg != null) {
+    if (s.side === 'LONG' && fg <= 25) t += 2.2
+    if (s.side === 'LONG' && fg >= 75) t -= 2.4
+    if (s.side === 'SHORT' && fg >= 75) t += 2.2
+    if (s.side === 'SHORT' && fg <= 25) t -= 2.4
+  }
+  if (ctx.newsBias === 'BULLISH') t += dir * 1.6
+  if (ctx.newsBias === 'BEARISH') t -= dir * 1.6
+  if (Number.isFinite(ctx.newsScore) && ctx.newsScore !== 0) {
+    t += Math.max(-1.5, Math.min(1.5, ctx.newsScore)) * 2.2 * dir
+  }
+
+  return Math.max(4, s.weight + t)
+}
+
+function tfWord(tf: TfStructure | null, name: string): string | null {
+  if (!tf) return null
+  const t =
+    tf.trend === 'BULLISH' ? 'бык' : tf.trend === 'BEARISH' ? 'медв' : 'флэт'
+  return `${name} ${t}`
+}
+
+function stackLine(
+  h1: TfStructure | null,
+  h4: TfStructure | null,
+  d1: TfStructure | null,
+  w1: TfStructure | null,
+  stack: number
+): string {
+  const parts = [
+    tfWord(h1, '1ч'),
+    tfWord(h4, '4ч'),
+    tfWord(d1, 'день'),
+    tfWord(w1, 'нед'),
+  ].filter((x): x is string => x != null)
+  const mag = Math.abs(stack)
+  const force = mag >= 1.05 ? 'сильный' : mag >= 0.4 ? 'средний' : 'слабый'
+  const dir =
+    stack >= 0.28 ? 'вверх' : stack <= -0.28 ? 'вниз' : 'без явного направления'
+  const extra =
+    h1 && h4 && h1.trend !== 'RANGING' && h4.trend !== 'RANGING' && h1.trend !== h4.trend
+      ? ' Час против 4ч — час чаще охота, не тренд.'
+      : ''
+  return `Стек ТФ ${force} ${dir}${parts.length ? ` (${parts.join(' · ')})` : ''}.${extra}`
+}
+
 function nowCopy(
   tape: TapeTexture,
   trap: MmTrapThesis | null,
   price: number,
+  h1: TfStructure | null,
   h4: TfStructure | null,
-  d1: TfStructure | null
+  d1: TfStructure | null,
+  w1: TfStructure | null,
+  auction: AuctionRange | null,
+  stack: number
 ): string {
   const bits: string[] = []
-  if (tape.grind === 'DOWN') {
-    bits.push(
-      tape.compression > 0.35
-        ? 'Поджимают вниз: хаи ниже, тела мелкие, диапазон сжимается. Это не лонг и не закреп — так готовят пролив.'
-        : 'Час режет хаи мелкими телами. Поджим, не смещение: цену могут спустить ещё и выбросить лонги рывком.'
-    )
-  } else if (tape.grind === 'UP') {
-    bits.push(
-      tape.compression > 0.35
-        ? 'Поджимают вверх мелкими телами. Часто это охота на шорты, не тренд.'
-        : 'Час поднимает лои без широкого тела. Могут добрать шорты и развернуть.'
-    )
-  } else if (tape.displacement === 'UP') {
-    bits.push('Последний час закрылся телом вверх — смещение настоящее, не фитиль.')
-  } else if (tape.displacement === 'DOWN') {
-    bits.push('Последний час закрылся телом вниз — смещение настоящее, не фитиль.')
-  } else if (trap?.closeQuality === 'REJECT_HIGH') {
-    bits.push('Фитиль сверху: хаи не приняли. Покупать BOS рано.')
-  } else if (trap?.closeQuality === 'REJECT_LOW') {
-    bits.push('Фитиль снизу: лои сняли и вернули. Это пружина, не сигнал лонг.')
-  } else {
-    bits.push('Час без смещения телом. BOS сам по себе сделкой не является.')
+  if (auction) {
+    if (auction.kind === 'FAILED_BREAK_DOWN') {
+      bits.push(
+        `Был боковик ${fmt(auction.bottom)}–${fmt(auction.top)}. Пробили вниз, сняли ${auction.lowLabel} и вернули цену внутрь — шорт пробоя не удержали.`
+      )
+    } else if (auction.kind === 'FAILED_BREAK_UP') {
+      bits.push(
+        `Боковик ${fmt(auction.bottom)}–${fmt(auction.top)}. Вынос хая не закрепили, стопы шортов сняли и вернули внутрь.`
+      )
+    } else if (auction.kind === 'BREAK_DOWN') {
+      bits.push(
+        `Диапазон ${fmt(auction.bottom)}–${fmt(auction.top)} потерян телом вниз. Пока нет возврата над ${fmt(auction.bottom)}, это не боковик.`
+      )
+    } else if (auction.kind === 'BREAK_UP') {
+      bits.push(
+        `Диапазон пробит телом вверх. Закреп над ${fmt(auction.top)} — иначе это вынос шортов, не тренд.`
+      )
+    } else if (auction.kind === 'INSIDE') {
+      bits.push(
+        `Цена в диапазоне ${fmt(auction.bottom)}–${fmt(auction.top)}. Стопы: ${auction.lowLabel} ${fmt(auction.stopsLow)} / ${auction.highLabel} ${fmt(auction.stopsHigh)}.`
+      )
+    }
+  }
+  if (!auction) {
+    if (tape.grind === 'DOWN') {
+      bits.push(
+        tape.compression > 0.35
+          ? 'Поджимают вниз мелкими телами — готовят пролив, не лонг.'
+          : 'Час режет хаи мелкими телами. Поджим, не смещение.'
+      )
+    } else if (tape.grind === 'UP') {
+      bits.push('Час поднимает лои без широкого тела. Могут добрать шорты и развернуть.')
+    } else if (tape.displacement === 'UP') {
+      bits.push('Последний час закрылся телом вверх — смещение настоящее.')
+    } else if (tape.displacement === 'DOWN') {
+      bits.push('Последний час закрылся телом вниз — смещение настоящее.')
+    }
   }
 
-  if (trap?.swept?.kind === 'SSL' && trap.reclaimLevel != null) {
+  if (trap?.swept?.kind === 'SSL' && trap.reclaimLevel != null && auction?.kind !== 'FAILED_BREAK_DOWN') {
     const held = price > trap.reclaimLevel
     bits.push(
       held
@@ -303,14 +549,8 @@ function nowCopy(
     )
   }
 
-  const htf =
-    h4?.trend === 'BEARISH' || d1?.trend === 'BEARISH'
-      ? '4ч/день смотрят вниз — любые лонги с часа проверять дважды.'
-      : h4?.trend === 'BULLISH' || d1?.trend === 'BULLISH'
-        ? '4ч/день смотрят вверх — сливы с часа часто охота, не разворот дня.'
-        : null
-  if (htf) bits.push(htf)
-  return bits.slice(0, 3).join(' ')
+  bits.push(stackLine(h1, h4, d1, w1, stack))
+  return bits.slice(0, 4).join(' ')
 }
 
 interface RawScenario {
@@ -331,10 +571,29 @@ export function buildStructureScenarios(input: {
   h1: TfStructure | null
   h4: TfStructure | null
   d1: TfStructure | null
+  w1?: TfStructure | null
+  htfStack?: number
   fib?: Fib141Reaction | null
   trap: MmTrapThesis | null
   bookImbalance?: number | null
   mmDrive?: 'UP' | 'DOWN' | 'NEUTRAL' | null
+  mmStopHunt?: boolean
+  mmHuntSide?: 'LONG' | 'SHORT' | null
+  mmMicroTarget?: number | null
+  mmMacroTarget?: number | null
+  liq?: LiqHeatmapModel | null
+  equalHighs?: Array<{ price: number; strength: string; isActive: boolean }>
+  equalLows?: Array<{ price: number; strength: string; isActive: boolean }>
+  altBias?: AltBias | null
+  altRegime?: AltRegime | null
+  fearGreed?: number | null
+  btcDominance?: number | null
+  btcDomDelta24h?: number | null
+  total3Delta24h?: number | null
+  newsBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  newsScore?: number
+  btcRs?: number | null
+  isBtc?: boolean
 }): StructureScenarioBoard {
   const price = input.price
   const tapeSrc =
@@ -349,6 +608,7 @@ export function buildStructureScenarios(input: {
   const h1 = input.h1
   const h4 = input.h4
   const d1 = input.d1
+  const w1 = input.w1 ?? null
   const book = input.bookImbalance ?? 0
   const drive = input.mmDrive ?? 'NEUTRAL'
   const atr1 = atr(tapeSrc.length >= 8 ? tapeSrc : input.candles1h ?? [], 14) || price * 0.008
@@ -363,7 +623,213 @@ export function buildStructureScenarios(input: {
   const fibTrapLong = input.fib?.state === 'INSIDE' && premium
   const held = reclaimHeld(price, trap, last)
   const lost = reclaimLost(price, trap, last, tape)
+  const auction = readAuction(
+    tapeSrc.length >= 16 ? tapeSrc : input.candles1h ?? tapeSrc,
+    price,
+    input.liq,
+    input.equalHighs,
+    input.equalLows
+  )
+  const stack = input.htfStack ?? 0
+  const macro = deriveAltMacro({
+    btcDominance: input.btcDominance,
+    btcDomDelta24h: input.btcDomDelta24h,
+    total3Delta24h: input.total3Delta24h,
+    altRegime: input.altRegime,
+    altBias: input.altBias,
+  })
+  const tiltCtx: ScenarioCtx = {
+    stack,
+    h1,
+    h4,
+    d1,
+    w1,
+    trap,
+    fib: input.fib,
+    book,
+    drive,
+    mmStopHunt: Boolean(input.mmStopHunt),
+    mmHuntSide: input.mmHuntSide ?? trap?.huntSide ?? null,
+    mmMicroTarget: input.mmMicroTarget ?? null,
+    mmMacroTarget: input.mmMacroTarget ?? null,
+    altBias: input.altBias ?? macro.altBias,
+    altRegime: input.altRegime ?? macro.regime,
+    fearGreed: input.fearGreed ?? null,
+    btcDominance: input.btcDominance ?? null,
+    total3Delta: input.total3Delta24h ?? null,
+    newsBias: input.newsBias ?? 'NEUTRAL',
+    newsScore: input.newsScore ?? 0,
+    btcRs: input.btcRs ?? null,
+    isBtc: Boolean(input.isBtc),
+  }
   const raw: RawScenario[] = []
+
+  if (auction) {
+    const { top, bottom, mid, stopsHigh, stopsLow } = auction
+    const lo = Math.min(origin, lerp(origin, bottom, 0.7))
+    const hi = Math.max(origin, lerp(origin, top, 0.7))
+    if (auction.kind === 'FAILED_BREAK_DOWN') {
+      raw.push({
+        kind: 'FAILED_RANGE_BREAK',
+        weight: 34 + (auction.strongLow ? 6 : 0) + (htfUp ? 6 : 0),
+        title: 'Вернули диапазон → к стопам шортов',
+        why: `Пробой вниз не удержали: ${auction.lowLabel} уже сняли. Дальше цена обычно не «летит вверх стрелкой», а набирает у лоя ${fmt(bottom)} и идёт в ${auction.highLabel} ${fmt(stopsHigh)}.`,
+        invalidation: `Слом: час закроется телом обратно под ${fmt(bottom)}.`,
+        side: 'LONG',
+        target: stopsHigh,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, bottom, mid, 0, 4, H * 0.55),
+          [H * 3.4, lerp(origin, bottom, 0.35), 'ретест лоя'],
+          [H * 4.2, mid, 'внутрь диапазона'],
+          [H * 6.2, stopsHigh, auction.highLabel],
+        ]),
+      })
+      raw.push({
+        kind: 'RANGE_HOLD',
+        weight: 18 + (htfDown ? 10 : 0) + (drive === 'DOWN' ? 6 : 0),
+        title: 'Второй пробой — не удержали возврат',
+        why: `Если набор у ${fmt(bottom)} не даст тела, диапазон потеряют снова. Тогда идут в следующую пачку лонгов ${fmt(stopsLow < bottom ? stopsLow : bottom - atr1 * 1.4)}.`,
+        invalidation: `Слом: два часа держатся над ${fmt(bottom)}.`,
+        side: 'SHORT',
+        target: Math.min(stopsLow, bottom - atr1),
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, bottom, mid, 0, 3, H * 0.5),
+          [H * 2.8, bottom, 'теряют лой'],
+          [H * 3.6, bottom - (top - bottom) * 0.12, 'слом'],
+          [H * 5.8, Math.min(stopsLow, bottom - atr1 * 1.2), auction.lowLabel],
+        ]),
+      })
+    } else if (auction.kind === 'FAILED_BREAK_UP') {
+      raw.push({
+        kind: 'FAILED_RANGE_BREAK',
+        weight: 34 + (auction.strongHigh ? 6 : 0) + (htfDown ? 6 : 0),
+        title: 'Вынос хая не закрепили → к лонгам',
+        why: `${auction.highLabel} сняли и вернули внутрь. Дальше набор под хаем ${fmt(top)} и ход в ${auction.lowLabel} ${fmt(stopsLow)}.`,
+        invalidation: `Слом: час закроется телом над ${fmt(top)}.`,
+        side: 'SHORT',
+        target: stopsLow,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, mid, top, 0, 4, H * 0.55),
+          [H * 3.4, lerp(origin, top, 0.35), 'ретест хая'],
+          [H * 4.2, mid, 'внутрь'],
+          [H * 6.2, stopsLow, auction.lowLabel],
+        ]),
+      })
+      raw.push({
+        kind: 'RANGE_HOLD',
+        weight: 18 + (htfUp ? 10 : 0),
+        title: 'Всё-таки закреп над диапазоном',
+        why: `Если следующее тело удержится над ${fmt(top)}, это уже не вынос, а слом. Тогда к следующей ликвидности сверху.`,
+        invalidation: `Слом: возврат телом под ${fmt(top)}.`,
+        side: 'LONG',
+        target: top + (top - bottom) * 0.6,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, mid, top, 0, 3, H * 0.5),
+          [H * 2.8, top, 'хай'],
+          [H * 3.8, top + (top - bottom) * 0.1, 'закреп'],
+          [H * 5.8, top + (top - bottom) * 0.55, 'вынос дальше'],
+        ]),
+      })
+    } else if (auction.kind === 'INSIDE') {
+      raw.push({
+        kind: 'TAKE_STOPS',
+        weight: 24 + (auction.strongHigh ? 5 : 0) + (distS < distL ? 6 : 0),
+        title: 'Набор в диапазоне → снятие шортов',
+        why: `Стопы шортов на ${fmt(stopsHigh)} (${auction.highLabel}${auction.strongHigh ? ', плотные' : ''}). Сначала пила ${fmt(bottom)}–${fmt(top)}, потом вынос хая — это не лонг из середины.`,
+        invalidation: `Слом: закреп телом под ${fmt(bottom)}.`,
+        side: 'LONG',
+        target: stopsHigh,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, lo, hi, 0, 4, H * 0.5),
+          [H * 3.6, lerp(origin, top, 0.7), 'к хаю'],
+          [H * 5.5, stopsHigh, auction.highLabel],
+        ]),
+      })
+      raw.push({
+        kind: 'TAKE_STOPS',
+        weight: 24 + (auction.strongLow ? 5 : 0) + (distL < distS ? 6 : 0),
+        title: 'Набор в диапазоне → снятие лонгов',
+        why: `Стопы лонгов на ${fmt(stopsLow)} (${auction.lowLabel}${auction.strongLow ? ', плотные' : ''}). Та же пила, другой край. Пока нет тела за границу — оба хода живы.`,
+        invalidation: `Слом: закреп телом над ${fmt(top)}.`,
+        side: 'SHORT',
+        target: stopsLow,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, lo, hi, 0, 4, H * 0.52),
+          [H * 3.6, lerp(origin, bottom, 0.7), 'к лою'],
+          [H * 5.5, stopsLow, auction.lowLabel],
+        ]),
+      })
+    } else if (auction.kind === 'BREAK_DOWN') {
+      raw.push({
+        kind: 'IMPULSE',
+        weight: 28 + (htfDown ? 8 : 0),
+        title: 'Диапазон потерян — добор лонгов',
+        why: `Тело под ${fmt(bottom)}. Возврат в боковик ещё не факт. Цель — ${auction.lowLabel} ${fmt(stopsLow)}.`,
+        invalidation: `Слом: закреп телом обратно над ${fmt(bottom)}.`,
+        side: 'SHORT',
+        target: stopsLow,
+        path: path([
+          [0, origin, 'сейчас'],
+          [H * 0.9, lerp(origin, bottom, 0.5), 'ретест снизу'],
+          [H * 1.8, bottom - (top - bottom) * 0.08, 'не пускают'],
+          [H * 4.4, stopsLow, auction.lowLabel],
+        ]),
+      })
+      raw.push({
+        kind: 'FAILED_RANGE_BREAK',
+        weight: 16 + (htfUp ? 8 : 0),
+        title: 'Ложный слом — вернут в диапазон',
+        why: `Как на типичном BTC: пробой шортом, набор под лоем, возврат внутрь к ${fmt(stopsHigh)}. Для этого нужно тело над ${fmt(bottom)}.`,
+        invalidation: `Слом возврата: час не может закрыться над ${fmt(bottom)}.`,
+        side: 'LONG',
+        target: mid,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, origin * 0.998, bottom, 0, 3, H * 0.5),
+          [H * 2.6, bottom, 'бой за лой'],
+          [H * 4.0, mid, 'внутрь'],
+          [H * 5.8, stopsHigh, auction.highLabel],
+        ]),
+      })
+    } else if (auction.kind === 'BREAK_UP') {
+      raw.push({
+        kind: 'IMPULSE',
+        weight: 28 + (htfUp ? 8 : 0),
+        title: 'Диапазон сломан вверх — добор шортов',
+        why: `Тело над ${fmt(top)}. Если удержат, идут в ${auction.highLabel} ${fmt(stopsHigh)}.`,
+        invalidation: `Слом: закреп телом обратно под ${fmt(top)}.`,
+        side: 'LONG',
+        target: stopsHigh,
+        path: path([
+          [0, origin, 'сейчас'],
+          [H * 0.9, lerp(origin, top, 0.5), 'ретест сверху'],
+          [H * 4.4, stopsHigh, auction.highLabel],
+        ]),
+      })
+      raw.push({
+        kind: 'FAILED_RANGE_BREAK',
+        weight: 16 + (htfDown ? 8 : 0),
+        title: 'Вынос шортов — вернут в диапазон',
+        why: `Пробой может быть охотой. Возврат под ${fmt(top)} → к ${fmt(stopsLow)}.`,
+        invalidation: `Слом: два часа держатся над ${fmt(top)}.`,
+        side: 'SHORT',
+        target: stopsLow,
+        path: path([
+          [0, origin, 'сейчас'],
+          ...chopIn(origin, top, origin * 1.002, 0, 3, H * 0.5),
+          [H * 2.6, top, 'теряют хай'],
+          [H * 4.0, mid, 'внутрь'],
+          [H * 5.8, stopsLow, auction.lowLabel],
+        ]),
+      })
+    }
+  }
 
   // 1) Slow squeeze then flush — the script the old HUD ignored
   {
@@ -810,44 +1276,38 @@ export function buildStructureScenarios(input: {
     })
   }
 
+  for (const s of raw) {
+    s.weight = tiltWeight(s, tiltCtx)
+  }
+
   const sorted = raw
-    .filter((s) => s.weight >= 6 && s.path.length >= 2)
+    .filter((s) => s.weight >= 6 && s.path.length >= 3)
     .sort((a, b) => b.weight - a.weight)
 
   const picked: RawScenario[] = []
+  if (sorted[0]) picked.push(sorted[0])
+  const leadNet = picked[0] ? netOf(picked[0].path) : 'FLAT'
+  const want = leadNet === 'UP' ? 'DOWN' : leadNet === 'DOWN' ? 'UP' : null
+  if (want) {
+    const opp = sorted.find((s) => !picked.includes(s) && netOf(s.path) === want)
+    if (opp) picked.push(opp)
+  }
   for (const s of sorted) {
-    if (picked.length >= 4) break
-    const dup = picked.some(
-      (o) =>
-        o.kind === s.kind &&
-        o.side === s.side &&
-        o.target != null &&
-        s.target != null &&
-        pct(o.target, s.target) < 0.4
+    if (picked.length >= 3) break
+    if (picked.includes(s)) continue
+    const n = netOf(s.path)
+    const sameDirSameKind = picked.some(
+      (p) => p.kind === s.kind && netOf(p.path) === n
     )
-    if (dup) continue
+    if (sameDirSameKind) continue
+    const sameDirCount = picked.filter((p) => netOf(p.path) === n).length
+    if (n !== 'FLAT' && sameDirCount >= 2) continue
     picked.push(s)
-  }
-  const hasUp = picked.some((s) => s.side === 'LONG' || s.side === 'BOTH')
-  const hasDown = picked.some((s) => s.side === 'SHORT' || s.side === 'BOTH')
-  if (!hasUp) {
-    const up = sorted.find((s) => s.side === 'LONG' && !picked.includes(s))
-    if (up) {
-      if (picked.length >= 4) picked[3] = up
-      else picked.push(up)
-    }
-  }
-  if (!hasDown) {
-    const dn = sorted.find((s) => s.side === 'SHORT' && !picked.includes(s))
-    if (dn) {
-      if (picked.length >= 4) picked[picked.length - 1] = dn
-      else picked.push(dn)
-    }
   }
 
   if (!picked.length) {
     return {
-      now: nowCopy(tape, trap, price, h4, d1),
+      now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack),
       leadId: 'A',
       leadTitle: 'Ждём факт на ленте',
       scenarios: [],
@@ -881,7 +1341,7 @@ export function buildStructureScenarios(input: {
 
   const lead = scenarios[0]
   return {
-    now: nowCopy(tape, trap, price, h4, d1),
+    now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack),
     leadId: lead?.id ?? 'A',
     leadTitle: lead?.title ?? 'Ждём факт',
     scenarios,

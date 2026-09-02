@@ -101,6 +101,7 @@ import {
 } from '../../api/telegram/alerts'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { useLiqHeatmap } from '../../hooks/useLiqHeatmap'
+import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { buildLiqHeatmap } from '../../engine/derivatives/liqHeatmap'
 import WhaleLevelsOverlay from './WhaleLevelsOverlay'
 import LiqHeatmapOverlay from './LiqHeatmapOverlay'
@@ -408,6 +409,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       ? coinSentiment.label
       : ('NEUTRAL' as const)
   const newsScore = coinSentiment?.score ?? 0
+  const workerCtx = useWorkerMarketContext()
+  const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
+  const isBtcPair = baseSym === 'BTC' || baseSym === 'XBT'
 
   const indicators = useChartIndicators(candles, chartPreferences.indicators)
   const { priceLevels: basePriceLevels } = useChartZones(
@@ -507,6 +511,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         liq: liqForStructure,
         bookImbalance: bookForForecast,
         mmDrive: mmSnap?.drive ?? null,
+        mmStopHunt: mmHunt?.microIsStopHunt,
+        mmHuntSide: mmHunt?.preferredSide ?? null,
+        mmMicroTarget: mmHunt?.microTarget ?? null,
+        mmMacroTarget: mmHunt?.macroTarget ?? null,
+        equalHighs: eqLiquidityMap?.equalHighs,
+        equalLows: eqLiquidityMap?.equalLows,
+        altBias: workerCtx?.altBias ?? null,
+        altRegime: workerCtx?.altRegime ?? null,
+        fearGreed: fearGreedValue ?? workerCtx?.fearGreed ?? null,
+        btcDominance: workerCtx?.btcDominance ?? null,
+        btcDomDelta24h: workerCtx?.btcDomDelta24h ?? null,
+        total3Delta24h: workerCtx?.total3Delta24h ?? workerCtx?.totalMcapDelta24h ?? null,
+        newsBias,
+        newsScore,
+        btcRs,
+        isBtc: isBtcPair,
       })
     } catch (err) {
       logger.warn('structure read failed', err)
@@ -524,9 +544,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     liqForStructure,
     bookForForecast,
     mmSnap?.drive,
+    mmHunt?.microIsStopHunt,
+    mmHunt?.preferredSide,
+    mmHunt?.microTarget,
+    mmHunt?.macroTarget,
+    eqLiquidityMap?.equalHighs,
+    eqLiquidityMap?.equalLows,
+    workerCtx?.altBias,
+    workerCtx?.altRegime,
+    workerCtx?.fearGreed,
+    workerCtx?.btcDominance,
+    workerCtx?.btcDomDelta24h,
+    workerCtx?.total3Delta24h,
+    workerCtx?.totalMcapDelta24h,
+    fearGreedValue,
+    newsBias,
+    newsScore,
+    btcRs,
+    isBtcPair,
   ])
-
-  const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
 
   /** Проторговка + FVG/OB откуда лонг/шорт с отката */
   const actionPick = useMemo(
