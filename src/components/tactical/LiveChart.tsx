@@ -362,10 +362,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const lastClose = candles.length ? candles[candles.length - 1][4] : 0
   const mapPrice = currentPrice > 0 ? currentPrice : lastClose
   const liqModel = useLiqHeatmap(symbol, candles, mapPrice, showLiqMap)
-  const liqFromCandles = useMemo(
-    () => buildLiqHeatmap({ candles, currentPrice: mapPrice }),
-    [candles, mapPrice]
-  )
+  const liqFromCandles = useMemo(() => {
+    try {
+      if (!(mapPrice > 0) || candles.length < 8) return null
+      return buildLiqHeatmap({ candles, currentPrice: mapPrice })
+    } catch (err) {
+      logger.warn('liq heatmap failed', err)
+      return null
+    }
+  }, [candles, mapPrice])
   const liqForStructure = liqModel ?? liqFromCandles
   const liveBookImbalance =
     orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
@@ -431,10 +436,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           ? candles1d
           : candles
     const px =
-      currentPrice > 0
-        ? Number(currentPrice.toPrecision(6))
-        : currentPrice
-    return buildGlobalFibonacci(src, px || 0)
+      Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
+    return buildGlobalFibonacci(src, px)
   }, [candles, candles1d, currentPrice])
 
   const chartStructure = useMemo(
@@ -446,7 +449,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   )
 
   const fibMaps = useMemo(() => {
-    const px = currentPrice > 0 ? Number(currentPrice.toPrecision(6)) : 0
+    const px = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
     const src: Record<string, OhlcvCandle[]> = {
       '1h':
         candles1h.length >= 20
@@ -486,21 +489,26 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   }, [])
 
   const structureRead = useMemo(() => {
-    const h1src = candles1h.length >= 20 ? candles1h : timeframe === '1h' ? candles : candles1h
-    const h4src = candles4h.length >= 16 ? candles4h : timeframe === '4h' ? candles : candles4h
-    const dSrc = candles1d.length >= 16 ? candles1d : timeframe === '1d' ? candles : candles1d
-    if (h1src.length < 16 && h4src.length < 16 && dSrc.length < 16) return null
-    const px =
-      currentPrice > 0 ? Number(currentPrice.toPrecision(6)) : currentPrice
-    return composeStructureRead({
-      price: px || 0,
-      candles1h: h1src.length >= 16 ? h1src : undefined,
-      candles4h: h4src.length >= 16 ? h4src : undefined,
-      candles1d: dSrc.length >= 16 ? dSrc : undefined,
-      candles1w: candles1w.length >= 8 ? candles1w : undefined,
-      fib: globalFib,
-      liq: liqForStructure,
-    })
+    try {
+      const h1src = candles1h.length >= 20 ? candles1h : timeframe === '1h' ? candles : candles1h
+      const h4src = candles4h.length >= 16 ? candles4h : timeframe === '4h' ? candles : candles4h
+      const dSrc = candles1d.length >= 16 ? candles1d : timeframe === '1d' ? candles : candles1d
+      if (h1src.length < 16 && h4src.length < 16 && dSrc.length < 16) return null
+      const px = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 0
+      if (!(px > 0) && candles.length < 16) return null
+      return composeStructureRead({
+        price: px || (candles.length ? candles[candles.length - 1][4] : 0),
+        candles1h: h1src.length >= 16 ? h1src : undefined,
+        candles4h: h4src.length >= 16 ? h4src : undefined,
+        candles1d: dSrc.length >= 16 ? dSrc : undefined,
+        candles1w: candles1w.length >= 8 ? candles1w : undefined,
+        fib: globalFib,
+        liq: liqForStructure,
+      })
+    } catch (err) {
+      logger.warn('structure read failed', err)
+      return null
+    }
   }, [
     candles,
     candles1h,
@@ -1677,19 +1685,27 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   useEffect(() => {
     const series = candleRef.current
     if (!series || !structureRead || !lwcData.length) {
-      series?.setMarkers([])
+      try {
+        series?.setMarkers([])
+      } catch {
+        /* ignore */
+      }
       return
     }
-    const times = lwcData.map((c) => c.time as number)
-    const mapped = markersForChart(structureRead, times)
-    const markers: SeriesMarker<Time>[] = mapped.map((m) => ({
-      time: m.time as Time,
-      position: m.position,
-      color: m.color,
-      shape: m.shape,
-      text: m.text,
-    }))
-    series.setMarkers(markers)
+    try {
+      const times = lwcData.map((c) => c.time as number)
+      const mapped = markersForChart(structureRead, times)
+      const markers: SeriesMarker<Time>[] = mapped.map((m) => ({
+        time: m.time as Time,
+        position: m.position,
+        color: m.color,
+        shape: m.shape,
+        text: m.text,
+      }))
+      series.setMarkers(markers)
+    } catch (err) {
+      logger.warn('structure markers failed', err)
+    }
   }, [structureRead, lwcData, chartReady])
 
   const updateLineSeries = useCallback(() => {
