@@ -9,7 +9,7 @@ import type { PathPoint } from '../prediction/types'
 import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
 import type { MmTrapThesis } from './mmTrapThesis'
 import { readCloseQuality } from './mmTrapThesis'
-import type { Fib141Reaction, TfStructure } from './structureRead'
+import type { Fib141Reaction, TfStructure, IntraPlan } from './structureRead'
 import { deriveAltMacro } from '../analysis/altMacro'
 import type { AltBias, AltRegime } from '../../api/marketContext'
 import { readAuction, type AuctionRange } from './auction'
@@ -36,6 +36,7 @@ export type StructureScenarioKind =
   | 'RANGE_HOLD'
   | 'TAKE_STOPS'
   | 'PULLBACK_FUEL'
+  | 'INTRA_RUN'
 
 export interface StructureScenario {
   id: 'A' | 'B' | 'C' | 'D'
@@ -358,7 +359,7 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
       else t -= 10
       if (s.kind === 'IMPULSE' && !withTrend) t -= 8
     }
-    if (cas.aligned && withTrend) t += 5
+    if (s.kind === 'INTRA_RUN' && withTrend) t += 9
     const q4 = cas.h4?.quality
     const q1 = cas.h1?.quality
     const q15 = cas.m15?.quality
@@ -599,26 +600,19 @@ function nowCopy(
   return bits.slice(0, 3).join(' ')
 }
 
-function compactPath(pts: PathPoint[]): PathPoint[] {
-  if (pts.length <= 3) return pts
+function keepStory(pts: PathPoint[]): PathPoint[] {
+  if (pts.length <= 5) return pts
   const first = pts[0]
   const last = pts[pts.length - 1]
   if (!first || !last) return pts
-  let bend = pts[Math.floor(pts.length / 2)] ?? last
-  let best = 0
-  const dt = last.timeOffsetSeconds - first.timeOffsetSeconds || 1
-  const dp = last.price - first.price
-  for (let i = 1; i < pts.length - 1; i++) {
-    const p = pts[i]
-    const t = (p.timeOffsetSeconds - first.timeOffsetSeconds) / dt
-    const line = first.price + dp * t
-    const d = Math.abs(p.price - line)
-    if (d >= best) {
-      best = d
-      bend = p
-    }
+  const keys = pts.filter((p, i) => i !== 0 && p !== last && p.isKeyLevel)
+  const mid = keys.length ? keys : [pts[Math.floor(pts.length / 2)]].filter(Boolean)
+  const out = [first]
+  for (const p of mid) {
+    if (p && p !== first && p !== last) out.push(p)
   }
-  return [first, bend, last]
+  out.push(last)
+  return out.slice(0, 5)
 }
 
 function spreadProbs(weights: number[]): number[] {
@@ -701,6 +695,7 @@ export function buildStructureScenarios(input: {
   isBtc?: boolean
   cascade?: CloseCascade | null
   fuel?: { price: number; label: string } | null
+  intra?: IntraPlan | null
   tapeBarMs?: number
 }): StructureScenarioBoard {
   const price = input.price
@@ -777,8 +772,74 @@ export function buildStructureScenarios(input: {
 
   const cas = input.cascade ?? null
   const fuel = input.fuel ?? null
-  const trendSide = cas?.globalSide ?? cas?.actionSide ?? null
-  if (fuel && trendSide && (cas?.regime === 'PULLBACK' || cas?.regime === 'TREND')) {
+  const intra = input.intra ?? null
+  const trendSide = intra?.side ?? cas?.globalSide ?? cas?.actionSide ?? null
+  if (intra && trendSide) {
+    const up = trendSide === 'LONG'
+    const br = intra.breakLv
+    const nx = intra.nextBreak
+    const ds = intra.dest
+    const rec = br.price
+    const pts: Array<[number, number, string?]> = [[0, origin, 'сейчас']]
+    let t = 0
+    if (cas?.regime === 'PULLBACK' && fuel) {
+      t += H * 2.2
+      pts.push([t, fuel.price, `топливо · ${fuel.label}`])
+    }
+    if (!intra.alreadyBroke) {
+      t += H * 3.5
+      pts.push([t, br.price, `пробой ${br.label}`])
+      t += H * 2.4
+      pts.push([t, rec * (up ? 1.0014 : 0.9986), `закреп ${br.label}`])
+    } else {
+      t += H * 3.2
+      pts.push([t, rec * (up ? 1.0014 : 0.9986), `закреп ${br.label}`])
+    }
+    if (nx) {
+      t += H * 4.5
+      pts.push([t, nx.price, `далее ${nx.label}`])
+    }
+    t += H * 5.5
+    pts.push([t, ds.price, `до ${ds.label}`])
+    raw.push({
+      kind: 'INTRA_RUN',
+      weight:
+        48 +
+        (cas?.regime === 'TREND' ? 10 : 0) +
+        (cas?.regime === 'PULLBACK' ? 8 : 0) +
+        (cas?.aligned ? 6 : 0),
+      title: intra.alreadyBroke
+        ? `Закреп ${br.label} → ${nx ? nx.label : ds.label}`
+        : `Пробой ${br.label} → закреп → ${ds.label}`,
+      why: `${intra.line} Это интрадей, не скальп: тело за ${fmt(br.price)}, держат закреп, затем ${nx ? `${nx.label} ${fmt(nx.price)}, ` : ''}финиш ${ds.label} ${fmt(ds.price)}.`,
+      invalidation: up
+        ? `Слом: час и 4ч закроются телом обратно под ${fmt(br.price)}.`
+        : `Слом: час и 4ч закроются телом обратно над ${fmt(br.price)}.`,
+      side: trendSide,
+      target: ds.price,
+      path: path(pts),
+    })
+    const failTo =
+      fuel?.price ??
+      (up
+        ? longs?.price ?? h4?.nextSsl ?? origin - atr1 * 2.4
+        : shorts?.price ?? h4?.nextBsl ?? origin + atr1 * 2.4)
+    raw.push({
+      kind: 'FAILED_RECLAIM',
+      weight: 16 + (cas?.regime === 'COUNTERTREND' ? 10 : 0),
+      title: `Не закрепят ${br.label} — обратно`,
+      why: `Если пробой ${br.label} ${fmt(br.price)} не удержат телом, это вынос. Цена вернётся${fuel ? ` в ${fuel.label}` : ''} и пойдёт до ${fmt(failTo)}.`,
+      invalidation: `Слом этого варианта: два часа держатся за ${fmt(br.price)}.`,
+      side: up ? 'SHORT' : 'LONG',
+      target: failTo,
+      path: path([
+        [0, origin, 'сейчас'],
+        [H * 2.4, br.price, `ложный ${br.label}`],
+        [H * 4.0, rec, 'не держат'],
+        [H * 9.0, failTo, 'обратный ход'],
+      ]),
+    })
+  } else if (fuel && trendSide && (cas?.regime === 'PULLBACK' || cas?.regime === 'TREND')) {
     const up = trendSide === 'LONG'
     const cont = up
       ? shorts?.price ?? h4?.nextBsl ?? h4?.dealingHigh ?? origin + atr1 * 1.8
@@ -1426,7 +1487,7 @@ export function buildStructureScenarios(input: {
 
   for (const s of raw) {
     s.weight = tiltWeight(s, tiltCtx)
-    s.path = compactPath(s.path)
+    s.path = keepStory(s.path)
   }
 
   const sorted = raw
@@ -1437,7 +1498,7 @@ export function buildStructureScenarios(input: {
 
   if (!picked.length) {
     return {
-      now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null),
+      now: [input.intra?.line, nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null)].filter(Boolean).join(' '),
       leadId: 'A',
       leadTitle: 'Ждём закрытие 15м / часа',
       scenarios: [],
@@ -1467,7 +1528,7 @@ export function buildStructureScenarios(input: {
 
   const lead = scenarios[0]
   return {
-    now: nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null),
+    now: [input.intra?.line, nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null)].filter(Boolean).join(' '),
     leadId: lead?.id ?? 'A',
     leadTitle: lead?.title ?? 'Ждём факт',
     scenarios,

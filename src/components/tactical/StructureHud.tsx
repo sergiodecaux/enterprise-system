@@ -66,6 +66,11 @@ const StructureHud = ({ read }: Props) => {
           <p className="mt-0.5 font-mono text-[11px] leading-snug text-white/75">
             {board?.now ?? read.summary}
           </p>
+          {read.intra && (
+            <p className="mt-0.5 font-mono text-[10px] text-cyan-200/80">
+              {read.intra.line}
+            </p>
+          )}
           {read.fuel && (
             <p className="mt-0.5 font-mono text-[10px] text-white/55">
               Топливо: {read.fuel.label} {read.fuel.price >= 1000 ? read.fuel.price.toFixed(1) : read.fuel.price.toPrecision(5)}

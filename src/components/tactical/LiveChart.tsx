@@ -1597,7 +1597,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 16,
+        rightOffset: 22,
         barSpacing: 8,
         minBarSpacing: 2,
         lockVisibleTimeRangeOnResize: true,

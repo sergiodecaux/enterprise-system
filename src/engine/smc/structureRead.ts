@@ -115,6 +115,7 @@ export interface StructureRead {
   scenarios: StructureScenarioBoard | null
   cascade: CloseCascade | null
   fuel: { price: number; label: string } | null
+  intra: IntraPlan | null
 }
 
 export interface CongestionZone {
@@ -727,6 +728,128 @@ export function pickFuel(input: {
   return nearest ? { price: nearest.price, label: nearest.label } : null
 }
 
+export interface IntraLevel {
+  price: number
+  label: string
+}
+
+export interface IntraPlan {
+  side: 'LONG' | 'SHORT'
+  alreadyBroke: boolean
+  breakLv: IntraLevel
+  nextBreak: IntraLevel | null
+  dest: IntraLevel
+  line: string
+}
+
+function pctDist(a: number, b: number): number {
+  if (!(b > 0)) return 99
+  return (Math.abs(a - b) / b) * 100
+}
+
+function ladder(
+  price: number,
+  dir: 1 | -1,
+  raw: IntraLevel[]
+): IntraLevel[] {
+  const want = raw
+    .filter((x) => x.price > 0 && (dir > 0 ? x.price > price * 1.0012 : x.price < price * 0.9988))
+    .sort((a, b) => (dir > 0 ? a.price - b.price : b.price - a.price))
+  const out: IntraLevel[] = []
+  for (const x of want) {
+    if (out.some((o) => pctDist(o.price, x.price) < 0.22)) continue
+    out.push(x)
+    if (out.length >= 3) break
+  }
+  return out
+}
+
+/** Intraday: what we break, where we hold, next break, how far. */
+export function planIntradayMove(input: {
+  price: number
+  side: 'LONG' | 'SHORT'
+  h1: TfStructure | null
+  h4: TfStructure | null
+  d1: TfStructure | null
+  w1: TfStructure | null
+  trap: MmTrapThesis | null
+  liq?: { longClusters: Array<{ price: number }>; shortClusters: Array<{ price: number }> } | null
+  equalHighs?: Array<{ price: number; isActive?: boolean }>
+  equalLows?: Array<{ price: number; isActive?: boolean }>
+}): IntraPlan | null {
+  const { price, side } = input
+  if (!(price > 0)) return null
+  const dir: 1 | -1 = side === 'LONG' ? 1 : -1
+  const raw: IntraLevel[] = []
+  const push = (p: number | null | undefined, label: string) => {
+    if (p != null && p > 0) raw.push({ price: p, label })
+  }
+  if (side === 'LONG') {
+    push(input.h1?.lastSwingHigh?.price, 'хай 1ч')
+    push(input.h4?.lastSwingHigh?.price, 'хай 4ч')
+    push(input.h1?.nextBsl, 'BSL часа')
+    push(input.h4?.nextBsl, 'BSL 4ч')
+    push(input.d1?.lastSwingHigh?.price, 'хай дня')
+    push(input.d1?.nextBsl, 'BSL дня')
+    push(input.w1?.nextBsl, 'хай недели')
+    push(input.trap?.crowdShorts, 'стопы шортов')
+    for (const e of input.equalHighs ?? []) {
+      if (e.isActive !== false) push(e.price, 'равные хаи')
+    }
+    for (const c of input.liq?.shortClusters ?? []) push(c.price, 'кластер шортов')
+  } else {
+    push(input.h1?.lastSwingLow?.price, 'лой 1ч')
+    push(input.h4?.lastSwingLow?.price, 'лой 4ч')
+    push(input.h1?.nextSsl, 'SSL часа')
+    push(input.h4?.nextSsl, 'SSL 4ч')
+    push(input.d1?.lastSwingLow?.price, 'лой дня')
+    push(input.d1?.nextSsl, 'SSL дня')
+    push(input.w1?.nextSsl, 'лой недели')
+    push(input.trap?.crowdLongs, 'стопы лонгов')
+    for (const e of input.equalLows ?? []) {
+      if (e.isActive !== false) push(e.price, 'равные лои')
+    }
+    for (const c of input.liq?.longClusters ?? []) push(c.price, 'кластер лонгов')
+  }
+
+  let steps = ladder(price, dir, raw)
+  const broken =
+    side === 'LONG'
+      ? input.h1?.lastSwingHigh?.price ?? input.h4?.lastSwingHigh?.price
+      : input.h1?.lastSwingLow?.price ?? input.h4?.lastSwingLow?.price
+  const alreadyBroke =
+    broken != null &&
+    ((side === 'LONG' && price > broken * 1.001) ||
+      (side === 'SHORT' && price < broken * 0.999))
+
+  if (steps.length < 2) {
+    const span =
+      (input.h4 && input.h4.dealingHigh > input.h4.dealingLow
+        ? input.h4.dealingHigh - input.h4.dealingLow
+        : input.h1 && input.h1.dealingHigh > input.h1.dealingLow
+          ? input.h1.dealingHigh - input.h1.dealingLow
+          : price * 0.012) * (steps.length ? 0.85 : 1.15)
+    const base = steps[0]?.price ?? price
+    steps = [
+      ...(steps[0] ? [steps[0]] : [{ price: price + dir * span * 0.45, label: side === 'LONG' ? 'хай структуры' : 'лой структуры' }]),
+      { price: base + dir * span, label: side === 'LONG' ? 'следующий BSL' : 'следующий SSL' },
+      { price: base + dir * span * 1.7, label: side === 'LONG' ? 'цель дня' : 'цель дня' },
+    ]
+    steps = ladder(price, dir, steps)
+  }
+
+  const breakLv = steps[0]
+  const nextBreak = steps[1] ?? null
+  const dest = steps[2] ?? steps[1] ?? steps[0]
+  if (!breakLv || !dest) return null
+
+  const line = alreadyBroke
+    ? `Уже над/под ${breakLv.label} ${breakLv.price >= 1000 ? breakLv.price.toFixed(1) : breakLv.price.toPrecision(5)}. Нужен закреп, дальше ${nextBreak ? nextBreak.label : dest.label}, до ${dest.label}.`
+    : `Пробьём ${breakLv.label}, закреп на нём, дальше ${nextBreak ? nextBreak.label : dest.label}, до ${dest.label}.`
+
+  return { side, alreadyBroke, breakLv, nextBreak, dest, line }
+}
+
 function lastStructureEvent(tf: TfStructure | null): StructureEvent | null {
   if (!tf) return null
   const evs = [tf.lastReclaim, tf.lastChoch, tf.lastBos].filter(
@@ -1041,6 +1164,21 @@ export function composeStructureRead(input: {
           equalLows: input.equalLows,
         })
       : null
+  const intra =
+    trendSide != null
+      ? planIntradayMove({
+          price,
+          side: trendSide,
+          h1,
+          h4,
+          d1,
+          w1,
+          trap,
+          liq: input.liq ?? null,
+          equalHighs: input.equalHighs,
+          equalLows: input.equalLows,
+        })
+      : null
   const tradeReady = trap.phase === 'TRADE_READY' && trap.tradeSide != null
   const preferredSide =
     cascade.regime === 'PULLBACK' || cascade.regime === 'TREND'
@@ -1111,6 +1249,7 @@ export function composeStructureRead(input: {
       fib: fib141,
       trap,
       fuel,
+      intra,
       bookImbalance: input.bookImbalance,
       mmDrive: input.mmDrive,
       mmStopHunt: input.mmStopHunt,
@@ -1201,6 +1340,7 @@ export function composeStructureRead(input: {
     scenarios: board,
     cascade,
     fuel,
+    intra,
   }
 }
 

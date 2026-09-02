@@ -1,6 +1,6 @@
 /**
- * Scenario arrows on a canvas overlay — never a chart series.
- * Compact paths from the last bar, not stretched across empty right padding.
+ * Intraday scenario path on canvas — break, reclaim, next, destination.
+ * Uses the empty right of the chart, not a 6-bar scalp stub.
  */
 
 import { useEffect, useRef } from 'react'
@@ -44,48 +44,27 @@ function drawArrow(
   ctx.restore()
 }
 
-function compact(points: PathPoint[]): PathPoint[] {
-  if (points.length <= 3) return points
-  const a = points[0]
-  const b = points[points.length - 1]
-  if (!a || !b) return points
-  let mid = points[Math.floor(points.length / 2)] ?? b
-  let best = 0
-  const dt = b.timeOffsetSeconds - a.timeOffsetSeconds || 1
-  const dp = b.price - a.price
-  for (let i = 1; i < points.length - 1; i++) {
-    const p = points[i]
-    const t = (p.timeOffsetSeconds - a.timeOffsetSeconds) / dt
-    const d = Math.abs(p.price - (a.price + dp * t))
-    if (d >= best) {
-      best = d
-      mid = p
-    }
-  }
-  return [a, mid, b]
-}
-
 function toXy(
   points: PathPoint[],
   x0: number,
   x1: number,
   yOf: (price: number) => number | null,
   h: number
-): Array<{ x: number; y: number }> {
-  const src = compact(points)
+): Array<{ x: number; y: number; label?: string }> {
+  const src = points.filter((p) => p.price > 0 && Number.isFinite(p.price)).slice(0, 6)
   const maxT = Math.max(
     1,
     ...src.map((p) => p.timeOffsetSeconds).filter((t) => t > 0)
   )
-  const out: Array<{ x: number; y: number }> = []
+  const out: Array<{ x: number; y: number; label?: string }> = []
   for (const p of src) {
-    if (!(p.price > 0) || !Number.isFinite(p.price)) continue
     const t = clamp(p.timeOffsetSeconds / maxT, 0, 1)
     const yRaw = yOf(p.price)
     if (yRaw == null || !Number.isFinite(yRaw)) continue
     out.push({
       x: x0 + (x1 - x0) * t,
-      y: clamp(yRaw, 14, h - 16),
+      y: clamp(yRaw, 18, h - 20),
+      label: p.label,
     })
   }
   return out
@@ -139,15 +118,16 @@ const StructureOverlay = ({
 
         const xStart = chart.timeScale().timeToCoordinate(lastCandleTs as never)
         const x0 =
-          xStart != null && Number.isFinite(Number(xStart)) ? Number(xStart) : w * 0.78
-        const bars = barSeconds >= 86_400 ? 3 : barSeconds >= 14_400 ? 4 : 6
+          xStart != null && Number.isFinite(Number(xStart)) ? Number(xStart) : w * 0.62
+        const barsAhead =
+          barSeconds >= 86_400 ? 3 : barSeconds >= 14_400 ? 6 : barSeconds >= 3_600 ? 12 : 32
         const xHint = chart
           .timeScale()
-          .timeToCoordinate((lastCandleTs + barSeconds * bars) as never)
-        const spanCap = Math.min(92, Math.max(48, w * 0.22))
+          .timeToCoordinate((lastCandleTs + barSeconds * barsAhead) as never)
+        const xRight = w - 10
         const xEndHint =
-          xHint != null && Number.isFinite(Number(xHint)) ? Number(xHint) : x0 + spanCap
-        const x1base = clamp(xEndHint, x0 + 44, x0 + spanCap)
+          xHint != null && Number.isFinite(Number(xHint)) ? Number(xHint) : x0 + w * 0.32
+        const x1base = clamp(xEndHint, x0 + 88, xRight)
 
         const yOf = (price: number): number | null => {
           const y = series.priceToCoordinate(price)
@@ -159,24 +139,23 @@ const StructureOverlay = ({
         for (let i = list.length - 1; i >= 0; i--) {
           const sc = list[i]
           const lead = i === 0
-          const x1 = lead ? x1base : x0 + (x1base - x0) * (0.72 - i * 0.08)
-          const pts = toXy(sc.path, x0, Math.max(x0 + 36, x1), yOf, h)
+          const x1 = lead ? x1base : x0 + (x1base - x0) * 0.78
+          const pts = toXy(sc.path, x0, Math.max(x0 + 70, x1), yOf, h)
           if (pts.length < 2) continue
           ctx.beginPath()
           ctx.moveTo(pts[0].x, pts[0].y)
-          if (pts.length === 2) {
-            ctx.lineTo(pts[1].x, pts[1].y)
-          } else {
-            const c = pts[1]
-            const n = pts[2]
-            ctx.quadraticCurveTo(c.x, c.y, n.x, n.y)
+          for (let k = 1; k < pts.length; k++) {
+            const prev = pts[k - 1]
+            const cur = pts[k]
+            const mx = (prev.x + cur.x) / 2
+            ctx.quadraticCurveTo(mx, prev.y, cur.x, cur.y)
           }
           ctx.strokeStyle = sc.color
-          ctx.lineWidth = lead ? 2.35 : 1.35
-          ctx.setLineDash(lead ? [] : [4, 4])
+          ctx.lineWidth = lead ? 2.4 : 1.3
+          ctx.setLineDash(lead ? [] : [5, 4])
           ctx.lineJoin = 'round'
           ctx.lineCap = 'round'
-          ctx.globalAlpha = lead ? 0.96 : 0.62
+          ctx.globalAlpha = lead ? 0.96 : 0.55
           ctx.stroke()
           ctx.setLineDash([])
           ctx.globalAlpha = 1
@@ -184,17 +163,34 @@ const StructureOverlay = ({
           const a = pts[pts.length - 2]
           const b = pts[pts.length - 1]
           const angle = Math.atan2(b.y - a.y, b.x - a.x)
-          drawArrow(ctx, b.x, b.y, angle, sc.color, lead ? 10 : 7)
+          drawArrow(ctx, b.x, b.y, angle, sc.color, lead ? 11 : 7)
 
-          const label = `${sc.id} ${sc.probability}%`
+          if (lead) {
+            ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace'
+            for (let k = 1; k < pts.length; k++) {
+              const p = pts[k]
+              const text = p.label
+              if (!text || text === 'сейчас') continue
+              const short = text.length > 22 ? `${text.slice(0, 20)}…` : text
+              const tw = ctx.measureText(short).width
+              const lx = clamp(p.x - tw / 2, 4, w - tw - 4)
+              const ly = clamp(p.y + (p.y > h / 2 ? -10 : 14), 12, h - 8)
+              ctx.fillStyle = 'rgba(8,10,14,0.78)'
+              ctx.fillRect(lx - 2, ly - 8, tw + 4, 11)
+              ctx.fillStyle = sc.color
+              ctx.fillText(short, lx, ly)
+            }
+          }
+
+          const tag = `${sc.id} ${sc.probability}%`
           ctx.font = 'bold 10px ui-monospace, SFMono-Regular, Menlo, monospace'
-          const tw = ctx.measureText(label).width
+          const tw = ctx.measureText(tag).width
           const lx = clamp(b.x - tw - 4, 4, w - tw - 6)
-          const ly = clamp(b.y + (i === 0 ? (b.y > h / 2 ? -11 : 13) : i * 12), 12, h - 8)
-          ctx.fillStyle = 'rgba(8,10,14,0.78)'
+          const ly = clamp(b.y + (lead ? (b.y > h / 2 ? 16 : -14) : i * 11), 12, h - 8)
+          ctx.fillStyle = 'rgba(8,10,14,0.8)'
           ctx.fillRect(lx - 3, ly - 9, tw + 6, 13)
           ctx.fillStyle = sc.color
-          ctx.fillText(label, lx, ly)
+          ctx.fillText(tag, lx, ly)
         }
       } catch {
         /* overlay must never kill the chart */
