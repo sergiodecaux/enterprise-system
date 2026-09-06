@@ -77,6 +77,10 @@ import {
   type StructureRead,
   type StructureTf,
 } from '../../engine/smc/structureRead'
+import {
+  buildZoneReactionBoard,
+  srBoardToLiquidityZones,
+} from '../../engine/smc/zoneReaction'
 import { lastClosedBar } from '../../engine/smc/closeCascade'
 import { pickActionZones } from '../../engine/smc/entryZones'
 import {
@@ -170,6 +174,8 @@ function paneHeight(expanded: boolean, landscape: boolean, vh: number): number {
 
 const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const { t } = useTranslation()
+  const tRef = useRef(t)
+  tRef.current = t
 
   const ticker = useAppStore((s) => s.liveTickets[flatSymbol])
   const orderBookMetrics = useAppStore(
@@ -348,7 +354,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           vertTouchDrag: true,
         },
         crosshair: { mode: CrosshairMode.Magnet },
-        timeScale: { rightOffset: tallChart ? 22 : 16 },
+        timeScale: { rightOffset: tallChart ? 16 : 12 },
       })
     } catch {
       /* ignore */
@@ -474,12 +480,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     })
   }, [])
 
+  const m15 = candles15m ?? []
   const src15m =
-    candles15m.length >= 12
-      ? candles15m
+    m15.length >= 12
+      ? m15
       : timeframe === '15m' || timeframe === '5m' || timeframe === '1m'
         ? candles
-        : candles15m
+        : m15
   const structureAnchor = [
     lastClosedBar(src15m, 900_000)?.[0] ?? 0,
     lastClosedBar(
@@ -599,6 +606,50 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     structureStickyRef.current = null
   }, [symbol])
 
+  const liveZones = useMemo(() => {
+    if (!(currentPrice > 0) || candles.length < 12) return structureRead?.zones ?? null
+    try {
+      const htf =
+        candles4h.length >= 16 ? candles4h : candles1h.length >= 16 ? candles1h : undefined
+      return buildZoneReactionBoard({
+        candles,
+        htfCandles: htf && htf !== candles ? htf : undefined,
+        tape: candles,
+        price: currentPrice,
+        dealingHigh: structureRead?.h4?.dealingHigh ?? structureRead?.h1?.dealingHigh,
+        dealingLow: structureRead?.h4?.dealingLow ?? structureRead?.h1?.dealingLow,
+        structureHeld: Boolean(
+          (structureRead?.h1?.lastReclaim?.held || structureRead?.h4?.lastReclaim?.held) &&
+            structureRead?.h1?.lastReclaim
+        ),
+        preferredSide:
+          structureRead?.preferredSide ??
+          (structureRead?.scenarios?.scenarios[0]?.side === 'BOTH'
+            ? null
+            : structureRead?.scenarios?.scenarios[0]?.side ?? null),
+        magnet: structureRead?.magnet,
+        equalHighs: eqLiquidityMap?.equalHighs,
+        equalLows: eqLiquidityMap?.equalLows,
+      })
+    } catch {
+      return structureRead?.zones ?? null
+    }
+  }, [
+    candles,
+    candles1h,
+    candles4h,
+    currentPrice,
+    structureRead,
+    eqLiquidityMap?.equalHighs,
+    eqLiquidityMap?.equalLows,
+  ])
+
+  const hudRead = useMemo((): StructureRead | null => {
+    if (!structureRead) return null
+    if (!liveZones) return structureRead
+    return { ...structureRead, zones: liveZones }
+  }, [structureRead, liveZones])
+
   /** Проторговка + FVG/OB откуда лонг/шорт с отката */
   const actionPick = useMemo(
     () =>
@@ -619,37 +670,42 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     const zones: LiquidityZone[] = []
 
     if (showSrZones) {
-      const cong = findCongestionZones(candles, 2)
-      if (cong.length) {
-        for (const z of cong) {
+      const sr = srBoardToLiquidityZones(liveZones, visibleEnd)
+      if (sr.length) {
+        zones.push(...sr)
+      } else {
+        const cong = findCongestionZones(candles, 4)
+        if (cong.length) {
+          for (const z of cong) {
+            zones.push({
+              id: `cong_${z.startTimeSec}_${z.touches}`,
+              type: 'VALUE_AREA',
+              side: 'NEUTRAL',
+              top: z.top,
+              bottom: z.bottom,
+              startTime: z.startTimeSec as Time,
+              endTime: visibleEnd,
+              strength: 9,
+              label: '',
+            })
+          }
+        } else if (chartStructure && chartStructure.dealingHigh > chartStructure.dealingLow) {
+          const startIdx = Math.max(0, Math.floor(candles.length * 0.45))
+          const startT = candles[startIdx]
+            ? (Math.floor(candles[startIdx][0] / 1000) as Time)
+            : ((Date.now() / 1000) as Time)
           zones.push({
-            id: `cong_${z.startTimeSec}_${z.touches}`,
+            id: 'cong_dealing',
             type: 'VALUE_AREA',
             side: 'NEUTRAL',
-            top: z.top,
-            bottom: z.bottom,
-            startTime: z.startTimeSec as Time,
+            top: chartStructure.dealingHigh,
+            bottom: chartStructure.dealingLow,
+            startTime: startT,
             endTime: visibleEnd,
-            strength: 9,
+            strength: 8,
             label: '',
           })
         }
-      } else if (chartStructure && chartStructure.dealingHigh > chartStructure.dealingLow) {
-        const startIdx = Math.max(0, Math.floor(candles.length * 0.45))
-        const startT = candles[startIdx]
-          ? (Math.floor(candles[startIdx][0] / 1000) as Time)
-          : ((Date.now() / 1000) as Time)
-        zones.push({
-          id: 'cong_dealing',
-          type: 'VALUE_AREA',
-          side: 'NEUTRAL',
-          top: chartStructure.dealingHigh,
-          bottom: chartStructure.dealingLow,
-          startTime: startT,
-          endTime: visibleEnd,
-          strength: 8,
-          label: '',
-        })
       }
     }
 
@@ -688,6 +744,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     fibMaps,
     zonesMode,
     foundChartZones,
+    liveZones,
   ])
 
   const priceLevels = useMemo(() => {
@@ -784,14 +841,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       const brief = analyzeZoneTap({
         zone,
         price: currentPrice,
-        structure: structureRead,
+        structure: hudRead,
         timeframe,
       })
       if (!brief) return
       setAdvisor(brief)
       setAdvisorBot('idle')
       try {
-        chartRef.current?.timeScale().applyOptions({ rightOffset: 24 })
+        chartRef.current?.timeScale().applyOptions({ rightOffset: 12 })
       } catch {
         /* ignore */
       }
@@ -840,7 +897,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     [
       liquidityZones,
       currentPrice,
-      structureRead,
+      hudRead,
       timeframe,
       haptic,
       resolveChatId,
@@ -1530,23 +1587,36 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         const data = await fetchOhlcv(symbol, timeframe, CANDLE_LIMIT[timeframe])
         if (cancelled) return
         if (!data.length) {
-          if (!silent) setError(t('chart_empty'))
+          if (!silent) setError(tRef.current('chart_empty'))
           return
         }
 
-        const mapped: CandlestickData[] = data.map((c) => ({
-          time: (c[0] / 1000) as Time,
-          open: c[1],
-          high: c[2],
-          low: c[3],
-          close: c[4],
-        }))
+        const mapped: CandlestickData[] = data
+          .filter(
+            (c) =>
+              Number.isFinite(c[0]) &&
+              Number.isFinite(c[1]) &&
+              Number.isFinite(c[2]) &&
+              Number.isFinite(c[3]) &&
+              Number.isFinite(c[4])
+          )
+          .map((c) => ({
+            time: (c[0] / 1000) as Time,
+            open: c[1],
+            high: c[2],
+            low: c[3],
+            close: c[4],
+          }))
+        if (!mapped.length) {
+          if (!silent) setError(tRef.current('chart_empty'))
+          return
+        }
         setCandles(data)
         seedHitBaselineFromCandles(symbol, data)
         setLwcData(mapped)
       } catch (err) {
         logger.warn('LiveChart klines failed', err)
-        if (!cancelled && !silent) setError(t('chart_error'))
+        if (!cancelled && !silent) setError(tRef.current('chart_error'))
       } finally {
         if (!cancelled && !silent) setLoading(false)
       }
@@ -1558,7 +1628,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       cancelled = true
       window.clearInterval(id)
     }
-  }, [symbol, timeframe, t])
+  }, [symbol, timeframe])
 
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return
@@ -1597,10 +1667,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 22,
+        rightOffset: 12,
         barSpacing: 8,
         minBarSpacing: 2,
-        lockVisibleTimeRangeOnResize: true,
+        lockVisibleTimeRangeOnResize: false,
         shiftVisibleRangeOnNewBar: true,
       },
       rightPriceScale: {
@@ -1735,7 +1805,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       const from = Math.max(-2, lwcData.length - vis)
       chartRef.current?.timeScale().setVisibleLogicalRange({
         from,
-        to: lwcData.length + 14,
+        to: lwcData.length + 5,
       })
       fittedKeyRef.current = key
     }
@@ -1892,14 +1962,23 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     }
 
     if (showSrZones) {
-      const bands = liquidityZones.filter((z) => (z.id ?? '').startsWith('cong_'))
+      const bands = liquidityZones.filter((z) => {
+        const id = z.id ?? ''
+        return id.startsWith('cong_') || id.startsWith('sr_')
+      })
       for (const z of bands) {
-        addLine(z.top, 'rgba(244, 114, 182, 0.55)', '', {
+        const color =
+          z.type === 'SSL'
+            ? 'rgba(45, 212, 191, 0.6)'
+            : z.type === 'BSL'
+              ? 'rgba(251, 113, 133, 0.6)'
+              : 'rgba(244, 114, 182, 0.55)'
+        addLine(z.top, color, '', {
           lineStyle: 2,
           lineWidth: 1,
           axisLabel: true,
         })
-        addLine(z.bottom, 'rgba(244, 114, 182, 0.55)', '', {
+        addLine(z.bottom, color, '', {
           lineStyle: 2,
           lineWidth: 1,
           axisLabel: true,
@@ -2066,7 +2145,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       const vis = timeframe === '1m' || timeframe === '5m' ? 90 : 70
       chart.timeScale().setVisibleLogicalRange({
         from: Math.max(-2, n - vis),
-        to: n + 14,
+        to: n + 5,
       })
     } else {
       chart.timeScale().fitContent()
@@ -2442,7 +2521,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 ? 'border border-pink-400/35 bg-pink-500/15 text-pink-200'
                 : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
             }`}
-            title="Проторговка — полупрозрачный диапазон, не линия"
+            title="Поддержка / сопротивление — прямоугольники, закреп и слом"
           >
             Зоны
           </button>
@@ -2613,7 +2692,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       </div>
 
       <div className={`shrink-0 ${chartExpanded ? 'px-2' : ''}`}>
-      <StructureHud read={structureRead} />
+      <StructureHud read={hudRead} />
       </div>
       {!chartExpanded && (
       <p className="px-1 font-mono text-[9px] text-white/35">

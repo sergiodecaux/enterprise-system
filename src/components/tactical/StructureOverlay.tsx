@@ -76,7 +76,6 @@ const StructureOverlay = ({
   containerRef,
   read,
   lastCandleTs,
-  barSeconds,
   showPath,
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -116,18 +115,15 @@ const StructureOverlay = ({
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, w, h)
 
+        // Only map the last real bar. Future timestamps on the time scale
+        // flatten candles (looks like the chart never loaded).
         const xStart = chart.timeScale().timeToCoordinate(lastCandleTs as never)
         const x0 =
-          xStart != null && Number.isFinite(Number(xStart)) ? Number(xStart) : w * 0.62
-        const barsAhead =
-          barSeconds >= 86_400 ? 3 : barSeconds >= 14_400 ? 6 : barSeconds >= 3_600 ? 12 : 32
-        const xHint = chart
-          .timeScale()
-          .timeToCoordinate((lastCandleTs + barSeconds * barsAhead) as never)
-        const xRight = w - 10
-        const xEndHint =
-          xHint != null && Number.isFinite(Number(xHint)) ? Number(xHint) : x0 + w * 0.32
-        const x1base = clamp(xEndHint, x0 + 88, xRight)
+          xStart != null && Number.isFinite(Number(xStart)) ? Number(xStart) : w * 0.68
+        const xRight = w - 12
+        const room = Math.max(56, xRight - x0)
+        const span = Math.min(room, Math.max(64, w * 0.26))
+        const x1base = x0 + span
 
         const yOf = (price: number): number | null => {
           const y = series.priceToCoordinate(price)
@@ -209,7 +205,7 @@ const StructureOverlay = ({
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, read, lastCandleTs, barSeconds, showPath])
+  }, [chart, series, containerRef, read, lastCandleTs, showPath])
 
   if (!showPath) return null
 

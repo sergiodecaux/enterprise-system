@@ -20,6 +20,10 @@ import {
   readCloseCascade,
   type CloseCascade,
 } from './closeCascade'
+import {
+  buildZoneReactionBoard,
+  type ZoneReactionBoard,
+} from './zoneReaction'
 
 export type StructureTf = '1h' | '4h' | '1d' | '1w'
 export type StructureTrend = 'BULLISH' | 'BEARISH' | 'RANGING'
@@ -116,6 +120,8 @@ export interface StructureRead {
   cascade: CloseCascade | null
   fuel: { price: number; label: string } | null
   intra: IntraPlan | null
+  /** S/R rectangles + hold/break/закреп reaction */
+  zones: ZoneReactionBoard | null
 }
 
 export interface CongestionZone {
@@ -782,7 +788,7 @@ export function planIntradayMove(input: {
   const dir: 1 | -1 = side === 'LONG' ? 1 : -1
   const raw: IntraLevel[] = []
   const push = (p: number | null | undefined, label: string) => {
-    if (p != null && p > 0) raw.push({ price: p, label })
+    if (p != null && Number.isFinite(p) && p > 0) raw.push({ price: p, label })
   }
   if (side === 'LONG') {
     push(input.h1?.lastSwingHigh?.price, 'хай 1ч')
@@ -823,12 +829,19 @@ export function planIntradayMove(input: {
       (side === 'SHORT' && price < broken * 0.999))
 
   if (steps.length < 2) {
-    const span =
-      (input.h4 && input.h4.dealingHigh > input.h4.dealingLow
+    const rawSpan =
+      input.h4 &&
+      Number.isFinite(input.h4.dealingHigh) &&
+      Number.isFinite(input.h4.dealingLow) &&
+      input.h4.dealingHigh > input.h4.dealingLow
         ? input.h4.dealingHigh - input.h4.dealingLow
-        : input.h1 && input.h1.dealingHigh > input.h1.dealingLow
+        : input.h1 &&
+            Number.isFinite(input.h1.dealingHigh) &&
+            Number.isFinite(input.h1.dealingLow) &&
+            input.h1.dealingHigh > input.h1.dealingLow
           ? input.h1.dealingHigh - input.h1.dealingLow
-          : price * 0.012) * (steps.length ? 0.85 : 1.15)
+          : price * 0.012
+    const span = Math.min(price * 0.08, Math.max(price * 0.004, rawSpan)) * (steps.length ? 0.85 : 1.15)
     const base = steps[0]?.price ?? price
     steps = [
       ...(steps[0] ? [steps[0]] : [{ price: price + dir * span * 0.45, label: side === 'LONG' ? 'хай структуры' : 'лой структуры' }]),
@@ -897,156 +910,6 @@ export function structureHoldState(
     }
   }
   return { held: false, side: null }
-}
-
-function buildFlightPath(opts: {
-  price: number
-  side: 'LONG' | 'SHORT'
-  held: boolean
-  h1: TfStructure | null
-  h4: TfStructure | null
-  fib: Fib141Reaction | null
-  magnet: { price: number; label: string } | null
-  invalidation: number | null
-}): PathPoint[] {
-  const { price, side, held, h1, h4, fib, magnet, invalidation } = opts
-  const dir = side === 'LONG' ? 1 : -1
-  const hour = 3600
-  const points: PathPoint[] = [{ timeOffsetSeconds: 0, price, label: 'сейчас' }]
-
-  if (!held) {
-    const move = side === 'SHORT' ? 'падение' : 'полёт'
-    let t = Math.round(hour * 1.6)
-    const h4Target =
-      side === 'LONG'
-        ? h4?.nextBsl ?? h4?.dealingHigh
-        : h4?.nextSsl ?? h4?.dealingLow
-    if (h4Target != null && h4Target > 0) {
-      const aligned =
-        (side === 'LONG' && h4Target > price) ||
-        (side === 'SHORT' && h4Target < price)
-      if (aligned) {
-        points.push({
-          timeOffsetSeconds: t,
-          price: h4Target,
-          label: `${move} · 4H`,
-          isKeyLevel: true,
-        })
-        t += Math.round(hour * 8)
-      }
-    }
-    if (magnet && magnet.price > 0) {
-      const aligned =
-        (side === 'LONG' && magnet.price > price) ||
-        (side === 'SHORT' && magnet.price < price)
-      if (aligned && !points.some((p) => Math.abs(p.price - magnet.price) < magnet.price * 0.001)) {
-        points.push({
-          timeOffsetSeconds: t,
-          price: magnet.price,
-          label: `${move} · ${magnet.label}`,
-          isKeyLevel: true,
-        })
-      }
-    }
-    if (points.length < 2) {
-      points.push({
-        timeOffsetSeconds: hour * 8,
-        price: price + dir * Math.abs(price) * 0.028,
-        label: move,
-      })
-    }
-    return points
-  }
-
-  // Pullback into discount (long) / premium (short) — 1H structure
-  const pull =
-    side === 'LONG'
-      ? h1?.lastReclaim?.price ?? h1?.lastSwingLow?.price ?? h1?.dealingLow
-      : h1?.lastReclaim?.price ?? h1?.lastSwingHigh?.price ?? h1?.dealingHigh
-
-  const usePull =
-    pull != null &&
-    ((side === 'LONG' && pull < price && pull > price * 0.92) ||
-      (side === 'SHORT' && pull > price && pull < price * 1.08))
-
-  let t = 0
-  if (fib && (fib.state === 'APPROACHING' || fib.state === 'INSIDE')) {
-    const mid = (fib.zoneTop + fib.zoneBottom) / 2
-    t += Math.round(hour * 2.5)
-    points.push({
-      timeOffsetSeconds: t,
-      price: mid,
-      label: fib.state === 'INSIDE' ? 'в 141' : 'к 141',
-      isKeyLevel: true,
-    })
-    t += Math.round(hour * 1.5)
-    const bounce =
-      fib.bias === 'LONG'
-        ? mid + Math.abs(fib.zoneTop - fib.zoneBottom) * 0.35
-        : mid - Math.abs(fib.zoneTop - fib.zoneBottom) * 0.35
-    points.push({
-      timeOffsetSeconds: t,
-      price: bounce,
-      label: 'отскок 141',
-      isKeyLevel: true,
-    })
-  } else if (fib?.state === 'BOUNCE' || fib?.state === 'RECLAIM') {
-    t += Math.round(hour * 1.2)
-    points.push({
-      timeOffsetSeconds: t,
-      price: price + dir * Math.abs(price) * 0.004,
-      label: fib.state === 'RECLAIM' ? 'закреп 141' : 'после отскока 141',
-    })
-  } else if (usePull && pull != null) {
-    t += Math.round(hour * 2)
-    points.push({
-      timeOffsetSeconds: t,
-      price: pull,
-      label: h1?.lastReclaim ? 'ретест 1H' : 'OTE / дисконт 1H',
-      isKeyLevel: true,
-    })
-  }
-
-  const h4Target =
-    side === 'LONG' ? h4?.nextBsl ?? h4?.dealingHigh : h4?.nextSsl ?? h4?.dealingLow
-  if (h4Target != null && h4Target > 0) {
-    const aligned =
-      (side === 'LONG' && h4Target > price) || (side === 'SHORT' && h4Target < price)
-    if (aligned) {
-      t += Math.round(hour * 6)
-      points.push({
-        timeOffsetSeconds: t,
-        price: h4Target,
-        label: 'цель 4H',
-        isKeyLevel: true,
-      })
-    }
-  }
-
-  if (magnet && magnet.price > 0) {
-    const aligned =
-      (side === 'LONG' && magnet.price > price) ||
-      (side === 'SHORT' && magnet.price < price)
-    if (aligned) {
-      t += Math.round(hour * 10)
-      points.push({
-        timeOffsetSeconds: t,
-        price: magnet.price,
-        label: magnet.label,
-        isKeyLevel: true,
-      })
-    }
-  }
-
-  if (invalidation != null && invalidation > 0 && points.length < 3) {
-    points.push({
-      timeOffsetSeconds: hour * 4,
-      price: invalidation,
-      label: 'слом',
-    })
-  }
-
-  return points
 }
 
 export function composeStructureRead(input: {
@@ -1276,7 +1139,39 @@ export function composeStructureRead(input: {
     board = null
   }
   const lead = board?.scenarios[0] ?? null
-  const summary = board?.now ?? trap.summary
+
+  let zoneBoard: ZoneReactionBoard | null = null
+  try {
+    const discoverSrc = h1src.length >= 12 ? h1src : h4src.length >= 12 ? h4src : d1src
+    const tapeSrc =
+      input.candles15m && input.candles15m.length >= 8
+        ? input.candles15m
+        : input.candlesTape && input.candlesTape.length >= 8
+          ? input.candlesTape
+          : discoverSrc
+    if (discoverSrc.length >= 12 && price > 0) {
+      zoneBoard = buildZoneReactionBoard({
+        candles: discoverSrc,
+        htfCandles: h4src.length >= 16 ? h4src : d1src.length >= 16 ? d1src : undefined,
+        tape: tapeSrc,
+        price,
+        dealingHigh: (h4 ?? h1)?.dealingHigh,
+        dealingLow: (h4 ?? h1)?.dealingLow,
+        structureHeld: Boolean(
+          (h1?.lastReclaim?.held || h4?.lastReclaim?.held) && hold.held
+        ),
+        preferredSide,
+        magnet,
+        equalHighs: input.equalHighs,
+        equalLows: input.equalLows,
+      })
+    }
+  } catch {
+    zoneBoard = null
+  }
+  if (zoneBoard?.line) factors.unshift(zoneBoard.line)
+
+  const summary = board?.now ?? zoneBoard?.line ?? trap.summary
 
   const markers: StructureMarker[] = []
   const pushMark = (ev: StructureEvent | null, tf: string) => {
@@ -1302,21 +1197,18 @@ export function composeStructureRead(input: {
   }
   if (h4?.lastChoch) pushMark(h4.lastChoch, '4H')
 
-  const chartPath =
-    lead && lead.path.length >= 2
-      ? lead.path
-      : tradeReady && pathSide && price > 0
-        ? buildFlightPath({
-            price,
-            side: pathSide,
-            held: true,
-            h1,
-            h4,
-            fib: fib141,
-            magnet,
-            invalidation,
-          })
-        : []
+  // Keep LWC consumers on the last bar only. Scenario arrows live on canvas.
+  const chartPath: PathPoint[] =
+    pathSide && price > 0 && Number.isFinite(price)
+      ? [
+          { timeOffsetSeconds: 0, price, label: 'сейчас' },
+          {
+            timeOffsetSeconds: 0,
+            price: price + (pathSide === 'LONG' ? 1 : -1) * price * 0.0008,
+            label: pathSide === 'LONG' ? 'вверх' : 'вниз',
+          },
+        ]
+      : []
 
   return {
     h1,
@@ -1341,6 +1233,7 @@ export function composeStructureRead(input: {
     cascade,
     fuel,
     intra,
+    zones: zoneBoard,
   }
 }
 

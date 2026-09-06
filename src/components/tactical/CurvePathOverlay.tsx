@@ -75,7 +75,6 @@ function densify(points: PathPoint[], anchor: number): LineData[] {
 const CurvePathOverlay = ({
   chart,
   lastCandleTs,
-  barSeconds,
   paths,
 }: Props) => {
   const seriesRef = useRef<ISeriesApi<'Line'>[]>([])
@@ -92,22 +91,10 @@ const CurvePathOverlay = ({
     seriesRef.current = []
     if (!lastCandleTs || !paths.length) return
 
-    const bar = Math.max(1, barSeconds)
-    const maxBars = Math.max(
-      0,
-      ...paths.flatMap((p) => p.points.map((pt) => pt.timeOffsetSeconds / bar))
-    )
-    try {
-      const ts = chart.timeScale()
-      const current = ts.options().rightOffset ?? 8
-      const extra = Math.min(40, Math.ceil(maxBars) + 6)
-      if (extra > current + 1) ts.applyOptions({ rightOffset: extra })
-    } catch {
-      /* ignore */
-    }
-
     for (const path of paths) {
-      const data = densify(path.points, lastCandleTs)
+      const data = densify(path.points, lastCandleTs).filter(
+        (p) => (p.time as number) <= lastCandleTs
+      )
       if (data.length < 2) continue
       try {
         const line = chart.addLineSeries({
@@ -150,7 +137,7 @@ const CurvePathOverlay = ({
       }
       seriesRef.current = []
     }
-  }, [chart, lastCandleTs, barSeconds, paths])
+  }, [chart, lastCandleTs, paths])
 
   return null
 }

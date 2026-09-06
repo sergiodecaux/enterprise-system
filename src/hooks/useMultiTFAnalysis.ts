@@ -53,12 +53,17 @@ export function useMultiTFAnalysis(
     setData((prev) => ({ ...prev, isLoading: true, error: null }))
 
     try {
-      const [candles1d, candles4h, candles1h, candles15m] = await Promise.all([
+      const [candles1d, candles4h, candles1h] = await Promise.all([
         fetchOhlcv(symbol, '1d', 90),
         fetchOhlcv(symbol, '4h', 100),
         fetchOhlcv(symbol, '1h', 120),
-        fetchOhlcv(symbol, '15m', 96),
       ])
+      let candles15m: OhlcvCandle[] = []
+      try {
+        candles15m = await fetchOhlcv(symbol, '15m', 96)
+      } catch {
+        candles15m = []
+      }
 
       const daily = analyzeTFSnapshot(candles1d, '1d')
       const h4 = analyzeTFSnapshot(candles4h, '4h')

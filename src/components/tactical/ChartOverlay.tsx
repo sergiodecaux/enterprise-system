@@ -18,13 +18,20 @@ interface Props {
 type Rgba = { r: number; g: number; b: number }
 
 function baseHue(zone: LiquidityZone): Rgba {
-  if ((zone.id ?? '').startsWith('cong_')) {
+  const id = zone.id ?? ''
+  if (id.startsWith('cong_') || id.startsWith('sr_rng') || id.startsWith('sr_cong')) {
     return { r: 244, g: 114, b: 182 }
   }
-  if ((zone.id ?? '').startsWith('sr_premium')) {
+  if (id.startsWith('sr_sup') || id.startsWith('sr_eql') || id.startsWith('sr_deal_lo')) {
+    return { r: 45, g: 212, b: 191 }
+  }
+  if (id.startsWith('sr_res') || id.startsWith('sr_eqh') || id.startsWith('sr_deal_hi')) {
+    return { r: 251, g: 113, b: 133 }
+  }
+  if (id.startsWith('sr_premium')) {
     return { r: 148, g: 163, b: 184 }
   }
-  if ((zone.id ?? '').startsWith('sr_discount')) {
+  if (id.startsWith('sr_discount')) {
     return { r: 45, g: 180, b: 175 }
   }
   switch (zone.type) {
@@ -78,7 +85,16 @@ function strengthVisual(
   const isFib141 =
     zone.type === 'FIBONACCI' &&
     ((zone.id ?? '').includes('141') || (zone.label ?? '').includes('141'))
-  const isCong = (zone.id ?? '').startsWith('cong_')
+  const id = zone.id ?? ''
+  const isCong =
+    id.startsWith('cong_') ||
+    id.startsWith('sr_sup') ||
+    id.startsWith('sr_res') ||
+    id.startsWith('sr_rng') ||
+    id.startsWith('sr_cong') ||
+    id.startsWith('sr_eq') ||
+    id.startsWith('sr_deal') ||
+    id.startsWith('sr_htf')
 
   const isAction = zone.type === 'FVG' || zone.type === 'ORDER_BLOCK'
   const airy = isFib141 || ((zone.id ?? '').startsWith('sr_') && !isCong)
@@ -142,7 +158,7 @@ function isActionZone(zone: LiquidityZone): boolean {
   return (
     zone.type === 'FVG' ||
     zone.type === 'ORDER_BLOCK' ||
-    Boolean(zone.contextHint && !(zone.id ?? '').startsWith('cong_'))
+    Boolean(zone.contextHint)
   )
 }
 
@@ -187,7 +203,7 @@ const ChartOverlay = ({
           if (ak !== bk) return bk - ak
           return (b.strength ?? 5) - (a.strength ?? 5)
         })
-        .slice(0, 12)
+        .slice(0, 14)
 
       for (const zone of visibleZones) {
         const topY = series.priceToCoordinate(zone.top)

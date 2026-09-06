@@ -24,9 +24,11 @@ interface Props {
 function toLineData(path: PathPoint[], anchor: number): LineData[] {
   return path
     .map((pp) => ({
-      time: (anchor + pp.timeOffsetSeconds) as Time,
+      // Cap at the last candle — future unix times flatten the time scale.
+      time: anchor as Time,
       value: pp.price,
     }))
+    .filter((p) => Number.isFinite(p.value) && p.value > 0)
     .filter(
       (p, i, arr) =>
         i === 0 || (p.time as number) > (arr[i - 1].time as number)
@@ -90,8 +92,18 @@ const ZonePathOverlay = ({
         lastValueVisible: false,
         crosshairMarkerVisible: isSel,
         title: '',
+        autoscaleInfoProvider: () => null,
       })
-      line.setData(toLineData(s.chartPath!, lastCandleTs))
+      const data = toLineData(s.chartPath!, lastCandleTs)
+      if (data.length < 2) {
+        try {
+          chart.removeSeries(line)
+        } catch {
+          /* ignore */
+        }
+        continue
+      }
+      line.setData(data)
       refs.current[s.id] = line
     }
 

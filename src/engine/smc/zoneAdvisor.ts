@@ -6,6 +6,7 @@
 import type { LiquidityZone } from '../indicators/types'
 import type { PathPoint } from '../prediction/types'
 import type { StructureRead } from './structureRead'
+import { reactionForZone } from './zoneReaction'
 
 export interface AdvisorLeg {
   side: 'LONG' | 'SHORT'
@@ -80,6 +81,8 @@ export function hitZoneAt(
 }
 
 function bounceSide(z: LiquidityZone, price: number): 'LONG' | 'SHORT' {
+  if (price < z.bottom) return 'SHORT'
+  if (price > z.top) return 'LONG'
   if (z.side === 'BULLISH') return 'LONG'
   if (z.side === 'BEARISH') return 'SHORT'
   const mid = (z.top + z.bottom) / 2
@@ -89,8 +92,20 @@ function bounceSide(z: LiquidityZone, price: number): 'LONG' | 'SHORT' {
 function pickTarget(
   side: 'LONG' | 'SHORT',
   price: number,
-  structure: StructureRead | null
+  structure: StructureRead | null,
+  zone?: LiquidityZone
 ): { price: number; label: string } {
+  const rx = zone ? reactionForZone(structure?.zones, zone) : null
+  if (rx) {
+    if (side === bounceSide(zone!, price) && rx.targetIfHold) {
+      return { price: rx.targetIfHold.price, label: rx.targetIfHold.label }
+    }
+    const dump = side === 'LONG' ? rx.nextIfBreakUp : rx.nextIfBreakDown
+    if (side !== bounceSide(zone!, price) && dump) {
+      const mid = (dump.top + dump.bottom) / 2
+      return { price: mid, label: dump.label }
+    }
+  }
   const h4 = structure?.h4
   const mag = structure?.magnet
   if (side === 'LONG') {
@@ -187,6 +202,10 @@ function holdProbability(
   price: number,
   structure: StructureRead | null
 ): number {
+  const rx = reactionForZone(structure?.zones, zone)
+  if (rx) {
+    return Math.round(clamp(rx.holdProbability, 22, 84))
+  }
   let p = 52
   const held = structure?.structureHeld ?? false
   const pref = structure?.preferredSide
@@ -218,9 +237,10 @@ export function analyzeZoneTap(opts: {
   const pHold = holdProbability(zone, side, price, structure)
   const pBreak = 100 - pHold
 
-  const holdT = pickTarget(side, price, structure)
+  const holdT = pickTarget(side, price, structure, zone)
   const breakSide: 'LONG' | 'SHORT' = side === 'LONG' ? 'SHORT' : 'LONG'
-  const breakT = pickTarget(breakSide, price, structure)
+  const breakT = pickTarget(breakSide, price, structure, zone)
+  const rx = reactionForZone(structure?.zones, zone)
 
   const mag =
     structure?.magnet &&
@@ -236,8 +256,19 @@ export function analyzeZoneTap(opts: {
   const invalidation = side === 'SHORT' ? zone.top : zone.bottom
   const kindRu = kind === 'RANGE' ? 'проторговка' : kind
 
-  const wait =
-    side === 'SHORT'
+  const wait = rx
+    ? rx.state === 'CONSOLIDATING_UNDER' || rx.state === 'HOLDING_BELOW'
+      ? rx.going === 'DOWN'
+        ? `Уже закрепились под зоной. Шорт от проторговки, цель ${holdT.label}.`
+        : `Проторговка под зоной — ждём, пойдёт ли вниз. Слом вверх отменяет шорт.`
+      : rx.state === 'CONSOLIDATING_OVER' || rx.state === 'HOLDING_ABOVE'
+        ? rx.going === 'UP'
+          ? `Закреп над зоной держит. Лонг от проторговки, цель ${holdT.label}.`
+          : `Проторговка над зоной — закреп слабый, риск слива вниз.`
+        : rx.state === 'RECLAIMED'
+          ? `Ложный пробой и закреп обратно. Основной сценарий — от зоны.`
+          : rx.narrative
+    : side === 'SHORT'
       ? `Ждать заход в ${kindRu} и закреп свечой под зоной. Не ловить маркет сверху.`
       : `Ждать заход в ${kindRu} и закреп свечой над зоной. Не ловить маркет снизу.`
 
@@ -290,8 +321,9 @@ export function analyzeZoneTap(opts: {
     path: breakPath(breakSide, price, zone, breakT.price, bar),
   }
 
-  const summary =
-    structure?.structureHeld
+  const summary = rx
+    ? rx.narrative
+    : structure?.structureHeld
       ? `Закреп пока держит · основной сценарий: ${primary.title} (${pHold}%)`
       : `Структура слабая · сначала закреп в зоне, иначе слом (${pBreak}%)`
 
