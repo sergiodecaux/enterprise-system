@@ -1,19 +1,28 @@
 /**
- * Global Fibonacci — как в TradingView на скринах трейдера.
+ * Global Fibonacci — зона 141–161 по методу из урока «141».
  *
- * Растяжка по импульсу (не «откат с хая»):
- *   0%   = начало импульса
- *   100% = конец импульса
- *   141% / 161% = extension ЗА концом → зона разворота
+ * Сетка тянется как в TradingView без «Переворот»:
+ *   0%   = последний экстремум (E), по фитилю
+ *   100% = важный пивот (P), от которого этот экстремум построился, по телу свечи
+ *   141% / 161% = extension ЗА пивотом P → зона реакции (блок заказов)
  *
- * SHORT: импульс ↑ (low→high) → зона 141–161 ВЫШЕ хая → отскок вниз
- * LONG:  импульс ↓ (high→low) → зона 141–161 НИЖЕ лоу → отскок вверх
+ * Слом структуры = закрытие за фитилём P. Выбирается последний слом; при
+ * одновременном сломе нескольких пивотов — ближайший к E.
+ *
+ * Лой P → хай E: зона 141–161 НИЖЕ лоя P → реакция вверх (LONG)
+ * Хай P → лой E: зона 141–161 ВЫШЕ хая P → реакция вниз (SHORT)
+ *
+ * mode = 'BREAK'    — P уже пробит закрытием (слом структуры), цена идёт в зону.
+ * mode = 'EXPECTED' — слома нет (или зона последнего слома прошита): зона по
+ *                     текущей ноге, станет рабочей, если P пробьют.
+ * Прошитая закрытием зона игнорируется.
  *
  * Уровни: 0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.414, 1.618, 2, 2.414, 2.618, 3
  */
 
 import type { OhlcvCandle } from '../../api/mexc'
 import type { LiquidityZone, PriceLevel } from '../indicators/types'
+import { findFvg, findOrderBlocks, type MarketStructure } from '../smc'
 
 export const GLOBAL_FIB_RATIOS = [
   0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.414, 1.618, 2, 2.414, 2.618, 3,
@@ -38,22 +47,26 @@ export interface GlobalFibReactionZone {
   strength: number
   active: boolean
   ratios: [number, number]
+  /** Совпадения с OB / FVG / горизонталями */
+  confluence?: string[]
 }
+
+export type GlobalFibMode = 'BREAK' | 'EXPECTED'
 
 export interface GlobalFibonacciMap {
   swingHigh: number
   swingLow: number
   highIdx: number
   lowIdx: number
-  /** UP = low then high · DOWN = high then low */
+  /** Нога P → E: UP = лой P → хай E · DOWN = хай P → лой E */
   impulse: 'UP' | 'DOWN'
-  /** 0% anchor (start of impulse) */
+  /** 0% — последний экстремум E */
   fib0: number
-  /** 100% anchor (end of impulse) */
+  /** 100% — важный пивот P */
   fib100: number
   levels: GlobalFibLevel[]
   reactionZones: GlobalFibReactionZone[]
-  /** Always the 141–161 band — главный магнит */
+  /** Always the 141–161 band — главная зона */
   zone141: GlobalFibReactionZone | null
   price141: number | null
   price161: number | null
@@ -66,19 +79,34 @@ export interface GlobalFibonacciMap {
   entryBias: 'LONG' | 'SHORT' | null
   chartZones: LiquidityZone[]
   priceLevels: PriceLevel[]
+  mode?: GlobalFibMode
+  /** Цена пивота P (100%) */
+  brokenPivot?: number
+  /** Индекс свечи слома P (mode BREAK) */
+  breakIdx?: number | null
+  /** Зона последнего слома была прошита закрытием — её игнорируем */
+  lastBreakPierced?: boolean
+  confluence?: string[]
+  /** Время (ms) свечи экстремума E — касания зоны раньше не считаются */
+  legEndTime?: number
+}
+
+export interface GlobalFibOptions {
+  /** Внешние зоны/уровни для проверки совпадения (OB, S/R …) */
+  confluenceZones?: Array<{ top: number; bottom: number; label?: string }>
 }
 
 export function fibPercentLabel(ratio: number): string {
   if (ratio === 0) return '0'
   if (ratio === 1) return '100'
   const pct = Math.round(ratio * 1000) / 10
-  return Number.isInteger(pct) ? String(pct) : String(pct)
+  return String(pct)
 }
 
 /**
- * Как на скрине: 0% = старт импульса, 100% = финиш, >100% = extension дальше.
- * UP:  price = low + diff * ratio   → 141 выше хая
- * DOWN: price = high − diff * ratio → 141 ниже лоу
+ * 0% = экстремум E, 100% = пивот P, >100% = за пивотом P.
+ * UP (лой P → хай E):   price = high − diff * ratio → 141 ниже лоя
+ * DOWN (хай P → лой E): price = low + diff * ratio  → 141 выше хая
  */
 export function levelPrice(
   swingHigh: number,
@@ -88,130 +116,131 @@ export function levelPrice(
 ): number {
   const diff = swingHigh - swingLow
   if (impulse === 'UP') {
-    return swingLow + diff * ratio
+    return swingHigh - diff * ratio
   }
-  return swingHigh - diff * ratio
+  return swingLow + diff * ratio
 }
 
-/**
- * Последний подтверждённый swing high + swing low (пивоты), не сырой max/min окна.
- * Импульс = от более раннего пивота к более позднему → extension «куда пойдёт» дальше.
- */
-export function findMajorSwing(candles: OhlcvCandle[]): {
-  swingHigh: number
-  swingLow: number
-  highIdx: number
-  lowIdx: number
-  impulse: 'UP' | 'DOWN'
-} | null {
-  if (candles.length < 25) return null
+interface Pivot {
+  i: number
+  /** Фитиль — по нему считается слом */
+  price: number
+  /** Тело свечи пивота — якорь 100% («не от фитиля») */
+  anchor: number
+  kind: 'HIGH' | 'LOW'
+}
 
-  const window = candles.slice(-120)
-  const pivotR = 2
-  const highs: Array<{ i: number; price: number }> = []
-  const lows: Array<{ i: number; price: number }> = []
+const PIVOT_R = 2
 
-  for (let i = pivotR; i < window.length - pivotR; i++) {
+function findPivots(window: OhlcvCandle[]): Pivot[] {
+  const out: Pivot[] = []
+  for (let i = PIVOT_R; i < window.length - PIVOT_R; i++) {
     const h = window[i][2]
     const l = window[i][3]
     let isHigh = true
     let isLow = true
-    for (let k = 1; k <= pivotR; k++) {
-      if (h < window[i - k][2] || h < window[i + k][2]) isHigh = false
-      if (l > window[i - k][3] || l > window[i + k][3]) isLow = false
+    for (let k = 1; k <= PIVOT_R; k++) {
+      if (h < window[i - k][2] || h <= window[i + k][2]) isHigh = false
+      if (l > window[i - k][3] || l >= window[i + k][3]) isLow = false
     }
-    if (isHigh) highs.push({ i, price: h })
-    if (isLow) lows.push({ i, price: l })
+    const bodyHi = Math.max(window[i][1], window[i][4])
+    const bodyLo = Math.min(window[i][1], window[i][4])
+    if (isHigh) out.push({ i, price: h, anchor: bodyHi, kind: 'HIGH' })
+    if (isLow) out.push({ i, price: l, anchor: bodyLo, kind: 'LOW' })
   }
-
-  if (highs.length < 1 || lows.length < 1) {
-    // Fallback: raw extrema in last 40 bars (still «recent»)
-    const recent = window.slice(-40)
-    let highIdx = 0
-    let lowIdx = 0
-    let swingHigh = -Infinity
-    let swingLow = Infinity
-    for (let i = 0; i < recent.length; i++) {
-      if (recent[i][2] >= swingHigh) {
-        swingHigh = recent[i][2]
-        highIdx = i
-      }
-      if (recent[i][3] <= swingLow) {
-        swingLow = recent[i][3]
-        lowIdx = i
-      }
-    }
-    if (!(swingHigh > swingLow) || swingLow <= 0) return null
-    if ((swingHigh - swingLow) / swingLow < 0.008) return null
-    const base = window.length - recent.length
-    return {
-      swingHigh,
-      swingLow,
-      highIdx: base + highIdx,
-      lowIdx: base + lowIdx,
-      impulse: highIdx > lowIdx ? 'UP' : 'DOWN',
-    }
-  }
-
-  // Prefer the most recent high and most recent low that form a meaningful range
-  const lastHigh = highs[highs.length - 1]
-  const lastLow = lows[lows.length - 1]
-
-  // If they are too close in time, walk back to get a cleaner impulse leg
-  let hi = lastHigh
-  let lo = lastLow
-  const minSep = 3
-  if (Math.abs(hi.i - lo.i) < minSep) {
-    if (hi.i >= lo.i && lows.length >= 2) lo = lows[lows.length - 2]
-    else if (lo.i > hi.i && highs.length >= 2) hi = highs[highs.length - 2]
-  }
-
-  // Also prefer the swing pair spanning the last impulse (later pivot = end)
-  let swingHigh = hi.price
-  let swingLow = lo.price
-  let highIdx = hi.i
-  let lowIdx = lo.i
-
-  // If last high is after last low but there was a higher high earlier in the leg, keep last pair
-  // Ensure high > low
-  if (!(swingHigh > swingLow)) {
-    // pick max of last 3 highs / min of last 3 lows
-    const hs = highs.slice(-3)
-    const ls = lows.slice(-3)
-    const bestH = hs.reduce((a, b) => (a.price >= b.price ? a : b))
-    const bestL = ls.reduce((a, b) => (a.price <= b.price ? a : b))
-    swingHigh = bestH.price
-    swingLow = bestL.price
-    highIdx = bestH.i
-    lowIdx = bestL.i
-  }
-
-  if (!(swingHigh > swingLow) || swingLow <= 0) return null
-  const rangePct = ((swingHigh - swingLow) / swingLow) * 100
-  if (rangePct < 0.8) return null
-
-  const impulse: 'UP' | 'DOWN' = highIdx > lowIdx ? 'UP' : 'DOWN'
-  return { swingHigh, swingLow, highIdx, lowIdx, impulse }
+  return out
 }
 
-function buildLevels(
-  swingHigh: number,
-  swingLow: number,
-  impulse: 'UP' | 'DOWN'
-): GlobalFibLevel[] {
-  return GLOBAL_FIB_RATIOS.map((ratio) => {
-    const price = levelPrice(swingHigh, swingLow, impulse, ratio)
-    let kind: GlobalFibLevel['kind'] = 'RETRACE'
-    if (ratio === 0) kind = 'ORIGIN'
-    else if (ratio === 1) kind = 'END'
-    else if (ratio > 1) kind = 'EXT'
+function atrOf(window: OhlcvCandle[], period = 14): number {
+  const n = Math.min(period, window.length - 1)
+  if (n <= 0) return 0
+  let sum = 0
+  for (let i = window.length - n; i < window.length; i++) {
+    const c = window[i]
+    const p = window[i - 1][4]
+    sum += Math.max(c[2] - c[3], Math.abs(c[2] - p), Math.abs(c[3] - p))
+  }
+  return sum / n
+}
 
-    return {
-      ratio,
-      price,
-      kind,
-      label: fibPercentLabel(ratio),
+/** Экстремум E после пивота P до индекса end (не включая). */
+function extremeAfter(
+  window: OhlcvCandle[],
+  p: Pivot,
+  end: number
+): { i: number; price: number } | null {
+  let best: { i: number; price: number } | null = null
+  for (let k = p.i + 1; k < end; k++) {
+    const v = p.kind === 'LOW' ? window[k][2] : window[k][3]
+    if (!best || (p.kind === 'LOW' ? v >= best.price : v <= best.price)) {
+      best = { i: k, price: v }
     }
+  }
+  return best
+}
+
+interface FibLeg {
+  pivot: Pivot
+  extreme: { i: number; price: number }
+  breakIdx: number | null
+}
+
+function legOk(leg: FibLeg, minLeg: number): boolean {
+  return Math.abs(leg.extreme.price - leg.pivot.anchor) >= minLeg
+}
+
+/** Последний слом структуры: закрытие за пивотом P, от которого построился экстремум E. */
+function findLastBreak(window: OhlcvCandle[], pivots: Pivot[], minLeg: number): FibLeg | null {
+  let best: FibLeg | null = null
+  for (const p of pivots) {
+    let j = -1
+    for (let k = p.i + PIVOT_R + 1; k < window.length; k++) {
+      const close = window[k][4]
+      if (p.kind === 'LOW' ? close < p.price : close > p.price) {
+        j = k
+        break
+      }
+    }
+    if (j < 0) continue
+    const extreme = extremeAfter(window, p, j)
+    if (!extreme) continue
+    const leg: FibLeg = { pivot: p, extreme, breakIdx: j }
+    if (!legOk(leg, minLeg)) continue
+    if (
+      !best ||
+      j > (best.breakIdx ?? -1) ||
+      (j === best.breakIdx && p.i > best.pivot.i)
+    ) {
+      best = leg
+    }
+  }
+  return best
+}
+
+/** Текущая нога без слома: последний экстремум E и важный пивот P перед ним. */
+function findCurrentLeg(window: OhlcvCandle[], pivots: Pivot[], minLeg: number): FibLeg | null {
+  if (!pivots.length) return null
+  const last = pivots[pivots.length - 1]
+  const eKind = last.kind
+  for (let idx = pivots.length - 1; idx >= 0; idx--) {
+    const p = pivots[idx]
+    if (p.kind === eKind) continue
+    const extreme = extremeAfter(window, p, window.length)
+    if (!extreme) continue
+    const leg: FibLeg = { pivot: p, extreme, breakIdx: null }
+    if (legOk(leg, minLeg)) return leg
+  }
+  return null
+}
+
+function buildLevels(fib0: number, fib100: number): GlobalFibLevel[] {
+  return GLOBAL_FIB_RATIOS.map((ratio) => {
+    const price = fib0 + (fib100 - fib0) * ratio
+    let kind: GlobalFibLevel['kind'] = 'RETRACE'
+    if (ratio === 0) kind = 'END'
+    else if (ratio === 1) kind = 'ORIGIN'
+    else if (ratio > 1) kind = 'EXT'
+    return { ratio, price, kind, label: fibPercentLabel(ratio) }
   })
 }
 
@@ -219,12 +248,9 @@ function is141Zone(z: GlobalFibReactionZone): boolean {
   return z.id.includes('141') || z.ratios[0] === 1.414
 }
 
-/**
- * Главное — зона 141–161 (отскок). Остальное — вторичные уровни сетки.
- */
 function buildReactionZones(
   levels: GlobalFibLevel[],
-  impulse: 'UP' | 'DOWN',
+  bias: 'LONG' | 'SHORT',
   currentPrice: number
 ): GlobalFibReactionZone[] {
   const byRatio = (r: number) => levels.find((l) => l.ratio === r)?.price
@@ -232,7 +258,6 @@ function buildReactionZones(
 
   const mk = (
     id: string,
-    bias: 'LONG' | 'SHORT',
     a: number,
     b: number,
     label: string,
@@ -262,60 +287,72 @@ function buildReactionZones(
   const r2618 = byRatio(2.618)
   const r3 = byRatio(3)
 
-  // Bias at extension: fade the impulse (как «отскок от 141–161»)
-  const extBias: 'LONG' | 'SHORT' = impulse === 'UP' ? 'SHORT' : 'LONG'
-
-  // ★ PRIMARY — зона 141–161
   if (r1414 != null && r1618 != null) {
-    zones.push(
-      mk(
-        'fib_ext_141',
-        extBias,
-        r1414,
-        r1618,
-        'Зона 141%–161% (разворот)',
-        16,
-        [1.414, 1.618]
-      )
-    )
+    zones.push(mk('fib_ext_141', r1414, r1618, 'Зона 141%–161% (реакция)', 16, [1.414, 1.618]))
   }
-
   if (r1414 != null) {
-    const half = Math.max(
-      Math.abs((r1618 ?? r1414) - r1414) * 0.2,
-      Math.abs(r1414) * 0.0025
-    )
-    zones.push(
-      mk(
-        'fib_magnet_141',
-        extBias,
-        r1414 + half,
-        r1414 - half,
-        '141% магнит',
-        18,
-        [1.414, 1.414]
-      )
-    )
+    const half = Math.max(Math.abs((r1618 ?? r1414) - r1414) * 0.2, Math.abs(r1414) * 0.0025)
+    zones.push(mk('fib_magnet_141', r1414 + half, r1414 - half, '141% магнит', 18, [1.414, 1.414]))
   }
-
-  // Deeper extensions — weaker magnets
   if (r2 != null && r2414 != null) {
-    zones.push(
-      mk('fib_ext_241', extBias, r2, r2414, 'Зона 200%–241%', 8, [2, 2.414])
-    )
+    zones.push(mk('fib_ext_241', r2, r2414, 'Зона 200%–241%', 8, [2, 2.414]))
   }
   if (r2414 != null && r2618 != null) {
-    zones.push(
-      mk('fib_ext_261', extBias, r2414, r2618, 'Зона 241%–261%', 7, [2.414, 2.618])
-    )
+    zones.push(mk('fib_ext_261', r2414, r2618, 'Зона 241%–261%', 7, [2.414, 2.618]))
   }
   if (r2618 != null && r3 != null) {
-    zones.push(
-      mk('fib_ext_300', extBias, r2618, r3, 'Зона 261%–300%', 6, [2.618, 3])
-    )
+    zones.push(mk('fib_ext_300', r2618, r3, 'Зона 261%–300%', 6, [2.618, 3]))
   }
-
   return zones
+}
+
+const NO_STRUCTURE: MarketStructure = {
+  trend: 'RANGING',
+  lastBos: null,
+  swingHighs: [],
+  swingLows: [],
+  lastSwingHigh: null,
+  lastSwingLow: null,
+}
+
+/** OB / FVG той же стороны, горизонтали прошлых пивотов и внешние зоны внутри полосы. */
+function findConfluence(
+  window: OhlcvCandle[],
+  pivots: Pivot[],
+  zone: GlobalFibReactionZone,
+  extra: GlobalFibOptions['confluenceZones']
+): string[] {
+  const tol = (zone.top - zone.bottom) * 0.25
+  const lo = zone.bottom - tol
+  const hi = zone.top + tol
+  const overlaps = (t: number, b: number) => Math.min(hi, t) >= Math.max(lo, b)
+  const side = zone.bias === 'LONG' ? 'BULLISH' : 'BEARISH'
+  const out: string[] = []
+
+  if (findOrderBlocks(window, NO_STRUCTURE, 20).some((ob) => ob.type === side && overlaps(ob.top, ob.bottom))) {
+    out.push('OB')
+  }
+  if (findFvg(window, 10).some((g) => g.type === side && overlaps(g.top, g.bottom))) {
+    out.push('FVG')
+  }
+  if (pivots.some((p) => p.price >= lo && p.price <= hi)) {
+    out.push('уровень')
+  }
+  for (const z of extra ?? []) {
+    if (overlaps(Math.max(z.top, z.bottom), Math.min(z.top, z.bottom))) {
+      out.push(z.label ?? 'зона')
+      break
+    }
+  }
+  return out
+}
+
+function isPierced(window: OhlcvCandle[], zone: GlobalFibReactionZone, fromIdx: number): boolean {
+  for (let k = fromIdx; k < window.length; k++) {
+    const close = window[k][4]
+    if (zone.bias === 'LONG' ? close < zone.bottom : close > zone.top) return true
+  }
+  return false
 }
 
 function toChartZones(
@@ -323,18 +360,24 @@ function toChartZones(
   startTime: number,
   endTime: number,
   in141: boolean,
-  near141: boolean
+  near141: boolean,
+  mode: GlobalFibMode,
+  pivotPrice: number
 ): LiquidityZone[] {
+  const px = pivotPrice.toPrecision(6)
   return zones.map((z) => {
     const primary = is141Zone(z)
+    const conf = z.confluence?.length ? ` · ${z.confluence.join('+')}` : ''
     let label = z.label
     if (primary) {
-      if (z.active || in141) {
-        label = `◎ ${z.label} · ищем ${z.bias}`
+      if (mode === 'EXPECTED') {
+        label = `☆ ${z.label} · ожидаемая (слом ${px}) · ${z.bias}${conf}`
+      } else if (z.active || in141) {
+        label = `◎ ${z.label} · ищем ${z.bias}${conf}`
       } else if (near141) {
-        label = `◎ ${z.label} · рядом · ${z.bias}`
+        label = `◎ ${z.label} · рядом · ${z.bias}${conf}`
       } else {
-        label = `★ ${z.label} · главный магнит`
+        label = `★ ${z.label} · после слома ${px} · ${z.bias}${conf}`
       }
     } else if (z.active) {
       label = `◎ ${z.label}`
@@ -348,7 +391,8 @@ function toChartZones(
       bottom: z.bottom,
       startTime: startTime as LiquidityZone['startTime'],
       endTime: endTime as LiquidityZone['endTime'],
-      strength: z.strength + (z.active ? 4 : 0) + (primary ? 20 : 0),
+      strength:
+        z.strength + (z.active ? 4 : 0) + (primary ? (mode === 'BREAK' ? 20 : 8) : 0),
       label,
     }
   })
@@ -382,22 +426,70 @@ function toPriceLevels(levels: GlobalFibLevel[]): PriceLevel[] {
 
 export function buildGlobalFibonacci(
   candles: OhlcvCandle[],
-  currentPrice: number
+  currentPrice: number,
+  opts?: GlobalFibOptions
 ): GlobalFibonacciMap | null {
-  const swing = findMajorSwing(candles)
-  if (!swing || !(currentPrice > 0)) return null
+  if (candles.length < 25 || !(currentPrice > 0)) return null
 
-  const { swingHigh, swingLow, highIdx, lowIdx, impulse } = swing
-  const levels = buildLevels(swingHigh, swingLow, impulse)
-  const fib0 = impulse === 'UP' ? swingLow : swingHigh
-  const fib100 = impulse === 'UP' ? swingHigh : swingLow
+  const window = candles.slice(-160)
+  const base = candles.length - window.length
+  const pivots = findPivots(window)
+  if (pivots.length < 2) return null
+  const minLeg = Math.max(currentPrice * 0.008, atrOf(window) * 1.5)
+
+  let mode: GlobalFibMode = 'BREAK'
+  let lastBreakPierced = false
+  let leg = findLastBreak(window, pivots, minLeg)
+  let levels: GlobalFibLevel[] = []
+  let reactionZones: GlobalFibReactionZone[] = []
+
+  const assemble = (l: FibLeg) => {
+    levels = buildLevels(l.extreme.price, l.pivot.anchor)
+    reactionZones = buildReactionZones(
+      levels,
+      l.pivot.kind === 'LOW' ? 'LONG' : 'SHORT',
+      currentPrice
+    )
+  }
+
+  if (leg) {
+    assemble(leg)
+    const primary = reactionZones.find((z) => z.id === 'fib_ext_141')
+    if (primary && leg.breakIdx != null && isPierced(window, primary, leg.breakIdx)) {
+      lastBreakPierced = true
+      leg = null
+    }
+  }
+  if (!leg) {
+    mode = 'EXPECTED'
+    leg = findCurrentLeg(window, pivots, minLeg)
+    if (!leg) return null
+    assemble(leg)
+  }
+
+  const conf141 = (() => {
+    const z = reactionZones.find((r) => r.id === 'fib_ext_141')
+    return z ? findConfluence(window, pivots, z, opts?.confluenceZones) : []
+  })()
+  for (const z of reactionZones) {
+    if (!is141Zone(z)) continue
+    z.confluence = conf141
+    z.strength += Math.min(10, conf141.length * 4)
+    if (mode === 'EXPECTED') z.strength -= 6
+  }
+
+  const pivot = leg.pivot
+  const extreme = leg.extreme
+  const impulse: 'UP' | 'DOWN' = pivot.kind === 'LOW' ? 'UP' : 'DOWN'
+  const swingHigh = impulse === 'UP' ? extreme.price : pivot.anchor
+  const swingLow = impulse === 'UP' ? pivot.anchor : extreme.price
+  const highIdx = base + (impulse === 'UP' ? extreme.i : pivot.i)
+  const lowIdx = base + (impulse === 'UP' ? pivot.i : extreme.i)
 
   const startCandle = candles[Math.max(0, candles.length - 90)]
   const endCandle = candles[candles.length - 1]
   const startTime = Math.floor(startCandle[0] / 1000)
   const endTime = Math.floor(endCandle[0] / 1000) + 86400 * 5
-
-  const reactionZones = buildReactionZones(levels, impulse, currentPrice)
 
   const zone141 =
     reactionZones.find((z) => z.id === 'fib_ext_141') ??
@@ -423,13 +515,11 @@ export function buildGlobalFibonacci(
       .filter((z) => z.active && !is141Zone(z))
       .sort((a, b) => b.strength - a.strength)[0] ?? null
 
-  // Primary active = 141 only for "FIB ZONE" semantics; else null (ждём 141)
   const activeZone = active141 ?? (near141 ? zone141 : null)
 
   let entryBias: 'LONG' | 'SHORT' | null = null
   if (active141) entryBias = active141.bias
-  else if (near141 && zone141) entryBias = zone141.bias
-  else if (zone141) entryBias = zone141.bias // structural: куда бить при касании 141
+  else if (zone141) entryBias = zone141.bias
   else if (activeOther) entryBias = activeOther.bias
 
   return {
@@ -438,8 +528,8 @@ export function buildGlobalFibonacci(
     highIdx,
     lowIdx,
     impulse,
-    fib0,
-    fib100,
+    fib0: extreme.price,
+    fib100: pivot.anchor,
     levels,
     reactionZones,
     zone141,
@@ -450,7 +540,21 @@ export function buildGlobalFibonacci(
     distTo141Pct,
     activeZone,
     entryBias,
-    chartZones: toChartZones(reactionZones, startTime, endTime, in141, near141),
+    chartZones: toChartZones(
+      reactionZones,
+      startTime,
+      endTime,
+      in141,
+      near141,
+      mode,
+      pivot.anchor
+    ),
     priceLevels: toPriceLevels(levels),
+    mode,
+    brokenPivot: pivot.anchor,
+    breakIdx: leg.breakIdx != null ? base + leg.breakIdx : null,
+    lastBreakPierced,
+    confluence: conf141,
+    legEndTime: window[extreme.i][0],
   }
 }

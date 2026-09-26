@@ -143,6 +143,8 @@ export interface CoinSignal {
     in141?: boolean
     near141?: boolean
     price141?: number | null
+    /** BREAK = пивот пробит, EXPECTED = зона по текущей ноге без слома */
+    mode?: 'BREAK' | 'EXPECTED'
   } | null
   /** Market maker intent / liquidity hunt */
   mmIntent?: MmIntentSnapshot | null

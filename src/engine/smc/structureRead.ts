@@ -88,6 +88,10 @@ export interface Fib141Reaction {
   reactionPrice: number | null
   barsAgo: number | null
   narrative: string
+  /** Сколько раз цена заходила в зону (эпизоды); 2–3-й возврат = вероятный пробой */
+  touches?: number
+  /** Стоп ~1% за зоной */
+  stopPrice?: number
 }
 
 export interface StructureMarker {
@@ -497,7 +501,8 @@ export function readFib141Reaction(
   let state: Fib141State = 'NONE'
   let reactionPrice: number | null = null
   let barsAgo: number | null = null
-  const look = candles.slice(-36)
+  const since = fib.legEndTime ?? 0
+  const look = candles.slice(-36).filter((c) => c[0] > since)
 
   for (let i = look.length - 1; i >= 0; i--) {
     const c = look[i]
@@ -557,18 +562,30 @@ export function readFib141Reaction(
   if (state === 'NONE' && near) state = 'APPROACHING'
   if (state === 'NONE' && close <= top && close >= bottom) state = 'INSIDE'
 
+  let touches = 0
+  for (let i = 0; i < look.length; i++) {
+    const hit = look[i][2] >= bottom && look[i][3] <= top
+    const prevHit = i > 0 && look[i - 1][2] >= bottom && look[i - 1][3] <= top
+    if (hit && !prevHit) touches++
+  }
+  const stopPrice = z.bias === 'LONG' ? bottom * 0.99 : top * 1.01
+  const retestWarn =
+    touches >= 2 && (state === 'INSIDE' || state === 'APPROACHING')
+      ? ` · возврат #${touches} — вероятный пробой`
+      : ''
+
   const narrative =
     state === 'BOUNCE'
-      ? `Отскок от 141 → ${z.bias} (как в прошлый раз)`
+      ? `Реакция от 141–161 → ${z.bias}`
       : state === 'BREAK'
-        ? `Слом 141 — импульс продолжается, 161/ликвидность дальше`
+        ? `Зона 141–161 прошита — игнорируем, импульс продолжается`
         : state === 'RECLAIM'
-          ? `Ложный пробой 141 + закреп обратно → ${z.bias}`
+          ? `Ложный пробой 141–161 + закреп обратно → ${z.bias}`
           : state === 'INSIDE'
-            ? `Цена в зоне 141 — ждём отскок ${z.bias} или слом`
+            ? `Цена в зоне 141–161 — ждём реакцию ${z.bias} (стоп ~1% за зоной)${retestWarn}`
             : state === 'APPROACHING'
-              ? `Подход к 141 · план ${z.bias}`
-              : '141 ещё не торговалась на этом импульсе'
+              ? `Подход к 141–161 · план ${z.bias}${retestWarn}`
+              : '141–161 ещё не торговалась на этой ноге'
 
   return {
     state,
@@ -578,6 +595,8 @@ export function readFib141Reaction(
     reactionPrice,
     barsAgo,
     narrative,
+    touches,
+    stopPrice,
   }
 }
 

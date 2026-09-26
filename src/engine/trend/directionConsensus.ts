@@ -152,8 +152,8 @@ export function computeDirectionConsensus(input: {
       'fib',
       'Fib',
       sideFromTrade(s.globalFib.entryBias),
-      0.9,
-      `impulse ${s.globalFib.impulse}`
+      s.globalFib.mode === 'EXPECTED' && !s.globalFib.inReactionZone ? 0.45 : 0.9,
+      s.globalFib.mode === 'EXPECTED' ? 'зона 141 ожидаемая' : 'зона 141 после слома'
     )
   }
 

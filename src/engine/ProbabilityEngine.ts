@@ -961,7 +961,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
         const fibBoost = globalFib.in141 ? 1.8 : 1.3
         s = Math.min(s + fibBoost, 10)
         z.push(
-          `GLOBAL_FIB_141_${direction}: ${globalFib.zone141?.label ?? '141'} (impulse ${globalFib.impulse})`
+          `GLOBAL_FIB_141_${direction}: ${globalFib.zone141?.label ?? '141'} (${globalFib.mode === 'EXPECTED' ? 'ожидаемая' : 'после слома'})`
         )
         logger.info(
           `[PE] ${internalSymbol} Fib 141 boost: +${fibBoost} | ${globalFib.zone141?.label}`
@@ -1310,6 +1310,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
             in141: globalFib.in141,
             near141: globalFib.near141,
             price141: globalFib.price141,
+            mode: globalFib.mode,
           }
         : null,
     }
@@ -1388,7 +1389,9 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   } else if (globalFib?.entryBias === 'LONG' && longAllowedFinal) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
     const at141 = globalFib.in141 || globalFib.near141
-    softScore = c.score + (at141 ? 2.4 : globalFib.zone141 ? 0.8 : 0)
+    softScore =
+      c.score +
+      (at141 ? 2.4 : globalFib.zone141 ? (globalFib.mode === 'EXPECTED' ? 0.3 : 0.8) : 0)
     softDirection = 'LONG'
     softZones = [
       ...c.zones,
@@ -1399,7 +1402,9 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   } else if (globalFib?.entryBias === 'SHORT' && shortAllowedFinal) {
     const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
     const at141 = globalFib.in141 || globalFib.near141
-    softScore = c.score + (at141 ? 2.4 : globalFib.zone141 ? 0.8 : 0)
+    softScore =
+      c.score +
+      (at141 ? 2.4 : globalFib.zone141 ? (globalFib.mode === 'EXPECTED' ? 0.3 : 0.8) : 0)
     softDirection = 'SHORT'
     softZones = [
       ...c.zones,
@@ -1580,6 +1585,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
           in141: globalFib.in141,
           near141: globalFib.near141,
           price141: globalFib.price141,
+          mode: globalFib.mode,
         }
       : null,
   }

@@ -9,7 +9,7 @@ const Radar141Heatmap = ({ rows, onPick }: Props) => {
   return (
     <div className="px-4 pb-3">
       <p className="mb-2 font-mono text-[10px] text-white/40">
-        X = Gap% · Y = RS к BTC. Верх-право: Strong + большая пропасть вверх. Низ-право: Weak + пропасть вниз.
+        X = путь от слома до зоны 141–161, % · Y = RS к BTC. Зелёные — реакция LONG, голубые — SHORT.
       </p>
       <div className="relative h-64 overflow-hidden rounded-xl border border-white/10 bg-[#0a0d12]">
         <div className="pointer-events-none absolute inset-x-8 top-2 text-center font-mono text-[9px] text-emerald-300/50">

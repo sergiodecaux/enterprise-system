@@ -304,8 +304,7 @@ export function findTradeZones(input: {
       const mid = (fz.top + fz.bottom) / 2
       const dist = Math.abs((mid - price) / price) * 100
       if (dist > fibMaxDist) continue
-      const side: 'LONG' | 'SHORT' =
-        fz.side === 'BEARISH' || mid > price ? 'SHORT' : 'LONG'
+      const side: 'LONG' | 'SHORT' = fz.side === 'BEARISH' ? 'SHORT' : 'LONG'
       const id = uid('zone_fib')
       const strength = fz.strength ?? 7
       const target =

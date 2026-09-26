@@ -55,8 +55,11 @@ function triggerOf(
   if (in141 || reaction?.state === 'INSIDE') {
     return { trigger: 'INSIDE_141', label: 'внутри 141' }
   }
-  if (reaction?.state === 'BREAK' || reaction?.state === 'BOUNCE') {
-    return { trigger: 'EXIT_141', label: 'вышла из 141' }
+  if (reaction?.state === 'BREAK') {
+    return { trigger: 'EXIT_141', label: 'прошила 141–161' }
+  }
+  if (reaction?.state === 'BOUNCE' || reaction?.state === 'RECLAIM') {
+    return { trigger: 'EXIT_141', label: 'реакция от 141–161' }
   }
   if (inGap) {
     return { trigger: 'IN_GAP', label: 'влетела в gap' }
@@ -85,20 +88,22 @@ function testKind(
   let touches = 0
   let firstIdx = -1
   let lastInside = -1
+  let prevHit = false
   candles.forEach((c, i) => {
     const hit = c[2] >= bottom && c[3] <= top
     if (hit) {
-      touches += 1
+      if (!prevHit) touches += 1
       if (firstIdx < 0) firstIdx = i
       lastInside = i
     }
+    prevHit = hit
   })
   if (touches === 0) return { kind: 'NONE', minutes: null }
   const minutes =
     lastInside >= 0
       ? Math.round(((candles.length - 1 - (firstIdx < 0 ? lastInside : firstIdx)) * tfMs) / 60_000)
       : null
-  if (touches >= 6) return { kind: 'EXHAUSTED', minutes }
+  if (touches >= 3) return { kind: 'EXHAUSTED', minutes }
   if (touches >= 2) return { kind: 'RETEST', minutes }
   return { kind: 'FIRST', minutes }
 }
@@ -157,7 +162,6 @@ export function buildRadar141Row(input: {
   const reaction = readFib141Reaction(candles1h, fib)
 
   const p141 = fib?.price141 ?? null
-  const p161 = fib?.price161 ?? null
   const zone = fib?.zone141
   const zTop = zone ? Math.max(zone.top, zone.bottom) : p141
   const zBot = zone ? Math.min(zone.top, zone.bottom) : p141
@@ -167,37 +171,23 @@ export function buildRadar141Row(input: {
   const dist141Atr =
     dist141Pct != null && atrPct > 0 ? dist141Pct / atrPct : null
 
-  const impulse = fib?.impulse ?? 'UP'
-  const nextMagnet = p161
+  // Пропасть = путь от пробитого пивота P (100%) до ближнего края зоны 141–161.
+  // Зона LONG лежит под лоем P → полёт вниз к зоне, реакция вверх; SHORT — зеркально.
+  const zoneBias = zone?.bias ?? null
+  const pivotPx = fib?.fib100 ?? null
+  const expected = fib?.mode === 'EXPECTED'
   let gapLo = 0
   let gapHi = 0
-  let gapSide: 'UP' | 'DOWN' = 'UP'
-  if (p141 != null && nextMagnet != null) {
-    if (impulse === 'UP') {
-      gapLo = Math.min(p141, nextMagnet)
-      gapHi = Math.max(p141, nextMagnet)
-      gapSide = 'UP'
+  const gapSide: 'UP' | 'DOWN' = zoneBias === 'SHORT' ? 'UP' : 'DOWN'
+  if (pivotPx != null && zTop != null && zBot != null && zoneBias) {
+    if (zoneBias === 'LONG') {
+      gapLo = zTop
+      gapHi = pivotPx
     } else {
-      gapLo = Math.min(p141, nextMagnet)
-      gapHi = Math.max(p141, nextMagnet)
-      gapSide = 'DOWN'
+      gapLo = pivotPx
+      gapHi = zBot
     }
-  } else if (p141 != null) {
-    const span = Math.max(atr * 8, price * 0.03)
-    if (price <= p141) {
-      gapLo = price
-      gapHi = p141
-      gapSide = 'UP'
-    } else {
-      gapLo = p141
-      gapHi = price
-      gapSide = 'DOWN'
-    }
-    if (gapHi - gapLo < span * 0.2) {
-      gapLo = p141
-      gapHi = p141 + (impulse === 'UP' ? span : -span)
-      if (gapHi < gapLo) [gapLo, gapHi] = [gapHi, gapLo]
-    }
+    if (gapHi < gapLo) [gapLo, gapHi] = [gapHi, gapLo]
   }
 
   const gapPct = gapHi > gapLo && price > 0 ? ((gapHi - gapLo) / price) * 100 : 0
@@ -253,15 +243,8 @@ export function buildRadar141Row(input: {
         : 'OK'
 
   let preferredSide: 'LONG' | 'SHORT' | null =
-    gapSide === 'UP' && rsLabel !== 'WEAK'
-      ? 'LONG'
-      : gapSide === 'DOWN' && rsLabel !== 'STRONG'
-        ? 'SHORT'
-        : rsLabel === 'STRONG'
-          ? 'LONG'
-          : rsLabel === 'WEAK'
-            ? 'SHORT'
-            : fib?.entryBias ?? null
+    fib?.entryBias ??
+    (rsLabel === 'STRONG' ? 'LONG' : rsLabel === 'WEAK' ? 'SHORT' : null)
 
   const isBtc = internalSymbol.startsWith('BTC/')
   if (!isBtc && altBias === 'SHORT') {
@@ -299,25 +282,37 @@ export function buildRadar141Row(input: {
       (!isBtc && altBias === 'LONG' && preferredSide === 'LONG' ? 6 : 0) +
       (!isBtc && altBias === 'SHORT' && preferredSide === 'SHORT' ? 6 : 0) -
       (!isBtc && altBias === 'SHORT' && preferredSide === 'LONG' ? 8 : 0) -
-      (!isBtc && altBias === 'LONG' && preferredSide === 'SHORT' ? 8 : 0) -
+      (!isBtc && altBias === 'LONG' && preferredSide === 'SHORT' ? 8 : 0) +
+      Math.min(12, (fib?.confluence?.length ?? 0) * 6) -
+      (expected ? 8 : 0) -
       clutter * 4,
     12,
     86
   )
 
   const tf = fib4h ? '4ч' : '1д'
+  const fmt = (n: number) => n.toFixed(price >= 100 ? 2 : 5)
+  const zoneTxt =
+    zTop != null && zBot != null ? `${fmt(zBot)}–${fmt(zTop)}` : '141–161'
+  const stopPx =
+    zoneBias === 'LONG' && zBot != null
+      ? zBot * 0.99
+      : zoneBias === 'SHORT' && zTop != null
+        ? zTop * 1.01
+        : null
+  const pivotLabel = zoneBias === 'LONG' ? 'слом лоя' : 'слом хая'
   const gap: GapCard | null =
-    gapPct > 0.4
+    gapPct > 0.4 && zoneBias
       ? {
           side: gapSide,
           upper: {
             price: gapHi,
-            label: gapSide === 'UP' ? '161 / цель' : '141',
+            label: zoneBias === 'LONG' ? pivotLabel : '141',
             tf,
           },
           lower: {
             price: gapLo,
-            label: gapSide === 'UP' ? '141' : '161 / цель',
+            label: zoneBias === 'LONG' ? '141' : pivotLabel,
             tf,
           },
           gapPct,
@@ -327,24 +322,32 @@ export function buildRadar141Row(input: {
           flyProb,
           plan: {
             retest:
-              preferredSide === 'SHORT'
-                ? `Ждать ретест верхней границы ${gapHi.toFixed(price >= 100 ? 2 : 5)} и закреп под ней`
-                : `Ждать ретест нижней границы ${gapLo.toFixed(price >= 100 ? 2 : 5)} и закреп над ней`,
+              (expected && pivotPx != null
+                ? `Зона ожидаемая: заработает после слома ${fmt(pivotPx)}. `
+                : '') +
+              (zoneBias === 'LONG'
+                ? `Ждать вход в зону 141–161 (${zoneTxt}) и реакцию вверх → LONG`
+                : `Ждать вход в зону 141–161 (${zoneTxt}) и реакцию вниз → SHORT`),
             breakout:
-              preferredSide === 'SHORT'
-                ? 'Шорт после слома и закрепа ниже 141, не ловить середину пропасти'
-                : 'Лонг после выхода и закрепа выше 141, не ловить середину пропасти',
+              zoneBias === 'LONG'
+                ? 'Закрытие ниже зоны = прошита, игнорируем; 2–3-й возврат в зону = вероятный пробой'
+                : 'Закрытие выше зоны = прошита, игнорируем; 2–3-й возврат в зону = вероятный пробой',
             invalidation:
-              preferredSide === 'SHORT'
-                ? `Час закроется выше 141 (${(p141 ?? gapHi).toFixed(price >= 100 ? 2 : 5)})`
-                : `Час закроется ниже 141 (${(p141 ?? gapLo).toFixed(price >= 100 ? 2 : 5)})`,
+              stopPx != null
+                ? `Стоп ~1% ${zoneBias === 'LONG' ? 'под' : 'над'} зоной: ${fmt(stopPx)}`
+                : 'Стоп ~1% за зоной',
           },
         }
       : null
 
   const zoneTop = zTop ?? p141 ?? price
   const zoneBot = zBot ?? p141 ?? price
-  const tests = testKind(candles1h, zoneTop, zoneBot)
+  const since = fib?.legEndTime ?? 0
+  const tests = testKind(
+    candles1h.filter((c) => c[0] > since),
+    zoneTop,
+    zoneBot
+  )
 
   const stats = readCoinStats(internalSymbol)
   if (prevTrigger === 'INSIDE_141' && trigger === 'APPROACH_141') {
