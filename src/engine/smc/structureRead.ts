@@ -1153,6 +1153,8 @@ export function composeStructureRead(input: {
       zoneBoard = buildZoneReactionBoard({
         candles: discoverSrc,
         htfCandles: h4src.length >= 16 ? h4src : d1src.length >= 16 ? d1src : undefined,
+        candles1h: h1src.length >= 2 ? h1src : undefined,
+        candles4h: h4src.length >= 2 ? h4src : undefined,
         tape: tapeSrc,
         price,
         dealingHigh: (h4 ?? h1)?.dealingHigh,

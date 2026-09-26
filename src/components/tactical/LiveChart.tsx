@@ -614,6 +614,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       return buildZoneReactionBoard({
         candles,
         htfCandles: htf && htf !== candles ? htf : undefined,
+        candles1h: candles1h.length >= 2 ? candles1h : candles,
+        candles4h: candles4h.length >= 2 ? candles4h : undefined,
         tape: candles,
         price: currentPrice,
         dealingHigh: structureRead?.h4?.dealingHigh ?? structureRead?.h1?.dealingHigh,

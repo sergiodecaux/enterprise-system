@@ -82,15 +82,20 @@ const StructureHud = ({ read }: Props) => {
               <p className="font-mono text-[10px] leading-snug text-pink-100/85">
                 {read.zones.line}
               </p>
+              {read.zones.active.closes && (
+                <p className="mt-0.5 font-mono text-[9px] text-cyan-200/75">
+                  {read.zones.active.closes.h4?.line ?? ''}
+                  {read.zones.active.closes.h4 && read.zones.active.closes.h1 ? ' · ' : ''}
+                  {read.zones.active.closes.h1?.line ?? ''}
+                </p>
+              )}
               <p className="mt-0.5 font-mono text-[9px] text-white/45">
+                {read.zones.active.zone.tier === 'STRONG' ? 'сил. зона · ' : ''}
                 удерж {read.zones.active.holdProbability}% · дальше{' '}
                 {read.zones.active.continueProbability}% · слом{' '}
                 {read.zones.active.breakProbability}%
-                {read.zones.active.nextIfBreakUp
-                  ? ` · ↑ ${read.zones.active.nextIfBreakUp.label}`
-                  : ''}
-                {read.zones.active.nextIfBreakDown
-                  ? ` · ↓ ${read.zones.active.nextIfBreakDown.label}`
+                {read.zones.active.destination
+                  ? ` · цель ${read.zones.active.destination.label}`
                   : ''}
               </p>
             </div>
@@ -114,6 +119,7 @@ const StructureHud = ({ read }: Props) => {
                 key={r.zone.id}
                 className="rounded border border-white/10 bg-black/25 px-1.5 py-0.5 font-mono text-[9px] text-white/50"
               >
+                {r.zone.tier === 'STRONG' ? 'сил. ' : ''}
                 {r.zone.role === 'SUPPORT'
                   ? 'подд.'
                   : r.zone.role === 'RESISTANCE'

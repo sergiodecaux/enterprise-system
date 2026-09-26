@@ -6,6 +6,8 @@
 import type { OhlcvCandle } from '../../api/mexc'
 import type { LiquidityZone } from '../indicators/types'
 import type { Time } from 'lightweight-charts'
+import { isBarClosed } from './closeCascade'
+import { readCloseQuality, type CloseQuality } from './mmTrapThesis'
 
 export type SrRole = 'SUPPORT' | 'RESISTANCE' | 'RANGE'
 export type SrSource = 'CONGESTION' | 'SWING_CLUSTER' | 'DEALING' | 'EQUAL'
@@ -31,6 +33,40 @@ export interface SrBand {
   endTimeSec: number
   touches: number
   strength: number
+  tier: 'WEAK' | 'MEDIUM' | 'STRONG'
+}
+
+export type ZoneClosePosture =
+  | 'HELD_ABOVE'
+  | 'HELD_BELOW'
+  | 'INSIDE'
+  | 'BROKE_UP'
+  | 'BROKE_DOWN'
+  | 'WICK_REJECT'
+
+export type ZoneStance =
+  | 'HOLD_ABOVE'
+  | 'HOLD_BELOW'
+  | 'BREAK_UP'
+  | 'BREAK_DOWN'
+  | 'WAIT_4H'
+  | 'CHOP'
+
+export interface TfZoneClose {
+  tf: '1h' | '4h'
+  posture: ZoneClosePosture
+  quality: CloseQuality
+  close: number
+  forming: boolean
+  line: string
+}
+
+export interface ZoneCloseVerdict {
+  h1: TfZoneClose | null
+  h4: TfZoneClose | null
+  stance: ZoneStance
+  destination: { price: number; label: string } | null
+  line: string
 }
 
 export interface ZoneDumpTarget {
@@ -55,6 +91,8 @@ export interface ZoneReaction {
   nextIfBreakUp: ZoneDumpTarget | null
   nextIfBreakDown: ZoneDumpTarget | null
   targetIfHold: { price: number; label: string } | null
+  closes: ZoneCloseVerdict | null
+  destination: { price: number; label: string } | null
   narrative: string
 }
 
@@ -67,6 +105,12 @@ export interface ZoneReactionBoard {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n))
+}
+
+function tierOf(strength: number): SrBand['tier'] {
+  if (strength >= 10) return 'STRONG'
+  if (strength >= 7) return 'MEDIUM'
+  return 'WEAK'
 }
 
 function atrApprox(candles: OhlcvCandle[], period = 14): number {
@@ -251,6 +295,7 @@ function congestionBands(candles: OhlcvCandle[], maxZones: number): SrBand[] {
       endTimeSec: span.end,
       touches: r.sum,
       strength: clamp(6 + Math.round(r.sum / 8), 6, 12),
+      tier: 'MEDIUM',
     }
     if (!out.some((z) => overlaps(z, next))) out.push(next)
   }
@@ -304,6 +349,7 @@ function swingClusterBands(candles: OhlcvCandle[], maxZones: number): SrBand[] {
         endTimeSec: span.end,
         touches: g.length,
         strength: clamp(5 + g.length * 2, 6, 12),
+        tier: g.length >= 3 ? 'STRONG' : 'MEDIUM',
       })
     }
     bands.sort((a, b) => b.touches - a.touches)
@@ -437,6 +483,37 @@ function countSideCloses(
   return c
 }
 
+function assignTiers(bands: SrBand[], atr: number): void {
+  for (const z of bands) {
+    z.tier = tierOf(z.strength)
+    if (z.source === 'EQUAL' && z.strength >= 10) z.tier = 'STRONG'
+    if (z.source === 'SWING_CLUSTER' && z.touches >= 3) z.tier = 'STRONG'
+  }
+  for (let i = 0; i < bands.length; i++) {
+    for (let j = i + 1; j < bands.length; j++) {
+      const a = bands[i]
+      const b = bands[j]
+      const near = Math.abs(bandMid(a) - bandMid(b)) <= atr * 0.45
+      if (!near && !overlaps(a, b, 0.28)) continue
+      a.strength = Math.min(12, a.strength + 2)
+      b.strength = Math.min(12, b.strength + 2)
+      a.tier = 'STRONG'
+      b.tier = 'STRONG'
+    }
+  }
+}
+
+function bandLabel(z: SrBand): string {
+  const strong = z.tier === 'STRONG' ? 'сильную ' : ''
+  const role =
+    z.role === 'SUPPORT'
+      ? `${strong}поддержку`
+      : z.role === 'RESISTANCE'
+        ? `${strong}сопротивление`
+        : `${strong}зону`
+  return `${role} ${fmtPx(z.bottom)}–${fmtPx(z.top)}`
+}
+
 function nextBand(
   bands: SrBand[],
   from: SrBand,
@@ -449,16 +526,180 @@ function nextBand(
     .sort((a, b) =>
       dir === 'DOWN' ? bandMid(b) - bandMid(a) : bandMid(a) - bandMid(b)
     )
-  const z = cands[0]
-  if (!z) return null
-  const role =
-    z.role === 'SUPPORT' ? 'поддержку' : z.role === 'RESISTANCE' ? 'сопротивление' : 'зону'
+  if (!cands.length) return null
+  const preferRole: SrRole = dir === 'UP' ? 'RESISTANCE' : 'SUPPORT'
+  const roleFit = cands.filter((z) => z.role === preferRole)
+  const strongFit = roleFit.filter((z) => z.tier === 'STRONG')
+  const strongAny = cands.filter((z) => z.tier === 'STRONG')
+  const nearest = cands[0]
+  const pick =
+    strongFit[0] ??
+    roleFit[0] ??
+    (strongAny[0] &&
+    Math.abs(bandMid(strongAny[0]) - mid) <= Math.abs(bandMid(nearest) - mid) * 1.85
+      ? strongAny[0]
+      : nearest)
   return {
-    id: z.id,
-    top: z.top,
-    bottom: z.bottom,
-    label: `${role} ${fmtPx(z.bottom)}–${fmtPx(z.top)}`,
+    id: pick.id,
+    top: pick.top,
+    bottom: pick.bottom,
+    label: bandLabel(pick),
   }
+}
+
+function qualityRu(q: CloseQuality): string {
+  if (q === 'DISPLACEMENT_UP') return 'тело вверх'
+  if (q === 'DISPLACEMENT_DOWN') return 'тело вниз'
+  if (q === 'REJECT_HIGH') return 'фитиль сверху'
+  if (q === 'REJECT_LOW') return 'фитиль снизу'
+  if (q === 'INDECISION') return 'доджи'
+  return 'обычное тело'
+}
+
+function postureRu(p: ZoneClosePosture): string {
+  if (p === 'HELD_ABOVE') return 'закреп над'
+  if (p === 'HELD_BELOW') return 'закреп под'
+  if (p === 'BROKE_UP') return 'пробили вверх'
+  if (p === 'BROKE_DOWN') return 'пробили вниз'
+  if (p === 'WICK_REJECT') return 'фитиль + закрылись обратно'
+  return 'внутри'
+}
+
+function readTfZoneClose(
+  candles: OhlcvCandle[] | undefined,
+  barMs: number,
+  zone: SrBand,
+  tf: '1h' | '4h',
+  atr: number
+): TfZoneClose | null {
+  if (!candles || candles.length < 2) return null
+  const last = candles[candles.length - 1]
+  const prev = candles[candles.length - 2]
+  if (!last) return null
+  const forming = !isBarClosed(last, barMs)
+  const pad = Math.max(atr * 0.1, (zone.top - zone.bottom) * 0.08, last[4] * 0.00025)
+  const close = last[4]
+  const prevC = prev?.[4] ?? close
+  const wickUp = last[2] > zone.top && close <= zone.top
+  const wickDn = last[3] < zone.bottom && close >= zone.bottom
+  let posture: ZoneClosePosture
+  if (close > zone.top + pad) {
+    posture = prevC <= zone.top + pad ? 'BROKE_UP' : 'HELD_ABOVE'
+  } else if (close < zone.bottom - pad) {
+    posture = prevC >= zone.bottom - pad ? 'BROKE_DOWN' : 'HELD_BELOW'
+  } else if (wickUp || wickDn) {
+    posture = 'WICK_REJECT'
+  } else {
+    posture = 'INSIDE'
+  }
+  const quality = readCloseQuality(last)
+  const name = tf === '1h' ? '1ч' : '4ч'
+  const live = forming ? 'закрывается' : 'закрылся'
+  return {
+    tf,
+    posture,
+    quality,
+    close,
+    forming,
+    line: `${name} ${live}: ${postureRu(posture)} · ${qualityRu(quality)}`,
+  }
+}
+
+function isAbove(p: ZoneClosePosture): boolean {
+  return p === 'HELD_ABOVE' || p === 'BROKE_UP'
+}
+function isBelow(p: ZoneClosePosture): boolean {
+  return p === 'HELD_BELOW' || p === 'BROKE_DOWN'
+}
+
+function judgeCloses(
+  h1: TfZoneClose | null,
+  h4: TfZoneClose | null,
+  zone: SrBand,
+  bands: SrBand[]
+): ZoneCloseVerdict {
+  const h4p = h4?.posture
+  const h1p = h1?.posture
+  let stance: ZoneStance = 'CHOP'
+  if (h4p && h1p) {
+    if (isAbove(h4p) && isAbove(h1p)) {
+      stance = h4p === 'BROKE_UP' || h1p === 'BROKE_UP' ? 'BREAK_UP' : 'HOLD_ABOVE'
+    } else if (isBelow(h4p) && isBelow(h1p)) {
+      stance = h4p === 'BROKE_DOWN' || h1p === 'BROKE_DOWN' ? 'BREAK_DOWN' : 'HOLD_BELOW'
+    } else if (isAbove(h4p) && isBelow(h1p)) {
+      stance = 'WAIT_4H'
+    } else if (isBelow(h4p) && isAbove(h1p)) {
+      stance = 'WAIT_4H'
+    } else if (h4p === 'WICK_REJECT' || h1p === 'WICK_REJECT') {
+      stance = isAbove(h4p ?? 'INSIDE') ? 'HOLD_ABOVE' : isBelow(h4p ?? 'INSIDE') ? 'HOLD_BELOW' : 'CHOP'
+    } else if (isAbove(h4p)) stance = 'HOLD_ABOVE'
+    else if (isBelow(h4p)) stance = 'HOLD_BELOW'
+    else stance = 'CHOP'
+  } else if (h4p) {
+    stance = isAbove(h4p)
+      ? h4p === 'BROKE_UP'
+        ? 'BREAK_UP'
+        : 'HOLD_ABOVE'
+      : isBelow(h4p)
+        ? h4p === 'BROKE_DOWN'
+          ? 'BREAK_DOWN'
+          : 'HOLD_BELOW'
+        : 'CHOP'
+  } else if (h1p) {
+    stance = isAbove(h1p)
+      ? h1p === 'BROKE_UP'
+        ? 'BREAK_UP'
+        : 'HOLD_ABOVE'
+      : isBelow(h1p)
+        ? h1p === 'BROKE_DOWN'
+          ? 'BREAK_DOWN'
+          : 'HOLD_BELOW'
+        : 'CHOP'
+  }
+
+  const dir: 'UP' | 'DOWN' | null =
+    stance === 'HOLD_ABOVE' || stance === 'BREAK_UP'
+      ? 'UP'
+      : stance === 'HOLD_BELOW' || stance === 'BREAK_DOWN'
+        ? 'DOWN'
+        : stance === 'WAIT_4H'
+          ? h4p && isAbove(h4p)
+            ? 'UP'
+            : h4p && isBelow(h4p)
+              ? 'DOWN'
+              : null
+          : null
+  const nxt = dir ? nextBand(bands, zone, dir) : null
+  const destination = nxt
+    ? {
+        price: dir === 'UP' ? nxt.bottom : nxt.top,
+        label: nxt.label,
+      }
+    : null
+
+  const bits = [h4?.line, h1?.line].filter(Boolean)
+  let destLine = ''
+  if (stance === 'WAIT_4H') {
+    destLine = h4p && isAbove(h4p)
+      ? `Час ушёл вниз, 4ч ещё над зоной — цель не сливаем, ждём закрытие 4ч`
+      : `Час выкупили, 4ч ещё под зоной — вверх не подтверждаем без 4ч`
+    if (destination) destLine += ` · если 4ч подтвердит: ${destination.label}`
+  } else if (destination) {
+    destLine =
+      stance === 'BREAK_DOWN' || stance === 'HOLD_BELOW'
+        ? `Цель вниз: ${destination.label}`
+        : `Цель вверх: ${destination.label}`
+  } else if (stance === 'CHOP') {
+    destLine = '1ч и 4ч не согласны — цели нет, пока пила в зоне'
+  }
+  const strong = zone.tier === 'STRONG' ? 'сильная ' : ''
+  const role =
+    zone.role === 'SUPPORT' ? 'поддержка' : zone.role === 'RESISTANCE' ? 'сопротивление' : 'зона'
+  const line = [`${strong}${role} ${fmtPx(zone.bottom)}–${fmtPx(zone.top)}`, ...bits, destLine]
+    .filter(Boolean)
+    .join(' · ')
+
+  return { h1, h4, stance, destination, line }
 }
 
 function isFatBand(z: SrBand, atr: number): boolean {
@@ -493,6 +734,9 @@ function pickActive(
     const scale = Math.max(atr, price * 0.001)
     s -= (edge / scale) * 12
     if (price <= r.zone.top && price >= r.zone.bottom) s -= (width / scale) * 8
+    if (r.zone.tier === 'STRONG' && edge <= scale * 2.2) s += 14
+    if (r.closes?.stance === 'HOLD_ABOVE' || r.closes?.stance === 'HOLD_BELOW') s += 8
+    if (r.closes?.stance === 'BREAK_UP' || r.closes?.stance === 'BREAK_DOWN') s += 10
     return s
   }
   return [...pool].sort((a, b) => score(b) - score(a))[0] ?? null
@@ -754,9 +998,10 @@ function narrativeOf(r: Omit<ZoneReaction, 'narrative'>): string {
     ? ` · дальше ${r.targetIfHold.label} ${fmtPx(r.targetIfHold.price)}`
     : ''
 
+  const closeLead = r.closes?.line ? `${r.closes.line}. ` : ''
   switch (r.state) {
     case 'HOLDING_ABOVE':
-      return `Закреп ${rolePhrase(z.role, 'над')} ${band} держит (${r.holdProbability}%). Идём дальше ${r.continueProbability}%.${holdTo}${next}`
+      return `${closeLead}Закреп ${rolePhrase(z.role, 'над')} ${band} держит (${r.holdProbability}%). Идём дальше ${r.continueProbability}%.${holdTo}${next}`
     case 'HOLDING_BELOW':
       return `Закрепились ${rolePhrase(z.role, 'под')} ${band} (${r.holdProbability}%). ${
         r.going === 'DOWN' ? 'Идём вниз' : r.going === 'UP' ? 'Ещё не вниз — пила' : 'Пока пила'
@@ -794,28 +1039,36 @@ function narrativeOf(r: Omit<ZoneReaction, 'narrative'>): string {
 
 export function hintForReaction(r: ZoneReaction): string {
   const role =
-    r.zone.role === 'SUPPORT' ? 'подд.' : r.zone.role === 'RESISTANCE' ? 'сопр.' : 'зона'
+    (r.zone.tier === 'STRONG' ? 'сил. ' : '') +
+    (r.zone.role === 'SUPPORT' ? 'подд.' : r.zone.role === 'RESISTANCE' ? 'сопр.' : 'зона')
+  const tf =
+    r.closes?.h1 && r.closes?.h4
+      ? ` · 1ч ${postureRu(r.closes.h1.posture)} · 4ч ${postureRu(r.closes.h4.posture)}`
+      : r.closes?.h1
+        ? ` · 1ч ${postureRu(r.closes.h1.posture)}`
+        : ''
+  const dest = r.destination ? ` → ${r.destination.label}` : ''
   switch (r.state) {
     case 'HOLDING_ABOVE':
-      return `${role} · закреп над · ${r.holdProbability}%`
+      return `${role} · закреп над · ${r.holdProbability}%${tf}${dest}`
     case 'HOLDING_BELOW':
-      return `${role} · закреп под · ${r.holdProbability}%`
+      return `${role} · закреп под · ${r.holdProbability}%${tf}${dest}`
     case 'CONSOLIDATING_UNDER':
-      return `${role} · проторг. под · ${r.going === 'DOWN' ? 'вниз' : r.going === 'UP' ? 'вверх?' : 'пила'} ${r.continueProbability}%`
+      return `${role} · проторг. под · ${r.going === 'DOWN' ? 'вниз' : r.going === 'UP' ? 'вверх?' : 'пила'} ${r.continueProbability}%${tf}${dest}`
     case 'CONSOLIDATING_OVER':
-      return `${role} · проторг. над · ${r.going === 'UP' ? 'вверх' : r.going === 'DOWN' ? 'вниз?' : 'пила'} ${r.continueProbability}%`
+      return `${role} · проторг. над · ${r.going === 'UP' ? 'вверх' : r.going === 'DOWN' ? 'вниз?' : 'пила'} ${r.continueProbability}%${tf}${dest}`
     case 'BREAKING':
-      return `${role} · ломаем · ${r.breakProbability}%`
+      return `${role} · ломаем · ${r.breakProbability}%${tf}${dest}`
     case 'BROKEN':
-      return `${role} · слом → ${r.nextIfBreak?.label ?? 'дальше'}`
+      return `${role} · слом → ${r.destination?.label ?? r.nextIfBreak?.label ?? 'дальше'}${tf}`
     case 'RECLAIMED':
-      return `${role} · ложный + закреп · ${r.holdProbability}%`
+      return `${role} · ложный + закреп · ${r.holdProbability}%${tf}`
     case 'INSIDE':
-      return `${role} · внутри · удерж ${r.holdProbability}% · слом ${r.breakProbability}%`
+      return `${role} · внутри · удерж ${r.holdProbability}%${tf}`
     case 'APPROACHING':
-      return `${role} · подход · удерж ${r.holdProbability}%`
+      return `${role} · подход · удерж ${r.holdProbability}%${tf}`
     default:
-      return role
+      return role + tf
   }
 }
 
@@ -864,6 +1117,7 @@ export function discoverSrBands(opts: {
       endTimeSec: tsSec(candles[candles.length - 1]),
       touches: 3,
       strength: 8,
+      tier: 'MEDIUM',
     }
     const thinBot: SrBand = {
       id: `sr_deal_lo_${Math.round(dLo * 1e6)}`,
@@ -875,6 +1129,7 @@ export function discoverSrBands(opts: {
       endTimeSec: tsSec(candles[candles.length - 1]),
       touches: 3,
       strength: 8,
+      tier: 'MEDIUM',
     }
     raw.push(thinTop, thinBot)
   }
@@ -892,6 +1147,7 @@ export function discoverSrBands(opts: {
       endTimeSec: tsSec(candles[candles.length - 1]),
       touches: eh.strength === 'STRONG' ? 5 : eh.strength === 'MEDIUM' ? 3 : 2,
       strength: eh.strength === 'STRONG' ? 11 : eh.strength === 'MEDIUM' ? 8 : 6,
+      tier: eh.strength === 'STRONG' ? 'STRONG' : eh.strength === 'MEDIUM' ? 'MEDIUM' : 'WEAK',
     })
   }
   for (const el of opts.equalLows ?? []) {
@@ -906,12 +1162,14 @@ export function discoverSrBands(opts: {
       endTimeSec: tsSec(candles[candles.length - 1]),
       touches: el.strength === 'STRONG' ? 5 : el.strength === 'MEDIUM' ? 3 : 2,
       strength: el.strength === 'STRONG' ? 11 : el.strength === 'MEDIUM' ? 8 : 6,
+      tier: el.strength === 'STRONG' ? 'STRONG' : el.strength === 'MEDIUM' ? 'MEDIUM' : 'WEAK',
     })
   }
 
   const merged = mergeBands(raw, maxBands + 2).filter(
     (z) => z.top - z.bottom <= maxBandHeight(atr, price) * 1.15
   )
+  assignTiers(merged, atr)
   for (const z of merged) {
     z.role = roleVsPrice(z, price)
     if (z.id.startsWith('sr_cong') || z.id.includes('cong')) {
@@ -935,6 +1193,8 @@ export function discoverSrBands(opts: {
 export function buildZoneReactionBoard(opts: {
   candles: OhlcvCandle[]
   htfCandles?: OhlcvCandle[]
+  candles1h?: OhlcvCandle[]
+  candles4h?: OhlcvCandle[]
   tape?: OhlcvCandle[]
   price: number
   dealingHigh?: number | null
@@ -970,7 +1230,7 @@ export function buildZoneReactionBoard(opts: {
 
   const reactions: ZoneReaction[] = bands.map((zone) => {
     const cls = classifyState(zone, classifySrc, price, tape, atr)
-    const going = goingFrom(cls.state, tape, zone.role, opts.preferredSide)
+    let going = goingFrom(cls.state, tape, zone.role, opts.preferredSide)
     const holdProbability = scoreHold({
       state: cls.state,
       zone,
@@ -1016,6 +1276,31 @@ export function buildZoneReactionBoard(opts: {
       )
     }
 
+    const h1c = readTfZoneClose(
+      opts.candles1h && opts.candles1h.length >= 2 ? opts.candles1h : discoverSrc,
+      3_600_000,
+      zone,
+      '1h',
+      atr
+    )
+    const h4c = readTfZoneClose(
+      opts.candles4h && opts.candles4h.length >= 2
+        ? opts.candles4h
+        : opts.htfCandles && opts.htfCandles.length >= 2
+          ? opts.htfCandles
+          : undefined,
+      14_400_000,
+      zone,
+      '4h',
+      atrApprox(opts.candles4h ?? opts.htfCandles ?? classifySrc)
+    )
+    const closes = judgeCloses(h1c, h4c, zone, bands)
+    if (closes.stance === 'HOLD_ABOVE' || closes.stance === 'BREAK_UP') going = 'UP'
+    else if (closes.stance === 'HOLD_BELOW' || closes.stance === 'BREAK_DOWN') going = 'DOWN'
+    else if (closes.stance === 'WAIT_4H') {
+      going = h4c && isAbove(h4c.posture) ? 'UP' : h4c && isBelow(h4c.posture) ? 'DOWN' : 'CHOP'
+    }
+
     const nextIfBreakUp = nextBand(bands, zone, 'UP')
     const nextIfBreakDown = nextBand(bands, zone, 'DOWN')
     const likelyBreak: 'UP' | 'DOWN' =
@@ -1049,7 +1334,9 @@ export function buildZoneReactionBoard(opts: {
         (holdDir === 'UP' && mag.price > price) || (holdDir === 'DOWN' && mag.price < price)
       if (aligned) targetIfHold = mag
     }
-    if (!targetIfHold) {
+    if (closes.destination) {
+      targetIfHold = closes.destination
+    } else if (!targetIfHold) {
       const nxt = nextBand(bands, zone, holdDir)
       if (nxt) {
         targetIfHold = {
@@ -1073,8 +1360,10 @@ export function buildZoneReactionBoard(opts: {
       nextIfBreakUp,
       nextIfBreakDown,
       targetIfHold,
+      closes,
+      destination: closes.destination ?? targetIfHold,
     }
-    return { ...draft, narrative: narrativeOf(draft) }
+    return { ...draft, narrative: closes.line || narrativeOf(draft) }
   })
 
   const active = pickActive(reactions, price, atr)
@@ -1083,7 +1372,7 @@ export function buildZoneReactionBoard(opts: {
     bands,
     reactions,
     active,
-    line: active?.narrative ?? '',
+    line: active?.closes?.line || active?.narrative || '',
   }
 }
 
@@ -1107,11 +1396,11 @@ export function srBoardToLiquidityZones(
       startTime: z.startTimeSec as Time,
       endTime: visibleEnd,
       strength: z.strength,
-      strengthTier: z.strength >= 10 ? 'STRONG' : z.strength >= 7 ? 'MEDIUM' : 'WEAK',
+      strengthTier: z.tier,
       label: hintForReaction(r),
       contextHint: hintForReaction(r),
       invalidation: z.role === 'SUPPORT' ? z.bottom : z.top,
-      target: r.targetIfHold?.price ?? (r.nextIfBreak ? bandMid({
+      target: r.destination?.price ?? r.targetIfHold?.price ?? (r.nextIfBreak ? bandMid({
         ...z,
         top: r.nextIfBreak.top,
         bottom: r.nextIfBreak.bottom,
