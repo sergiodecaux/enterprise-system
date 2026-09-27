@@ -1,8 +1,9 @@
-import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle } from 'lucide-react'
+import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Bot } from 'lucide-react'
 import type { ActiveTrade } from '../../engine/types'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { directionLabel } from '../../i18n/displayMaps'
 import { useAppStore } from '../../store/useAppStore'
+import { useAdvisorStore } from '../../store/useAdvisorStore'
 
 interface TradeCardProps {
   trade: ActiveTrade
@@ -11,6 +12,7 @@ interface TradeCardProps {
 const TradeCard = ({ trade }: TradeCardProps) => {
   const { haptic } = useTelegramWebApp()
   const closeTrade = useAppStore((s) => s.closeTrade)
+  const askAdvisor = useAdvisorStore((s) => s.ask)
 
   const isLong = trade.direction === 'LONG'
   const isProfit = trade.pnlPercent > 0
@@ -219,6 +221,22 @@ const TradeCard = ({ trade }: TradeCardProps) => {
               🚨 PANIC SELL / BAIL OUT
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() =>
+              askAdvisor({
+                mode: 'trade',
+                symbol: trade.symbol,
+                tradeId: trade.id,
+                text: `Мнение по моей сделке ${trade.symbol} ${trade.direction}: держать, сократить или закрыть?`,
+              })
+            }
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-matrix/30 bg-matrix/5 px-4 py-2 font-mono text-xs font-bold uppercase text-matrix transition-colors hover:bg-matrix/10 active:scale-95"
+          >
+            <Bot className="h-3.5 w-3.5" />
+            Спросить советника
+          </button>
 
           <button
             type="button"

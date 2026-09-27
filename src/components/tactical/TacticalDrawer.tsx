@@ -1,7 +1,8 @@
 import { useEffect, useRef, useMemo } from 'react'
-import { Magnet, X } from 'lucide-react'
+import { Bot, Magnet, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/useAppStore'
+import { useAdvisorStore } from '../../store/useAdvisorStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import ProbabilityGauge from './ProbabilityGauge'
 import LiveChart from './LiveChart'
@@ -476,6 +477,12 @@ const TacticalDrawer = () => {
     })
   }, [signal, mtfAlignment, mtfLiq, brief1d, brief4h, brief1h])
 
+  const setAdvisorBrief = useAdvisorStore((s) => s.setBrief)
+  const askAdvisor = useAdvisorStore((s) => s.ask)
+  useEffect(() => {
+    if (signal && marketBrief && !briefLoading) setAdvisorBrief(signal.symbol, marketBrief)
+  }, [signal, marketBrief, briefLoading, setAdvisorBrief])
+
   const workerCtx = useWorkerMarketContext()
   const journalVersion = useAppStore((s) => s.journalVersion)
 
@@ -597,6 +604,21 @@ const TacticalDrawer = () => {
                   )}
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() =>
+                  askAdvisor({
+                    mode: 'coin',
+                    symbol: signal.symbol,
+                    text: `Разбери ${signal.displayName}: есть ли сетап?`,
+                  })
+                }
+                className="mr-1 flex items-center gap-1 rounded-lg border border-matrix/30 px-2 py-1.5 font-mono text-[11px] text-matrix transition-colors hover:bg-matrix/10"
+                aria-label="Спросить советника"
+              >
+                <Bot className="h-4 w-4" />
+                Советник
+              </button>
               <button
                 onClick={handleClose}
                 className="rounded-lg p-2 transition-colors hover:bg-hull-light"

@@ -42,3 +42,4 @@ android/app/release/
 # Cloudflare wrangler local cache
 workers/mexc-proxy/.wrangler/
 workers/mexc-proxy/.wrangler-dry/
+workers/ai-advisor/.wrangler/

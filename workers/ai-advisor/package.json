@@ -1,0 +1,14 @@
+{
+  "name": "ai-advisor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "wrangler dev --remote --env a",
+    "deploy:all": "powershell -ExecutionPolicy Bypass -File scripts/deploy-all.ps1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260926.1"
+  }
+}

@@ -3,6 +3,7 @@ import { Target, Radar as RadarIcon, Activity, Zap } from 'lucide-react'
 import Header from './components/layout/Header'
 import SniperView from './components/sniper/SniperView'
 import ErrorBoundary from './components/ErrorBoundary'
+import AdvisorPanel from './components/advisor/AdvisorPanel'
 import NewsStrip from './components/news/NewsStrip'
 import { useMexcScanner } from './hooks/useMexcScanner'
 import { useNewsIntelligence } from './hooks/useNewsIntelligence'
@@ -123,6 +124,8 @@ function App() {
             <TacticalDrawer />
           </Suspense>
         )}
+
+        <AdvisorPanel />
       </div>
     </ErrorBoundary>
   )

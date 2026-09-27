@@ -14,6 +14,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX, Flame } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
+import { useAdvisorStore } from '../../store/useAdvisorStore'
 import type { EqualLevel } from '../../engine/types'
 import {
   CHART_TIMEFRAMES,
@@ -601,6 +602,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     btcRs,
     isBtcPair,
   ])
+
+  const setAdvisorStructure = useAdvisorStore((s) => s.setStructure)
+  useEffect(() => {
+    setAdvisorStructure(flatSymbol, structureRead)
+  }, [flatSymbol, structureRead, setAdvisorStructure])
 
   useEffect(() => {
     structureStickyRef.current = null

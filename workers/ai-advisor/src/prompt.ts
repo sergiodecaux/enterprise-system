@@ -1,0 +1,73 @@
+import type { ChatMessage } from './providers'
+
+export type AdvisorMode = 'chat' | 'market' | 'radar' | 'coin' | 'trade'
+
+const MAX_HISTORY = 8
+const MAX_MESSAGE_CHARS = 2_500
+const MAX_SNAPSHOT_CHARS = 14_000
+
+const SYSTEM_PROMPT = `Ты — торговый советник внутри личного приложения для крипто-фьючерсов MEXC.
+Методика приложения: SMC-структура (BOS/CHoCH, свипы ликвидности, premium/discount), зона Фибоначчи 141–161 («зона 141»), радар 141 (монеты у зоны 141 со свободным путём), стакан и лента (OBI, агрессия покупателей, CVD), сессии, фон рынка (Fear&Greed, доминация BTC, альт-режим), журнал отработки сигналов.
+
+Правила:
+- Опирайся только на JSON-снимок и историю диалога. Если нужных данных нет — прямо скажи, чего не хватает. Не выдумывай цены, уровни и статистику.
+- Никаких гарантий и «точно пойдёт»: говори вероятностями и условиями. Это не инвестиционная рекомендация, решение принимает пользователь.
+- Если таймфреймы, структура и поток противоречат друг другу — назови конфликт и что его разрешит.
+- Риск на сделку — не больше 1–2% депозита. Если соотношение риск/прибыль (RR) ниже 1.5 — скажи об этом прямо.
+- Учитывай журнал: если у похожего сетапа слабая статистика, предупреди.
+- Пиши по-русски, кратко, без воды. Цены бери из снимка с той же точностью.
+
+Формат ответа по сетапу или сделке:
+1) Вывод — одна строка: LONG / SHORT / ЖДАТЬ и уверенность (низкая/средняя/высокая).
+2) Аргументы — 3–5 пунктов с цифрами из снимка.
+3) Риски — что против идеи.
+4) Уровни — вход (зона), стоп, TP1/TP2, RR.
+5) Что отменит идею — конкретная цена или событие.
+На общие вопросы о рынке отвечай свободно, но так же коротко и с цифрами.
+
+Легенда снимка: market — фон рынка; focus — текущая монета (signal — сигнал движка, structure — SMC-структура по ТФ, zone141 — зона 141, brief — бриф по ТФ и планы по стилям); radar — топ радара 141 (trig — состояние у зоны, d141 — расстояние до зоны в %, gap — свободный путь в %, score — оценка возможности); trades — активные сделки пользователя; journal — статистика журнала (wr — винрейт 0..1, avgR — средний R).`
+
+const MODE_HINTS: Record<AdvisorMode, string> = {
+  chat: '',
+  market:
+    'Задача: общий обзор рынка сейчас — фон (BTC, доминация, Fear&Greed, альт-режим, новости), куда смотрит рынок и что это значит для альтов. В конце 2–3 монеты из радара, на которые стоит смотреть, и почему.',
+  radar:
+    'Задача: разбери топ радара 141. Для 3–5 лучших монет: сторона, насколько близко к зоне 141, свободный путь, главный риск. Отсортируй по качеству возможности.',
+  coin: 'Задача: разбери текущую монету (focus) по формату ответа по сетапу.',
+  trade:
+    'Задача: дай мнение по активной сделке пользователя (trades; если указан focusTradeId — по ней): держать, сократить, перенести стоп или закрыть. Используй формат ответа по сделке.',
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+export function isAdvisorMode(v: unknown): v is AdvisorMode {
+  return typeof v === 'string' && v in MODE_HINTS
+}
+
+export function buildMessages(input: {
+  history: ChatMessage[]
+  snapshot: unknown
+  mode: AdvisorMode
+}): ChatMessage[] {
+  const parts = [SYSTEM_PROMPT]
+  const hint = MODE_HINTS[input.mode]
+  if (hint) parts.push(hint)
+  if (input.snapshot != null) {
+    const json =
+      typeof input.snapshot === 'string' ? input.snapshot : JSON.stringify(input.snapshot)
+    parts.push(`Снимок данных приложения (JSON):\n${clip(json, MAX_SNAPSHOT_CHARS)}`)
+  }
+
+  // Single system message: some chat templates (Gemma) reject several system turns.
+  const out: ChatMessage[] = [{ role: 'system', content: parts.join('\n\n') }]
+
+  const history = input.history
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim())
+    .slice(-MAX_HISTORY)
+    .map((m) => ({ role: m.role, content: clip(m.content, MAX_MESSAGE_CHARS) }))
+
+  while (history.length && history[0].role !== 'user') history.shift()
+  return out.concat(history)
+}

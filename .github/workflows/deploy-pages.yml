@@ -37,6 +37,7 @@ jobs:
           VITE_MEXC_PROXY_URL: ${{ secrets.VITE_MEXC_PROXY_URL }}
           VITE_ALERT_SECRET: ${{ secrets.VITE_ALERT_SECRET }}
           VITE_TELEGRAM_BOT_USERNAME: ${{ secrets.VITE_TELEGRAM_BOT_USERNAME }}
+          VITE_ADVISOR_URLS: ${{ secrets.VITE_ADVISOR_URLS }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

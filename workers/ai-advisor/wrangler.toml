@@ -1,0 +1,60 @@
+# AI advisor — the same code on every account, one [env.X] per account.
+# Deploy one:  npx wrangler deploy --env a
+# Deploy all:  npm run deploy:all   (scripts/deploy-all.ps1)
+#
+# Accounts below are the live mexc-proxy ring accounts (A, B, C, F). ai-advisor is a
+# separate worker there and does not touch mexc-proxy; mexc-proxy does not use Workers AI,
+# so each account's 10k neurons/day go to the advisor. Replace account_id if you use
+# dedicated accounts instead. Workers requests (100k/day) are shared with mexc-proxy.
+#
+# Secrets per env (not inherited):
+#   npx wrangler secret put ADVISOR_TOKEN --env a
+#   (optional) TELEGRAM_BOT_TOKEN --env a
+
+name = "ai-advisor"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+NODE_LABEL = "dev"
+MODEL_PRIMARY = "@cf/google/gemma-4-26b-a4b-it"
+MODEL_FALLBACK = "@cf/zai-org/glm-4.7-flash"
+DAILY_CAP = "250"
+MAX_OUTPUT_TOKENS = "900"
+DISABLE_THINKING = "1"
+ALLOWED_TG_IDS = ""
+
+[ai]
+binding = "AI"
+
+# ── A · https://ai-advisor.sergiodecaux.workers.dev ──────────────────────────
+[env.a]
+name = "ai-advisor"
+account_id = "b64dba72f0f7d3fb29ece70dda27d747"
+ai = { binding = "AI" }
+vars = { NODE_LABEL = "A", MODEL_PRIMARY = "@cf/google/gemma-4-26b-a4b-it", MODEL_FALLBACK = "@cf/zai-org/glm-4.7-flash", DAILY_CAP = "250", MAX_OUTPUT_TOKENS = "900", DISABLE_THINKING = "1", ALLOWED_TG_IDS = "" }
+
+# ── B · https://ai-advisor.mexc-standby.workers.dev ──────────────────────────
+[env.b]
+name = "ai-advisor"
+account_id = "e3a84d77aed7dfee0a33638e6aca557f"
+ai = { binding = "AI" }
+vars = { NODE_LABEL = "B", MODEL_PRIMARY = "@cf/google/gemma-4-26b-a4b-it", MODEL_FALLBACK = "@cf/zai-org/glm-4.7-flash", DAILY_CAP = "250", MAX_OUTPUT_TOKENS = "900", DISABLE_THINKING = "1", ALLOWED_TG_IDS = "" }
+
+# ── C · https://ai-advisor.mexc-c.workers.dev ────────────────────────────────
+[env.c]
+name = "ai-advisor"
+account_id = "c256c823b763a79fe2206bd16c69a62b"
+ai = { binding = "AI" }
+vars = { NODE_LABEL = "C", MODEL_PRIMARY = "@cf/google/gemma-4-26b-a4b-it", MODEL_FALLBACK = "@cf/zai-org/glm-4.7-flash", DAILY_CAP = "250", MAX_OUTPUT_TOKENS = "900", DISABLE_THINKING = "1", ALLOWED_TG_IDS = "" }
+
+# ── F · https://ai-advisor.mexc-f.workers.dev ────────────────────────────────
+[env.f]
+name = "ai-advisor"
+account_id = "f25b2e3490e4beeadf4461cd78c55ccd"
+ai = { binding = "AI" }
+vars = { NODE_LABEL = "F", MODEL_PRIMARY = "@cf/google/gemma-4-26b-a4b-it", MODEL_FALLBACK = "@cf/zai-org/glm-4.7-flash", DAILY_CAP = "250", MAX_OUTPUT_TOKENS = "900", DISABLE_THINKING = "1", ALLOWED_TG_IDS = "" }
+
+# D (7a55891f90e84f1bcf58b901fe568771) and E (d0557787a0a41883caecac1954983a3e) are
+# reserved in mexc-proxy until their credentials are verified — copy an env block to add them.
