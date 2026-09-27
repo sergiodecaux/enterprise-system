@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { Shield, Bell } from 'lucide-react'
+import { Shield, Bell, Bot } from 'lucide-react'
 import StatusIndicator from './StatusIndicator'
 import TelegramAlertsPanel from '../telegram/TelegramAlertsPanel'
+import { useAdvisorStore } from '../../store/useAdvisorStore'
 
 const Header = () => {
   const [alertsOpen, setAlertsOpen] = useState(false)
+  const openAdvisor = useAdvisorStore((s) => s.setOpen)
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-14 border-b border-hull-border bg-hull/95 backdrop-blur-sm">
@@ -21,14 +23,25 @@ const Header = () => {
 
         <StatusIndicator />
 
-        <button
-          type="button"
-          onClick={() => setAlertsOpen(true)}
-          className="flex w-16 items-center justify-end rounded-lg p-1.5 text-holo/50 transition-colors hover:bg-hull-light/50 hover:text-matrix"
-          title="Telegram алерты"
-        >
-          <Bell className="h-4 w-4" />
-        </button>
+        <div className="flex w-16 items-center justify-end gap-0.5">
+          <button
+            type="button"
+            onClick={() => openAdvisor(true)}
+            className="rounded-lg p-1.5 text-holo/50 transition-colors hover:bg-hull-light/50 hover:text-matrix"
+            title="Советник AI"
+            aria-label="Советник AI"
+          >
+            <Bot className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setAlertsOpen(true)}
+            className="rounded-lg p-1.5 text-holo/50 transition-colors hover:bg-hull-light/50 hover:text-matrix"
+            title="Telegram алерты"
+          >
+            <Bell className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-matrix to-transparent" />

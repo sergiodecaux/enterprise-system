@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bot, Send, Settings, Square, Trash2, X } from 'lucide-react'
-import { getAdvisorToken, getAdvisorUrls, type AdvisorMode } from '../../api/advisor'
+import type { AdvisorMode } from '../../api/advisor'
 import { useAdvisorChat } from '../../hooks/useAdvisorChat'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import { useAppStore } from '../../store/useAppStore'
@@ -49,12 +49,6 @@ const AdvisorPanel = () => {
   const [showSettings, setShowSettings] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
-  const configured = getAdvisorUrls().length > 0 && getAdvisorToken().length > 0
-
-  useEffect(() => {
-    if (open && !configured) setShowSettings(true)
-  }, [open, configured])
-
   useEffect(() => {
     if (!open || !pendingAsk || busy || showSettings) return
     const req = useAdvisorStore.getState().consumeAsk()
@@ -77,12 +71,14 @@ const AdvisorPanel = () => {
 
   return (
     <>
-      {!open && !drawerOpen && (
+      {!open && (
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="Советник AI"
-          className="fixed bottom-5 right-4 z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-matrix/40 bg-space/95 text-matrix shadow-[0_0_18px_rgba(0,255,136,0.25)] backdrop-blur-sm transition-transform active:scale-95"
+          className={`fixed right-4 z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-matrix/40 bg-space/95 text-matrix shadow-[0_0_18px_rgba(0,255,136,0.25)] backdrop-blur-sm transition-transform active:scale-95 ${
+            drawerOpen ? 'bottom-[5.5rem]' : 'bottom-5'
+          }`}
         >
           <Bot className="h-6 w-6" />
         </button>

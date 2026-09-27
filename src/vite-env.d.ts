@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_TELEGRAM_BOT_USERNAME?: string
   /** Comma-separated ai-advisor worker URLs (ring order). Not secret. */
   readonly VITE_ADVISOR_URLS?: string
+  /** Overrides the built-in ai-advisor access token */
+  readonly VITE_ADVISOR_TOKEN?: string
 }
 
 interface ImportMeta {

@@ -1,8 +1,9 @@
 /**
- * AI advisor client — walks the ring of ai-advisor workers (VITE_ADVISOR_URLS or the
- * URL list from settings). A node that answers 429 "exhausted" is skipped until the
- * next 00:00 UTC (persisted); network / 5xx errors cool a node down for 2 minutes.
- * The personal access token lives only in localStorage, never in the bundle.
+ * AI advisor client — walks the ring of ai-advisor workers (settings override →
+ * VITE_ADVISOR_URLS → built-in ring). A node that answers 429 "exhausted" is skipped
+ * until the next 00:00 UTC (persisted); network / 5xx / 404 errors cool a node down
+ * for 2 minutes. The access token is built into the bundle (single-user app, it only
+ * gates free Workers AI quota); a token saved in settings overrides it.
  */
 
 export type AdvisorMode = 'chat' | 'market' | 'radar' | 'coin' | 'trade'
@@ -30,6 +31,16 @@ export class AdvisorError extends Error {
     this.name = 'AdvisorError'
   }
 }
+
+const BUILTIN_ADVISOR_URLS = [
+  'https://ai-advisor.sergiodecaux.workers.dev',
+  'https://ai-advisor-2.sergiodecaux.workers.dev',
+  'https://ai-advisor-4.sergiodecaux.workers.dev',
+  'https://ai-advisor.mexc-standby.workers.dev',
+  'https://ai-advisor.mexc-c.workers.dev',
+  'https://ai-advisor.mexc-f.workers.dev',
+]
+const BUILTIN_ADVISOR_TOKEN = 'e6d6023342fb603fb6733b6e5d6e34e2081b6fe638dbb235aebe9cdd73562ba3'
 
 const TOKEN_KEY = 'advisor.token'
 const URLS_KEY = 'advisor.urls'
@@ -63,8 +74,17 @@ function parseUrlList(raw: string): string[] {
     .filter((u, i, all) => /^https?:\/\//.test(u) && all.indexOf(u) === i)
 }
 
-export function getAdvisorToken(): string {
+/** Token saved in settings on this device; empty = use the built-in one */
+export function getAdvisorTokenOverride(): string {
   return readLs(TOKEN_KEY).trim()
+}
+
+export function getAdvisorToken(): string {
+  return (
+    getAdvisorTokenOverride() ||
+    (import.meta.env.VITE_ADVISOR_TOKEN ?? '').trim() ||
+    BUILTIN_ADVISOR_TOKEN
+  )
 }
 
 export function setAdvisorToken(token: string): void {
@@ -81,7 +101,8 @@ export function setAdvisorUrlOverride(raw: string): void {
 }
 
 export function getDefaultAdvisorUrls(): string[] {
-  return parseUrlList(import.meta.env.VITE_ADVISOR_URLS ?? '')
+  const fromEnv = parseUrlList(import.meta.env.VITE_ADVISOR_URLS ?? '')
+  return fromEnv.length ? fromEnv : BUILTIN_ADVISOR_URLS
 }
 
 export function getAdvisorUrls(): string[] {

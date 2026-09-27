@@ -3,7 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import {
   clearAdvisorExhausted,
   getAdvisorNodeStates,
-  getAdvisorToken,
+  getAdvisorTokenOverride,
   getAdvisorUrlOverride,
   getDefaultAdvisorUrls,
   probeAdvisorNodes,
@@ -19,7 +19,7 @@ function timeLabel(ms: number): string {
 }
 
 const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
-  const [token, setToken] = useState(getAdvisorToken)
+  const [token, setToken] = useState(getAdvisorTokenOverride)
   const [urls, setUrls] = useState(getAdvisorUrlOverride)
   const [health, setHealth] = useState<AdvisorHealth[] | null>(null)
   const [probing, setProbing] = useState(false)
@@ -50,13 +50,13 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
     <div className="space-y-3 font-mono text-[12px] text-holo/80">
       <label className="block">
         <span className="mb-1 block text-[10px] uppercase text-holo/50">
-          Токен доступа (хранится только на этом устройстве)
+          Токен (не обязателен — уже встроен)
         </span>
         <input
           type="password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder="ADVISOR_TOKEN"
+          placeholder="встроенный токен"
           autoComplete="off"
           className="w-full rounded-lg border border-hull-border bg-space px-3 py-2 text-holo outline-none focus:border-matrix/60"
         />
