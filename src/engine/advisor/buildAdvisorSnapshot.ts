@@ -4,7 +4,17 @@ import type { JournalAnalytics } from '../journal/types'
 import type { Radar141Row } from '../radar141/types'
 import type { StructureRead, TfStructure } from '../smc/structureRead'
 import type { ActiveTrade, CoinSignal, MarketContext } from '../types'
+import {
+  buildChartContext,
+  buildCompositeContext,
+  buildFlowContext,
+  buildSessionContext,
+  buildSmcExtra,
+  type AdvisorDeskInput,
+} from './buildDeskContext'
+import { clip, compact, num, px } from './format'
 import type {
+  AdvisorChartInput,
   AdvisorFocus,
   AdvisorJournal,
   AdvisorMarket,
@@ -28,49 +38,16 @@ export interface AdvisorSnapshotInput {
   journal: JournalAnalytics | null
   structure: StructureRead | null
   brief: MarketBrief | null
+  /** State of the open chart for the focus coin (LiveChart) */
+  chart?: AdvisorChartInput | null
+  /** Live order-flow / session state of the focus coin (tactical screen) */
+  desk?: AdvisorDeskInput | null
   /** Token budget for the whole JSON (default 3000) */
   maxTokens?: number
 }
 
 const RADAR_ROWS = 8
 const MAX_TRADES = 5
-
-function px(n: number | null | undefined): number | null {
-  if (n == null || !Number.isFinite(n) || n === 0) return null
-  return Number(n.toPrecision(6))
-}
-
-function num(n: number | null | undefined, digits = 1): number | null {
-  if (n == null || !Number.isFinite(n)) return null
-  const f = 10 ** digits
-  return Math.round(n * f) / f
-}
-
-function clip(s: string | null | undefined, max: number): string | undefined {
-  if (!s) return undefined
-  const t = s.replace(/\s+/g, ' ').trim()
-  if (!t) return undefined
-  return t.length > max ? `${t.slice(0, max - 1)}…` : t
-}
-
-/** Drops null/undefined/empty values so the JSON stays compact. */
-function compact<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((v) => compact(v)).filter((v) => v != null) as T
-  }
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (v == null || v === '') continue
-      const c = compact(v)
-      if (Array.isArray(c) && c.length === 0) continue
-      if (c && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).length === 0) continue
-      out[k] = c
-    }
-    return out as T
-  }
-  return value
-}
 
 /** Rough token estimate: Latin/JSON ≈ 3.6 chars per token, Cyrillic ≈ 2.3. */
 export function estimateTokens(text: string): number {
@@ -243,6 +220,11 @@ function buildFocus(input: AdvisorSnapshotInput): AdvisorFocus | undefined {
         }
       : undefined,
     radar: row ? radarRow(row) : undefined,
+    chart: buildChartContext(input.chart ?? null, input.now),
+    flow: input.desk ? buildFlowContext(input.desk, input.now) : undefined,
+    smc: input.desk ? buildSmcExtra(signal, input.desk) : undefined,
+    session: input.desk ? buildSessionContext(signal, input.desk) : undefined,
+    composite: buildCompositeContext(input.desk?.composite ?? null),
   }
 }
 
@@ -303,6 +285,35 @@ type TrimStep = [label: string, apply: (s: AdvisorSnapshot) => void]
 const TRIM_STEPS: TrimStep[] = [
   ['news.top', (s) => { if (s.market.news) delete s.market.news.top }],
   ['radar→5', (s) => { if (s.radar) s.radar.rows = s.radar.rows.slice(0, 5) }],
+  ['chart.bars→12', (s) => { if (s.focus?.chart?.bars) s.focus.chart.bars = s.focus.chart.bars.slice(-12) }],
+  ['desk.minor', (s) => {
+    const f = s.focus
+    if (!f) return
+    delete f.composite
+    if (f.smc) {
+      delete f.smc.score
+      delete f.smc.dataQuality
+    }
+    if (f.flow) delete f.flow.alerts
+    if (f.chart?.consensus) delete f.chart.consensus.votes
+  }],
+  ['chart.setups→2', (s) => { if (s.focus?.chart?.setups) s.focus.chart.setups = s.focus.chart.setups.slice(0, 2) }],
+  ['chart.bars', (s) => { if (s.focus?.chart) delete s.focus.chart.bars }],
+  ['desk.detail', (s) => {
+    const f = s.focus
+    if (!f) return
+    delete f.session
+    if (f.smc) {
+      delete f.smc.eqLevels
+      delete f.smc.mm?.why
+      delete f.smc.surgical?.confirms
+    }
+    if (f.chart?.forecast) f.chart.forecast.scenarios.forEach((sc) => delete sc.why)
+    if (f.chart?.live) {
+      delete f.chart.live.smc
+      delete f.chart.live.alts
+    }
+  }],
   ['structure.factors', (s) => { if (s.focus?.structure) delete s.focus.structure.factors }],
   ['journal.insights', (s) => { if (s.journal) delete s.journal.insights }],
   ['trades→3', (s) => { if (s.trades) s.trades = s.trades.slice(0, 3) }],
@@ -319,6 +330,12 @@ const TRIM_STEPS: TrimStep[] = [
   ['structure.tf.h1', (s) => { if (s.focus?.structure?.tf) delete s.focus.structure.tf.h1 }],
   ['radar→3', (s) => { if (s.radar) s.radar.rows = s.radar.rows.slice(0, 3) }],
   ['brief', (s) => { if (s.focus) delete s.focus.brief }],
+  ['desk', (s) => {
+    if (!s.focus) return
+    delete s.focus.flow
+    delete s.focus.smc
+  }],
+  ['chart', (s) => { if (s.focus) delete s.focus.chart }],
 ]
 
 export function buildAdvisorSnapshot(input: AdvisorSnapshotInput): AdvisorSnapshotResult {

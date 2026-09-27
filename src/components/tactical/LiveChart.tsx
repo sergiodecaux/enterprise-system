@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX, Flame } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
+import type { AdvisorChartInput } from '../../engine/advisor'
 import type { EqualLevel } from '../../engine/types'
 import {
   CHART_TIMEFRAMES,
@@ -268,6 +269,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [tradesGlobalView, setTradesGlobalView] =
     useState<TradeGlobalView | null>(null)
   const [tradesMagnet, setTradesMagnet] = useState<TradeMagnet | null>(null)
+  /** Symbol the Сделки / Найти сигнал results were computed for */
+  const toolsSymbolRef = useRef<string | null>(null)
   const jewelSentRef = useRef<Set<string>>(new Set())
 
   const tallChart = chartExpanded || phoneLandscape
@@ -1163,6 +1166,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       structure: structureRead,
     })
 
+    toolsSymbolRef.current = symbol
     setFoundZones(result.zones)
     setFoundChartZones(result.chartZones)
     setTradesMode(true)
@@ -1330,6 +1334,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       sequence: sequenceHit,
     })
 
+    toolsSymbolRef.current = symbol
     setLiveSignal(result)
     setSignalMode(true)
     setFoundZones(result.zones)
@@ -2346,6 +2351,31 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       structureRead,
     ]
   )
+
+  const advisorChartRef = useRef<AdvisorChartInput | null>(null)
+  const toolsFresh = toolsSymbolRef.current === symbol
+  advisorChartRef.current = {
+    timeframe,
+    horizon: forecastHorizon,
+    candles,
+    forecast: forecast && forecast.scenarios.length > 0 ? forecast : null,
+    consensus: directionConsensus,
+    liveSignal: toolsFresh ? liveSignal : null,
+    setups: toolsFresh ? pickedSetups : [],
+    globalView: toolsFresh ? tradesGlobalView : null,
+    magnet: toolsFresh ? tradesMagnet : null,
+    liq: liqModel,
+    macro: macroCtx,
+    updatedAt: Date.now(),
+  }
+  const setAdvisorChart = useAdvisorStore((s) => s.setChart)
+  useEffect(() => {
+    const read = () => advisorChartRef.current as AdvisorChartInput
+    setAdvisorChart(flatSymbol, read)
+    return () => {
+      if (useAdvisorStore.getState().chartBySymbol[flatSymbol] === read) setAdvisorChart(flatSymbol, null)
+    }
+  }, [flatSymbol, setAdvisorChart])
 
   const chartRegime = signal?.marketRegime ?? 'RANGING'
   const toolsTrendOk =

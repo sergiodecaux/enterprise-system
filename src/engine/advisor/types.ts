@@ -1,4 +1,27 @@
-/** Compact market snapshot sent to the AI advisor (budget ≈ 3k tokens). */
+/** Compact market snapshot sent to the AI advisor (budget ≈ 3k tokens, more for coin/trade). */
+import type { OhlcvCandle } from '../../api/mexc'
+import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
+import type { MacroOutlookContext } from '../prediction/macroOutlook'
+import type { PriceForecast } from '../prediction/types'
+import type { ConditionalSetup, TradeGlobalView, TradeMagnet } from '../setups/types'
+import type { LiveSignalResult } from '../trades/findLiveSignal'
+import type { DirectionConsensus } from '../trend/directionConsensus'
+
+/** Raw state of the open chart, published by LiveChart for the advisor. */
+export interface AdvisorChartInput {
+  timeframe: string
+  horizon: string
+  candles: OhlcvCandle[]
+  forecast: PriceForecast | null
+  consensus: DirectionConsensus | null
+  liveSignal: LiveSignalResult | null
+  setups: ConditionalSetup[]
+  globalView: TradeGlobalView | null
+  magnet: TradeMagnet | null
+  liq: LiqHeatmapModel | null
+  macro: MacroOutlookContext | null
+  updatedAt: number
+}
 
 export interface AdvisorMarket {
   fearGreed: number | null
@@ -81,6 +104,144 @@ export interface AdvisorFocus {
     }>
   }
   radar?: AdvisorRadarRow
+  chart?: AdvisorChart
+  flow?: AdvisorFlow
+  smc?: AdvisorSmcExtra
+  session?: AdvisorSession
+  composite?: AdvisorComposite
+}
+
+/** [high, low, close, volume ÷ avg20] */
+export type AdvisorBar = [number, number, number, number]
+
+export interface AdvisorScenario {
+  id: string
+  type: string
+  prob: number
+  entry: number | null
+  target: number | null
+  inv: number | null
+  rr?: number | null
+  trigger?: string
+  why?: string[]
+}
+
+export interface AdvisorSetup {
+  side: string
+  title: string
+  prob: number
+  status: string
+  zone: [number, number]
+  entry: number | null
+  target: number | null
+  inv: number | null
+  ladder?: [number, number, number]
+  pReach?: [number, number, number]
+  trigger?: string
+  pending?: string[]
+}
+
+export interface AdvisorChart {
+  tf: string
+  horizon?: string
+  ageSec: number
+  stats?: {
+    bars: number
+    chgPct: number | null
+    hi: number | null
+    lo: number | null
+    atrPct: number | null
+    volX: number | null
+  }
+  bars?: AdvisorBar[]
+  mtf?: Record<'d' | 'h4' | 'h1', string> & { strength: string; target?: string }
+  forecast?: { dominant: string; macro?: string; scenarios: AdvisorScenario[] }
+  consensus?: { bias: string; conf: number; summary?: string; votes?: string[] }
+  live?: {
+    phase: string
+    primary: string
+    summary?: string
+    inv?: string
+    alts?: string[]
+    drive?: string
+    smc?: string[]
+    now?: string
+  }
+  view?: { bias: string; summary?: string; magnet?: string }
+  setups?: AdvisorSetup[]
+  liq?: {
+    label?: string
+    longLiqBelow: number | null
+    shortLiqAbove: number | null
+    longClusters?: number[]
+    shortClusters?: number[]
+    tapeBuy: number | null
+    tapeSell: number | null
+  }
+  macro?: string
+}
+
+export interface AdvisorFlow {
+  book?: {
+    obi: number | null
+    pressure: string
+    spreadPct: number | null
+    walls?: string[]
+    shift?: string
+  }
+  cvd?: { src: string; trend: string; buyPct: number; div?: string }
+  tape?: { signal: string; pressure: string; burst: boolean; ticks: number }
+  aggression?: { label: string; ratio: number; largeBuys: number }
+  whales?: { support?: string; resistance?: string; alerts?: string[] }
+  alerts?: string[]
+}
+
+export interface AdvisorSmcExtra {
+  mm?: {
+    drive: string
+    conf: number
+    side: string | null
+    micro?: string
+    macro?: string
+    stopHunt?: boolean
+    why?: string[]
+  }
+  surgical?: {
+    status: string
+    side: string
+    limit?: number | null
+    zone?: [number, number]
+    inv?: number | null
+    reason?: string
+    confirms?: string[]
+  }
+  ltf?: string[]
+  eqLevels?: string[]
+  btcDiv?: string
+  htf?: string
+  regime?: string
+  vp?: { poc: number | null; vah: number | null; val: number | null; note?: string }
+  liqGate?: string
+  globalFib?: string
+  score?: string[]
+  dataQuality?: string
+  invalidation?: string
+  warnings?: string[]
+}
+
+export interface AdvisorSession {
+  dna?: string
+  po3?: string
+  flip?: string
+}
+
+export interface AdvisorComposite {
+  score: number
+  phase: string
+  force: string
+  vol: string
+  advice?: string
+  warnings?: string[]
 }
 
 export interface AdvisorRadarRow {

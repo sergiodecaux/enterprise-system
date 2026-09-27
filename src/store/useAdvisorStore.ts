@@ -1,5 +1,6 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 import type { AdvisorMode } from '../api/advisor'
+import type { AdvisorChartInput } from '../engine/advisor/types'
 import type { MarketBrief } from '../engine/brief/marketBrief'
 import type { StructureRead } from '../engine/smc/structureRead'
 
@@ -31,6 +32,8 @@ interface AdvisorState {
   /** Latest analyses published by chart / drawer, keyed by flat or internal symbol */
   structureBySymbol: Record<string, StructureRead>
   briefBySymbol: Record<string, MarketBrief>
+  /** Live getters registered by the open chart (read only when a snapshot is built) */
+  chartBySymbol: Record<string, () => AdvisorChartInput>
   setOpen: (open: boolean) => void
   ask: (req: AdvisorAsk) => void
   consumeAsk: () => AdvisorAsk | null
@@ -40,6 +43,7 @@ interface AdvisorState {
   clearMessages: () => void
   setStructure: (symbol: string, read: StructureRead | null) => void
   setBrief: (symbol: string, brief: MarketBrief | null) => void
+  setChart: (symbol: string, read: (() => AdvisorChartInput) | null) => void
 }
 
 const HISTORY_KEY = 'advisor.history'
@@ -69,6 +73,7 @@ export const useAdvisorStore = create<AdvisorState>((set, get) => ({
   pendingAsk: null,
   structureBySymbol: {},
   briefBySymbol: {},
+  chartBySymbol: {},
 
   setOpen: (open) => set({ open }),
 
@@ -120,5 +125,13 @@ export const useAdvisorStore = create<AdvisorState>((set, get) => ({
     set((s) => {
       if (!brief || s.briefBySymbol[symbol] === brief) return s
       return { briefBySymbol: { ...s.briefBySymbol, [symbol]: brief } }
+    }),
+
+  setChart: (symbol, read) =>
+    set((s) => {
+      const next = { ...s.chartBySymbol }
+      if (read) next[symbol] = read
+      else delete next[symbol]
+      return { chartBySymbol: next }
     }),
 }))

@@ -610,7 +610,7 @@ const TacticalDrawer = () => {
                   askAdvisor({
                     mode: 'coin',
                     symbol: signal.symbol,
-                    text: `Разбери ${signal.displayName}: есть ли сетап?`,
+                    text: `Разбери график ${signal.displayName}: сведи всё, что на экране, — есть ли сетап?`,
                   })
                 }
                 className="mr-1 flex items-center gap-1 rounded-lg border border-matrix/30 px-2 py-1.5 font-mono text-[11px] text-matrix transition-colors hover:bg-matrix/10"

@@ -5,7 +5,8 @@ import {
   type AdvisorChatMessage,
   type AdvisorMode,
 } from '../api/advisor'
-import { buildAdvisorSnapshot } from '../engine/advisor'
+import { buildAdvisorSnapshot, type AdvisorDeskInput } from '../engine/advisor'
+import { buildCompositeAnalysis } from '../engine/composite'
 import { getAnalytics, loadJournal } from '../engine/journal/storage'
 import { useAdvisorStore, type AdvisorUiMessage } from '../store/useAdvisorStore'
 import { useAppStore } from '../store/useAppStore'
@@ -40,7 +41,55 @@ export interface AdvisorSendOptions {
   tradeId?: string | null
 }
 
-export function buildCurrentSnapshot(symbol: string | null, tradeId: string | null) {
+/** Snapshot token budget: deep coin / trade reads get the whole chart screen */
+const SNAPSHOT_BUDGET: Record<AdvisorMode, number> = {
+  chat: 6000,
+  coin: 9000,
+  trade: 7000,
+  market: 3000,
+  radar: 3000,
+}
+
+function buildDesk(symbol: string | null): AdvisorDeskInput | null {
+  if (!symbol) return null
+  const app = useAppStore.getState()
+  const signal = app.signals.find((s) => s.symbol === symbol || s.internalSymbol === symbol)
+  if (!signal) return null
+  const key = signal.internalSymbol
+  const book = app.orderBookMetrics[key] ?? null
+  const aggression = app.buyerAggression[key] ?? signal.buyerAggression ?? null
+  const whales = app.whaleWatcher[key] ?? null
+  const dna = app.sessionDNA[key] ?? null
+  const po3 = app.po3Analysis[key] ?? null
+  let composite = null
+  try {
+    composite = buildCompositeAnalysis(signal, signal.memePulse ?? undefined, book, aggression, whales, dna, po3)
+  } catch {
+    composite = null
+  }
+  return {
+    book,
+    obDelta: app.obDelta[key] ?? null,
+    spoofs: app.spoofAlerts[key] ?? [],
+    icebergs: app.icebergAlerts[key] ?? [],
+    cvd: app.liveTapeCvd[key] ?? null,
+    tape: app.tapeMomentum[key] ?? null,
+    aggression,
+    whales,
+    liquidityMap: app.liquidityMaps[key] ?? null,
+    dna,
+    po3,
+    mmIntent: app.mmIntent[key] ?? null,
+    surgical: app.surgicalEntries[key] ?? null,
+    composite,
+  }
+}
+
+export function buildCurrentSnapshot(
+  symbol: string | null,
+  tradeId: string | null,
+  mode: AdvisorMode = 'chat'
+) {
   const app = useAppStore.getState()
   const advisor = useAdvisorStore.getState()
   let journal = null
@@ -49,7 +98,12 @@ export function buildCurrentSnapshot(symbol: string | null, tradeId: string | nu
   } catch {
     journal = null
   }
+  const readChart = symbol ? advisor.chartBySymbol[symbol] : undefined
+  const deep = mode === 'coin' || mode === 'trade' || mode === 'chat'
   return buildAdvisorSnapshot({
+    maxTokens: SNAPSHOT_BUDGET[mode],
+    chart: deep && readChart ? readChart() : null,
+    desk: deep ? buildDesk(symbol) : null,
     now: Date.now(),
     focusSymbol: symbol,
     focusTradeId: tradeId,
@@ -111,7 +165,7 @@ export function useAdvisorChat() {
 
     try {
       if (!getCachedWorkerMarketContext()) await loadWorkerMarketContext().catch(() => null)
-      const { snapshot } = buildCurrentSnapshot(symbol, opts.tradeId ?? null)
+      const { snapshot } = buildCurrentSnapshot(symbol, opts.tradeId ?? null, opts.mode)
       const meta = await streamAdvisorChat({
         messages: [...history, { role: 'user', content: text }],
         snapshot,

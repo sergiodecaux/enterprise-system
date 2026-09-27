@@ -23,8 +23,9 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Max-Age': '86400',
 }
 
-const MAX_BODY_BYTES = 64_000
+const MAX_BODY_BYTES = 128_000
 const DEFAULT_MAX_OUTPUT_TOKENS = 900
+const COIN_MIN_OUTPUT_TOKENS = 1600
 
 function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -54,9 +55,11 @@ function parseHistory(raw: unknown): ChatMessage[] {
 
 async function openFirstAvailable(
   env: Env,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  mode: AdvisorMode
 ): Promise<ProviderStream | ProviderError> {
-  const maxTokens = intVar(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+  const base = intVar(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+  const maxTokens = mode === 'coin' ? Math.max(base, COIN_MIN_OUTPUT_TOKENS) : base
   let lastError = new ProviderError('unknown', 'No providers configured')
   for (const provider of providerChain(env)) {
     try {
@@ -144,7 +147,7 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   }
 
   const messages = buildMessages({ history, snapshot: body.snapshot, mode })
-  const opened = await openFirstAvailable(env, messages)
+  const opened = await openFirstAvailable(env, messages, mode)
   if (opened instanceof ProviderError) {
     if (opened.kind === 'quota') {
       ctx.waitUntil(markQuotaExhausted())

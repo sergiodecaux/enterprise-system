@@ -44,7 +44,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
     }
   }
 
-  const snap = buildCurrentSnapshot(selectedCoin, null)
+  const snap = buildCurrentSnapshot(selectedCoin, null, selectedCoin ? 'coin' : 'chat')
 
   return (
     <div className="space-y-3 font-mono text-[12px] text-holo/80">
