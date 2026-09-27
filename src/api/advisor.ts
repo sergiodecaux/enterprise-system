@@ -292,32 +292,46 @@ export async function streamAdvisorChat(opts: StreamAdvisorOptions): Promise<Adv
 
     deadUntil.delete(url)
     let meta: AdvisorMeta = { node: '?', model: '?', provider: '?', url }
-    for await (const ev of readSse(res, opts.signal)) {
-      let data: Record<string, unknown>
-      try {
-        data = JSON.parse(ev.data) as Record<string, unknown>
-      } catch {
-        continue
-      }
-      if (ev.event === 'meta') {
-        meta = {
-          url,
-          node: String(data.node ?? '?'),
-          model: String(data.model ?? '?'),
-          provider: String(data.provider ?? '?'),
+    let gotText = false
+    let streamProblem = ''
+    try {
+      for await (const ev of readSse(res, opts.signal)) {
+        let data: Record<string, unknown>
+        try {
+          data = JSON.parse(ev.data) as Record<string, unknown>
+        } catch {
+          continue
         }
-        opts.onMeta?.(meta)
-      } else if (ev.event === 'error') {
-        const message = String(data.message ?? 'ошибка модели')
-        if (/4006|daily free allocation|neurons/i.test(message)) markExhausted(url)
-        throw new AdvisorError('stream', `Ответ прерван: ${message}`)
-      } else if (ev.event === 'done') {
-        return meta
-      } else if (typeof data.d === 'string') {
-        opts.onDelta(data.d)
+        if (ev.event === 'meta') {
+          meta = {
+            url,
+            node: String(data.node ?? '?'),
+            model: String(data.model ?? '?'),
+            provider: String(data.provider ?? '?'),
+          }
+          opts.onMeta?.(meta)
+        } else if (ev.event === 'error') {
+          streamProblem = String(data.message ?? 'ошибка модели')
+          break
+        } else if (ev.event === 'done') {
+          return meta
+        } else if (typeof data.d === 'string' && data.d) {
+          gotText = true
+          opts.onDelta(data.d)
+        }
       }
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err
+      streamProblem = 'обрыв связи'
     }
-    return meta
+    if (!streamProblem) return meta
+
+    const quota = /4006|daily free allocation|neurons/i.test(streamProblem)
+    if (quota) markExhausted(url)
+    else deadUntil.set(url, Date.now() + DEAD_COOLDOWN_MS)
+    // Text already shown to the user can't be replayed from another node.
+    if (gotText) throw new AdvisorError('stream', `Ответ прерван: ${streamProblem}`)
+    lastProblem = quota ? 'лимит узла исчерпан' : streamProblem
   }
 
   if (authFailures === order.length) {
