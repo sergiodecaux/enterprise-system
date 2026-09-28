@@ -63,9 +63,10 @@ export function burstExceeded(now = Date.now()): boolean {
   return burst.length >= BURST_MAX
 }
 
-export async function recordRequest(used: number): Promise<void> {
+/** `countsDaily` = answered by this account's Workers AI (external providers don't spend its quota) */
+export async function recordRequest(used: number, countsDaily: boolean): Promise<void> {
   burst.push(Date.now())
-  await writeNumber('used', used + 1)
+  if (countsDaily) await writeNumber('used', used + 1)
 }
 
 export async function markQuotaExhausted(): Promise<void> {

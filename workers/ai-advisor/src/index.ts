@@ -14,7 +14,13 @@ import {
   usageState,
 } from './limits'
 import { buildMessages, isAdvisorMode, type AdvisorMode } from './prompt'
-import { providerChain, ProviderError, type ChatMessage, type ProviderStream } from './providers'
+import {
+  providerChain,
+  ProviderError,
+  type ChatMessage,
+  type ChatProvider,
+  type ProviderStream,
+} from './providers'
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -54,6 +60,7 @@ function parseHistory(raw: unknown): ChatMessage[] {
 }
 
 async function openFirstAvailable(
+  chain: ChatProvider[],
   env: Env,
   messages: ChatMessage[],
   mode: AdvisorMode
@@ -61,7 +68,7 @@ async function openFirstAvailable(
   const base = intVar(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   const maxTokens = mode === 'coin' ? Math.max(base, COIN_MIN_OUTPUT_TOKENS) : base
   let lastError = new ProviderError('unknown', 'No providers configured')
-  for (const provider of providerChain(env)) {
+  for (const provider of chain) {
     try {
       return await provider.open({ messages, maxTokens, temperature: 0.4 })
     } catch (err) {
@@ -134,7 +141,8 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   const mode: AdvisorMode = isAdvisorMode(body.mode) ? body.mode : 'chat'
 
   const usage = await usageState(env)
-  if (usage.exhausted) {
+  const chain = providerChain(env, { workersAi: !usage.exhausted })
+  if (!chain.length) {
     return json(
       { ok: false, error: 'Daily limit reached on this node', exhausted: true, resetAt: usage.resetAt },
       429
@@ -147,9 +155,9 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
   }
 
   const messages = buildMessages({ history, snapshot: body.snapshot, mode })
-  const opened = await openFirstAvailable(env, messages, mode)
+  const opened = await openFirstAvailable(chain, env, messages, mode)
   if (opened instanceof ProviderError) {
-    if (opened.kind === 'quota') {
+    if (opened.kind === 'quota' || (usage.exhausted && opened.kind !== 'bad_request')) {
       ctx.waitUntil(markQuotaExhausted())
       return json(
         { ok: false, error: 'Workers AI daily allocation used up', exhausted: true, resetAt: usage.resetAt },
@@ -159,7 +167,7 @@ async function handleChat(request: Request, env: Env, ctx: ExecutionContext): Pr
     return json({ ok: false, error: opened.message, kind: opened.kind }, 502)
   }
 
-  ctx.waitUntil(recordRequest(usage.used))
+  ctx.waitUntil(recordRequest(usage.used, opened.provider === 'workers-ai'))
   return sseResponse(opened, env.NODE_LABEL ?? '?', ctx)
 }
 

@@ -68,7 +68,7 @@ function createThinkFilter(): (piece: string) => string {
   }
 }
 
-async function* parseSse(
+export async function* parseSse(
   stream: ReadableStream<Uint8Array>,
   onUsage: (u: TokenUsage) => void
 ): AsyncGenerator<string> {

@@ -67,6 +67,21 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN --env a   # токен бота, че
 
 и в `wrangler.toml` для окружения укажите `ALLOWED_TG_IDS = "<ваш Telegram user id>"`.
 
+## Внешние модели (умнее бесплатных Workers AI)
+
+Сильные модели Workers AI (DeepSeek V4, GLM-5.3, Kimi) недоступны на бесплатном тарифе. Воркер умеет
+сначала обращаться к внешним OpenAI-совместимым API, а Workers AI оставляет запасным. Лимит внешнего
+API не помечает узел исчерпанным — воркер просто идёт к следующему провайдеру.
+
+| Секрет | Провайдер | Модель по умолчанию (переменная для замены) |
+|---|---|---|
+| `GEMINI_API_KEY` | Google AI Studio | `gemini-2.5-flash` (`GEMINI_MODEL`) |
+| `OPENROUTER_API_KEY` | OpenRouter | `deepseek/deepseek-chat-v3-0324:free` (`OPENROUTER_MODEL`) |
+| `GROQ_API_KEY` | Groq | `openai/gpt-oss-120b` (`GROQ_MODEL`) |
+
+Порядок — `EXTERNAL_ORDER` (например `openrouter,gemini`), по умолчанию gemini → openrouter → groq.
+Ключ нужно записать на каждый узел: `npx wrangler secret put GEMINI_API_KEY --env a` (и b, c, f).
+
 ## Разработка
 
 ```powershell

@@ -20,6 +20,15 @@ export interface Env {
   DISABLE_THINKING?: string
   /** Human label of this node in the ring, e.g. "A" */
   NODE_LABEL?: string
+  /** External OpenAI-compatible providers (wrangler secrets); tried before Workers AI */
+  GEMINI_API_KEY?: string
+  GEMINI_MODEL?: string
+  GROQ_API_KEY?: string
+  GROQ_MODEL?: string
+  OPENROUTER_API_KEY?: string
+  OPENROUTER_MODEL?: string
+  /** Comma-separated order of external providers, e.g. "gemini,openrouter,groq" */
+  EXTERNAL_ORDER?: string
 }
 
 export const DEFAULT_PRIMARY_MODEL = '@cf/google/gemma-4-26b-a4b-it'
