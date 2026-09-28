@@ -4,6 +4,7 @@ import type { JournalAnalytics } from '../journal/types'
 import type { Radar141Row } from '../radar141/types'
 import type { StructureRead, TfStructure } from '../smc/structureRead'
 import type { ActiveTrade, CoinSignal, MarketContext } from '../types'
+import type { WatchedSetup } from '../setups/types'
 import {
   buildChartContext,
   buildCompositeContext,
@@ -12,6 +13,7 @@ import {
   buildSmcExtra,
   type AdvisorDeskInput,
 } from './buildDeskContext'
+import { huntMarketSetups } from './huntSetups'
 import { clip, compact, num, px } from './format'
 import type {
   AdvisorChartInput,
@@ -42,6 +44,7 @@ export interface AdvisorSnapshotInput {
   chart?: AdvisorChartInput | null
   /** Live order-flow / session state of the focus coin (tactical screen) */
   desk?: AdvisorDeskInput | null
+  watches?: WatchedSetup[]
   /** Token budget for the whole JSON (default 3000) */
   maxTokens?: number
 }
@@ -329,6 +332,8 @@ const TRIM_STEPS: TrimStep[] = [
   ['journal.setups', (s) => { if (s.journal) delete s.journal.setups }],
   ['structure.tf.h1', (s) => { if (s.focus?.structure?.tf) delete s.focus.structure.tf.h1 }],
   ['radar→3', (s) => { if (s.radar) s.radar.rows = s.radar.rows.slice(0, 3) }],
+  ['hunt.near', (s) => { if (s.hunt) s.hunt.near = [] }],
+  ['hunt.ready→4', (s) => { if (s.hunt) s.hunt.ready = s.hunt.ready.slice(0, 4) }],
   ['brief', (s) => { if (s.focus) delete s.focus.brief }],
   ['desk', (s) => {
     if (!s.focus) return
@@ -357,6 +362,11 @@ export function buildAdvisorSnapshot(input: AdvisorSnapshotInput): AdvisorSnapsh
           rows: radarRows.map(radarRow),
         }
       : undefined,
+    hunt: huntMarketSetups({
+      signals: input.signals,
+      radarRows: input.radarRows,
+      watches: input.watches,
+    }),
     trades: buildTrades(input),
     journal: buildJournal(input.journal),
   })

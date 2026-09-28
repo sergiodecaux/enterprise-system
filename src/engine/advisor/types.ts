@@ -288,12 +288,45 @@ export interface AdvisorJournal {
   insights?: string[]
 }
 
+export interface AdvisorHuntRow {
+  s: string
+  dir: string
+  kind: 'ready' | 'surgical' | 'setup' | 'radar141' | 'near' | 'watch'
+  rank: number
+  px: number
+  sl?: number
+  tp1?: number
+  tp2?: number
+  rr?: number | null
+  zone?: [number, number]
+  grade?: string
+  ready?: boolean
+  missing?: string[]
+  style?: string
+  prob?: number
+  score?: number
+  trig?: string
+  d141?: number
+  gap?: number
+  mm?: string
+  surgi?: string
+  why?: string
+}
+
+export interface AdvisorHunt {
+  scanned: number
+  ready: AdvisorHuntRow[]
+  near: AdvisorHuntRow[]
+  watches?: AdvisorHuntRow[]
+}
+
 export interface AdvisorSnapshot {
   t: string
   focusTradeId?: string
   market: AdvisorMarket
   focus?: AdvisorFocus
   radar?: { scannedAt?: string; rows: AdvisorRadarRow[] }
+  hunt?: AdvisorHunt
   trades?: AdvisorTrade[]
   journal?: AdvisorJournal
 }

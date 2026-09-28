@@ -20,7 +20,7 @@ const EXTERNAL: ExternalSpec[] = [
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     key: (env) => env.GEMINI_API_KEY,
     model: (env) => env.GEMINI_MODEL,
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash',
   },
   {
     id: 'openrouter',
@@ -50,15 +50,19 @@ function externalChain(env: Env): ChatProvider[] {
   return specs.flatMap((s) => {
     const apiKey = s.key(env)?.trim()
     if (!apiKey) return []
-    return [
+    const models = (s.model(env)?.trim() || s.defaultModel)
+      .split(',')
+      .map((m) => m.trim())
+      .filter(Boolean)
+    return models.map((model) =>
       openAiCompatProvider({
         id: s.id,
         baseUrl: s.baseUrl,
         apiKey,
-        model: s.model(env)?.trim() || s.defaultModel,
+        model,
         extraHeaders: s.extraHeaders,
-      }),
-    ]
+      })
+    )
   })
 }
 

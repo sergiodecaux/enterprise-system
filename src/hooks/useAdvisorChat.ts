@@ -48,6 +48,15 @@ const SNAPSHOT_BUDGET: Record<AdvisorMode, number> = {
   trade: 7000,
   market: 3000,
   radar: 3000,
+  setups: 4500,
+}
+
+const SETUP_HUNT_RE =
+  /сетап|setup|что взять|что лонг|что шорт|найди сделк|охот[аеу]|где вход|что торгов/i
+
+function resolveMode(mode: AdvisorMode, text: string): AdvisorMode {
+  if (mode === 'chat' && SETUP_HUNT_RE.test(text)) return 'setups'
+  return mode
 }
 
 function buildDesk(symbol: string | null): AdvisorDeskInput | null {
@@ -112,6 +121,7 @@ export function buildCurrentSnapshot(
     worker: getCachedWorkerMarketContext(),
     radarRows: app.radar141Rows,
     activeTrades: app.activeTrades,
+    watches: app.watchedSetups,
     journal,
     structure: symbol ? advisor.structureBySymbol[symbol] ?? null : null,
     brief: symbol ? advisor.briefBySymbol[symbol] ?? null : null,
@@ -137,13 +147,14 @@ export function useAdvisorChat() {
 
     const store = useAdvisorStore.getState()
     const symbol = opts.symbol ?? useAppStore.getState().selectedCoin ?? null
+    const mode = resolveMode(opts.mode, text)
     const history = answeredTurns(store.messages).slice(-HISTORY_TURNS)
 
     const userMsg = {
       id: newId(),
       role: 'user' as const,
       content: text,
-      mode: opts.mode,
+      mode,
       createdAt: Date.now(),
       symbol,
     }
@@ -153,7 +164,7 @@ export function useAdvisorChat() {
       id: replyId,
       role: 'assistant',
       content: '',
-      mode: opts.mode,
+      mode,
       createdAt: Date.now(),
       pending: true,
       symbol,
@@ -165,11 +176,11 @@ export function useAdvisorChat() {
 
     try {
       if (!getCachedWorkerMarketContext()) await loadWorkerMarketContext().catch(() => null)
-      const { snapshot } = buildCurrentSnapshot(symbol, opts.tradeId ?? null, opts.mode)
+      const { snapshot } = buildCurrentSnapshot(symbol, opts.tradeId ?? null, mode)
       const meta = await streamAdvisorChat({
         messages: [...history, { role: 'user', content: text }],
         snapshot,
-        mode: opts.mode,
+        mode,
         signal: controller.signal,
         onMeta: (m) => useAdvisorStore.getState().patchMessage(replyId, { model: m.model, node: m.node }),
         onDelta: (d) => useAdvisorStore.getState().appendToMessage(replyId, d),
