@@ -18,14 +18,14 @@ interface Props {
   setups: ConditionalSetup[]
   selectedId: string | null
   lastCandleTs: number
+  barSeconds?: number
   containerRef: React.RefObject<HTMLDivElement>
 }
 
 function toLineData(path: PathPoint[], anchor: number): LineData[] {
   return path
     .map((pp) => ({
-      // Cap at the last candle — future unix times flatten the time scale.
-      time: anchor as Time,
+      time: (anchor + (pp.timeOffsetSeconds || 0)) as Time,
       value: pp.price,
     }))
     .filter((p) => Number.isFinite(p.value) && p.value > 0)
@@ -41,6 +41,7 @@ const ZonePathOverlay = ({
   setups,
   selectedId,
   lastCandleTs,
+  barSeconds = 3600,
   containerRef,
 }: Props) => {
   const refs = useRef<Record<string, ISeriesApi<'Line'>>>({})
@@ -59,6 +60,20 @@ const ZonePathOverlay = ({
 
     const withPath = setups.filter((s) => s.chartPath && s.chartPath.length >= 2)
     if (!withPath.length || !lastCandleTs) return
+
+    const maxOffset = Math.max(
+      0,
+      ...withPath.flatMap((s) => s.chartPath!.map((p) => p.timeOffsetSeconds || 0))
+    )
+    const bar = Math.max(1, barSeconds)
+    const rightBars = Math.min(28, Math.ceil(maxOffset / bar) + 4)
+    try {
+      const ts = chart.timeScale()
+      const current = ts.options().rightOffset ?? 6
+      if (rightBars > current) ts.applyOptions({ rightOffset: rightBars })
+    } catch {
+      /* ignore */
+    }
 
     // Prefer selected; else show up to 4 paths
     const ordered = selectedId
@@ -117,7 +132,7 @@ const ZonePathOverlay = ({
         delete refs.current[id]
       }
     }
-  }, [chart, series, setups, selectedId, lastCandleTs, containerRef])
+  }, [chart, series, setups, selectedId, lastCandleTs, barSeconds, containerRef])
 
   return null
 }

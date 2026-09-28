@@ -118,7 +118,15 @@ const SetupPickerPanel = ({
                 ))}
               </ul>
 
-              <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg bg-black/25 p-1.5">
+              <div className="mb-2 grid grid-cols-4 gap-1 rounded-lg bg-black/25 p-1.5">
+                <div className="text-center">
+                  <div className="font-mono text-[8px] uppercase text-holo/30">
+                    Зона
+                  </div>
+                  <div className="font-mono text-[9px] leading-tight text-holo">
+                    {s.entryZone.bottom.toPrecision(5)}–{s.entryZone.top.toPrecision(5)}
+                  </div>
+                </div>
                 <div className="text-center">
                   <div className="font-mono text-[8px] uppercase text-holo/30">
                     Limit

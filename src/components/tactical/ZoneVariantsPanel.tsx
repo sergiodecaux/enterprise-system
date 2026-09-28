@@ -79,7 +79,8 @@ const ZoneVariantsPanel = ({
               }
             >
               <span className="mr-1 opacity-70">{strengthDots(z.strength)}</span>
-              {z.side === 'LONG' ? 'SSL↑' : 'BSL↓'} {z.source} @ {fmt(z.mid)}
+              {z.side === 'LONG' ? 'SSL↑' : 'BSL↓'} {z.source}{' '}
+              {fmt(z.bottom)}–{fmt(z.top)}
               <span className="ml-1 opacity-50">
                 {z.distancePct >= 0 ? '+' : ''}
                 {z.distancePct.toFixed(2)}%
@@ -155,7 +156,13 @@ const ZoneVariantsPanel = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-1 font-mono text-[9px] text-holo/45">
+              <div className="grid grid-cols-4 gap-1 font-mono text-[9px] text-holo/45">
+                <div>
+                  Зона
+                  <div className="text-holo/80">
+                    {fmt(s.entryZone.bottom)}–{fmt(s.entryZone.top)}
+                  </div>
+                </div>
                 <div>
                   Вход
                   <div className="text-sky-300/90">{fmt(s.limitEntry)}</div>

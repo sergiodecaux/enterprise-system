@@ -858,8 +858,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       if (!brief) return
       setAdvisor(brief)
       setAdvisorBot('idle')
-      try {
-        chartRef.current?.timeScale().applyOptions({ rightOffset: 12 })
+        try {
+        chartRef.current?.timeScale().applyOptions({ rightOffset: 18 })
       } catch {
         /* ignore */
       }
@@ -1999,6 +1999,25 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
+    const focusZoneId = advisor?.zoneId ?? highlightedZoneId ?? actionPick.launchId
+    const focusZone = focusZoneId
+      ? liquidityZones.find((z) => z.id === focusZoneId)
+      : null
+    if (focusZone && focusZone.top !== focusZone.bottom) {
+      const up = focusZone.side !== 'BEARISH'
+      const color = up ? 'rgba(45, 212, 191, 0.95)' : 'rgba(251, 113, 133, 0.95)'
+      addLine(focusZone.top, color, '', {
+        lineStyle: 0,
+        lineWidth: 2,
+        axisLabel: true,
+      })
+      addLine(focusZone.bottom, color, '', {
+        lineStyle: 0,
+        lineWidth: 2,
+        axisLabel: true,
+      })
+    }
+
     // SL / TP / вход только в режиме сигнала или выбранного сетапа
     if (signalMode || selectedSetup) {
       const entry =
@@ -2061,6 +2080,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     signalMode,
     showSrZones,
     liquidityZones,
+    advisor?.zoneId,
+    highlightedZoneId,
+    actionPick.launchId,
   ])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
@@ -2195,6 +2217,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     if (!el) return
     let last: { t: number; x: number; y: number } | null = null
     let start: { x: number; y: number } | null = null
+    let singleTimer: ReturnType<typeof setTimeout> | null = null
+    const clearSingle = () => {
+      if (singleTimer != null) {
+        clearTimeout(singleTimer)
+        singleTimer = null
+      }
+    }
     const onStart = (e: TouchEvent) => {
       e.stopPropagation()
       if (e.touches.length === 1) {
@@ -2202,12 +2231,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       } else {
         start = null
         last = null
+        clearSingle()
       }
     }
     const onEnd = (e: TouchEvent) => {
       const target = e.target as HTMLElement | null
       if (target?.closest('button')) {
         last = null
+        clearSingle()
         return
       }
       if (e.changedTouches.length !== 1 || !start) return
@@ -2216,6 +2247,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       start = null
       if (moved > 18) {
         last = null
+        clearSingle()
         return
       }
       const now = Date.now()
@@ -2225,15 +2257,24 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         Math.hypot(tch.clientX - last.x, tch.clientY - last.y) < 44
       ) {
         last = null
+        clearSingle()
         e.preventDefault()
         resolveChartDoubleTap(tch.clientX, tch.clientY)
         return
       }
       last = { t: now, x: tch.clientX, y: tch.clientY }
+      const snap = last
+      clearSingle()
+      singleTimer = setTimeout(() => {
+        if (!last || last.t !== snap.t) return
+        last = null
+        resolveChartDoubleTap(snap.x, snap.y)
+      }, 280)
     }
     el.addEventListener('touchstart', onStart, { passive: true })
     el.addEventListener('touchend', onEnd, { passive: false })
     return () => {
+      clearSingle()
       el.removeEventListener('touchstart', onStart)
       el.removeEventListener('touchend', onEnd)
     }
@@ -2559,7 +2600,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 ? 'border border-pink-400/35 bg-pink-500/15 text-pink-200'
                 : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
             }`}
-            title="Поддержка / сопротивление — прямоугольники, закреп и слом"
+            title="Поддержка / сопротивление — ценовой диапазон (не линия)"
           >
             Зоны
           </button>
@@ -2734,7 +2775,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       </div>
       {!chartExpanded && (
       <p className="px-1 font-mono text-[9px] text-white/35">
-        Двойной тап по зоне — сценарий, стрелки и сообщение в бота
+        Двойной тап по зоне не нужен — коснитесь цветной полосы. Зона = диапазон цен, не линия.
       </p>
       )}
 
@@ -2822,7 +2863,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             series={candleRef.current}
             zones={liquidityZones}
             containerRef={containerRef}
-            opacity={14}
+            opacity={24}
             showLabels
             highlightId={advisor?.zoneId ?? highlightedZoneId ?? actionPick.launchId}
             quiet
@@ -2980,6 +3021,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             lastCandleTs={
               lastCandleTs || Math.floor(Date.now() / 1000)
             }
+            barSeconds={timeframeBarSeconds(timeframe)}
             containerRef={containerRef}
           />
         )}

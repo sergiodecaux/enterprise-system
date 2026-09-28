@@ -82,6 +82,15 @@ const StructureHud = ({ read }: Props) => {
               <p className="font-mono text-[10px] leading-snug text-pink-100/85">
                 {read.zones.line}
               </p>
+              <p className="font-mono text-[10px] text-pink-100/70">
+                {read.zones.active.zone.bottom >= 1000
+                  ? read.zones.active.zone.bottom.toFixed(2)
+                  : read.zones.active.zone.bottom.toPrecision(5)}
+                –
+                {read.zones.active.zone.top >= 1000
+                  ? read.zones.active.zone.top.toFixed(2)
+                  : read.zones.active.zone.top.toPrecision(5)}
+              </p>
               {read.zones.active.closes && (
                 <p className="mt-0.5 font-mono text-[9px] text-cyan-200/75">
                   {read.zones.active.closes.h4?.line ?? ''}

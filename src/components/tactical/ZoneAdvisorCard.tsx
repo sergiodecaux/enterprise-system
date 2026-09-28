@@ -46,7 +46,10 @@ const ZoneAdvisorCard = ({ brief, botStatus, onClose }: Props) => {
           <p className="mt-0.5 font-mono text-[10px] leading-snug text-white/70">
             {a.wait}
           </p>
-          <p className="mt-1 font-mono text-[10px] text-white/55">
+          <p className="mt-1 font-mono text-[10px] font-semibold text-white/80">
+            зона {px(Math.min(a.entryBottom, a.entryTop))}–{px(Math.max(a.entryBottom, a.entryTop))}
+          </p>
+          <p className="font-mono text-[10px] text-white/55">
             вход {px(a.entry)} · {a.invalidationHint}
           </p>
           <p className="font-mono text-[10px] text-white/55">

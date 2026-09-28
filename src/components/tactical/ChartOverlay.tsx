@@ -101,9 +101,9 @@ function strengthVisual(
   const tierMul = tier === 'STRONG' ? 1.15 : tier === 'MEDIUM' ? 0.85 : 0.55
   let op = (baseOpacityPct / 100) * tierMul
   if (airy) op = Math.min(0.09, op * 0.28)
-  if (isCong) op = 0.16
-  if (highlighted) op = Math.min(0.55, op * 1.45)
-  else op *= 0.92
+  if (isCong) op = 0.2
+  if (highlighted) op = Math.min(0.58, op * 1.55)
+  else op *= 1.05
 
   const borderA = isCong
     ? 0.38
@@ -121,14 +121,16 @@ function strengthVisual(
 
   return {
     fillA: isCong
-      ? 0.16
+      ? highlighted
+        ? 0.28
+        : 0.2
       : isAction
         ? highlighted
-          ? 0.26
-          : 0.16
+          ? 0.32
+          : 0.2
       : airy
-      ? Math.min(0.1, Math.max(0.035, op))
-      : Math.min(0.5, Math.max(0.08, op)),
+      ? Math.min(0.16, Math.max(0.07, op))
+      : Math.min(0.52, Math.max(0.12, op)),
     borderA: highlighted ? 1 : borderA,
     borderW,
     stripeW,
@@ -143,6 +145,17 @@ function rgba(c: Rgba, a: number): string {
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`
 }
 
+function fmtPx(p: number): string {
+  if (!(p > 0) || !Number.isFinite(p)) return '—'
+  if (p >= 1000) return p.toFixed(2)
+  if (p >= 1) return p.toFixed(4)
+  return p.toPrecision(5)
+}
+
+function rangeCaption(zone: LiquidityZone): string {
+  return `${fmtPx(Math.min(zone.bottom, zone.top))}–${fmtPx(Math.max(zone.bottom, zone.top))}`
+}
+
 function compactLabel(zone: LiquidityZone): string {
   if (zone.contextHint) return zone.contextHint
   if (zone.type === 'FVG') {
@@ -152,6 +165,25 @@ function compactLabel(zone: LiquidityZone): string {
     return zone.side === 'BULLISH' ? 'OB · лонг с отката' : 'OB · шорт с отката'
   }
   return zone.label || zone.type
+}
+
+function edgeLabelStyle(hue: Rgba, dimmed: number, highlighted: boolean): string {
+  return `
+    position: absolute;
+    right: 4px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: ${highlighted ? '10px' : '9px'};
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700;
+    color: rgba(255,255,255,0.95);
+    background: rgba(8,10,14,0.78);
+    border: 1px solid ${rgba(hue, highlighted ? 0.7 : 0.4)};
+    text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: ${dimmed};
+  `
 }
 
 function isActionZone(zone: LiquidityZone): boolean {
@@ -209,28 +241,19 @@ const ChartOverlay = ({
         const topY = series.priceToCoordinate(zone.top)
         const bottomY = series.priceToCoordinate(zone.bottom)
         const rawStartX = timeScale.timeToCoordinate(zone.startTime as Time)
-        const endX = timeScale.timeToCoordinate(
-          (zone.endTime ?? zone.startTime) as Time
-        )
 
         const startXNum = rawStartX == null ? 0 : Number(rawStartX)
-        const endXNum = endX == null ? plotRight : Number(endX)
 
         if (topY == null || bottomY == null) continue
 
         const height = Math.abs(Number(bottomY) - Number(topY))
         const yPos = Math.min(Number(topY), Number(bottomY))
         const left = Math.max(0, startXNum)
-        const width = Math.min(
-          Math.max(
-            endXNum > startXNum ? endXNum - startXNum : plotRight - startXNum,
-            8
-          ),
-          plotRight - left
-        )
+        // Range is a price band: stretch to the axis so the corridor stays readable
+        const width = Math.max(8, plotRight - left)
 
         if (height < 1 || yPos < -80 || yPos > containerHeight + 80) continue
-        if (startXNum > plotRight) continue
+        if (left >= plotRight) continue
 
         const highlighted = Boolean(highlightId && zone.id === highlightId)
         const hue = baseHue(zone)
@@ -244,7 +267,7 @@ const ChartOverlay = ({
             : 1
 
         const div = document.createElement('div')
-        const minH = vis.isFib141 || vis.isCong || vis.isAction || highlighted ? 5 : 3
+        const minH = vis.isFib141 || vis.isCong || vis.isAction || highlighted ? 8 : 5
         const fillStart = vis.isCong
           ? vis.fillA * dimmed
           : vis.isFib141
@@ -286,6 +309,23 @@ const ChartOverlay = ({
           overflow: hidden;
           border-radius: 2px;
         `
+
+        const bandH = Math.max(height, minH)
+        if (bandH >= 26) {
+          const topLbl = document.createElement('div')
+          topLbl.textContent = fmtPx(Math.max(zone.top, zone.bottom))
+          topLbl.style.cssText = `${edgeLabelStyle(hue, dimmed, highlighted)} top: 1px;`
+          div.appendChild(topLbl)
+          const botLbl = document.createElement('div')
+          botLbl.textContent = fmtPx(Math.min(zone.top, zone.bottom))
+          botLbl.style.cssText = `${edgeLabelStyle(hue, dimmed, highlighted)} bottom: 1px;`
+          div.appendChild(botLbl)
+        } else {
+          const midLbl = document.createElement('div')
+          midLbl.textContent = rangeCaption(zone)
+          midLbl.style.cssText = `${edgeLabelStyle(hue, dimmed, highlighted)} top: 50%; transform: translateY(-50%);`
+          div.appendChild(midLbl)
+        }
 
         if (actionable && (width >= 48 || highlighted)) {
           const pill = document.createElement('div')
