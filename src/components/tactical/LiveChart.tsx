@@ -10,6 +10,7 @@ import {
   type LineData,
   type Time,
   type SeriesMarker,
+  type AutoscaleInfo,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
 import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX, Flame } from 'lucide-react'
@@ -89,7 +90,7 @@ import {
 import { lastClosedBar } from '../../engine/smc/closeCascade'
 import { pickActionZones } from '../../engine/smc/entryZones'
 import { calculateAtr } from '../../engine/smc'
-import { buildChartStory } from '../../engine/smc/chartStory'
+import { buildChartStory, leadStoryScenario } from '../../engine/smc/chartStory'
 import type { StoryScenarioId } from '../../engine/smc/chartStory'
 import {
   analyzeZoneTap,
@@ -329,6 +330,7 @@ const LiveChart = ({
     }
   })
   const [storyPathId, setStoryPathId] = useState<StoryScenarioId>('hold')
+  const storyPickedRef = useRef(false)
   const [advisor, setAdvisor] = useState<ZoneAdvisorBrief | null>(null)
   const [advisorBot, setAdvisorBot] = useState<'idle' | 'sent' | 'fail'>('idle')
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
@@ -358,7 +360,7 @@ const LiveChart = ({
       ? fillH
       : paneHeight(chartExpanded, phoneLandscape, viewportH, inDrawer)
   chartHeightRef.current = chartHeight
-  const storyRightOffset = denseUi ? 14 : tallChart ? 22 : 18
+  const storyRightOffset = denseUi ? 18 : tallChart ? 28 : 22
 
   useEffect(() => {
     const sync = () => {
@@ -1721,8 +1723,60 @@ const LiveChart = ({
   const tapZones = cleanMode || onlyStrong ? overlayZones : candidateZones
 
   useEffect(() => {
-    setStoryPathId('hold')
+    storyPickedRef.current = false
   }, [symbol, timeframe])
+
+  useEffect(() => {
+    if (storyPickedRef.current) return
+    const lead = leadStoryScenario(chartStory.scenarios)
+    if (lead && lead.id !== storyPathId) setStoryPathId(lead.id)
+  }, [chartStory.scenarios, storyPathId])
+
+  useEffect(() => {
+    const series = candleRef.current
+    if (!series) return
+    const sc =
+      chartStory.scenarios.find((s) => s.id === storyPathId) ??
+      leadStoryScenario(chartStory.scenarios)
+    const prices: number[] = []
+    const path = sc?.path?.length ? sc.path : chartStory.future?.path
+    if (path) {
+      for (const p of path) if (p.price > 0) prices.push(p.price)
+    }
+    if (sc?.toPrice && sc.toPrice > 0) prices.push(sc.toPrice)
+    else if (chartStory.future?.targetPrice) prices.push(chartStory.future.targetPrice)
+    if (chartStory.primary) {
+      prices.push(chartStory.primary.top, chartStory.primary.bottom)
+    }
+    if (!prices.length) {
+      series.applyOptions({ autoscaleInfoProvider: undefined })
+      return
+    }
+    series.applyOptions({
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const base = original()
+        if (!base?.priceRange) return base
+        let min = base.priceRange.minValue
+        let max = base.priceRange.maxValue
+        for (const p of prices) {
+          min = Math.min(min, p)
+          max = Math.max(max, p)
+        }
+        const pad = Math.max((max - min) * 0.1, 1e-8)
+        return {
+          ...base,
+          priceRange: { minValue: min - pad, maxValue: max + pad },
+        }
+      },
+    })
+    return () => {
+      try {
+        series.applyOptions({ autoscaleInfoProvider: undefined })
+      } catch {
+        /* chart may already be gone */
+      }
+    }
+  }, [chartStory, storyPathId, chartReady])
 
   useEffect(() => {
     if (cleanMode) {
@@ -1858,7 +1912,7 @@ const LiveChart = ({
         borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: denseUi ? 14 : 18,
+        rightOffset: denseUi ? 18 : 22,
         barSpacing: 8,
         minBarSpacing: 2,
         lockVisibleTimeRangeOnResize: false,
@@ -3178,7 +3232,7 @@ const LiveChart = ({
             future={chartStory.future}
             lastPrice={currentPrice}
             scenarios={chartStory.scenarios}
-            activeId={storyPathId ?? 'hold'}
+            activeId={storyPathId}
           />
         )}
         {chartReady > 0 && lastCandleTs > 0 && !cleanMode && !pathModeActive && !advisor && !onlyStrong && (
@@ -3349,6 +3403,7 @@ const LiveChart = ({
           scenarios={chartStory.scenarios}
           activeId={storyPathId}
           onSelect={(id) => {
+            storyPickedRef.current = true
             setStoryPathId(id)
             haptic.impact()
           }}

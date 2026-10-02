@@ -56,6 +56,8 @@ export interface StoryScenario {
   path: PathPoint[]
   toPrice: number | null
   toLabel: string
+  /** Arrow-tip caption, e.g. «цель 84500 · разворот» */
+  tipLabel: string
 }
 
 export interface StoryLegendItem {
@@ -70,6 +72,7 @@ export interface ChartStoryFuture {
   failPath: PathPoint[] | null
   targetPrice: number
   targetLabel: string
+  tipLabel: string
   failTargetPrice: number | null
   failTargetLabel: string | null
   boxLow: number
@@ -126,6 +129,25 @@ function fmtPx(p: number): string {
   if (p >= 1) return p.toFixed(4)
   if (p >= 0.01) return p.toFixed(5)
   return p.toPrecision(5)
+}
+
+/** Compact target on the arrow: 84500, not 84500.00. */
+export function fmtStoryTargetPx(p: number): string {
+  if (!(p > 0) || !Number.isFinite(p)) return '—'
+  if (p >= 1000) return String(Math.round(p))
+  if (p >= 100) return p.toFixed(1)
+  if (p >= 1) return p.toFixed(4)
+  if (p >= 0.01) return p.toFixed(5)
+  return p.toPrecision(5)
+}
+
+export function storyTipLabel(price: number): string {
+  return `цель ${fmtStoryTargetPx(price)} · разворот`
+}
+
+export function leadStoryScenario(rows: StoryScenario[]): StoryScenario | null {
+  if (!rows.length) return null
+  return rows.reduce((a, b) => (b.pct > a.pct ? b : a))
 }
 
 export interface ZoneMeaning {
@@ -476,63 +498,120 @@ function pickContextZones(
   return out
 }
 
+type MagCand = { price: number; label: string; weight: number }
+
+function inPrimaryZone(z: LiquidityZone | null, price: number): boolean {
+  if (!z) return false
+  const lo = Math.min(z.top, z.bottom)
+  const hi = Math.max(z.top, z.bottom)
+  const pad = Math.max((hi - lo) * 0.08, 1e-12)
+  return price >= lo - pad && price <= hi + pad
+}
+
+function alignedBeyond(
+  side: 'LONG' | 'SHORT',
+  from: number,
+  cand: number,
+  minMove: number
+): boolean {
+  if (!(cand > 0) || !Number.isFinite(cand) || !(from > 0)) return false
+  if (side === 'LONG') return cand >= from + minMove
+  return cand <= from - minMove
+}
+
+/** Next reversal magnet in the working direction — not a stub past the zone edge. */
 function targetFrom(opts: {
   setup: ConditionalSetup | null
   rx: ZoneReaction | null
   structure: StructureRead | null
   primary: LiquidityZone | null
+  opposite: LiquidityZone | null
   side: 'LONG' | 'SHORT' | null
   price: number
+  atr: number
 }): { price: number; label: string } | null {
-  const { setup, rx, structure, primary, side, price } = opts
-  if (setup && setup.target > 0) {
-    const aligned =
-      !side ||
-      (side === 'LONG' && setup.target >= price) ||
-      (side === 'SHORT' && setup.target <= price)
-    if (aligned) return { price: setup.target, label: setup.magnet?.label ?? 'цель' }
+  const { setup, rx, structure, primary, opposite, side, price, atr } = opts
+  if (!side || !(price > 0)) return null
+  const zoneClear =
+    primary != null
+      ? side === 'LONG'
+        ? Math.max(primary.top, primary.bottom)
+        : Math.min(primary.top, primary.bottom)
+      : price
+  const from = side === 'LONG' ? Math.max(price, zoneClear) : Math.min(price, zoneClear)
+  const minMove = Math.max(
+    atr * 0.9,
+    primary ? Math.abs(primary.top - primary.bottom) * 0.65 : 0,
+    price * 0.0024
+  )
+
+  const raw: MagCand[] = []
+  const add = (p: number | null | undefined, label: string, weight: number) => {
+    if (p == null || !alignedBeyond(side, from, p, minMove)) return
+    if (inPrimaryZone(primary, p)) return
+    raw.push({ price: p, label, weight })
   }
-  if (rx?.destination && rx.destination.price > 0) {
-    const aligned =
-      !side ||
-      (side === 'LONG' && rx.destination.price >= price) ||
-      (side === 'SHORT' && rx.destination.price <= price)
-    if (aligned) return rx.destination
-  }
-  if (rx?.targetIfHold && rx.targetIfHold.price > 0) {
-    const aligned =
-      !side ||
-      (side === 'LONG' && rx.targetIfHold.price >= price) ||
-      (side === 'SHORT' && rx.targetIfHold.price <= price)
-    if (aligned) return rx.targetIfHold
+
+  if (setup?.magnet && setup.magnet.price > 0) {
+    add(setup.magnet.price, setup.magnet.label || 'магнит', 100)
   }
   const mag = structure?.magnet
-  if (mag && mag.price > 0) {
-    const aligned =
-      !side ||
-      (side === 'LONG' && mag.price >= price) ||
-      (side === 'SHORT' && mag.price <= price)
-    if (aligned) return mag
+  if (mag && mag.price > 0) add(mag.price, mag.label || 'магнит', 98)
+  if (structure?.intra?.dest?.price) {
+    add(structure.intra.dest.price, structure.intra.dest.label || 'цель', 94)
   }
+  if (setup?.targetsLadder?.r2) add(setup.targetsLadder.r2, 'цель 2', 92)
+  if (setup?.target) add(setup.target, setup.magnet?.label ?? 'цель', 88)
+  if (rx?.destination?.price) add(rx.destination.price, rx.destination.label, 90)
+  if (rx?.targetIfHold?.price) add(rx.targetIfHold.price, rx.targetIfHold.label, 86)
+
   if (side === 'LONG') {
-    const bsl =
-      structure?.h1?.nextBsl ?? structure?.h4?.nextBsl ?? structure?.h4?.dealingHigh ?? null
-    if (bsl != null && bsl > price) return { price: bsl, label: 'BSL' }
+    add(structure?.h4?.nextBsl, 'BSL', 88)
+    add(structure?.h1?.nextBsl, 'BSL', 84)
+    add(structure?.d1?.nextBsl, 'BSL дня', 82)
+    add(structure?.h4?.lastSwingHigh?.price, 'хай 4ч', 76)
+    add(structure?.h1?.lastSwingHigh?.price, 'хай 1ч', 72)
+    add(structure?.h4?.dealingHigh, 'премиум 4ч', 64)
+    add(structure?.d1?.dealingHigh, 'хай дня', 60)
+  } else {
+    add(structure?.h4?.nextSsl, 'SSL', 88)
+    add(structure?.h1?.nextSsl, 'SSL', 84)
+    add(structure?.d1?.nextSsl, 'SSL дня', 82)
+    add(structure?.h4?.lastSwingLow?.price, 'лой 4ч', 76)
+    add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 72)
+    add(structure?.h4?.dealingLow, 'дисконт 4ч', 64)
+    add(structure?.d1?.dealingLow, 'лой дня', 60)
   }
-  if (side === 'SHORT') {
-    const ssl =
-      structure?.h1?.nextSsl ?? structure?.h4?.nextSsl ?? structure?.h4?.dealingLow ?? null
-    if (ssl != null && ssl < price) return { price: ssl, label: 'SSL' }
+
+  if (opposite) {
+    const edge = side === 'LONG' ? opposite.bottom : opposite.top
+    const meaning = readZoneMeaning(opposite)
+    add(edge, meaning.meaning || opposite.label || 'противоположная зона', 85)
   }
-  if (primary?.target && primary.target > 0) {
-    return { price: primary.target, label: 'цель' }
+  if (setup?.targetsLadder?.r1) add(setup.targetsLadder.r1, 'цель 1', 62)
+  if (primary?.target) add(primary.target, 'цель', 50)
+
+  const leadPath = structure?.scenarios?.scenarios[0]
+  if (leadPath) {
+    const last = [...leadPath.path].reverse().find((p) => p.price > 0)
+    if (last) add(last.price, last.label || leadPath.title, 58)
   }
-  const lead = structure?.scenarios?.scenarios[0]
-  if (lead) {
-    const last = [...lead.path].reverse().find((p) => p.price > 0)
-    if (last) return { price: last.price, label: last.label || lead.title }
-  }
-  return null
+
+  if (!raw.length) return null
+
+  const withDist = raw.map((c) => ({
+    ...c,
+    dist: Math.abs(c.price - price),
+  }))
+  withDist.sort((a, b) => {
+    const sa = a.weight >= 80 ? 0 : 1
+    const sb = b.weight >= 80 ? 0 : 1
+    if (sa !== sb) return sa - sb
+    if (Math.abs(b.weight - a.weight) >= 14) return b.weight - a.weight
+    return a.dist - b.dist
+  })
+  const hit = withDist[0]
+  return hit ? { price: hit.price, label: hit.label } : null
 }
 
 function failTargetFrom(opts: {
@@ -542,45 +621,67 @@ function failTargetFrom(opts: {
   opposite: LiquidityZone | null
   side: 'LONG' | 'SHORT'
   price: number
+  atr: number
 }): { price: number; label: string } | null {
-  const { rx, structure, primary, opposite, side, price } = opts
+  const { rx, structure, primary, opposite, side, price, atr } = opts
+  const fail: 'LONG' | 'SHORT' = side === 'LONG' ? 'SHORT' : 'LONG'
+  const zoneClear =
+    side === 'LONG'
+      ? Math.min(primary.bottom, primary.top)
+      : Math.max(primary.top, primary.bottom)
+  const from = side === 'LONG' ? Math.min(price, zoneClear) : Math.max(price, zoneClear)
+  const minMove = Math.max(atr * 0.9, Math.abs(primary.top - primary.bottom) * 0.65, price * 0.0024)
+  const raw: MagCand[] = []
+  const add = (p: number | null | undefined, label: string, weight: number) => {
+    if (p == null || !alignedBeyond(fail, from, p, minMove)) return
+    if (inPrimaryZone(primary, p)) return
+    raw.push({ price: p, label, weight })
+  }
+
   if (side === 'LONG') {
     const dump = rx?.nextIfBreakDown
-    if (dump) return { price: dump.top, label: dump.label }
-    const ssl =
-      structure?.h1?.nextSsl ?? structure?.h4?.nextSsl ?? structure?.h4?.dealingLow ?? null
-    if (ssl != null && ssl < Math.min(price, primary.bottom)) {
-      return { price: ssl, label: 'SSL' }
-    }
+    if (dump) add(dump.top, dump.label || 'SSL', 94)
+    add(structure?.h1?.nextSsl, 'SSL', 90)
+    add(structure?.h4?.nextSsl, 'SSL', 92)
+    add(structure?.d1?.nextSsl, 'SSL дня', 84)
+    add(structure?.h4?.lastSwingLow?.price, 'лой 4ч', 76)
+    add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 72)
+    add(structure?.h4?.dealingLow, 'дисконт 4ч', 64)
   } else {
     const dump = rx?.nextIfBreakUp
-    if (dump) return { price: dump.bottom, label: dump.label }
-    const bsl =
-      structure?.h1?.nextBsl ?? structure?.h4?.nextBsl ?? structure?.h4?.dealingHigh ?? null
-    if (bsl != null && bsl > Math.max(price, primary.top)) {
-      return { price: bsl, label: 'BSL' }
-    }
+    if (dump) add(dump.bottom, dump.label || 'BSL', 94)
+    add(structure?.h1?.nextBsl, 'BSL', 90)
+    add(structure?.h4?.nextBsl, 'BSL', 92)
+    add(structure?.d1?.nextBsl, 'BSL дня', 84)
+    add(structure?.h4?.lastSwingHigh?.price, 'хай 4ч', 76)
+    add(structure?.h1?.lastSwingHigh?.price, 'хай 1ч', 72)
+    add(structure?.h4?.dealingHigh, 'премиум 4ч', 64)
   }
   if (opposite) {
-    const mid = (opposite.top + opposite.bottom) / 2
-    const aligned =
-      (side === 'LONG' && mid < primary.bottom) || (side === 'SHORT' && mid > primary.top)
-    if (aligned) return { price: mid, label: opposite.label || 'противоположная зона' }
+    const edge = fail === 'LONG' ? opposite.bottom : opposite.top
+    add(edge, readZoneMeaning(opposite).meaning || opposite.label || 'противоположная зона', 82)
   }
   if (primary.invalidation && primary.invalidation > 0) {
-    const inv = primary.invalidation
-    const aligned =
-      (side === 'LONG' && inv < primary.bottom) || (side === 'SHORT' && inv > primary.top)
-    if (aligned) return { price: inv, label: 'слом' }
+    add(primary.invalidation, 'слом', 70)
   }
-  return null
+  if (structure?.invalidation) add(structure.invalidation, 'слом', 68)
+
+  if (!raw.length) return null
+  raw.sort((a, b) => {
+    const sa = a.weight >= 80 ? 0 : 1
+    const sb = b.weight >= 80 ? 0 : 1
+    if (sa !== sb) return sa - sb
+    if (Math.abs(b.weight - a.weight) >= 14) return b.weight - a.weight
+    return Math.abs(a.price - price) - Math.abs(b.price - price)
+  })
+  return { price: raw[0].price, label: raw[0].label }
 }
 
 function sweepPriceOf(
   primary: LiquidityZone,
   side: 'LONG' | 'SHORT',
   structure: StructureRead | null
-): number | null {
+): number {
   const trap = structure?.trap?.swept
   if (trap && trap.price > 0) {
     if (side === 'LONG' && trap.kind === 'SSL') return trap.price
@@ -591,33 +692,69 @@ function sweepPriceOf(
     if (side === 'LONG' && ev.side === 'DOWN') return ev.price
     if (side === 'SHORT' && ev.side === 'UP') return ev.price
   }
-  return side === 'LONG' ? primary.bottom : primary.top
+  const swing =
+    side === 'LONG'
+      ? structure?.h1?.lastSwingLow?.price ?? structure?.h4?.lastSwingLow?.price
+      : structure?.h1?.lastSwingHigh?.price ?? structure?.h4?.lastSwingHigh?.price
+  const sslBsl =
+    side === 'LONG'
+      ? structure?.h1?.nextSsl ?? structure?.h4?.nextSsl
+      : structure?.h1?.nextBsl ?? structure?.h4?.nextBsl
+  const edge = side === 'LONG' ? primary.bottom : primary.top
+  const hunts = [edge, swing, sslBsl].filter(
+    (p): p is number => p != null && p > 0 && Number.isFinite(p)
+  )
+  if (!hunts.length) return edge
+  return side === 'LONG' ? Math.min(...hunts) : Math.max(...hunts)
 }
 
-/** Straight / 2-segment path — TradingView path-to-target, not a doodle. */
+/** Straight / 2–3 segment path — TradingView path-to-target, not a doodle. */
+function ptsToPath(
+  pts: Array<{ t: number; price: number; label: string; key?: boolean }>
+): PathPoint[] {
+  return pts
+    .filter((p) => p.price > 0 && Number.isFinite(p.price))
+    .map((p) => ({
+      timeOffsetSeconds: p.t,
+      price: p.price,
+      label: p.label,
+      isKeyLevel: p.key,
+    }))
+}
+
 function twoSeg(
   a: { t: number; price: number; label: string },
   b: { t: number; price: number; label: string; key?: boolean },
   c?: { t: number; price: number; label: string; key?: boolean }
 ): PathPoint[] {
-  const pts: PathPoint[] = [
-    { timeOffsetSeconds: a.t, price: a.price, label: a.label },
-    {
-      timeOffsetSeconds: b.t,
-      price: b.price,
-      label: b.label,
-      isKeyLevel: b.key,
-    },
-  ]
-  if (c) {
-    pts.push({
-      timeOffsetSeconds: c.t,
-      price: c.price,
-      label: c.label,
-      isKeyLevel: c.key,
-    })
+  return ptsToPath(c ? [a, b, c] : [a, b])
+}
+
+function horizonBars(from: number, to: number, atr: number): number {
+  const dist = Math.abs(to - from)
+  const atrN = atr > 0 ? dist / atr : 3
+  return clamp(Math.round(6 + atrN * 2.6), 12, 26)
+}
+
+function pullbackIntoZone(
+  primary: LiquidityZone,
+  side: 'LONG' | 'SHORT',
+  price: number,
+  kind: StoryNowKind,
+  fuel: number | null
+): number | null {
+  if (kind !== 'APPROACHING' && kind !== 'OUTSIDE') return null
+  if (inside(primary, price)) return null
+  const mid = (primary.top + primary.bottom) / 2
+  if (side === 'LONG' && price > primary.top) {
+    if (fuel != null && fuel > 0 && fuel <= primary.top && fuel >= primary.bottom) return fuel
+    return mid
   }
-  return pts
+  if (side === 'SHORT' && price < primary.bottom) {
+    if (fuel != null && fuel > 0 && fuel <= primary.top && fuel >= primary.bottom) return fuel
+    return mid
+  }
+  return null
 }
 
 function holdPathOf(opts: {
@@ -626,17 +763,42 @@ function holdPathOf(opts: {
   target: { price: number; label: string }
   side: 'LONG' | 'SHORT'
   barSeconds: number
+  atr: number
+  kind: StoryNowKind
+  fuel: number | null
 }): PathPoint[] {
-  const { price, primary, target, side, barSeconds } = opts
+  const { price, primary, target, side, barSeconds, atr, kind, fuel } = opts
   const bar = Math.max(1, barSeconds)
-  const mid = (primary.top + primary.bottom) / 2
+  const now = price > 0 ? price : (primary.top + primary.bottom) / 2
+  const bars = horizonBars(now, target.price, atr)
+  const pb = pullbackIntoZone(primary, side, now, kind, fuel)
   const leave = side === 'LONG' ? primary.top : primary.bottom
-  const from = Number.isFinite(price) && price > 0 ? (mid + price) / 2 : mid
-  return twoSeg(
-    { t: Math.round(-bar * 0.4), price: from, label: 'зона' },
-    { t: Math.round(bar * 2.2), price: leave, label: 'выход' },
-    { t: Math.round(bar * 8), price: target.price, label: target.label, key: true }
-  )
+  const pts: Array<{ t: number; price: number; label: string; key?: boolean }> = [
+    { t: 0, price: now, label: 'сейчас' },
+  ]
+  if (pb != null && Math.abs(pb - now) > atr * 0.18) {
+    pts.push({
+      t: Math.round(bar * Math.max(2.2, bars * 0.22)),
+      price: pb,
+      label: 'зона',
+    })
+  } else if (
+    Math.abs(leave - now) > atr * 0.22 &&
+    Math.abs(leave - target.price) > atr * 0.4
+  ) {
+    pts.push({
+      t: Math.round(bar * Math.max(1.8, bars * 0.16)),
+      price: leave,
+      label: 'выход',
+    })
+  }
+  pts.push({
+    t: Math.round(bar * bars),
+    price: target.price,
+    label: target.label,
+    key: true,
+  })
+  return ptsToPath(pts)
 }
 
 function sweepPathOf(opts: {
@@ -645,22 +807,29 @@ function sweepPathOf(opts: {
   target: { price: number; label: string }
   side: 'LONG' | 'SHORT'
   barSeconds: number
-  sweepPrice: number | null
+  atr: number
+  sweepPrice: number
 }): PathPoint[] {
-  const { price, primary, target, side, barSeconds, sweepPrice } = opts
+  const { price, primary, target, side, barSeconds, atr, sweepPrice } = opts
   const bar = Math.max(1, barSeconds)
-  const sweep =
-    sweepPrice && sweepPrice > 0
-      ? sweepPrice
-      : side === 'LONG'
-        ? primary.bottom
-        : primary.top
   const now = price > 0 ? price : (primary.top + primary.bottom) / 2
-  return twoSeg(
+  const sweep = sweepPrice > 0 ? sweepPrice : side === 'LONG' ? primary.bottom : primary.top
+  const bars = horizonBars(now, target.price, atr)
+  return ptsToPath([
     { t: 0, price: now, label: 'сейчас' },
-    { t: Math.round(bar * 2.4), price: sweep, label: 'свип', key: true },
-    { t: Math.round(bar * 8), price: target.price, label: target.label, key: true }
-  )
+    {
+      t: Math.round(bar * Math.max(2.4, bars * 0.24)),
+      price: sweep,
+      label: 'свип',
+      key: true,
+    },
+    {
+      t: Math.round(bar * bars),
+      price: target.price,
+      label: target.label,
+      key: true,
+    },
+  ])
 }
 
 function breakPathOf(opts: {
@@ -669,35 +838,54 @@ function breakPathOf(opts: {
   target: { price: number; label: string }
   side: 'LONG' | 'SHORT'
   barSeconds: number
+  atr: number
 }): PathPoint[] {
-  const { price, primary, target, side, barSeconds } = opts
+  const { price, primary, target, side, barSeconds, atr } = opts
   const bar = Math.max(1, barSeconds)
   const through = side === 'LONG' ? primary.bottom : primary.top
   const now = price > 0 ? price : (primary.top + primary.bottom) / 2
-  return twoSeg(
+  const bars = horizonBars(now, target.price, atr)
+  return ptsToPath([
     { t: 0, price: now, label: 'сейчас' },
-    { t: Math.round(bar * 2), price: through, label: 'слом', key: true },
-    { t: Math.round(bar * 8), price: target.price, label: target.label, key: true }
-  )
+    {
+      t: Math.round(bar * Math.max(2, bars * 0.2)),
+      price: through,
+      label: 'слом',
+      key: true,
+    },
+    {
+      t: Math.round(bar * bars),
+      price: target.price,
+      label: target.label,
+      key: true,
+    },
+  ])
 }
 
 function chopPathOf(opts: {
   price: number
   primary: LiquidityZone
   barSeconds: number
+  atr: number
 }): PathPoint[] {
-  const { price, primary, barSeconds } = opts
+  const { price, primary, barSeconds, atr } = opts
   const bar = Math.max(1, barSeconds)
   const mid = (primary.top + primary.bottom) / 2
   const now = price > 0 ? price : mid
-  const far = Math.abs(now - primary.top) >= Math.abs(now - primary.bottom)
-    ? primary.bottom
-    : primary.top
-  return twoSeg(
+  const far =
+    Math.abs(now - primary.top) <= Math.abs(now - primary.bottom)
+      ? primary.bottom
+      : primary.top
+  const bars = horizonBars(now, far, atr)
+  return ptsToPath([
     { t: 0, price: now, label: 'сейчас' },
-    { t: Math.round(bar * 3.2), price: far, label: 'край' },
-    { t: Math.round(bar * 7), price: mid, label: 'середина' }
-  )
+    {
+      t: Math.round(bar * bars),
+      price: far,
+      label: 'край диапазона',
+      key: true,
+    },
+  ])
 }
 
 interface LastTape {
@@ -1048,10 +1236,11 @@ export function padStoryScenarios(
       title: holdArrowCaption(s, holdDest),
       path: twoSeg(
         { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 8), price: holdTo, label: holdDest, key: true }
+        { t: Math.round(bar * 12), price: holdTo, label: holdDest, key: true }
       ),
       toPrice: holdTo,
       toLabel: holdDest,
+      tipLabel: storyTipLabel(holdTo),
     },
     {
       id: 'sweep',
@@ -1062,11 +1251,12 @@ export function padStoryScenarios(
       title: 'свип → разворот',
       path: twoSeg(
         { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 2.4), price: s === 'LONG' ? now * 0.997 : now * 1.003, label: 'свип', key: true },
-        { t: Math.round(bar * 8), price: holdTo, label: holdDest, key: true }
+        { t: Math.round(bar * 3), price: s === 'LONG' ? now * 0.997 : now * 1.003, label: 'свип', key: true },
+        { t: Math.round(bar * 12), price: holdTo, label: holdDest, key: true }
       ),
       toPrice: holdTo,
       toLabel: holdDest,
+      tipLabel: storyTipLabel(holdTo),
     },
     {
       id: 'break',
@@ -1077,10 +1267,11 @@ export function padStoryScenarios(
       title: `слом → ${breakDest}`,
       path: twoSeg(
         { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 8), price: breakTo, label: breakDest, key: true }
+        { t: Math.round(bar * 12), price: breakTo, label: breakDest, key: true }
       ),
       toPrice: breakTo,
       toLabel: breakDest,
+      tipLabel: storyTipLabel(breakTo),
     },
     {
       id: 'chop',
@@ -1088,13 +1279,14 @@ export function padStoryScenarios(
       side: 'RANGE',
       dirLabel: dirWord('RANGE'),
       condition: 'если останемся внутри',
-      title: 'пила внутри зоны',
+      title: 'пила → край диапазона',
       path: twoSeg(
         { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 7), price: now, label: 'середина' }
+        { t: Math.round(bar * 10), price: now, label: 'край диапазона' }
       ),
       toPrice: now,
-      toLabel: 'середина зоны',
+      toLabel: 'край диапазона',
+      tipLabel: storyTipLabel(now),
     },
   ]
   const byId = new Map(rows.map((r) => [r.id, r]))
@@ -1205,8 +1397,10 @@ export function buildChartStory(opts: {
           rx,
           structure: opts.structure ?? null,
           primary,
+          opposite,
           side: holdSide,
           price: livePrice,
+          atr,
         })
       : null
 
@@ -1219,6 +1413,7 @@ export function buildChartStory(opts: {
           opposite,
           side: holdSide,
           price: livePrice,
+          atr,
         })
       : null
 
@@ -1257,20 +1452,37 @@ export function buildChartStory(opts: {
       : { hold: 40, sweep: 22, brk: 22, chop: 16 }
 
     const holdDest = holdTgtRu ?? {
-      price: holdSide === 'LONG' ? primary.top + atr * 2 : primary.bottom - atr * 2,
+      price:
+        holdSide === 'LONG'
+          ? Math.max(primary.top, livePrice) + atr * 3.2
+          : Math.min(primary.bottom, livePrice) - atr * 3.2,
       label: holdSide === 'LONG' ? 'ликвидность сверху' : 'стопы снизу',
     }
     const breakDest = failTgtRu ?? {
-      price: holdSide === 'LONG' ? primary.bottom - atr * 2 : primary.top + atr * 2,
+      price:
+        holdSide === 'LONG'
+          ? Math.min(primary.bottom, livePrice) - atr * 3.2
+          : Math.max(primary.top, livePrice) + atr * 3.2,
       label: holdSide === 'LONG' ? 'стопы снизу' : 'ликвидность сверху',
     }
+    const chopDest = {
+      price:
+        Math.abs(livePrice - primary.top) <= Math.abs(livePrice - primary.bottom)
+          ? primary.bottom
+          : primary.top,
+      label: 'край диапазона',
+    }
 
+    const fuelPx = opts.structure?.fuel?.price ?? null
     const holdPath = holdPathOf({
       price: livePrice,
       primary,
       target: holdDest,
       side: holdSide,
       barSeconds,
+      atr,
+      kind: nowKind,
+      fuel: fuelPx,
     })
     const sweepPath = sweepPathOf({
       price: livePrice,
@@ -1278,6 +1490,7 @@ export function buildChartStory(opts: {
       target: holdDest,
       side: holdSide,
       barSeconds,
+      atr,
       sweepPrice: sweep,
     })
     const lostPath = breakPathOf({
@@ -1286,8 +1499,14 @@ export function buildChartStory(opts: {
       target: breakDest,
       side: holdSide,
       barSeconds,
+      atr,
     })
-    const rangePath = chopPathOf({ price: livePrice, primary, barSeconds })
+    const rangePath = chopPathOf({
+      price: livePrice,
+      primary,
+      barSeconds,
+      atr,
+    })
 
     const zStart = timeSec(primary.startTime)
     const zEnd = timeSec(primary.endTime) || zStart
@@ -1304,6 +1523,7 @@ export function buildChartStory(opts: {
         path: holdPath,
         toPrice: holdDest.price,
         toLabel: holdDest.label,
+        tipLabel: storyTipLabel(holdDest.price),
       },
       {
         id: 'sweep',
@@ -1311,10 +1531,11 @@ export function buildChartStory(opts: {
         side: holdSide,
         dirLabel: dirWord(holdSide),
         condition: sweepCondition(holdSide),
-        title: 'свип → разворот',
+        title: `свип → ${humanizeStoryTarget(holdDest.label, holdSide)}`,
         path: sweepPath,
         toPrice: holdDest.price,
         toLabel: holdDest.label,
+        tipLabel: storyTipLabel(holdDest.price),
       },
       {
         id: 'break',
@@ -1326,6 +1547,7 @@ export function buildChartStory(opts: {
         path: lostPath,
         toPrice: breakDest.price,
         toLabel: breakDest.label,
+        tipLabel: storyTipLabel(breakDest.price),
       },
       {
         id: 'chop',
@@ -1333,35 +1555,45 @@ export function buildChartStory(opts: {
         side: 'RANGE',
         dirLabel: dirWord('RANGE'),
         condition: 'если останемся внутри',
-        title: 'пила внутри зоны',
+        title: 'пила → край диапазона',
         path: rangePath,
-        toPrice: (primary.top + primary.bottom) / 2,
-        toLabel: 'середина зоны',
+        toPrice: chopDest.price,
+        toLabel: chopDest.label,
+        tipLabel: storyTipLabel(chopDest.price),
       }
     )
 
+    const packed = padStoryScenarios(scenarios, holdSide, livePrice, barSeconds)
+    const lead = leadStoryScenario(packed) ?? packed[0]
+    const leadPath = lead?.path?.length ? lead.path : holdPath
+    const leadTarget = lead?.toPrice ?? holdDest.price
+    const leadLabel = lead?.toLabel ?? holdDest.label
     const prices = [
       livePrice,
       holdDest.price,
       breakDest.price,
-      ...holdPath.map((p) => p.price),
+      chopDest.price,
+      ...leadPath.map((p) => p.price),
     ].filter((p) => p > 0 && Number.isFinite(p))
     prices.push(primary.top, primary.bottom)
     const boxLow = Math.min(...prices)
     const boxHigh = Math.max(...prices)
-    const maxOff = Math.max(1, ...holdPath.map((p) => p.timeOffsetSeconds || 0))
+    const maxOff = Math.max(1, ...leadPath.map((p) => p.timeOffsetSeconds || 0))
     const bar = Math.max(1, barSeconds)
+    const futureSide: 'LONG' | 'SHORT' =
+      lead && lead.side !== 'RANGE' ? lead.side : holdSide
     future = {
-      path: holdPath,
+      path: leadPath,
       failPath: lostPath,
-      targetPrice: holdDest.price,
-      targetLabel: holdDest.label,
+      targetPrice: leadTarget,
+      targetLabel: leadLabel,
+      tipLabel: lead?.tipLabel ?? storyTipLabel(leadTarget),
       failTargetPrice: breakDest.price,
       failTargetLabel: breakDest.label,
       boxLow,
       boxHigh,
-      bars: Math.min(14, Math.max(6, Math.ceil(maxOff / bar) + 2)),
-      side: holdSide,
+      bars: Math.min(26, Math.max(12, Math.ceil(maxOff / bar) + 2)),
+      side: futureSide,
     }
 
     arrows.push({

@@ -3,6 +3,7 @@ import type {
   StoryScenario,
   StoryScenarioId,
 } from '../../engine/smc/chartStory'
+import { fmtStoryTargetPx } from '../../engine/smc/chartStory'
 
 interface BoardProps {
   scenarios: StoryScenario[]
@@ -40,6 +41,7 @@ const FALLBACK_ROWS: StoryScenario[] = [
     path: [],
     toPrice: null,
     toLabel: '',
+    tipLabel: '',
   },
   {
     id: 'sweep',
@@ -51,6 +53,7 @@ const FALLBACK_ROWS: StoryScenario[] = [
     path: [],
     toPrice: null,
     toLabel: '',
+    tipLabel: '',
   },
   {
     id: 'break',
@@ -62,6 +65,7 @@ const FALLBACK_ROWS: StoryScenario[] = [
     path: [],
     toPrice: null,
     toLabel: '',
+    tipLabel: '',
   },
   {
     id: 'chop',
@@ -69,10 +73,11 @@ const FALLBACK_ROWS: StoryScenario[] = [
     side: 'RANGE',
     dirLabel: 'пила',
     condition: 'если останемся внутри',
-    title: 'пила внутри зоны',
+    title: 'пила → край диапазона',
     path: [],
     toPrice: null,
     toLabel: '',
+    tipLabel: '',
   },
 ]
 
@@ -123,12 +128,21 @@ export const ScenarioBoard = ({
                   {sc.dirLabel}
                 </span>
                 <span
-                  className={`min-w-0 flex-1 ${
+                  className={`min-w-0 flex-1 truncate ${
                     dense ? 'text-[11px]' : 'text-[10px]'
                   } ${on ? 'text-white/90' : 'text-white/65'}`}
                 >
                   {sc.condition}
                 </span>
+                {sc.toPrice != null && sc.toPrice > 0 && (
+                  <span
+                    className={`shrink-0 tabular-nums ${
+                      dense ? 'text-[10px]' : 'text-[9px]'
+                    } ${on ? 'text-white/70' : 'text-white/40'}`}
+                  >
+                    {fmtStoryTargetPx(sc.toPrice)}
+                  </span>
+                )}
               </button>
             </li>
           )

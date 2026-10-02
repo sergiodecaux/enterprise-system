@@ -233,7 +233,13 @@ function compactLabel(zone: LiquidityZone): string {
   return zone.label || zone.type
 }
 
-function zoneCaption(zone: LiquidityZone, _many: boolean, isPrimary: boolean): string {
+function zoneCaption(
+  zone: LiquidityZone,
+  _many: boolean,
+  isPrimary: boolean,
+  thin: boolean
+): string {
+  if (thin) return zone.label || (isPrimary ? 'сильная' : compactLabel(zone))
   if (isPrimary) return zone.contextHint || compactLabel(zone)
   return zone.label || zone.contextHint || compactLabel(zone)
 }
@@ -486,7 +492,7 @@ const ChartOverlay = ({
           cap.zone.storyRole === 'PRIMARY' || cap.zone.storyRole === 'SECONDARY'
         if (thinLabels && !isPrimary) continue
         if (!story && !showLabels && quiet) continue
-        let text = zoneCaption(cap.zone, many, isPrimary)
+        let text = zoneCaption(cap.zone, many, isPrimary, thinLabels)
         if (!text) continue
         if (thinLabels && text.length > 26) text = `${text.slice(0, 25)}…`
         const fontPx = thinLabels
