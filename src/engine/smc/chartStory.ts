@@ -103,22 +103,150 @@ function fmtPx(p: number): string {
   return p.toPrecision(5)
 }
 
-function tagRole(z: LiquidityZone, role: 'PRIMARY' | 'SECONDARY'): LiquidityZone {
+export interface ZoneMeaning {
+  word: string
+  meaning: string
+  take: 'LONG' | 'SHORT' | null
+}
+
+/** SMC meaning for a chart zone — never a generic «зона». */
+export function readZoneMeaning(z: LiquidityZone): ZoneMeaning {
+  const id = (z.id ?? '').toLowerCase()
+  const side = sideOfZone(z)
+  if (id.includes('eqh')) return { word: 'EQH', meaning: 'равные хаи', take: 'SHORT' }
+  if (id.includes('eql')) return { word: 'EQL', meaning: 'равные лои', take: 'LONG' }
+  if (id.includes('deal_hi')) return { word: 'BSL', meaning: 'ликвидность сверху', take: 'SHORT' }
+  if (id.includes('deal_lo')) return { word: 'SSL', meaning: 'ликвидность снизу', take: 'LONG' }
+  if (z.type === 'BSL') return { word: 'BSL', meaning: 'ликвидность сверху', take: 'SHORT' }
+  if (z.type === 'SSL' || z.type === 'LIQ') {
+    return { word: 'SSL', meaning: 'ликвидность снизу', take: 'LONG' }
+  }
+  if (z.type === 'ORDER_BLOCK') {
+    return side === 'SHORT'
+      ? { word: 'предл.', meaning: 'предложение', take: 'SHORT' }
+      : { word: 'спрос', meaning: 'спрос', take: 'LONG' }
+  }
+  if (z.type === 'FVG') {
+    return side === 'SHORT'
+      ? { word: 'FVG', meaning: 'гэп предложения', take: 'SHORT' }
+      : { word: 'FVG', meaning: 'гэп спроса', take: 'LONG' }
+  }
+  if (id.includes('premium') || id.includes('sr_res')) {
+    return { word: 'предл.', meaning: 'предложение', take: 'SHORT' }
+  }
+  if (id.includes('discount') || id.includes('sr_sup')) {
+    return { word: 'спрос', meaning: 'спрос', take: 'LONG' }
+  }
+  if (id.includes('cong') || z.type === 'VALUE_AREA' || z.type === 'POC') {
+    return { word: 'проторг.', meaning: 'проторговка', take: side }
+  }
+  if (side === 'LONG') return { word: 'спрос', meaning: 'спрос', take: 'LONG' }
+  if (side === 'SHORT') return { word: 'предложение', meaning: 'предложение', take: 'SHORT' }
+  return { word: 'контекст', meaning: 'контекст', take: null }
+}
+
+export function humanizeStoryTarget(
+  raw: string,
+  side: 'LONG' | 'SHORT' | null
+): string {
+  const src = (raw || '').trim()
+  const s = src.toLowerCase()
+  if (!s || s === 'цель' || s === 'target') {
+    return side === 'SHORT' ? 'стопы снизу' : 'ликвидность сверху'
+  }
+  if (s.includes('равные хаи') || s.includes('eqh')) return 'равные хаи'
+  if (s.includes('равные лои') || s.includes('eql')) return 'равные лои'
+  if (s === 'bsl' || s.includes('bsl') || s.includes('ликвидность сверху')) {
+    return 'ликвидность сверху'
+  }
+  if (s === 'ssl' || s.includes('ssl') || s.includes('ликвидность снизу')) {
+    return 'стопы снизу'
+  }
+  if (s.includes('стопы снизу') || s.includes('стопы лонг')) return 'стопы снизу'
+  if (s.includes('стопы шорт') || s.includes('шорты')) return 'ликвидность сверху'
+  if (s.includes('магнит')) return 'магнит'
+  if (src.length <= 22 && /[а-яё]/i.test(src)) return src
+  return side === 'SHORT' ? 'стопы снизу' : 'ликвидность сверху'
+}
+
+function strongCaption(
+  z: LiquidityZone,
+  side: 'LONG' | 'SHORT' | null
+): { full: string; word: string } {
+  const take = side ?? sideOfZone(z)
+  if (take === 'LONG') return { full: 'сильная · спрос · лонг отсюда', word: 'спрос' }
+  if (take === 'SHORT') {
+    return { full: 'сильная · предложение · шорт отсюда', word: 'предложение' }
+  }
+  const m = readZoneMeaning(z)
+  return { full: `сильная · ${m.meaning}`, word: m.word }
+}
+
+function weakCaption(
+  z: LiquidityZone,
+  primary: LiquidityZone,
+  side: 'LONG' | 'SHORT' | null,
+  magnet: { price: number; label: string } | null
+): { full: string; word: string } {
+  const m = readZoneMeaning(z)
+  const isMag =
+    magnet != null &&
+    magnet.price > 0 &&
+    magnet.price <= z.top &&
+    magnet.price >= z.bottom
+  if (isMag) {
+    const magRu = humanizeStoryTarget(magnet.label, side)
+    return { full: `слабая · ${magRu}`, word: 'магнит' }
+  }
+  const mid = (z.top + z.bottom) / 2
+  const pMid = (primary.top + primary.bottom) / 2
+  const above = mid > pMid
+  if (side === 'LONG' && above && (m.word === 'BSL' || m.word === 'EQH' || m.take === 'SHORT')) {
+    return {
+      full: `слабая · ${m.meaning === 'равные хаи' ? 'равные хаи' : 'ликвидность сверху'}`,
+      word: m.word,
+    }
+  }
+  if (side === 'SHORT' && !above && (m.word === 'SSL' || m.word === 'EQL' || m.take === 'LONG')) {
+    return {
+      full: `слабая · ${m.meaning === 'равные лои' ? 'равные лои' : 'стопы снизу'}`,
+      word: m.word,
+    }
+  }
+  return { full: `слабая · ${m.meaning}`, word: m.word }
+}
+
+function holdArrowCaption(side: 'LONG' | 'SHORT', dest: string): string {
+  const d = humanizeStoryTarget(dest, side)
+  return side === 'LONG' ? `лонг → ${d}` : `шорт → ${d}`
+}
+
+function tagRole(
+  z: LiquidityZone,
+  role: 'PRIMARY' | 'SECONDARY',
+  side: 'LONG' | 'SHORT' | null,
+  primary?: LiquidityZone | null,
+  magnet?: { price: number; label: string } | null
+): LiquidityZone {
   if (role === 'PRIMARY') {
+    const cap = strongCaption(z, side)
     return {
       ...z,
       storyRole: 'PRIMARY',
       strengthTier: 'STRONG',
       strength: Math.max(z.strength ?? 8, 11),
-      contextHint: z.contextHint || 'сильная зона',
-      label: z.label || 'сильная зона',
+      contextHint: cap.full,
+      label: cap.word,
     }
   }
+  const cap = weakCaption(z, primary ?? z, side, magnet ?? null)
   return {
     ...z,
     storyRole: 'SECONDARY',
-    strengthTier: z.strengthTier === 'STRONG' ? 'MEDIUM' : z.strengthTier ?? 'WEAK',
+    strengthTier: 'WEAK',
     strength: Math.min(z.strength ?? 6, 7),
+    contextHint: cap.full,
+    label: cap.word,
   }
 }
 
@@ -244,22 +372,41 @@ function pickPrimary(
   return scored[0] ?? null
 }
 
-function pickSecondary(
+function pickContextZones(
   zones: LiquidityZone[],
   primary: LiquidityZone,
-  side: 'LONG' | 'SHORT' | null
-): LiquidityZone | null {
-  const want: LiquidityZone['side'] =
-    side === 'LONG' ? 'BEARISH' : side === 'SHORT' ? 'BULLISH' : 'NEUTRAL'
+  side: 'LONG' | 'SHORT' | null,
+  max: number,
+  magnet: { price: number; label: string } | null
+): LiquidityZone[] {
+  const pMid = (primary.top + primary.bottom) / 2
   const cands = zones.filter((z) => {
     if (z.id === primary.id) return false
     if (overlapRatio(z, primary) > 0.4) return false
-    if (want !== 'NEUTRAL' && z.side !== want && z.side !== 'NEUTRAL') return false
     return true
   })
-  if (!cands.length) return null
-  cands.sort((a, b) => (b.strength ?? 0) - (a.strength ?? 0))
-  return cands[0] ?? null
+  const score = (z: LiquidityZone): number => {
+    const m = readZoneMeaning(z)
+    const mid = (z.top + z.bottom) / 2
+    let s = z.strength ?? 5
+    if (m.word === 'EQH' || m.word === 'EQL') s += 8
+    if (m.word === 'BSL' || m.word === 'SSL') s += 6
+    if (magnet && magnet.price > 0 && magnet.price <= z.top && magnet.price >= z.bottom) {
+      s += 7
+    }
+    if (side === 'LONG' && mid > pMid) s += 4
+    if (side === 'SHORT' && mid < pMid) s += 4
+    s -= Math.min(8, edgeDist(z, pMid) / Math.max(pMid * 0.002, 1e-8))
+    return s
+  }
+  cands.sort((a, b) => score(b) - score(a) || (b.strength ?? 0) - (a.strength ?? 0))
+  const out: LiquidityZone[] = []
+  for (const z of cands) {
+    if (out.length >= max) break
+    if (out.some((x) => overlapRatio(x, z) > 0.45)) continue
+    out.push(tagRole(z, 'SECONDARY', side, primary, magnet))
+  }
+  return out
 }
 
 function targetFrom(opts: {
@@ -462,7 +609,7 @@ function failPathOf(opts: {
     {
       timeOffsetSeconds: Math.round(bar * 8),
       price: target.price,
-      label: target.label || 'если слом',
+      label: 'если сломают',
       isKeyLevel: true,
     },
   ]
@@ -688,20 +835,20 @@ export function buildChartStory(opts: {
     board,
     price,
   })
-  const primary = rawPrimary ? tagRole(rawPrimary, 'PRIMARY') : null
-  const rx = primary ? reactionForZone(board, primary) : board?.active ?? null
+  const rx = rawPrimary ? reactionForZone(board, rawPrimary) : board?.active ?? null
 
   const fromGoing = goingToSide(rx?.going)
   const fromSetup = opts.setup?.side ?? null
   const fromStruct = opts.structure?.preferredSide ?? null
-  const holdSide = fromSetup ?? fromGoing ?? fromStruct ?? sideOfZone(primary)
+  const holdSide = fromSetup ?? fromGoing ?? fromStruct ?? sideOfZone(rawPrimary)
+  const primary = rawPrimary ? tagRole(rawPrimary, 'PRIMARY', holdSide) : null
   const nowKind = nowKindOf(primary, rx, price, atr, holdSide)
 
-  const oppRaw = primary ? pickSecondary(pool, primary, holdSide) : null
-  const opposite = oppRaw ? tagRole(oppRaw, 'SECONDARY') : null
-
-  let secondary: LiquidityZone[] = []
-  if (primary && !onlyStrong && opposite) secondary = [opposite]
+  const magnet = opts.structure?.magnet ?? null
+  const secondary = primary
+    ? pickContextZones(pool, primary, holdSide, onlyStrong ? 2 : 3, magnet)
+    : []
+  const opposite = secondary[0] ?? null
 
   const displayZones = primary ? [primary, ...secondary] : []
 
@@ -770,36 +917,49 @@ export function buildChartStory(opts: {
         })
       : null
 
+  const holdTgtRu = holdTgt
+    ? {
+        ...holdTgt,
+        label: humanizeStoryTarget(holdTgt.label || 'цель', workingSide),
+      }
+    : null
+  const failTgtRu = failTgt
+    ? {
+        ...failTgt,
+        label: humanizeStoryTarget(failTgt.label || 'если сломают', holdSide),
+      }
+    : null
+
   const showFail =
-    Boolean(failTgt) &&
+    Boolean(failTgtRu) &&
     (nowKind === 'IN_ZONE' || nowKind === 'APPROACHING' || nowKind === 'BOUNCE')
 
   const arrows: StoryArrow[] = []
   let future: ChartStoryFuture | null = null
 
-  if (holdTgt && workingSide && primary && price > 0) {
+  if (holdTgtRu && workingSide && primary && price > 0) {
     const sweep = sweepPriceOf(primary, workingSide, opts.structure ?? null)
     const path = workingPath({
       price,
       primary,
-      target: holdTgt,
+      target: holdTgtRu,
       side: workingSide,
       kind: nowKind,
       barSeconds,
       sweepPrice: sweep,
     })
     const failPath =
-      showFail && failTgt && holdSide
+      showFail && failTgtRu && holdSide
         ? failPathOf({
             price,
             primary,
-            target: failTgt,
+            target: failTgtRu,
             side: holdSide,
             barSeconds,
           })
         : null
 
-    const prices = [price, holdTgt.price, ...path.map((p) => p.price)].filter(
+    const prices = [price, holdTgtRu.price, ...path.map((p) => p.price)].filter(
       (p) => p > 0 && Number.isFinite(p)
     )
     prices.push(primary.top, primary.bottom)
@@ -810,10 +970,10 @@ export function buildChartStory(opts: {
     future = {
       path,
       failPath,
-      targetPrice: holdTgt.price,
-      targetLabel: holdTgt.label || 'цель',
-      failTargetPrice: showFail && failTgt ? failTgt.price : null,
-      failTargetLabel: showFail && failTgt ? failTgt.label : null,
+      targetPrice: holdTgtRu.price,
+      targetLabel: holdTgtRu.label,
+      failTargetPrice: showFail && failTgtRu ? failTgtRu.price : null,
+      failTargetLabel: showFail && failTgtRu ? failTgtRu.label : null,
       boxLow,
       boxHigh,
       bars: Math.min(18, Math.max(6, Math.ceil(maxOff / bar) + 2)),
@@ -829,30 +989,30 @@ export function buildChartStory(opts: {
       kind: 'PRIMARY',
       side: workingSide,
       fromPrice,
-      toPrice: holdTgt.price,
-      toLabel: holdTgt.label || 'цель',
+      toPrice: holdTgtRu.price,
+      toLabel: holdTgtRu.label,
       zoneTop: primary.top,
       zoneBottom: primary.bottom,
       zoneStartSec: zStart,
       zoneEndSec: zEnd,
       oddsPct: shownOdds?.pct ?? 50,
-      label: workingSide === 'LONG' ? 'лонг' : 'шорт',
+      label: holdArrowCaption(workingSide, holdTgtRu.label),
       sweepPrice: sweep,
     })
-    if (showFail && failTgt && holdSide) {
+    if (showFail && failTgtRu && holdSide) {
       arrows.push({
         id: 'fail',
         kind: 'FAIL',
         side: holdSide === 'LONG' ? 'SHORT' : 'LONG',
         fromPrice: holdSide === 'LONG' ? primary.bottom : primary.top,
-        toPrice: failTgt.price,
-        toLabel: failTgt.label || 'если слом',
+        toPrice: failTgtRu.price,
+        toLabel: failTgtRu.label,
         zoneTop: primary.top,
         zoneBottom: primary.bottom,
         zoneStartSec: zStart,
         zoneEndSec: zEnd,
         oddsPct: shownOdds?.failPct ?? 50,
-        label: holdSide === 'LONG' ? 'шорт' : 'лонг',
+        label: 'если сломают',
         sweepPrice: null,
       })
     }

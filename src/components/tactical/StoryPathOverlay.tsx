@@ -9,7 +9,6 @@ import type {
   ChartStoryFuture,
   StoryArrow,
 } from '../../engine/smc/chartStory'
-import { fmtStoryPrice } from '../../engine/smc/chartStory'
 import type { PathPoint } from '../../engine/prediction/types'
 
 interface Props {
@@ -39,14 +38,69 @@ function drawArrowHead(
   ctx.translate(x, y)
   ctx.rotate(angle)
   ctx.fillStyle = color
+  ctx.strokeStyle = 'rgba(8,10,14,0.9)'
+  ctx.lineWidth = Math.max(1.2, size * 0.08)
   ctx.beginPath()
   ctx.moveTo(0, 0)
-  ctx.lineTo(-size, -size * 0.42)
-  ctx.lineTo(-size * 0.68, 0)
-  ctx.lineTo(-size, size * 0.42)
+  ctx.lineTo(-size, -size * 0.48)
+  ctx.lineTo(-size * 0.62, 0)
+  ctx.lineTo(-size, size * 0.48)
   ctx.closePath()
   ctx.fill()
+  ctx.stroke()
   ctx.restore()
+}
+
+type TagBox = { x: number; y: number; w: number; h: number }
+
+function tagHits(a: TagBox, b: TagBox): boolean {
+  return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y)
+}
+
+function drawCaption(
+  ctx: CanvasRenderingContext2D,
+  lines: string[],
+  x: number,
+  y: number,
+  color: string,
+  bg: string,
+  fontPx: number,
+  plotRight: number,
+  h: number,
+  used: TagBox[],
+  muted: boolean
+) {
+  ctx.font = `${muted ? '600' : '800'} ${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
+  const widths = lines.map((l) => ctx.measureText(l).width)
+  const tw = Math.max(8, ...widths)
+  const lineH = fontPx + 3
+  const th = lines.length * lineH + 6
+  let lx = Math.max(4, Math.min(x, plotRight - tw - 10))
+  let ly = Math.max(fontPx + 6, Math.min(y, h - th - 4))
+  for (let i = 0; i < 10; i++) {
+    const box = { x: lx - 5, y: ly - fontPx - 2, w: tw + 12, h: th }
+    if (!used.some((u) => tagHits(u, box)) && box.x + box.w <= plotRight - 4) {
+      used.push(box)
+      ctx.fillStyle = bg
+      ctx.fillRect(box.x, box.y, box.w, box.h)
+      ctx.fillStyle = color
+      lines.forEach((line, idx) => {
+        ctx.fillText(line, lx, ly + idx * lineH)
+      })
+      return box
+    }
+    ly += th + 3
+    if (ly + th > h - 4) ly = Math.max(fontPx + 6, y - (i + 1) * (th + 3))
+  }
+  const box = { x: lx - 5, y: ly - fontPx - 2, w: tw + 12, h: th }
+  used.push(box)
+  ctx.fillStyle = bg
+  ctx.fillRect(box.x, box.y, box.w, box.h)
+  ctx.fillStyle = color
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, lx, ly + idx * lineH)
+  })
+  return box
 }
 
 function strokePath(
@@ -258,38 +312,47 @@ const StoryPathOverlay = ({
 
         const holdColor = future.side === 'LONG' ? '#86efac' : '#fda4af'
         const failColor = future.side === 'LONG' ? '#fda4af' : '#86efac'
+        const tags: TagBox[] = []
 
         if (failPts.length >= 2) {
-          strokePath(ctx, failPts, failColor, compact ? 1.35 : 1.15, 0.38, [5, 5])
+          strokePath(ctx, failPts, 'rgba(8,10,14,0.55)', compact ? 4.2 : 3.4, 0.7, [6, 5])
+          strokePath(ctx, failPts, failColor, compact ? 2.6 : 2.2, 0.72, [6, 5])
           const fa = failPts[failPts.length - 2]
           const fb = failPts[failPts.length - 1]
-          ctx.globalAlpha = 0.4
+          ctx.globalAlpha = 0.78
           drawArrowHead(
             ctx,
             fb.x,
             fb.y,
             Math.atan2(fb.y - fa.y, fb.x - fa.x),
             failColor,
-            compact ? 9 : 7
+            compact ? 14 : 12
           )
           ctx.globalAlpha = 1
           if (fail) {
-            const tag = `${fail.label} ${Math.round(fail.oddsPct)}%`
-            const fontPx = compact ? 11 : 9
-            ctx.font = `${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
-            const tw = ctx.measureText(tag).width
-            const padY = compact ? 12 : 10
-            const lx = clamp(x0 + 6, x0 + 2, Math.max(x0 + 2, plotRight - tw - 8))
-            const ly = clamp(fb.y + (fb.y > h / 2 ? 14 : -10), padY, h - 8)
-            ctx.fillStyle = 'rgba(8,10,14,0.62)'
-            ctx.fillRect(lx - 4, ly - fontPx + 1, tw + 8, fontPx + 6)
-            ctx.fillStyle = 'rgba(248,250,252,0.62)'
-            ctx.fillText(tag, lx, ly)
+            const pct = Math.round(fail.oddsPct)
+            const fontPx = compact ? 11 : 10
+            const ly = clamp(fb.y + (fb.y > h / 2 ? 18 : -16), compact ? 16 : 14, h - 12)
+            const lx = clamp(fb.x - 24, x0 + 4, Math.max(x0 + 4, plotRight - 90))
+            drawCaption(
+              ctx,
+              ['если сломают', `${pct}%`],
+              lx,
+              ly,
+              'rgba(248,250,252,0.78)',
+              'rgba(8,10,14,0.72)',
+              fontPx,
+              plotRight,
+              h,
+              tags,
+              true
+            )
           }
         }
 
         if (holdPts.length >= 2) {
-          strokePath(ctx, holdPts, holdColor, compact ? 2.7 : 2.35, 0.96, [])
+          strokePath(ctx, holdPts, 'rgba(8,10,14,0.88)', compact ? 7.2 : 6.2, 1, [])
+          strokePath(ctx, holdPts, holdColor, compact ? 4.4 : 3.8, 1, [])
           const a = holdPts[holdPts.length - 2]
           const b = holdPts[holdPts.length - 1]
           drawArrowHead(
@@ -298,25 +361,29 @@ const StoryPathOverlay = ({
             b.y,
             Math.atan2(b.y - a.y, b.x - a.x),
             holdColor,
-            compact ? 13 : 11
+            compact ? 18 : 16
           )
 
-          const dir = hold?.label ?? (future.side === 'LONG' ? 'лонг' : 'шорт')
+          const dir = hold?.label ?? (future.side === 'LONG' ? 'лонг → ликвидность сверху' : 'шорт → стопы снизу')
           const pct = hold ? Math.round(hold.oddsPct) : null
-          const head = pct != null ? `${dir} ${pct}%` : dir
-          const tgt = fmtStoryPrice(future.targetPrice)
-          const tag = compact ? head : `${head} → ${tgt}`
-          const fontPx = compact ? 12 : 10
-          ctx.font = `bold ${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
-          const tw = ctx.measureText(tag).width
-          const mid = holdPts[Math.min(holdPts.length - 1, Math.max(1, Math.floor(holdPts.length * 0.62)))]
-          const labelX = Math.max(x0 + 4, mid.x)
-          const lx = clamp(labelX - tw * 0.2, x0 + 2, Math.max(x0 + 2, plotRight - tw - 8))
-          const ly = clamp(mid.y + (mid.y > h / 2 ? 18 : -14), compact ? 18 : 14, h - 10)
-          ctx.fillStyle = 'rgba(8,10,14,0.86)'
-          ctx.fillRect(lx - 5, ly - fontPx, tw + 10, fontPx + 8)
-          ctx.fillStyle = holdColor
-          ctx.fillText(tag, lx, ly)
+          const fontPx = compact ? 12 : 11
+          const mid = holdPts[Math.min(holdPts.length - 1, Math.max(1, Math.floor(holdPts.length * 0.58)))]
+          const sideSign = mid.y > h / 2 ? -1 : 1
+          const lx = clamp(mid.x - 8, Math.max(8, x0 - 4), Math.max(x0 + 2, plotRight - 120))
+          const ly = clamp(mid.y + sideSign * 20, compact ? 18 : 16, h - 14)
+          drawCaption(
+            ctx,
+            pct != null ? [dir, `${pct}%`] : [dir],
+            lx,
+            ly,
+            holdColor,
+            'rgba(8,10,14,0.88)',
+            fontPx,
+            plotRight,
+            h,
+            tags,
+            false
+          )
         }
       } catch {
         /* overlay must never kill the chart */

@@ -11,13 +11,14 @@ interface Props {
   showLabels: boolean
   /** Highlight this zone id (selected setup / found zone) */
   highlightId?: string | null
-  /** TradingView-style: no in-chart pills / tags (prices live on the right axis) */
+  /** TradingView-style: no in-chart price pills (prices live on the right axis) */
   quiet?: boolean
-  /** One filled take-from zone; others faint */
+  /** One filled take-from zone + faint context — not a wall of bands */
   onlyStrong?: boolean
 }
 
 type Rgba = { r: number; g: number; b: number }
+type Box = { x: number; y: number; w: number; h: number }
 
 function baseHue(zone: LiquidityZone): Rgba {
   const id = zone.id ?? ''
@@ -59,10 +60,8 @@ function baseHue(zone: LiquidityZone): Rgba {
         : { r: 192, g: 132, b: 252 }
     case 'SSL':
     case 'LIQ':
-      // Teal — support / hold to go up
       return { r: 45, g: 212, b: 191 }
     case 'BSL':
-      // Rose — resistance / hold to go down (short)
       return { r: 251, g: 113, b: 133 }
     default:
       return { r: 100, g: 200, b: 255 }
@@ -105,9 +104,9 @@ function strengthVisual(
 
   if (isPrimary) {
     return {
-      fillA: 0.26,
-      borderA: 0.78,
-      borderW: 1.5,
+      fillA: 0.34,
+      borderA: 0.95,
+      borderW: 2.4,
       stripeW: 0,
       tier: 'STRONG' as const,
       isFib141: false,
@@ -120,8 +119,8 @@ function strengthVisual(
 
   if (isSecondary || onlyStrong) {
     return {
-      fillA: 0.05,
-      borderA: 0.38,
+      fillA: 0.04,
+      borderA: 0.42,
       borderW: 1,
       stripeW: 0,
       tier: 'WEAK' as const,
@@ -144,14 +143,16 @@ function strengthVisual(
   const borderA = isCong
     ? 0.38
     : isAction
-      ? highlighted ? 0.85 : 0.62
+      ? highlighted
+        ? 0.85
+        : 0.62
     : airy
-    ? 0.32
-    : tier === 'STRONG'
-      ? 0.95
-      : tier === 'MEDIUM'
-        ? 0.72
-        : 0.45
+      ? 0.32
+      : tier === 'STRONG'
+        ? 0.95
+        : tier === 'MEDIUM'
+          ? 0.72
+          : 0.45
   const borderW = highlighted ? 2 : isCong || airy ? 1 : tier === 'STRONG' ? 1.5 : 1
   const stripeW = airy ? 2 : tier === 'STRONG' ? 4 : tier === 'MEDIUM' ? 3 : 2
 
@@ -165,8 +166,8 @@ function strengthVisual(
           ? 0.32
           : 0.2
       : airy
-      ? Math.min(0.16, Math.max(0.07, op))
-      : Math.min(0.52, Math.max(0.12, op)),
+        ? Math.min(0.16, Math.max(0.07, op))
+        : Math.min(0.52, Math.max(0.12, op)),
     borderA: highlighted ? 1 : borderA,
     borderW,
     stripeW,
@@ -205,6 +206,11 @@ function compactLabel(zone: LiquidityZone): string {
   return zone.label || zone.type
 }
 
+function zoneCaption(zone: LiquidityZone, many: boolean, isPrimary: boolean): string {
+  if (isPrimary || !many) return zone.contextHint || compactLabel(zone)
+  return zone.label || zone.contextHint || compactLabel(zone)
+}
+
 function edgeLabelStyle(hue: Rgba, dimmed: number, highlighted: boolean, compact: boolean): string {
   return `
     position: absolute;
@@ -230,6 +236,47 @@ function isActionZone(zone: LiquidityZone): boolean {
     zone.type === 'ORDER_BLOCK' ||
     Boolean(zone.contextHint)
   )
+}
+
+function overlaps(a: Box, b: Box): boolean {
+  return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y)
+}
+
+function placeBox(
+  used: Box[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  plotRight: number,
+  containerHeight: number
+): Box {
+  let px = Math.max(4, Math.min(x, plotRight - w - 8))
+  let py = Math.max(2, y)
+  for (let i = 0; i < 12; i++) {
+    const b = { x: px, y: py, w, h }
+    if (
+      !used.some((u) => overlaps(u, b)) &&
+      py >= 2 &&
+      py + h <= containerHeight - 2 &&
+      px + w <= plotRight - 4
+    ) {
+      used.push(b)
+      return b
+    }
+    py += h + 3
+    if (py + h > containerHeight - 2) {
+      py = Math.max(2, y - (i + 1) * (h + 3))
+    }
+  }
+  const fallback = {
+    x: px,
+    y: Math.max(2, Math.min(y, containerHeight - h - 2)),
+    w,
+    h,
+  }
+  used.push(fallback)
+  return fallback
 }
 
 const ChartOverlay = ({
@@ -264,6 +311,7 @@ const ChartOverlay = ({
       }
       const plotRight = Math.max(80, containerWidth - priceScaleW)
       const compact = containerWidth < 560
+      const used: Box[] = []
 
       const visibleZones = [...zones]
         .sort((a, b) => {
@@ -278,7 +326,18 @@ const ChartOverlay = ({
           if (ak !== bk) return bk - ak
           return (b.strength ?? 5) - (a.strength ?? 5)
         })
-        .slice(0, onlyStrong ? 1 : 8)
+        .slice(0, onlyStrong ? 4 : 8)
+
+      const many = visibleZones.length > 3
+      const captions: Array<{
+        zone: LiquidityZone
+        vis: ReturnType<typeof strengthVisual>
+        hue: Rgba
+        left: number
+        yPos: number
+        height: number
+        width: number
+      }> = []
 
       for (const zone of visibleZones) {
         const topY = series.priceToCoordinate(zone.top)
@@ -300,7 +359,6 @@ const ChartOverlay = ({
         const height = Math.abs(Number(bottomY) - Number(topY))
         const yPos = Math.min(Number(topY), Number(bottomY))
         const left = Math.max(0, startXNum)
-        // Stop at the zone's now-edge so the future window stays empty for the path
         const nowCap = plotRight - 10
         const right = Number.isFinite(endXNum)
           ? Math.min(nowCap, Math.max(left + 8, endXNum))
@@ -310,13 +368,12 @@ const ChartOverlay = ({
         if (height < 1 || yPos < -80 || yPos > containerHeight + 80) continue
         if (left >= plotRight) continue
 
-        const highlighted = Boolean(
-          highlightId && zone.id === highlightId
-        ) || zone.storyRole === 'PRIMARY'
+        const highlighted =
+          Boolean(highlightId && zone.id === highlightId) ||
+          zone.storyRole === 'PRIMARY'
         const hue = baseHue(zone)
         const vis = strengthVisual(zone, opacity, highlighted, onlyStrong)
-        const actionable = vis.isPrimary || vis.isAction || isActionZone(zone)
-        const dimmed = vis.outlineOnly ? 0.85 : 1
+        const dimmed = vis.outlineOnly ? 0.88 : 1
 
         const div = document.createElement('div')
         const minH = vis.isPrimary || vis.isAction || highlighted ? 8 : 5
@@ -336,7 +393,7 @@ const ChartOverlay = ({
           border-bottom: ${vis.borderW}px ${vis.outlineOnly || vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
           box-shadow: ${
             vis.isPrimary
-              ? `inset 0 0 0 1px ${rgba(hue, 0.28)}`
+              ? `inset 0 0 0 1.5px ${rgba(hue, 0.45)}, 0 0 10px ${rgba(hue, 0.18)}`
               : 'none'
           };
           opacity: ${dimmed};
@@ -365,143 +422,73 @@ const ChartOverlay = ({
           }
         }
 
-        if (vis.isPrimary && (width >= 40 || highlighted) && !vis.outlineOnly) {
-          const pill = document.createElement('div')
-          pill.textContent = quiet ? 'зона' : 'сильная зона'
-          const pillH = Math.max(height, minH)
-          const floatUp = compact && pillH < 24 && yPos >= 22
-          pill.style.cssText = `
-            position: absolute;
-            left: ${floatUp ? `${left + 6}px` : '6px'};
-            top: ${floatUp ? `${Math.max(4, yPos - 4)}px` : '50%'};
-            transform: ${floatUp ? 'translateY(-100%)' : 'translateY(-50%)'};
-            max-width: ${Math.max(72, Math.min(compact ? 160 : 200, width - 10))}px;
-            padding: ${compact ? '2px 8px' : '1px 6px'};
-            border-radius: 4px;
-            font-size: ${compact ? '12px' : '10px'};
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            font-weight: 700;
-            letter-spacing: 0.01em;
-            color: rgba(255,255,255,0.95);
-            background: rgba(0,0,0,0.72);
-            border: 1px solid ${rgba(hue, 0.75)};
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
-          `
-          if (floatUp) {
-            overlay.appendChild(div)
-            overlay.appendChild(pill)
-          } else {
-            div.appendChild(pill)
-            overlay.appendChild(div)
-          }
-          continue
-        }
-
-        if (!quiet && !actionable) {
-        const stripe = document.createElement('div')
-        stripe.style.cssText = `
-          position: absolute;
-          left: 0; top: 0; bottom: 0;
-          width: ${vis.stripeW + (zone.type === 'SSL' || zone.type === 'BSL' ? 2 : 0)}px;
-          background: ${rgba(hue, vis.tier === 'STRONG' ? 0.95 : vis.tier === 'MEDIUM' ? 0.7 : 0.4)};
-        `
-        div.appendChild(stripe)
-
-        if (
-          (zone.type === 'SSL' || zone.type === 'BSL' || zone.type === 'LIQ') &&
-          height >= 12
-        ) {
-          const chev = document.createElement('div')
-          const up = zone.type === 'SSL' || zone.type === 'LIQ'
-          chev.textContent = up ? '▲ LONG' : '▼ SHORT'
-          chev.style.cssText = `
-            position: absolute;
-            left: ${vis.stripeW + 6}px;
-            bottom: 2px;
-            font-size: 8px;
-            font-weight: 800;
-            letter-spacing: 0.04em;
-            color: ${rgba(hue, 0.95)};
-            font-family: ui-monospace, Menlo, monospace;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
-          `
-          div.appendChild(chev)
-        }
-
-        const isKeyZone =
-          zone.type === 'SSL' ||
-          zone.type === 'BSL' ||
-          zone.type === 'FIBONACCI' ||
-          zone.type === 'OTE' ||
-          highlighted
-        const showPill =
-          showLabels ||
-          vis.isFib141 ||
-          highlighted ||
-          (isKeyZone && vis.tier !== 'WEAK')
-
-        if (showPill) {
-          const pill = document.createElement('div')
-          pill.textContent = compactLabel(zone)
-          pill.style.cssText = `
-            position: absolute;
-            left: ${vis.stripeW + 6}px;
-            top: 50%;
-            transform: translateY(-50%);
-            max-width: ${Math.max(72, Math.min(180, width - 48))}px;
-            padding: 1px 6px;
-            border-radius: 4px;
-            font-size: ${highlighted || vis.isFib141 ? '10px' : '9px'};
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            font-weight: ${vis.tier === 'STRONG' || highlighted ? '700' : '600'};
-            letter-spacing: 0.01em;
-            color: rgba(255,255,255,0.95);
-            background: rgba(0,0,0,0.55);
-            border: 1px solid ${rgba(hue, 0.55)};
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
-            backdrop-filter: blur(2px);
-          `
-          div.appendChild(pill)
-        }
-
-        // Strength dots on left of pill area for STRONG
-        if (vis.tier === 'STRONG' && height >= 10) {
-          const badge = document.createElement('span')
-          badge.textContent = '●●●'
-          badge.style.cssText = `
-            position: absolute;
-            left: ${vis.stripeW + 4}px;
-            top: 2px;
-            font-size: 7px;
-            letter-spacing: 1px;
-            color: ${rgba(hue, 0.9)};
-            font-family: monospace;
-          `
-          div.appendChild(badge)
-        } else if (vis.tier === 'MEDIUM' && height >= 10) {
-          const badge = document.createElement('span')
-          badge.textContent = '●●'
-          badge.style.cssText = `
-            position: absolute;
-            left: ${vis.stripeW + 4}px;
-            top: 2px;
-            font-size: 7px;
-            letter-spacing: 1px;
-            color: ${rgba(hue, 0.7)};
-            font-family: monospace;
-          `
-          div.appendChild(badge)
-        }
-
-        } // !quiet decorations
-
         overlay.appendChild(div)
+        captions.push({
+          zone,
+          vis,
+          hue,
+          left,
+          yPos,
+          height: bandH,
+          width,
+        })
+      }
+
+      for (const cap of captions) {
+        const isPrimary = cap.vis.isPrimary
+        const story =
+          cap.zone.storyRole === 'PRIMARY' || cap.zone.storyRole === 'SECONDARY'
+        if (!story && !showLabels && quiet) continue
+        const text = zoneCaption(cap.zone, many, isPrimary)
+        if (!text) continue
+        const fontPx = isPrimary ? (compact ? 12 : 11) : compact ? 10 : 9
+        const padX = isPrimary ? (compact ? 8 : 6) : 5
+        const pillH = isPrimary ? (compact ? 20 : 18) : compact ? 16 : 14
+        const pillW = Math.min(
+          Math.max(52, text.length * (fontPx * 0.62) + padX * 2),
+          Math.max(72, plotRight - 16)
+        )
+        const preferAbove = compact && cap.height < 26 && cap.yPos >= pillH + 4
+        const rawX = Math.max(4, Math.min(cap.left + 4, plotRight * 0.42))
+        const rawY = preferAbove
+          ? cap.yPos - pillH - 2
+          : cap.yPos + Math.max(2, Math.min(6, cap.height * 0.12))
+        const box = placeBox(
+          used,
+          rawX,
+          rawY,
+          pillW,
+          pillH,
+          plotRight,
+          containerHeight
+        )
+        const pill = document.createElement('div')
+        pill.textContent = text
+        pill.style.cssText = `
+          position: absolute;
+          left: ${box.x}px;
+          top: ${box.y}px;
+          max-width: ${Math.max(48, plotRight - box.x - 8)}px;
+          padding: ${isPrimary ? (compact ? '2px 8px' : '1px 6px') : '1px 5px'};
+          border-radius: 4px;
+          font-size: ${fontPx}px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-weight: ${isPrimary ? 800 : 600};
+          letter-spacing: 0.01em;
+          color: ${isPrimary ? 'rgba(255,255,255,0.96)' : 'rgba(226,232,240,0.82)'};
+          background: ${isPrimary ? 'rgba(0,0,0,0.78)' : 'rgba(8,10,14,0.55)'};
+          border: ${isPrimary ? 1.5 : 1}px ${isPrimary ? 'solid' : 'dashed'} ${rgba(
+            cap.hue,
+            isPrimary ? 0.85 : 0.4
+          )};
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+          opacity: ${isPrimary ? 1 : 0.82};
+          pointer-events: none;
+        `
+        overlay.appendChild(pill)
       }
     }
 
