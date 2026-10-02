@@ -3108,21 +3108,21 @@ const LiveChart = ({
             timeframe={timeframe}
           />
         )}
-        {overlayZones.length > 0 && chartReady > 0 && (
+        {chartReady > 0 && overlayZones.length > 0 && (
           <ChartOverlay
             chart={chartRef.current}
             series={candleRef.current}
             zones={overlayZones}
             containerRef={containerRef}
-            opacity={cleanMode ? 20 : 24}
-            showLabels={cleanMode || onlyStrong || chartPreferences.showLabels}
+            opacity={cleanMode ? 32 : 28}
+            showLabels
             highlightId={
               advisor?.zoneId ??
               highlightedZoneId ??
               chartStory.primary?.id ??
               actionPick.launchId
             }
-            quiet={cleanMode}
+            quiet={false}
             onlyStrong={cleanMode || onlyStrong}
           />
         )}
@@ -3140,7 +3140,7 @@ const LiveChart = ({
             future={chartStory.future}
             lastPrice={currentPrice}
             scenarios={chartStory.scenarios}
-            activeId={storyPathId}
+            activeId={storyPathId ?? 'hold'}
           />
         )}
         {chartReady > 0 && lastCandleTs > 0 && !cleanMode && !pathModeActive && !advisor && !onlyStrong && (
@@ -3299,24 +3299,20 @@ const LiveChart = ({
           />
         )}
         </div>
-        {chartStory.legend.length > 0 && (
-          <ZoneLegend
-            items={chartStory.legend}
-            onlyStrong={cleanMode || onlyStrong}
-          />
-        )}
-        {chartStory.scenarios.length >= 2 && (
-          <ScenarioBoard
-            scenarios={chartStory.scenarios}
-            activeId={storyPathId}
-            onSelect={(id) => {
-              setStoryPathId(id)
-              haptic.impact()
-            }}
-            dense={denseUi}
-          />
-        )}
       </div>
+      <ZoneLegend
+        items={chartStory.legend}
+        onlyStrong={cleanMode || onlyStrong}
+      />
+      <ScenarioBoard
+        scenarios={chartStory.scenarios}
+        activeId={storyPathId}
+        onSelect={(id) => {
+          setStoryPathId(id)
+          haptic.impact()
+        }}
+        dense={denseUi}
+      />
 
       {!chartExpanded && (
         <>

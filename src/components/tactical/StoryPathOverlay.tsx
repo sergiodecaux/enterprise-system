@@ -168,12 +168,18 @@ const StoryPathOverlay = ({
           return Number.isFinite(n) ? n : null
         }
 
+        const selected =
+          activeId && activeId !== 'hold'
+            ? scenarios.find((s) => s.id === activeId) ?? null
+            : null
         const active =
-          scenarios.find((s) => s.id === activeId) ??
+          selected ??
           scenarios.find((s) => s.id === 'hold') ??
           null
         const src: PathPoint[] =
-          active?.path && active.path.length >= 2 ? active.path : future.path
+          selected?.path && selected.path.length >= 2
+            ? selected.path
+            : future.path
 
         const xAtOffset = (t: number, maxT: number): number => {
           if (t <= 0) {
@@ -213,7 +219,8 @@ const StoryPathOverlay = ({
         if (pts.length < 2) return
 
         const color = pathColor(active, future.side)
-        const dashed = active?.id === 'break' || active?.id === 'chop'
+        const dashed =
+          selected != null && (selected.id === 'break' || selected.id === 'chop')
         const width = compact ? 3.6 : 3.2
         const halo = compact ? 6.4 : 5.6
 

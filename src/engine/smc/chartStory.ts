@@ -358,6 +358,44 @@ function nowLineOf(
   return k
 }
 
+function widenBand(z: LiquidityZone, price: number, atr: number): LiquidityZone {
+  const n =
+    z.top < z.bottom ? { ...z, top: z.bottom, bottom: z.top } : { ...z }
+  const minH = Math.max(atr * 0.5, (price > 0 ? price : n.top) * 0.0028)
+  const h = n.top - n.bottom
+  if (h >= minH) return n
+  const mid = h > 0 ? (n.top + n.bottom) / 2 : price || n.top
+  return { ...n, top: mid + minH / 2, bottom: mid - minH / 2 }
+}
+
+function makeSynthBand(
+  price: number,
+  atr: number,
+  side: 'LONG' | 'SHORT' | null,
+  candles: OhlcvCandle[],
+  barSeconds: number
+): LiquidityZone {
+  const h = Math.max(atr * 0.75, price * 0.0038)
+  const last = candles.length
+    ? Math.floor(candles[candles.length - 1][0] / 1000)
+    : Math.floor(Date.now() / 1000)
+  const look = Math.min(48, Math.max(16, candles.length))
+  const start = candles.length
+    ? Math.floor(candles[Math.max(0, candles.length - look)][0] / 1000)
+    : last - barSeconds * look
+  return {
+    id: 'story_synth',
+    type: 'VALUE_AREA',
+    side: side === 'SHORT' ? 'BEARISH' : 'BULLISH',
+    top: price + h / 2,
+    bottom: price - h / 2,
+    startTime: start as LiquidityZone['startTime'],
+    endTime: last as LiquidityZone['endTime'],
+    strength: 12,
+    strengthTier: 'STRONG',
+  }
+}
+
 function pickPrimary(
   zones: LiquidityZone[],
   opts: {
@@ -986,6 +1024,83 @@ function dirWord(side: 'LONG' | 'SHORT' | 'RANGE'): string {
   return 'пила'
 }
 
+export function padStoryScenarios(
+  rows: StoryScenario[],
+  side: 'LONG' | 'SHORT' | null,
+  price: number,
+  barSeconds: number
+): StoryScenario[] {
+  const s: 'LONG' | 'SHORT' = side === 'SHORT' ? 'SHORT' : 'LONG'
+  const fail: 'LONG' | 'SHORT' = s === 'LONG' ? 'SHORT' : 'LONG'
+  const bar = Math.max(1, barSeconds)
+  const now = price > 0 ? price : 1
+  const holdTo = s === 'LONG' ? now * 1.006 : now * 0.994
+  const breakTo = s === 'LONG' ? now * 0.994 : now * 1.006
+  const holdDest = s === 'LONG' ? 'ликвидность сверху' : 'стопы снизу'
+  const breakDest = s === 'LONG' ? 'стопы снизу' : 'ликвидность сверху'
+  const stubs: StoryScenario[] = [
+    {
+      id: 'hold',
+      pct: 40,
+      side: s,
+      dirLabel: dirWord(s),
+      condition: holdCondition(s),
+      title: holdArrowCaption(s, holdDest),
+      path: twoSeg(
+        { t: 0, price: now, label: 'сейчас' },
+        { t: Math.round(bar * 8), price: holdTo, label: holdDest, key: true }
+      ),
+      toPrice: holdTo,
+      toLabel: holdDest,
+    },
+    {
+      id: 'sweep',
+      pct: 22,
+      side: s,
+      dirLabel: dirWord(s),
+      condition: sweepCondition(s),
+      title: 'свип → разворот',
+      path: twoSeg(
+        { t: 0, price: now, label: 'сейчас' },
+        { t: Math.round(bar * 2.4), price: s === 'LONG' ? now * 0.997 : now * 1.003, label: 'свип', key: true },
+        { t: Math.round(bar * 8), price: holdTo, label: holdDest, key: true }
+      ),
+      toPrice: holdTo,
+      toLabel: holdDest,
+    },
+    {
+      id: 'break',
+      pct: 22,
+      side: fail,
+      dirLabel: dirWord(fail),
+      condition: breakCondition(s),
+      title: `слом → ${breakDest}`,
+      path: twoSeg(
+        { t: 0, price: now, label: 'сейчас' },
+        { t: Math.round(bar * 8), price: breakTo, label: breakDest, key: true }
+      ),
+      toPrice: breakTo,
+      toLabel: breakDest,
+    },
+    {
+      id: 'chop',
+      pct: 16,
+      side: 'RANGE',
+      dirLabel: dirWord('RANGE'),
+      condition: 'если останемся внутри',
+      title: 'пила внутри зоны',
+      path: twoSeg(
+        { t: 0, price: now, label: 'сейчас' },
+        { t: Math.round(bar * 7), price: now, label: 'середина' }
+      ),
+      toPrice: now,
+      toLabel: 'середина зоны',
+    },
+  ]
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  return stubs.map((stub) => byId.get(stub.id) ?? stub)
+}
+
 function holdCondition(side: 'LONG' | 'SHORT'): string {
   return side === 'LONG' ? 'если закрепятся над зоной' : 'если закрепятся под зоной'
 }
@@ -1022,22 +1137,42 @@ export function buildChartStory(opts: {
 
   const fibish = (z: LiquidityZone) =>
     z.type === 'FIBONACCI' || (z.id ?? '').startsWith('fib141_')
-  const pool = opts.zones.filter((z) => z.top > z.bottom && !fibish(z))
+  const pool = opts.zones
+    .filter((z) => !fibish(z) && z.top > 0 && z.bottom > 0)
+    .map((z) => widenBand(z, price, atr))
 
-  const rawPrimary = pickPrimary(pool, {
+  const fromSetup = opts.setup?.side ?? null
+  const fromStruct = opts.structure?.preferredSide ?? null
+  let livePrice = price
+  if (!(livePrice > 0) && candles.length) {
+    livePrice = candles[candles.length - 1]?.[4] ?? 0
+  }
+
+  let rawPrimary = pickPrimary(pool, {
     focusId: opts.focusId ?? null,
     launchId: opts.launchId ?? null,
     board,
-    price,
+    price: livePrice,
   })
+  if (!rawPrimary && livePrice > 0) {
+    rawPrimary = makeSynthBand(
+      livePrice,
+      atr,
+      fromSetup ?? fromStruct,
+      candles,
+      barSeconds
+    )
+  }
+  if (rawPrimary && livePrice > 0) {
+    rawPrimary = widenBand(rawPrimary, livePrice, atr)
+  }
   const rx = rawPrimary ? reactionForZone(board, rawPrimary) : board?.active ?? null
 
   const fromGoing = goingToSide(rx?.going)
-  const fromSetup = opts.setup?.side ?? null
-  const fromStruct = opts.structure?.preferredSide ?? null
-  const holdSide = fromSetup ?? fromGoing ?? fromStruct ?? sideOfZone(rawPrimary)
+  const holdSide =
+    fromSetup ?? fromGoing ?? fromStruct ?? sideOfZone(rawPrimary) ?? (livePrice > 0 ? 'LONG' : null)
   const primary = rawPrimary ? tagRole(rawPrimary, 'PRIMARY', holdSide) : null
-  const nowKind = nowKindOf(primary, rx, price, atr, holdSide)
+  const nowKind = nowKindOf(primary, rx, livePrice || price, atr, holdSide)
 
   const magnet = opts.structure?.magnet ?? null
   const secondary = primary
@@ -1054,7 +1189,7 @@ export function buildChartStory(opts: {
           rx,
           structure: opts.structure ?? null,
           candles,
-          price,
+          price: livePrice,
           atr,
           side: holdSide,
           kind: nowKind,
@@ -1071,7 +1206,7 @@ export function buildChartStory(opts: {
           structure: opts.structure ?? null,
           primary,
           side: holdSide,
-          price,
+          price: livePrice,
         })
       : null
 
@@ -1083,7 +1218,7 @@ export function buildChartStory(opts: {
           primary,
           opposite,
           side: holdSide,
-          price,
+          price: livePrice,
         })
       : null
 
@@ -1106,7 +1241,7 @@ export function buildChartStory(opts: {
   const scenarios: StoryScenario[] = []
   let future: ChartStoryFuture | null = null
 
-  if (primary && holdSide && price > 0) {
+  if (primary && holdSide && livePrice > 0) {
     const sweep = sweepPriceOf(primary, holdSide, opts.structure ?? null)
     const tape = readLastTape(candles, primary, holdSide, atr)
     const bos = bosAligned(opts.structure ?? null, holdSide)
@@ -1131,14 +1266,14 @@ export function buildChartStory(opts: {
     }
 
     const holdPath = holdPathOf({
-      price,
+      price: livePrice,
       primary,
       target: holdDest,
       side: holdSide,
       barSeconds,
     })
     const sweepPath = sweepPathOf({
-      price,
+      price: livePrice,
       primary,
       target: holdDest,
       side: holdSide,
@@ -1146,13 +1281,13 @@ export function buildChartStory(opts: {
       sweepPrice: sweep,
     })
     const lostPath = breakPathOf({
-      price,
+      price: livePrice,
       primary,
       target: breakDest,
       side: holdSide,
       barSeconds,
     })
-    const rangePath = chopPathOf({ price, primary, barSeconds })
+    const rangePath = chopPathOf({ price: livePrice, primary, barSeconds })
 
     const zStart = timeSec(primary.startTime)
     const zEnd = timeSec(primary.endTime) || zStart
@@ -1206,7 +1341,7 @@ export function buildChartStory(opts: {
     )
 
     const prices = [
-      price,
+      livePrice,
       holdDest.price,
       breakDest.price,
       ...holdPath.map((p) => p.price),
@@ -1246,6 +1381,7 @@ export function buildChartStory(opts: {
     })
   }
 
+  const legend = legendOf(primary, secondary)
   return {
     primary,
     secondary,
@@ -1256,8 +1392,17 @@ export function buildChartStory(opts: {
     future,
     odds: scoredOdds,
     arrows,
-    scenarios,
-    legend: legendOf(primary, secondary),
+    scenarios: padStoryScenarios(scenarios, holdSide, livePrice || price, barSeconds),
+    legend: legend.length
+      ? legend
+      : [
+          {
+            role: 'STRONG',
+            text: 'сильная · зона на графике',
+            range: '—',
+            take: holdSide,
+          },
+        ],
   }
 }
 

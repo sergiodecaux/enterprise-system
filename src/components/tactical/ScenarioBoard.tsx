@@ -29,14 +29,64 @@ function dirTone(side: StoryScenario['side']): string {
   return 'text-amber-200'
 }
 
-/** Compact 4-row SMC board under/above candles — not an overlay on price. */
+const FALLBACK_ROWS: StoryScenario[] = [
+  {
+    id: 'hold',
+    pct: 40,
+    side: 'LONG',
+    dirLabel: 'лонг',
+    condition: 'если закрепятся над зоной',
+    title: 'лонг → ликвидность сверху',
+    path: [],
+    toPrice: null,
+    toLabel: '',
+  },
+  {
+    id: 'sweep',
+    pct: 22,
+    side: 'LONG',
+    dirLabel: 'лонг',
+    condition: 'если снимут лои и закроются обратно',
+    title: 'свип → разворот',
+    path: [],
+    toPrice: null,
+    toLabel: '',
+  },
+  {
+    id: 'break',
+    pct: 22,
+    side: 'SHORT',
+    dirLabel: 'шорт',
+    condition: 'если закроют ниже зоны',
+    title: 'слом',
+    path: [],
+    toPrice: null,
+    toLabel: '',
+  },
+  {
+    id: 'chop',
+    pct: 16,
+    side: 'RANGE',
+    dirLabel: 'пила',
+    condition: 'если останемся внутри',
+    title: 'пила внутри зоны',
+    path: [],
+    toPrice: null,
+    toLabel: '',
+  },
+]
+
+/** Compact 4-row SMC board under candles — never an overlay on price. */
 export const ScenarioBoard = ({
   scenarios,
   activeId,
   onSelect,
   dense = false,
 }: BoardProps) => {
-  if (scenarios.length < 2) return null
+  const rows =
+    scenarios.length >= 4
+      ? scenarios.slice(0, 4)
+      : FALLBACK_ROWS.map((stub) => scenarios.find((s) => s.id === stub.id) ?? stub)
   return (
     <div
       className={`shrink-0 border-t border-white/[0.08] bg-[#0a0c10] ${
@@ -44,7 +94,7 @@ export const ScenarioBoard = ({
       }`}
     >
       <ul className="flex flex-col gap-0.5">
-        {scenarios.map((sc) => {
+        {rows.map((sc) => {
           const on = sc.id === activeId
           return (
             <li key={sc.id}>
@@ -90,19 +140,25 @@ export const ScenarioBoard = ({
 
 /** Always-visible: 1 сильная + слабые listed, even if only the strong band is drawn. */
 export const ZoneLegend = ({ items, onlyStrong = false }: LegendProps) => {
-  if (!items.length) return null
-  const strong = items.find((i) => i.role === 'STRONG')
+  const strong =
+    items.find((i) => i.role === 'STRONG') ??
+    ({
+      role: 'STRONG' as const,
+      text: 'сильная · зона на графике',
+      range: '',
+      take: null,
+    } satisfies StoryLegendItem)
   const weaks = items.filter((i) => i.role === 'WEAK')
   return (
-    <div className="shrink-0 border-t border-white/[0.06] bg-[#080a0e] px-2 py-1 font-mono leading-snug text-[10px] text-white/70">
+    <div className="shrink-0 border-t border-white/[0.06] bg-[#080a0e] px-2 py-1.5 font-mono leading-snug text-[11px] text-white/80">
       {strong && (
-        <p className="text-teal-100/90">
-          <span className="font-bold uppercase tracking-wide text-teal-200/90">
+        <p className="text-teal-100">
+          <span className="font-bold uppercase tracking-wide text-teal-200">
             сильная
           </span>
           {' · '}
           {strong.text}
-          <span className="text-white/45"> {strong.range}</span>
+          <span className="text-white/50"> {strong.range}</span>
         </p>
       )}
       {weaks.length > 0 && (

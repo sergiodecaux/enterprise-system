@@ -39,6 +39,19 @@ jobs:
           VITE_TELEGRAM_BOT_USERNAME: ${{ secrets.VITE_TELEGRAM_BOT_USERNAME }}
           VITE_ADVISOR_URLS: ${{ secrets.VITE_ADVISOR_URLS }}
 
+      - name: Stamp Mini App version
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'dist/version.json';
+            let j = {};
+            try { j = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) {}
+            j.id = (process.env.GITHUB_SHA || '').slice(0, 12);
+            j.sha = process.env.GITHUB_SHA;
+            j.t = Date.now();
+            fs.writeFileSync(p, JSON.stringify(j));
+          "
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

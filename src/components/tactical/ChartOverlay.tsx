@@ -114,9 +114,9 @@ function strengthVisual(
 
   if (isPrimary) {
     return {
-      fillA: 0.38,
+      fillA: 0.56,
       borderA: 1,
-      borderW: 2.6,
+      borderW: 3.2,
       stripeW: 0,
       tier: 'STRONG' as const,
       isFib141: false,
@@ -380,25 +380,37 @@ const ChartOverlay = ({
             ? NaN
             : Number(rawEndX)
 
-        if (topY == null || bottomY == null) continue
-
-        const height = Math.abs(Number(bottomY) - Number(topY))
-        const yPos = Math.min(Number(topY), Number(bottomY))
-        const left = Math.max(0, startXNum)
-        const nowCap = plotRight - 8
         const highlighted =
           Boolean(highlightId && zone.id === highlightId) ||
           zone.storyRole === 'PRIMARY'
         const isPrimaryBand = zone.storyRole === 'PRIMARY' || highlighted
+
+        let topN = topY == null ? NaN : Number(topY)
+        let botN = bottomY == null ? NaN : Number(bottomY)
+        if ((!Number.isFinite(topN) || !Number.isFinite(botN)) && isPrimaryBand) {
+          const mid = containerHeight * 0.42
+          topN = mid - 22
+          botN = mid + 22
+        }
+        if (!Number.isFinite(topN) || !Number.isFinite(botN)) continue
+
+        const rawH = Math.abs(botN - topN)
+        const minBand = isPrimaryBand ? (compact ? 44 : 36) : 10
+        const height = Math.max(rawH, minBand)
+        let yPos = Math.min(topN, botN)
+        if (rawH < minBand) yPos -= (minBand - rawH) / 2
+        yPos = Math.max(4, Math.min(yPos, containerHeight - height - 4))
+        const left = isPrimaryBand ? 0 : Math.max(0, startXNum)
+        const nowCap = plotRight - 8
         const histRight = Number.isFinite(endXNum)
           ? Math.min(nowCap, Math.max(left + 8, endXNum))
           : Math.min(nowCap, left + Math.max(48, (nowCap - left) * 0.72))
         const right = isPrimaryBand
           ? nowCap
           : Math.max(histRight, Math.min(nowCap, left + Math.max(72, (nowCap - left) * 0.55)))
-        const width = Math.max(12, right - left)
+        const width = Math.max(isPrimaryBand ? 80 : 12, right - left)
 
-        if (height < 1 || yPos < -80 || yPos > containerHeight + 80) continue
+        if (yPos < -120 || yPos > containerHeight + 120) continue
         if (left >= plotRight) continue
 
         const hue = baseHue(zone)
@@ -406,9 +418,9 @@ const ChartOverlay = ({
         const dimmed = vis.outlineOnly ? 0.92 : 1
 
         const div = document.createElement('div')
-        const minH = vis.isPrimary || vis.isAction || highlighted ? 14 : 8
+        const minH = vis.isPrimary || vis.isAction || highlighted ? 28 : 8
         const fill = vis.isPrimary
-          ? rgba(hue, vis.fillA)
+          ? `linear-gradient(180deg, ${rgba(hue, vis.fillA * 0.72)} 0%, ${rgba(hue, vis.fillA)} 45%, ${rgba(hue, vis.fillA * 0.78)} 100%)`
           : vis.outlineOnly
             ? rgba(hue, vis.fillA)
             : `linear-gradient(90deg, ${rgba(hue, vis.fillA)} 0%, ${rgba(hue, vis.fillA * 0.55)} 70%, ${rgba(hue, vis.fillA * 0.2)} 100%)`
@@ -423,14 +435,15 @@ const ChartOverlay = ({
           border: ${vis.borderW}px ${dash} ${rgba(hue, vis.borderA * dimmed)};
           box-shadow: ${
             vis.isPrimary
-              ? `inset 0 0 0 1px ${rgba(hue, 0.55)}, 0 0 14px ${rgba(hue, 0.22)}`
+              ? `inset 0 0 0 2px ${rgba(hue, 0.7)}, 0 0 22px ${rgba(hue, 0.38)}`
               : 'none'
           };
-          opacity: ${dimmed};
+          opacity: 1;
           pointer-events: none;
           box-sizing: border-box;
           overflow: visible;
-          border-radius: 3px;
+          border-radius: 4px;
+          z-index: ${vis.isPrimary ? 2 : 1};
         `
 
         const bandH = Math.max(height, minH)
@@ -572,7 +585,7 @@ const ChartOverlay = ({
     <div
       ref={overlayRef}
       className="pointer-events-none absolute inset-0 overflow-hidden"
-      style={{ zIndex: 1 }}
+      style={{ zIndex: 8 }}
     />
   )
 }

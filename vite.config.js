@@ -1,4 +1,6 @@
 // @ts-nocheck
+import fs from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 const RSS_ALLOWED = [
@@ -58,8 +60,82 @@ function newsRssProxy() {
         },
     };
 }
+/**
+ * Telegram WebView caches index.html. Load hashed assets from version.json
+ * (fetched with a unique query) so Mini App picks up a new Pages deploy.
+ */
+function telegramCacheBust() {
+    return {
+        name: 'telegram-cache-bust',
+        apply: 'build',
+        transformIndexHtml: {
+            order: 'post',
+            handler(html) {
+                const cssRe = /<link rel="stylesheet" crossorigin href="([^"]+)">/;
+                const jsRe = /<script type="module" crossorigin src="([^"]+)"><\/script>/;
+                const css = html.match(cssRe)?.[1] ?? '';
+                const js = html.match(jsRe)?.[1] ?? '';
+                const boot = `<script>
+(function () {
+  var cssFallback = ${JSON.stringify(css)};
+  var jsFallback = ${JSON.stringify(js)};
+  function addCss(href) {
+    if (!href) return;
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.crossOrigin = 'anonymous';
+    l.href = href;
+    document.head.appendChild(l);
+  }
+  function addJs(src) {
+    if (!src) return;
+    var s = document.createElement('script');
+    s.type = 'module';
+    s.crossOrigin = 'anonymous';
+    s.src = src;
+    document.body.appendChild(s);
+  }
+  fetch('./version.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (v) {
+      addCss((v && v.css) || cssFallback);
+      addJs((v && v.entry) || jsFallback);
+    })
+    .catch(function () {
+      addCss(cssFallback);
+      addJs(jsFallback);
+    });
+})();
+</script>`;
+                let out = html;
+                if (css)
+                    out = out.replace(cssRe, '');
+                if (js)
+                    out = out.replace(jsRe, boot);
+                else
+                    out = out.replace('</body>', boot + '</body>');
+                return out;
+            },
+        },
+        closeBundle() {
+            const dist = path.resolve('dist');
+            const htmlPath = path.join(dist, 'index.html');
+            if (!fs.existsSync(htmlPath))
+                return;
+            const html = fs.readFileSync(htmlPath, 'utf8');
+            const css = html.match(/cssFallback = "([^"]+)"/)?.[1] ??
+                html.match(/href="(\.\/assets\/[^"]+\.css)"/)?.[1] ??
+                '';
+            const entry = html.match(/jsFallback = "([^"]+)"/)?.[1] ??
+                html.match(/src="(\.\/assets\/[^"]+\.js)"/)?.[1] ??
+                '';
+            const id = String(process.env.GITHUB_SHA || Date.now()).slice(0, 12);
+            fs.writeFileSync(path.join(dist, 'version.json'), JSON.stringify({ id, entry, css, t: Date.now() }));
+        },
+    };
+}
 export default defineConfig({
-    plugins: [react(), newsRssProxy()],
+    plugins: [react(), newsRssProxy(), telegramCacheBust()],
     base: './',
     server: {
         proxy: {
