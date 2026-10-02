@@ -7,6 +7,9 @@ export default {
   ],
   theme: {
     extend: {
+      screens: {
+        desk: '1100px',
+      },
       colors: {
         space: '#0a0a0a',
         hull: '#111111',

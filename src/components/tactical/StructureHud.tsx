@@ -1,11 +1,19 @@
 /**
  * Live scenario board: which path is leading, and why — not a binary reclaim line.
+ * Default view is one line; full essay only after the user expands.
  */
 
+import { useEffect, useState } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { StructureRead, TfStructure } from '../../engine/smc/structureRead'
 
 interface Props {
   read: StructureRead | null
+  /** One-line board — no scenario dump. Story HUD lives on the chart. */
+  compact?: boolean
+  nowLine?: string
+  /** Start collapsed (чистый режим). User can expand the essay. */
+  startCollapsed?: boolean
 }
 
 function tfBit(tf: TfStructure | null): string {
@@ -31,11 +39,22 @@ function tfBit(tf: TfStructure | null): string {
   return `${name} ${kind}${arrow}`
 }
 
-const StructureHud = ({ read }: Props) => {
+const StructureHud = ({
+  read,
+  compact = false,
+  nowLine,
+  startCollapsed = false,
+}: Props) => {
+  const [open, setOpen] = useState(!startCollapsed)
+  useEffect(() => {
+    setOpen(!startCollapsed)
+  }, [startCollapsed])
+
   if (!read) return null
   const board = read.scenarios
   const lead = board?.scenarios[0] ?? null
-  const list = board?.scenarios ?? []
+  const list = !open || compact ? [] : board?.scenarios ?? []
+  const story = nowLine?.trim() || null
 
   const nest = read.cascade
   const regime =
@@ -55,29 +74,55 @@ const StructureHud = ({ read }: Props) => {
           ? 'border-rose-400/30 bg-rose-950/30 text-rose-100'
           : 'border-cyan-400/25 bg-slate-950/50 text-cyan-100'
 
+  const oneLine = `${regime}${lead ? ` · ${lead.id} ${lead.probability}%` : ''}`
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1 text-left ${tone}`}
+        title="Развернуть сценарий"
+      >
+        <span className="min-w-0 truncate font-mono text-[11px] font-bold uppercase tracking-wide">
+          {oneLine}
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+      </button>
+    )
+  }
+
   return (
     <div className={`rounded-xl border px-3 py-2 ${tone}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-mono text-[11px] font-bold uppercase tracking-wide text-white/90">
-            {regime}
-            {lead ? ` · ${lead.id} ${lead.title} · ${lead.probability}%` : ''}
-          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 text-left"
+            title="Свернуть сценарий"
+          >
+            <div className="min-w-0 font-mono text-[11px] font-bold uppercase tracking-wide text-white/90">
+              {regime}
+              {lead ? ` · ${lead.id} ${lead.title} · ${lead.probability}%` : ''}
+            </div>
+            <ChevronUp className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          </button>
           <p className="mt-0.5 font-mono text-[11px] leading-snug text-white/75">
-            {board?.now ?? read.summary}
+            {story ?? board?.now ?? read.summary}
           </p>
-          {read.intra?.line && (
+          {!compact && read.intra?.line && (
             <p className="mt-0.5 font-mono text-[10px] text-cyan-200/80">
               {read.intra.line}
             </p>
           )}
-          {read.fuel && Number.isFinite(read.fuel.price) && (
+          {read.fuel && Number.isFinite(read.fuel.price) && !compact && (
             <p className="mt-0.5 font-mono text-[10px] text-white/55">
               Топливо: {read.fuel.label} {read.fuel.price >= 1000 ? read.fuel.price.toFixed(1) : read.fuel.price.toPrecision(5)}
               {nest?.entrySide ? ' · 15м только вход' : ''}
             </p>
           )}
-          {read.zones?.active && (
+          {read.zones?.active && !compact && (
             <div className="mt-1">
               <p className="font-mono text-[10px] leading-snug text-pink-100/85">
                 {read.zones.line}
@@ -118,7 +163,7 @@ const StructureHud = ({ read }: Props) => {
         </div>
       </div>
 
-      {read.zones && read.zones.reactions.length > 1 && (
+      {read.zones && read.zones.reactions.length > 1 && !compact && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {read.zones.reactions
             .filter((r) => r.zone.id !== read.zones?.active?.zone.id)

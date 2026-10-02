@@ -65,6 +65,8 @@ import {
 import ZonePathOverlay from './ZonePathOverlay'
 import StructureHud from './StructureHud'
 import StructureOverlay from './StructureOverlay'
+import StoryPathOverlay from './StoryPathOverlay'
+import NowStoryHud from './NowStoryHud'
 import CurvePathOverlay from './CurvePathOverlay'
 import ZoneAdvisorCard from './ZoneAdvisorCard'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
@@ -85,6 +87,8 @@ import {
 } from '../../engine/smc/zoneReaction'
 import { lastClosedBar } from '../../engine/smc/closeCascade'
 import { pickActionZones } from '../../engine/smc/entryZones'
+import { calculateAtr } from '../../engine/smc'
+import { buildChartStory } from '../../engine/smc/chartStory'
 import {
   analyzeZoneTap,
   hitZoneAt,
@@ -122,6 +126,8 @@ interface LiveChartProps {
   symbol: string
   flatSymbol: string
   signal?: CoinSignal | null
+  /** Заполнить родителя (терминал ПК), без фиксированных 440px */
+  fillParent?: boolean
 }
 
 const CANDLE_LIMIT: Record<MexcTimeframe, number> = {
@@ -131,6 +137,41 @@ const CANDLE_LIMIT: Record<MexcTimeframe, number> = {
   '1h': 160,
   '4h': 120,
   '1d': 100,
+}
+
+/** Чистый график: без EMA/осцилляторов/объёма — свечи главные. */
+const CLEAN_OFF_INDICATORS = {
+  ema20: false,
+  ema50: false,
+  ema200: false,
+  sma9: false,
+  sma21: false,
+  sma50: false,
+  bollingerBands: false,
+  vwap: false,
+  rsi: false,
+  macd: false,
+  stochastic: false,
+  atr: false,
+  volume: false,
+} as const
+
+function readLsFlag(key: string, defaultOn: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key)
+    if (v == null) return defaultOn
+    return v === '1'
+  } catch {
+    return defaultOn
+  }
+}
+
+function writeLsFlag(key: string, on: boolean) {
+  try {
+    localStorage.setItem(key, on ? '1' : '0')
+  } catch {
+    /* ignore */
+  }
 }
 
 const INDICATOR_COLORS: Record<string, string> = {
@@ -168,13 +209,32 @@ function isPhoneLandscapeNow(): boolean {
   return w > h && (coarse || h < 560)
 }
 
-function paneHeight(expanded: boolean, landscape: boolean, vh: number): number {
+/** Telegram Mini App drawer: fill remaining 85dvh, cap ~440px. */
+function drawerPaneHeight(vh: number): number {
+  const sheet = Math.round(vh * 0.85)
+  // handle+header ≈ 96, optional whale ≈ 40, GO ≈ 48, padding ≈ 16, title+TF rails+HUD ≈ 132
+  const leftover = sheet - 96 - 40 - 48 - 16 - 132
+  return Math.round(Math.min(CHART_HEIGHT, Math.max(260, leftover)))
+}
+
+function paneHeight(
+  expanded: boolean,
+  landscape: boolean,
+  vh: number,
+  inDrawer: boolean
+): number {
   if (expanded) return Math.max(280, Math.round(vh - 152))
   if (landscape) return Math.max(200, Math.round(vh * 0.58))
+  if (inDrawer) return drawerPaneHeight(vh)
   return CHART_HEIGHT
 }
 
-const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
+const LiveChart = ({
+  symbol,
+  flatSymbol,
+  signal = null,
+  fillParent = false,
+}: LiveChartProps) => {
   const { t } = useTranslation()
   const tRef = useRef(t)
   tRef.current = t
@@ -223,13 +283,9 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   )
   const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
-  const [showLiqMap, setShowLiqMap] = useState(() => {
-    try {
-      return localStorage.getItem('enterprise_liq_map') !== '0'
-    } catch {
-      return true
-    }
-  })
+  const [showLiqMap, setShowLiqMap] = useState(() =>
+    readLsFlag('enterprise_liq_map', false)
+  )
   const [audioOn, setAudioOn] = useState(() => {
     try {
       return localStorage.getItem('enterprise_process_audio') === '1'
@@ -251,13 +307,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const [activeScenarios, setActiveScenarios] = useState<Set<string>>(
     () => new Set(['A'])
   )
-  const [cleanMode, setCleanMode] = useState(true)
+  const [cleanMode, setCleanMode] = useState(() =>
+    readLsFlag('enterprise_chart_clean', true)
+  )
   const [showSetupPicker, setShowSetupPicker] = useState(false)
   const [pickedSetups, setPickedSetups] = useState<ConditionalSetup[]>([])
   const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
   const [fibTfs, setFibTfs] = useState<Set<string>>(() => new Set())
   const [showSrZones, setShowSrZones] = useState(true)
+  const [onlyStrong, setOnlyStrong] = useState(() => {
+    try {
+      return localStorage.getItem('enterprise_only_strong') !== '0'
+    } catch {
+      return true
+    }
+  })
   const [advisor, setAdvisor] = useState<ZoneAdvisorBrief | null>(null)
   const [advisorBot, setAdvisorBot] = useState<'idle' | 'sent' | 'fail'>('idle')
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
@@ -273,14 +338,28 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const toolsSymbolRef = useRef<string | null>(null)
   const jewelSentRef = useRef<Set<string>>(new Set())
 
-  const tallChart = chartExpanded || phoneLandscape
-  const chartHeight = paneHeight(chartExpanded, phoneLandscape, viewportH)
+  const [fillH, setFillH] = useState(CHART_HEIGHT)
+  const [hostW, setHostW] = useState(() =>
+    typeof window !== 'undefined'
+      ? Math.round(window.visualViewport?.width ?? window.innerWidth)
+      : 390
+  )
+  const tallChart = chartExpanded || phoneLandscape || fillParent
+  const inDrawer = !fillParent
+  const denseUi = hostW < 560
+  const chartHeight =
+    fillParent && !chartExpanded
+      ? fillH
+      : paneHeight(chartExpanded, phoneLandscape, viewportH, inDrawer)
   chartHeightRef.current = chartHeight
+  const storyRightOffset = denseUi ? 14 : tallChart ? 22 : 18
 
   useEffect(() => {
     const sync = () => {
       const h = window.visualViewport?.height ?? window.innerHeight
+      const w = window.visualViewport?.width ?? window.innerWidth
       setViewportH(h)
+      setHostW(Math.round(w))
       setPhoneLandscape(isPhoneLandscapeNow())
     }
     sync()
@@ -293,6 +372,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       window.visualViewport?.removeEventListener('resize', sync)
     }
   }, [])
+
+  useEffect(() => {
+    const el = chartShellRef.current
+    if (!el) return
+    const apply = () => {
+      const w = Math.floor(el.clientWidth)
+      const h = Math.floor(el.clientHeight)
+      if (w >= 80) setHostW(w)
+      if (fillParent && !chartExpanded && h >= 80) setFillH(h)
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [fillParent, chartExpanded, chartReady])
 
   useEffect(() => {
     if (!chartExpanded) return
@@ -337,6 +431,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       host.style.cssText =
         'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;background:#0c0e12;padding-top:env(safe-area-inset-top);'
       document.body.appendChild(host)
+    } else if (fillParent) {
+      host.style.cssText =
+        'position:relative;display:flex;flex-direction:column;width:100%;height:100%;flex:1;min-height:0;'
+      slot.appendChild(host)
     } else {
       host.style.cssText = 'position:relative;display:block;width:100%;'
       slot.appendChild(host)
@@ -345,7 +443,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       resizeLiveChart()
       window.requestAnimationFrame(resizeLiveChart)
     })
-  }, [chartExpanded, expandHost, resizeLiveChart])
+  }, [chartExpanded, fillParent, expandHost, resizeLiveChart])
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -358,13 +456,22 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           vertTouchDrag: true,
         },
         crosshair: { mode: CrosshairMode.Magnet },
-        timeScale: { rightOffset: tallChart ? 16 : 12 },
+        layout: { fontSize: denseUi ? 12 : 11 },
+        timeScale: { rightOffset: storyRightOffset },
       })
     } catch {
       /* ignore */
     }
     resizeLiveChart()
-  }, [chartHeight, tallChart, chartExpanded, resizeLiveChart])
+  }, [
+    chartHeight,
+    tallChart,
+    chartExpanded,
+    fillParent,
+    denseUi,
+    storyRightOffset,
+    resizeLiveChart,
+  ])
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
@@ -416,10 +523,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const fearGreedValue = useAppStore((s) => s.newsIntel.fearGreed?.value ?? null)
   const isBtcPair = baseSym === 'BTC' || baseSym === 'XBT'
 
-  const indicators = useChartIndicators(candles, chartPreferences.indicators)
+  const indicators = useChartIndicators(
+    candles,
+    cleanMode ? CLEAN_OFF_INDICATORS : chartPreferences.indicators
+  )
   const { priceLevels: basePriceLevels } = useChartZones(
     candles,
-    chartPreferences.zones
+    cleanMode
+      ? {
+          ...chartPreferences.zones,
+          fibonacci: false,
+          dailyLevels: false,
+          poc: false,
+          valueArea: false,
+        }
+      : chartPreferences.zones
   )
 
   const lastCandleTs =
@@ -672,11 +790,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     [candles, currentPrice, structureRead?.preferredSide]
   )
 
-  const liquidityZones = useMemo((): LiquidityZone[] => {
-    const visibleEnd =
+  const candidateZones = useMemo((): LiquidityZone[] => {
+    const lastTs =
       candles.length > 0
-        ? ((Math.floor(candles[candles.length - 1][0] / 1000) + 86400 * 4) as Time)
-        : ((Date.now() / 1000 + 86400) as Time)
+        ? Math.floor(candles[candles.length - 1][0] / 1000)
+        : Math.floor(Date.now() / 1000)
+    const visibleEnd = lastTs as Time
 
     const zones: LiquidityZone[] = []
 
@@ -720,27 +839,6 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
-    const visibleStart =
-      candles.length > 0
-        ? (Math.floor(candles[0][0] / 1000) as Time)
-        : ((Date.now() / 1000) as Time)
-
-    for (const tf of fibTfs) {
-      const fib = fibMaps[tf]
-      if (!fib) continue
-      const band = fib.chartZones.find(
-        (z) => (z.id ?? '').includes('ext_141') || (z.id ?? '').includes('141')
-      )
-      if (!band) continue
-      zones.push({
-        ...band,
-        id: `fib141_${tf}`,
-        startTime: visibleStart,
-        endTime: visibleEnd,
-        label: `141 ${tf}`,
-      })
-    }
-
     if (zonesMode && foundChartZones.length) {
       zones.push(...foundChartZones)
     }
@@ -751,44 +849,62 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     candles,
     chartStructure,
     showSrZones,
-    fibTfs,
-    fibMaps,
     zonesMode,
     foundChartZones,
     liveZones,
   ])
 
   const priceLevels = useMemo(() => {
-    const colors: Record<string, string> = {
-      '1h': 'rgba(251, 191, 36, 0.75)',
-      '4h': 'rgba(34, 211, 238, 0.75)',
-      '1d': 'rgba(167, 139, 250, 0.75)',
+    const retrace = new Set([0.236, 0.382, 0.5, 0.618, 0.786])
+    const autoTf =
+      timeframe === '1h' || timeframe === '4h' || timeframe === '1d' ? timeframe : null
+    const tfs = new Set(fibTfs)
+    if (autoTf && !cleanMode) tfs.add(autoTf)
+    if (autoTf && cleanMode && fibTfs.size === 0) tfs.add(autoTf)
+
+    const extColors: Record<string, string> = {
+      '1h': 'rgba(251, 191, 36, 0.55)',
+      '4h': 'rgba(34, 211, 238, 0.55)',
+      '1d': 'rgba(167, 139, 250, 0.55)',
     }
     const out: typeof basePriceLevels = []
-    for (const tf of fibTfs) {
+    for (const tf of tfs) {
       const fib = fibMaps[tf]
-      if (!fib?.price141) continue
-      out.push({
-        id: `gfib_${tf}_141`,
-        type: 'FIB_OTE',
-        price: fib.price141,
-        label: '',
-        color: colors[tf] ?? 'rgba(251, 191, 36, 0.6)',
-        lineStyle: 2,
-      })
-      if (fib.price161 && fibTfs.size <= 2) {
-        out.push({
-          id: `gfib_${tf}_161`,
-          type: 'FIB_OTE',
-          price: fib.price161,
-          label: '',
-          color: colors[tf] ?? 'rgba(251, 191, 36, 0.4)',
-          lineStyle: 3,
-        })
+      if (!fib?.levels?.length) continue
+      const extra = fibTfs.has(tf)
+      for (const lv of fib.levels) {
+        if (retrace.has(lv.ratio)) {
+          if (cleanMode && lv.ratio !== 0.618) continue
+          const isHalf = lv.ratio === 0.5
+          const is618 = lv.ratio === 0.618
+          out.push({
+            id: `gfib_${tf}_${lv.ratio}`,
+            type: is618 ? 'FIB_618' : 'FIB_OTE',
+            price: lv.price,
+            label: String(lv.ratio),
+            color: isHalf
+              ? 'rgba(226, 232, 240, 0.42)'
+              : is618
+                ? 'rgba(251, 191, 36, 0.5)'
+                : 'rgba(148, 163, 184, 0.28)',
+            lineStyle: isHalf ? 1 : 2,
+          })
+        }
+        if (extra && (lv.ratio === 1.414 || lv.ratio === 1.618)) {
+          out.push({
+            id: `gfib_${tf}_${lv.ratio}`,
+            type: 'FIB_OTE',
+            price: lv.price,
+            label: lv.ratio === 1.414 ? '1.414' : '1.618',
+            color: extColors[tf] ?? 'rgba(251, 191, 36, 0.45)',
+            lineStyle: lv.ratio === 1.414 ? 2 : 3,
+          })
+        }
       }
     }
+    if (cleanMode) return out.slice(0, 3)
     return out
-  }, [fibTfs, fibMaps, basePriceLevels])
+  }, [fibTfs, fibMaps, timeframe, basePriceLevels, cleanMode])
 
   const forecast = usePriceForecast(
     candles,
@@ -847,7 +963,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const handleZoneTap = useCallback(
     (zoneId: string) => {
-      const zone = liquidityZones.find((z) => z.id === zoneId)
+      const zone = candidateZones.find((z) => z.id === zoneId)
       if (!zone || !(currentPrice > 0)) return
       const brief = analyzeZoneTap({
         zone,
@@ -859,7 +975,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       setAdvisor(brief)
       setAdvisorBot('idle')
         try {
-        chartRef.current?.timeScale().applyOptions({ rightOffset: 18 })
+        chartRef.current?.timeScale().applyOptions({ rightOffset: storyRightOffset })
       } catch {
         /* ignore */
       }
@@ -906,7 +1022,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       })()
     },
     [
-      liquidityZones,
+      candidateZones,
       currentPrice,
       hudRead,
       timeframe,
@@ -916,6 +1032,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       flatSymbol,
       signal?.displayName,
       showAlert,
+      storyRightOffset,
     ]
   )
 
@@ -1553,6 +1670,47 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     return match?.id ?? null
   }, [selectedSetupId, selectedSetup, foundZones])
 
+  const chartAtr = useMemo(
+    () => calculateAtr(candles, 14) ?? Math.max(currentPrice * 0.004, 1e-8),
+    [candles, currentPrice]
+  )
+
+  const chartStory = useMemo(
+    () =>
+      buildChartStory({
+        zones: candidateZones,
+        price: currentPrice,
+        atr: chartAtr,
+        board: liveZones,
+        structure: hudRead,
+        setup: selectedSetup,
+        focusId: advisor?.zoneId ?? highlightedZoneId ?? null,
+        launchId: actionPick.launchId,
+        barSeconds: timeframeBarSeconds(timeframe),
+        onlyStrong: cleanMode || onlyStrong,
+        candles,
+      }),
+    [
+      candidateZones,
+      currentPrice,
+      chartAtr,
+      liveZones,
+      hudRead,
+      selectedSetup,
+      advisor?.zoneId,
+      highlightedZoneId,
+      actionPick.launchId,
+      timeframe,
+      onlyStrong,
+      cleanMode,
+      candles,
+    ]
+  )
+
+  const overlayZones =
+    cleanMode || onlyStrong ? chartStory.displayZones : candidateZones
+  const tapZones = cleanMode || onlyStrong ? overlayZones : candidateZones
+
   useEffect(() => {
     if (!selectedSetup?.chartPath || !forecast) return
     if (
@@ -1654,7 +1812,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       layout: {
         background: { color: '#0c0e12' },
         textColor: 'rgba(220, 230, 240, 0.55)',
-        fontSize: 11,
+        fontSize: denseUi ? 12 : 11,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       },
       grid: {
@@ -1680,7 +1838,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 12,
+        rightOffset: denseUi ? 14 : 18,
         barSpacing: 8,
         minBarSpacing: 2,
         lockVisibleTimeRangeOnResize: false,
@@ -1852,6 +2010,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       return
     }
     try {
+      if (cleanMode) {
+        series.setMarkers([])
+        return
+      }
       const times = lwcData.map((c) => c.time as number)
       const mapped = markersForChart(structureRead, times)
       const markers: SeriesMarker<Time>[] = mapped.map((m) => ({
@@ -1865,7 +2027,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     } catch (err) {
       logger.warn('structure markers failed', err)
     }
-  }, [structureRead, lwcData, chartReady])
+  }, [structureRead, lwcData, chartReady, cleanMode])
 
   const updateLineSeries = useCallback(() => {
     const chart = chartRef.current
@@ -1965,57 +2127,59 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       }
     }
 
-    // Fib 141 — price on the right axis only, no letter tags
+    // Fib retrace / 141 — thin lines + axis labels (0.5, 0.618), not fat boxes
     for (const level of priceLevels) {
-      addLine(level.price, level.color, '', {
+      addLine(level.price, level.color, level.label || '', {
         lineStyle: level.lineStyle ?? 2,
         lineWidth: 1,
         axisLabel: true,
       })
     }
 
-    if (showSrZones) {
-      const bands = liquidityZones.filter((z) => {
-        const id = z.id ?? ''
-        return id.startsWith('cong_') || id.startsWith('sr_')
-      })
-      for (const z of bands) {
-        const color =
-          z.type === 'SSL'
-            ? 'rgba(45, 212, 191, 0.6)'
-            : z.type === 'BSL'
-              ? 'rgba(251, 113, 133, 0.6)'
-              : 'rgba(244, 114, 182, 0.55)'
-        addLine(z.top, color, '', {
-          lineStyle: 2,
-          lineWidth: 1,
-          axisLabel: true,
-        })
-        addLine(z.bottom, color, '', {
-          lineStyle: 2,
-          lineWidth: 1,
-          axisLabel: true,
-        })
-      }
-    }
-
-    const focusZoneId = advisor?.zoneId ?? highlightedZoneId ?? actionPick.launchId
-    const focusZone = focusZoneId
-      ? liquidityZones.find((z) => z.id === focusZoneId)
-      : null
+    const focusZone = chartStory.primary
     if (focusZone && focusZone.top !== focusZone.bottom) {
       const up = focusZone.side !== 'BEARISH'
       const color = up ? 'rgba(45, 212, 191, 0.95)' : 'rgba(251, 113, 133, 0.95)'
       addLine(focusZone.top, color, '', {
         lineStyle: 0,
-        lineWidth: 2,
+        lineWidth: 1,
         axisLabel: true,
       })
       addLine(focusZone.bottom, color, '', {
         lineStyle: 0,
-        lineWidth: 2,
+        lineWidth: 1,
         axisLabel: true,
       })
+    }
+
+    if (!cleanMode && onlyStrong && liveZones?.reactions && focusZone) {
+      const primaryRole =
+        focusZone.side === 'BULLISH'
+          ? 'SUPPORT'
+          : focusZone.side === 'BEARISH'
+            ? 'RESISTANCE'
+            : null
+      const opp = liveZones.reactions.find(
+        (r) =>
+          r.zone.id !== focusZone.id &&
+          r.zone.tier !== 'WEAK' &&
+          (!primaryRole || r.zone.role !== primaryRole)
+      )
+      const lineZone =
+        opp ??
+        liveZones.reactions.find(
+          (r) => r.zone.id !== focusZone.id && r.zone.role === 'RESISTANCE'
+        )
+      if (lineZone) {
+        const resist = lineZone.zone.role === 'RESISTANCE'
+        const px = resist ? lineZone.zone.bottom : lineZone.zone.top
+        addLine(
+          px,
+          resist ? 'rgba(251, 113, 133, 0.75)' : 'rgba(45, 212, 191, 0.65)',
+          '',
+          { lineStyle: 0, lineWidth: 1, axisLabel: true }
+        )
+      }
     }
 
     // SL / TP / вход только в режиме сигнала или выбранного сетапа
@@ -2079,7 +2243,11 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     selectedSetup,
     signalMode,
     showSrZones,
-    liquidityZones,
+    overlayZones,
+    chartStory.primary,
+    liveZones,
+    onlyStrong,
+    cleanMode,
     advisor?.zoneId,
     highlightedZoneId,
     actionPick.launchId,
@@ -2206,10 +2374,10 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         return
       }
       if (price == null || !(price > 0)) return
-      const zone = hitZoneAt(liquidityZones, price)
+      const zone = hitZoneAt(tapZones, price)
       if (zone) handleZoneTap(zone.id)
     },
-    [liquidityZones, handleZoneTap]
+    [tapZones, handleZoneTap]
   )
 
   useEffect(() => {
@@ -2303,9 +2471,15 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
   const applyCleanMode = (enabled: boolean) => {
     setCleanMode(enabled)
+    writeLsFlag('enterprise_chart_clean', enabled)
     if (enabled) {
       setActiveScenarios(new Set(['A']))
       setSessionSettings({ enabled: false })
+      setShowHints(false)
+      setShowLiqMap(false)
+      writeLsFlag('enterprise_liq_map', false)
+      setOnlyStrong(true)
+      writeLsFlag('enterprise_only_strong', true)
       setChartPreferences({
         opacity: 16,
         showLabels: false,
@@ -2320,6 +2494,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
         },
         indicators: {
           ...chartPreferences.indicators,
+          ema20: false,
           ema200: false,
           ema50: false,
           bollingerBands: false,
@@ -2327,7 +2502,17 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           macd: false,
           stochastic: false,
           atr: false,
+          volume: false,
         },
+      })
+    } else {
+      setShowHints(true)
+      setShowLiqMap(true)
+      writeLsFlag('enterprise_liq_map', true)
+      setOnlyStrong(false)
+      writeLsFlag('enterprise_only_strong', false)
+      setChartPreferences({
+        showLabels: true,
       })
     }
   }
@@ -2367,6 +2552,8 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
     signal.tp1 != null &&
     !showForecast &&
     !pathModeActive &&
+    !onlyStrong &&
+    !chartStory.future &&
     chartReady > 0 &&
     lastCandleTs > 0
 
@@ -2433,12 +2620,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   const ui = (
     <div
       className={
-        chartExpanded
+        chartExpanded || fillParent
           ? 'flex h-full min-h-0 flex-col bg-[#0c0e12]'
           : 'space-y-2'
       }
     >
-      {!chartExpanded && (
+      {!chartExpanded && !cleanMode && (
       <ProcessStrip
         symbol={symbol}
         regime={chartRegime}
@@ -2515,7 +2702,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 ? 'border border-matrix/40 bg-matrix/15 text-matrix'
                 : 'border border-hull-border text-holo/40 hover:text-holo/70'
             }`}
-            title="Чистый режим — меньше слоёв"
+            title="Чистый режим — свечи, одна зона, путь вправо. Полный — все слои."
           >
             {cleanMode ? t('chart_clean') : t('chart_full')}
           </button>
@@ -2603,6 +2790,29 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             title="Поддержка / сопротивление — ценовой диапазон (не линия)"
           >
             Зоны
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOnlyStrong((v) => {
+                const next = !v
+                try {
+                  localStorage.setItem('enterprise_only_strong', next ? '1' : '0')
+                } catch {
+                  /* ignore */
+                }
+                return next
+              })
+              haptic.impact()
+            }}
+            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+              onlyStrong
+                ? 'border border-teal-400/40 bg-teal-500/15 text-teal-200'
+                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            }`}
+            title="Только одна сильная зона входа — без стопки коробок"
+          >
+            только сильная
           </button>
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             {FIB_TF_BUTTONS.map((b) => (
@@ -2771,23 +2981,27 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       </div>
 
       <div className={`shrink-0 ${chartExpanded ? 'px-2' : ''}`}>
-      <StructureHud read={hudRead} />
+      <StructureHud
+        read={hudRead}
+        startCollapsed={cleanMode || inDrawer}
+        nowLine={chartStory.nowLine}
+      />
       </div>
-      {!chartExpanded && (
+      {!chartExpanded && !fillParent && !cleanMode && (
       <p className="px-1 font-mono text-[9px] text-white/35">
-        Двойной тап по зоне не нужен — коснитесь цветной полосы. Зона = диапазон цен, не линия.
+        Сильная зона = диапазон входа. Касание — сценарий. Вправо — куда идём.
       </p>
       )}
 
       <div
         ref={chartShellRef}
         className={`relative w-full overflow-hidden bg-[#0c0e12] ${
-          chartExpanded
+          chartExpanded || fillParent
             ? 'min-h-0 flex-1 rounded-none border-0'
             : 'rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
         }`}
         style={{
-          height: chartExpanded ? undefined : chartHeight,
+          height: chartExpanded || fillParent ? undefined : chartHeight,
           touchAction: 'none',
         }}
         onTouchStart={(e) => e.stopPropagation()}
@@ -2810,8 +3024,14 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           className="h-full w-full"
           style={{ touchAction: 'none' }}
         />
-        {lwcData.length > 0 && (
-          <div className="pointer-events-none absolute left-2 top-1.5 z-20 flex flex-wrap items-baseline gap-x-2 font-mono text-[10px] text-white/70">
+        {(lwcData.length > 0 || chartStory.nowLine) && (
+          <div className="pointer-events-none absolute left-1.5 top-1.5 z-20 flex max-w-[min(18rem,68%)] flex-col items-start gap-1">
+            {lwcData.length > 0 && (
+              <div
+                className={`flex flex-wrap items-baseline gap-x-1.5 font-mono text-white/70 ${
+                  denseUi ? 'text-[11px]' : 'text-[10px]'
+                }`}
+              >
             {(() => {
               const bar = lwcData[lwcData.length - 1]
               const pct = bar.open ? ((bar.close - bar.open) / bar.open) * 100 : 0
@@ -2821,17 +3041,21 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
               return (
                 <>
                   <span className="font-bold text-white/85">{timeframe}</span>
+                  {!denseUi && (
+                    <>
+                      <span>
+                        O <span className="text-white/90">{fmt(bar.open)}</span>
+                      </span>
+                      <span>
+                        H <span className="text-emerald-300/90">{fmt(bar.high)}</span>
+                      </span>
+                      <span>
+                        L <span className="text-rose-300/90">{fmt(bar.low)}</span>
+                      </span>
+                    </>
+                  )}
                   <span>
-                    O <span className="text-white/90">{fmt(bar.open)}</span>
-                  </span>
-                  <span>
-                    H <span className="text-emerald-300/90">{fmt(bar.high)}</span>
-                  </span>
-                  <span>
-                    L <span className="text-rose-300/90">{fmt(bar.low)}</span>
-                  </span>
-                  <span>
-                    C{' '}
+                    {denseUi ? '' : 'C '}
                     <span className={up ? 'text-emerald-300' : 'text-rose-300'}>
                       {fmt(bar.close)}
                     </span>
@@ -2843,6 +3067,18 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
                 </>
               )
             })()}
+              </div>
+            )}
+            {chartReady > 0 && chartStory.nowLine && (
+              <NowStoryHud
+                line={chartStory.nowLine}
+                kind={chartStory.nowKind}
+                side={chartStory.side}
+                oddsPct={chartStory.odds?.pct ?? null}
+                fact={chartStory.odds?.fact ?? null}
+                dense={denseUi}
+              />
+            )}
           </div>
         )}
         {chartReady > 0 && showSessions && (
@@ -2857,19 +3093,41 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             timeframe={timeframe}
           />
         )}
-        {liquidityZones.length > 0 && chartReady > 0 && (
+        {overlayZones.length > 0 && chartReady > 0 && (
           <ChartOverlay
             chart={chartRef.current}
             series={candleRef.current}
-            zones={liquidityZones}
+            zones={overlayZones}
             containerRef={containerRef}
-            opacity={24}
-            showLabels
-            highlightId={advisor?.zoneId ?? highlightedZoneId ?? actionPick.launchId}
-            quiet
+            opacity={cleanMode ? 20 : 24}
+            showLabels={!cleanMode && chartPreferences.showLabels}
+            highlightId={
+              advisor?.zoneId ??
+              highlightedZoneId ??
+              chartStory.primary?.id ??
+              actionPick.launchId
+            }
+            quiet={cleanMode}
+            onlyStrong={cleanMode || onlyStrong}
           />
         )}
-        {chartReady > 0 && lastCandleTs > 0 && !pathModeActive && !advisor && (
+        {chartReady > 0 &&
+          lastCandleTs > 0 &&
+          chartStory.future &&
+          !advisor &&
+          !showForecast && (
+          <StoryPathOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            lastCandleTs={lastCandleTs}
+            barSeconds={timeframeBarSeconds(timeframe)}
+            future={chartStory.future}
+            lastPrice={currentPrice}
+            arrows={chartStory.arrows}
+          />
+        )}
+        {chartReady > 0 && lastCandleTs > 0 && !cleanMode && !pathModeActive && !advisor && !onlyStrong && (
           <StructureOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -2912,16 +3170,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           onClick={() => {
             setShowLiqMap((v) => {
               const next = !v
-              try {
-                localStorage.setItem('enterprise_liq_map', next ? '1' : '0')
-              } catch {
-                /* ignore */
-              }
+              writeLsFlag('enterprise_liq_map', next)
               return next
             })
             haptic.impact()
           }}
-          className={`absolute bottom-9 left-2 z-30 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-md transition-colors ${
+          className={`absolute bottom-8 left-1.5 z-30 inline-flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-md transition-colors ${
             showLiqMap
               ? 'border-emerald-400/40 bg-emerald-950/80 text-emerald-200'
               : 'border-white/15 bg-black/65 text-white/55 hover:text-white/85'
@@ -2948,7 +3202,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
             priceCeil={candlePriceSpan.ceil}
           />
         )}
-        {chartReady > 0 &&  (
+        {chartReady > 0 && !cleanMode && (
           <SequenceProcessOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3011,6 +3265,7 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
           />
         )}
         {pathModeActive &&
+          !onlyStrong &&
           pickedSetups.some((s) => s.chartPath?.length) &&
           chartReady > 0 && (
           <ZonePathOverlay
@@ -3029,11 +3284,13 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
 
       {!chartExpanded && (
         <>
+      {!cleanMode && (
       <DeltaSparkline
         symbol={symbol}
         refreshKey={processRefreshKey}
         height={32}
       />
+      )}
 
       {chartPreferences.indicators.volume &&
         indicators.volume.length > 0 && (
@@ -3151,8 +3408,12 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
   )
 
   return (
-    <>
-      {chartExpanded && (
+    <div
+      className={
+        fillParent ? 'flex h-full min-h-0 w-full flex-col' : undefined
+      }
+    >
+      {chartExpanded && !fillParent && (
         <div
           className="flex h-[440px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#0c0e12] font-mono text-[10px] text-white/35"
           aria-hidden
@@ -3162,10 +3423,16 @@ const LiveChart = ({ symbol, flatSymbol, signal = null }: LiveChartProps) => {
       )}
       <div
         ref={expandSlotRef}
-        className={chartExpanded ? 'hidden' : 'relative w-full'}
+        className={
+          chartExpanded
+            ? 'hidden'
+            : fillParent
+              ? 'relative flex min-h-0 w-full flex-1 flex-col'
+              : 'relative w-full'
+        }
       />
       {expandHost ? createPortal(ui, expandHost) : ui}
-    </>
+    </div>
   )
 }
 

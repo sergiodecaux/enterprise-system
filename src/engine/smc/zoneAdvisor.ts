@@ -68,6 +68,7 @@ export function hitZoneAt(
   if (!hits.length) return null
   hits.sort((a, b) => {
     const rank = (z: LiquidityZone) => {
+      if (z.storyRole === 'PRIMARY') return -1
       if (z.type === 'FVG') return 0
       if (z.type === 'ORDER_BLOCK') return 1
       if (z.contextHint) return 2

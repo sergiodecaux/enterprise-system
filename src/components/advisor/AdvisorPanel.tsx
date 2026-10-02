@@ -4,6 +4,7 @@ import type { AdvisorMode } from '../../api/advisor'
 import { useAdvisorChat } from '../../hooks/useAdvisorChat'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import { useAppStore } from '../../store/useAppStore'
+import { useDesktopLayout } from '../../hooks/useDesktopLayout'
 import AdvisorMessage from './AdvisorMessage'
 import AdvisorSettings from './AdvisorSettings'
 
@@ -38,6 +39,7 @@ const QUICK_ACTIONS: QuickAction[] = [
 ]
 
 const AdvisorPanel = () => {
+  const isDesktop = useDesktopLayout()
   const open = useAdvisorStore((s) => s.open)
   const setOpen = useAdvisorStore((s) => s.setOpen)
   const messages = useAdvisorStore((s) => s.messages)
@@ -76,7 +78,7 @@ const AdvisorPanel = () => {
 
   return (
     <>
-      {!open && (
+      {!open && !isDesktop && (
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -90,7 +92,13 @@ const AdvisorPanel = () => {
       )}
 
       {open && (
-        <div className="fixed inset-0 z-[70] flex flex-col bg-space/95 backdrop-blur-sm sm:inset-auto sm:bottom-4 sm:right-4 sm:h-[80vh] sm:w-[420px] sm:rounded-2xl sm:border sm:border-hull-border">
+        <div
+          className={
+            isDesktop
+              ? 'fixed bottom-0 right-0 top-14 z-[70] flex w-[400px] flex-col border-l border-hull-border bg-space'
+              : 'fixed inset-0 z-[70] flex flex-col bg-space/95 backdrop-blur-sm sm:inset-auto sm:bottom-4 sm:right-4 sm:h-[80vh] sm:w-[420px] sm:rounded-2xl sm:border sm:border-hull-border'
+          }
+        >
           <div className="flex flex-shrink-0 items-center justify-between border-b border-hull-border/60 px-4 py-3">
             <div className="flex items-center gap-2">
               <Bot className="h-5 w-5 text-matrix" />

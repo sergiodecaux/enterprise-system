@@ -65,6 +65,8 @@ export interface LiquidityZone {
    * "удерж ↑ · слом < 1.23" / "удерж ↓ · слом > 4.56"
    */
   contextHint?: string
+  /** Chart story rank: one filled take-from vs faint context */
+  storyRole?: 'PRIMARY' | 'SECONDARY'
 }
 
 // ============================================================================

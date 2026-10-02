@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
+import { useDesktopLayout } from '../../hooks/useDesktopLayout'
 import ProbabilityGauge from './ProbabilityGauge'
 import LiveChart from './LiveChart'
 import OrderBookPanel from './OrderBookPanel'
@@ -391,6 +392,7 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
 const TacticalDrawer = () => {
   const { t } = useTranslation()
   const { haptic } = useTelegramWebApp()
+  const isDesktop = useDesktopLayout()
   const selectedCoin = useAppStore((state) => state.selectedCoin)
   const isDrawerOpen = useAppStore((state) => state.isDrawerOpen)
   const signals = useAppStore((state) => state.signals)
@@ -450,7 +452,9 @@ const TacticalDrawer = () => {
     signal?.ote?.isActive
   )
 
-  useBuyerAggression(isDrawerOpen && signal ? signal.internalSymbol : null)
+  const deskLive = isDesktop || isDrawerOpen
+
+  useBuyerAggression(deskLive && signal ? signal.internalSymbol : null)
 
   const {
     alignment: mtfAlignment,
@@ -462,7 +466,7 @@ const TacticalDrawer = () => {
   } = useMultiTFAnalysis(
     signal?.internalSymbol ?? '',
     signal?.price ?? 0,
-    isDrawerOpen && !!signal
+    deskLive && !!signal
   )
 
   const marketBrief = useMemo(() => {
@@ -487,10 +491,10 @@ const TacticalDrawer = () => {
   const journalVersion = useAppStore((s) => s.journalVersion)
 
   useEffect(() => {
-    if (isDrawerOpen && signal) {
+    if (isDrawerOpen && signal && !isDesktop) {
       haptic.impact()
     }
-  }, [isDrawerOpen, signal, haptic])
+  }, [isDrawerOpen, signal, haptic, isDesktop])
 
   useEffect(() => {
     if (signal) pushSignalSnapshot(signal)
@@ -520,7 +524,17 @@ const TacticalDrawer = () => {
     }
   }
 
-  if (!signal) return null
+  if (!signal) {
+    if (!isDesktop) return null
+    return (
+      <div className="flex h-full min-h-0 flex-col items-center justify-center bg-space px-8 text-center">
+        <p className="font-mono text-sm text-holo/55">Выберите монету слева</p>
+        <p className="mt-2 max-w-sm font-mono text-xs leading-relaxed text-holo/30">
+          График, стакан и разбор откроются здесь — широкий терминал, без нижнего окна.
+        </p>
+      </div>
+    )
+  }
 
   const probability = signal.probabilityPct
   const direction = signal.direction
@@ -552,30 +566,46 @@ const TacticalDrawer = () => {
 
   return (
     <>
-      <div
-        className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${
-          isDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-        onClick={handleBackdropClick}
-      />
+      {!isDesktop && (
+        <div
+          className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
+            isDrawerOpen
+              ? 'pointer-events-auto opacity-100'
+              : 'pointer-events-none opacity-0'
+          }`}
+          onClick={handleBackdropClick}
+        />
+      )}
 
       <div
         ref={drawerRef}
-        className={`fixed bottom-0 left-0 right-0 z-50 flex w-full max-h-[85vh] flex-col overflow-hidden rounded-t-2xl border-t border-hull-border bg-space transition-transform duration-400 ease-out ${
-          isDrawerOpen
-            ? 'translate-y-0 opacity-100'
-            : 'translate-y-full opacity-0 pointer-events-none'
-        }`}
-        style={{
-          transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
+        className={
+          isDesktop
+            ? 'flex h-full min-h-0 w-full flex-col overflow-hidden bg-space'
+            : `fixed bottom-0 left-0 right-0 z-50 flex w-full max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border-t border-hull-border bg-space transition-transform duration-400 ease-out ${
+                isDrawerOpen
+                  ? 'translate-y-0 opacity-100'
+                  : 'pointer-events-none translate-y-full opacity-0'
+              }`
+        }
+        style={
+          isDesktop
+            ? undefined
+            : {
+                maxHeight: '85dvh',
+                paddingBottom: 'env(safe-area-inset-bottom)',
+                transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)',
+              }
+        }
       >
         <div className="flex-shrink-0">
-          <div className="my-3 flex justify-center">
-            <div className="h-1 w-12 rounded-full bg-hull-border" />
-          </div>
+          {!isDesktop && (
+            <div className="my-2 flex justify-center">
+              <div className="h-1 w-12 rounded-full bg-hull-border" />
+            </div>
+          )}
 
-          <div className="border-b border-hull-border/50 px-4 pb-3">
+          <div className="border-b border-hull-border/50 px-4 pb-2">
             <div className="mb-2 flex items-start justify-between">
               <div className="flex-1">
                 <h2 className="mb-1 font-mono text-2xl font-bold text-holo">
@@ -633,10 +663,10 @@ const TacticalDrawer = () => {
             whaleState.alerts.filter((a) => a.isActive && !a.isExpired).length >
               0 && (
               <div className="border-b border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-1.5">
-                <div className="max-h-[4.5rem] space-y-1 overflow-y-auto overscroll-contain">
+              <div className="max-h-[2.4rem] space-y-1 overflow-y-auto overscroll-contain">
                   {whaleState.alerts
                     .filter((a) => a.isActive && !a.isExpired)
-                    .slice(0, 2)
+                    .slice(0, isDesktop ? 2 : 1)
                     .map((alert) => (
                       <WhaleAlertBanner key={alert.id} alert={alert} />
                     ))}
@@ -646,9 +676,110 @@ const TacticalDrawer = () => {
         </div>
 
         <div
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4"
-          style={{ WebkitOverflowScrolling: 'touch' }}
+          className={
+            isDesktop
+              ? 'grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,400px)]'
+              : 'min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4'
+          }
+          style={
+            isDesktop ? undefined : { WebkitOverflowScrolling: 'touch' }
+          }
         >
+          {isDesktop && (
+            <div className="flex min-h-0 min-w-0 flex-col border-r border-hull-border">
+              <div className="shrink-0 px-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic.impact()
+                    requestAnimationFrame(() => {
+                      document
+                        .getElementById('live-signal-cta')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                      window.setTimeout(() => {
+                        document.getElementById('live-signal-cta')?.click()
+                      }, 280)
+                    })
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-3 text-left"
+                >
+                  <div>
+                    <div className="font-mono text-[12px] font-bold uppercase tracking-wider text-amber-100">
+                      Найти сигнал
+                    </div>
+                    <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
+                      Самое вероятное движение сейчас · зоны · SMC
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
+                    GO
+                  </span>
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 p-2">
+                <LiveChart
+                  symbol={signal.internalSymbol}
+                  flatSymbol={signal.symbol}
+                  signal={signal}
+                  fillParent
+                />
+              </div>
+              <div className="max-h-[26vh] shrink-0 overflow-y-auto border-t border-hull-border px-3 py-2">
+                <CollapsibleSection
+                  title="Стакан"
+                  subtitle="уровни · стены · imbalance"
+                  defaultOpen
+                >
+                  <OrderBookPanel symbol={signal.internalSymbol} />
+                </CollapsibleSection>
+              </div>
+            </div>
+          )}
+          <div
+            className={
+              isDesktop
+                ? 'min-h-0 space-y-3 overflow-y-auto overscroll-contain px-3 py-3'
+                : 'contents'
+            }
+          >
+          {!isDesktop && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  haptic.impact()
+                  requestAnimationFrame(() => {
+                    document
+                      .getElementById('live-signal-cta')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    window.setTimeout(() => {
+                      document.getElementById('live-signal-cta')?.click()
+                    }, 280)
+                  })
+                }}
+                className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 text-left"
+              >
+                <div>
+                  <div className="font-mono text-[12px] font-bold uppercase tracking-wider text-amber-100">
+                    Найти сигнал
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
+                    Самое вероятное движение сейчас · зоны · SMC
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
+                  GO
+                </span>
+              </button>
+
+              <LiveChart
+                symbol={signal.internalSymbol}
+                flatSymbol={signal.symbol}
+                signal={signal}
+              />
+            </>
+          )}
+
           {(marketBrief || briefLoading) && (
             <CollapsibleSection
               title="Бриф"
@@ -657,6 +788,7 @@ const TacticalDrawer = () => {
                   ? 'загрузка…'
                   : marketBrief?.nowHeadline?.slice(0, 28)
               }
+              defaultOpen={isDesktop}
             >
               {marketBrief && (
                 <MarketBriefPanel brief={marketBrief} loading={briefLoading} />
@@ -668,6 +800,7 @@ const TacticalDrawer = () => {
             <CollapsibleSection
               title="Сводка"
               subtitle={`${compositeAnalysis.marketPhase} · ${compositeAnalysis.overallScore}`}
+              defaultOpen={isDesktop}
             >
               <CompositeAnalysisPanel analysis={compositeAnalysis} />
             </CollapsibleSection>
@@ -676,7 +809,7 @@ const TacticalDrawer = () => {
           <CollapsibleSection
             title="Анализ+"
             subtitle="Score · Hist WR · gate · playbook"
-            defaultOpen
+            defaultOpen={isDesktop}
           >
             <CoinAnalysisUpgradePanel
               signal={signal}
@@ -707,7 +840,7 @@ const TacticalDrawer = () => {
             </CollapsibleSection>
           )}
 
-          <CollapsibleSection title="Метрики" defaultOpen>
+          <CollapsibleSection title="Метрики" defaultOpen={isDesktop}>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-hull border border-hull-border rounded-lg p-3">
               <div className="text-xs text-holo/40 font-mono uppercase mb-1">
@@ -831,6 +964,7 @@ const TacticalDrawer = () => {
             ]
               .filter(Boolean)
               .join(' · ')}
+            defaultOpen={isDesktop}
           >
             <div className="space-y-3">
               {mmIntent && <MmIntentPanel intent={mmIntent} />}
@@ -883,50 +1017,19 @@ const TacticalDrawer = () => {
             </div>
           </CollapsibleSection>
 
-          <button
-            type="button"
-            onClick={() => {
-              haptic.impact()
-              requestAnimationFrame(() => {
-                document
-                  .getElementById('live-signal-cta')
-                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                window.setTimeout(() => {
-                  document.getElementById('live-signal-cta')?.click()
-                }, 280)
-              })
-            }}
-            className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-3 text-left"
-          >
-            <div>
-              <div className="font-mono text-[12px] font-bold uppercase tracking-wider text-amber-100">
-                Найти сигнал
-              </div>
-              <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
-                Самое вероятное движение сейчас · зоны · SMC
-              </div>
-            </div>
-            <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
-              GO
-            </span>
-          </button>
-
-          <LiveChart
-            symbol={signal.internalSymbol}
-            flatSymbol={signal.symbol}
-            signal={signal}
-          />
-
+          {!isDesktop && (
           <CollapsibleSection
             title="Стакан"
             subtitle="уровни · стены · imbalance"
           >
             <OrderBookPanel symbol={signal.internalSymbol} />
           </CollapsibleSection>
+          )}
 
           <CollapsibleSection title="Лог">
             <DataLog signal={signal} />
           </CollapsibleSection>
+          </div>
         </div>
       </div>
     </>

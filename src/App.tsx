@@ -11,6 +11,7 @@ import { useRadar141Screener } from './hooks/useRadar141Screener'
 import { useTelegramWebApp } from './hooks/useTelegramWebApp'
 import { useTelegramAlerts } from './hooks/useTelegramAlerts'
 import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
+import { useDesktopLayout } from './hooks/useDesktopLayout'
 import { useAppStore } from './store/useAppStore'
 
 const RadarView = lazy(() => import('./components/radar/RadarView'))
@@ -20,6 +21,41 @@ const TacticalDrawer = lazy(() => import('./components/tactical/TacticalDrawer')
 
 type ActiveTab = 'sniper' | 'trades' | 'radar' | 'signals'
 
+function TabBar({
+  activeTab,
+  onSelect,
+}: {
+  activeTab: ActiveTab
+  onSelect: (tab: ActiveTab) => void
+}) {
+  const tabs: { id: ActiveTab; label: string; icon: typeof Target; active: string }[] = [
+    { id: 'sniper', label: 'Снайпер', icon: Target, active: 'border-matrix text-matrix' },
+    { id: 'trades', label: 'Сделки', icon: Activity, active: 'border-matrix text-matrix' },
+    { id: 'radar', label: 'Радар', icon: RadarIcon, active: 'border-matrix text-matrix' },
+    { id: 'signals', label: 'Сигналы', icon: Zap, active: 'border-amber-400 text-amber-300' },
+  ]
+
+  return (
+    <div className="flex">
+      {tabs.map(({ id, label, icon: Icon, active }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onSelect(id)}
+          className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
+            activeTab === id
+              ? active
+              : 'border-transparent text-holo/40 hover:text-holo/70'
+          }`}
+        >
+          <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function App() {
   useTelegramWebApp()
   useTelegramAlerts()
@@ -27,6 +63,7 @@ function App() {
   useNewsIntelligence()
   useSignalJournalResolver()
 
+  const isDesktop = useDesktopLayout()
   const [activeTab, setActiveTab] = useState<ActiveTab>('sniper')
   const [radarArmed, setRadarArmed] = useState(false)
   const [drawerMounted, setDrawerMounted] = useState(false)
@@ -40,89 +77,63 @@ function App() {
     newsSettings.enabled && newsSettings.showStrip && newsItems.length > 0
 
   useEffect(() => {
-    if (isDrawerOpen) setDrawerMounted(true)
-  }, [isDrawerOpen])
+    if (isDrawerOpen || isDesktop) setDrawerMounted(true)
+  }, [isDrawerOpen, isDesktop])
 
   const selectTab = (tab: ActiveTab) => {
     setActiveTab(tab)
     if (tab === 'radar') setRadarArmed(true)
   }
 
+  const views = (
+    <>
+      {showStrip && <NewsStrip items={newsItems} />}
+      {activeTab === 'sniper' && <SniperView />}
+      <Suspense fallback={null}>
+        {activeTab === 'trades' && <TradesView />}
+        {activeTab === 'radar' && <RadarView />}
+        {activeTab === 'signals' && <SignalsView />}
+      </Suspense>
+    </>
+  )
+
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-space font-mono text-holo">
+      <div
+        className={`bg-space font-mono text-holo ${
+          isDesktop ? 'h-dvh overflow-hidden' : 'min-h-screen'
+        }`}
+      >
         <Header />
 
-        <div className="sticky top-14 z-20 border-b border-hull-border bg-space/95 backdrop-blur-sm">
-          <div className="flex">
-            <button
-              type="button"
-              onClick={() => selectTab('sniper')}
-              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
-                activeTab === 'sniper'
-                  ? 'border-matrix text-matrix'
-                  : 'border-transparent text-holo/40 hover:text-holo/70'
-              }`}
-            >
-              <Target className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              Снайпер
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectTab('trades')}
-              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
-                activeTab === 'trades'
-                  ? 'border-matrix text-matrix'
-                  : 'border-transparent text-holo/40 hover:text-holo/70'
-              }`}
-            >
-              <Activity className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              Сделки
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectTab('radar')}
-              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
-                activeTab === 'radar'
-                  ? 'border-matrix text-matrix'
-                  : 'border-transparent text-holo/40 hover:text-holo/70'
-              }`}
-            >
-              <RadarIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              Радар
-            </button>
-
-            <button
-              type="button"
-              onClick={() => selectTab('signals')}
-              className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2.5 font-mono text-[11px] font-bold uppercase transition-colors sm:gap-2 sm:py-3 sm:text-sm ${
-                activeTab === 'signals'
-                  ? 'border-amber-400 text-amber-300'
-                  : 'border-transparent text-holo/40 hover:text-holo/70'
-              }`}
-            >
-              <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              Сигналы
-            </button>
+        {isDesktop ? (
+          <div className="flex h-full pt-14">
+            <div className="flex w-[min(420px,36vw)] min-w-[300px] max-w-[460px] flex-col border-r border-hull-border">
+              <div className="shrink-0 border-b border-hull-border bg-space/95">
+                <TabBar activeTab={activeTab} onSelect={selectTab} />
+              </div>
+              <main className="min-h-0 flex-1 overflow-y-auto">{views}</main>
+            </div>
+            <div className="min-h-0 min-w-0 flex-1">
+              {drawerMounted && (
+                <Suspense fallback={null}>
+                  <TacticalDrawer />
+                </Suspense>
+              )}
+            </div>
           </div>
-        </div>
-
-        <main className="px-0 pb-20">
-          {showStrip && <NewsStrip items={newsItems} />}
-          {activeTab === 'sniper' && <SniperView />}
-          <Suspense fallback={null}>
-            {activeTab === 'trades' && <TradesView />}
-            {activeTab === 'radar' && <RadarView />}
-            {activeTab === 'signals' && <SignalsView />}
-          </Suspense>
-        </main>
-
-        {drawerMounted && (
-          <Suspense fallback={null}>
-            <TacticalDrawer />
-          </Suspense>
+        ) : (
+          <>
+            <div className="sticky top-14 z-20 border-b border-hull-border bg-space/95 backdrop-blur-sm">
+              <TabBar activeTab={activeTab} onSelect={selectTab} />
+            </div>
+            <main className="px-0 pb-20">{views}</main>
+            {drawerMounted && (
+              <Suspense fallback={null}>
+                <TacticalDrawer />
+              </Suspense>
+            )}
+          </>
         )}
 
         <AdvisorPanel />

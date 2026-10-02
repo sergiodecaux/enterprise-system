@@ -18,6 +18,9 @@ const Header = () => {
               ENTERPRISE
             </span>
             <span className="font-mono text-xs text-holo/60">SYSTEM</span>
+            <span className="ml-2 hidden font-mono text-[10px] uppercase tracking-wider text-holo/30 desk:inline">
+              терминал
+            </span>
           </div>
         </div>
 

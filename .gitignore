@@ -28,6 +28,10 @@ scripts/.env
 .env
 .env.local
 
+# Electron Windows build
+release/
+*.exe
+
 # Android / Capacitor local build
 android/.gradle/
 android/app/build/

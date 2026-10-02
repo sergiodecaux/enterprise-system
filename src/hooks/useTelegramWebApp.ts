@@ -43,12 +43,13 @@ export const useTelegramWebApp = () => {
   const [userId, setUserId] = useState<number | null>(null)
 
   useEffect(() => {
-    const webApp = window.Telegram?.WebApp
+    let cancelled = false
+    let timer: number | null = null
 
-    if (webApp) {
+    const apply = (webApp: TelegramWebApp) => {
+      if (cancelled) return
       setIsInTelegram(true)
 
-      // Initialize WebApp only once per lifetime
       if (!isInitialized) {
         isInitialized = true
         webApp.ready()
@@ -66,10 +67,34 @@ export const useTelegramWebApp = () => {
 
       const id = webApp.initDataUnsafe?.user?.id || null
       setUserId(id)
-    } else {
-      setIsInTelegram(false)
-      setUserLanguage('en')
-      setUserId(null)
+    }
+
+    const tick = () => {
+      const webApp = window.Telegram?.WebApp
+      if (webApp) {
+        apply(webApp)
+        return true
+      }
+      return false
+    }
+
+    if (tick()) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    // telegram-web-app.js loads async from index.html — wait a few seconds
+    const started = Date.now()
+    timer = window.setInterval(() => {
+      if (tick() || Date.now() - started > 4000) {
+        if (timer != null) window.clearInterval(timer)
+      }
+    }, 50)
+
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearInterval(timer)
     }
   }, [])
 

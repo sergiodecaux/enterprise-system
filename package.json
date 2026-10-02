@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -10,7 +11,9 @@
     "preview": "vite preview",
     "backtest": "tsx scripts/runBacktest.ts",
     "android:sync": "npm run build && npx cap sync android",
-    "android:apk": "npm run build && npx cap sync android && android\\gradlew.bat -p android assembleDebug"
+    "android:apk": "npm run build && npx cap sync android && android\\gradlew.bat -p android assembleDebug",
+    "desktop": "npm run build && electron .",
+    "desktop:exe": "npm run build && electron-builder --win portable"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
@@ -37,6 +40,8 @@
     "@typescript-eslint/parser": "^6.14.0",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
@@ -45,5 +50,37 @@
     "tsx": "^4.19.2",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"
+  },
+  "build": {
+    "appId": "com.enterprise.system",
+    "productName": "Enterprise System",
+    "copyright": "Enterprise System",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "package.json",
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "EnterpriseSystem.exe"
+    }
   }
 }
