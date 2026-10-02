@@ -40,6 +40,7 @@ const SequenceProcessOverlay = ({
       if (!box) return
       const h = box.clientHeight
       const w = box.clientWidth
+      if (w < 80 || h < 40) return
       overlay.innerHTML = ''
 
       const isLong = sequence.side === 'LONG'
@@ -52,9 +53,13 @@ const SequenceProcessOverlay = ({
 
       let y: number | null = null
       if (sequence.wallPrice != null && sequence.wallPrice > 0) {
-        const yCoord = series.priceToCoordinate(sequence.wallPrice)
-        if (yCoord != null && !Number.isNaN(Number(yCoord))) {
-          y = Math.max(16, Math.min(h - 16, Number(yCoord)))
+        try {
+          const yCoord = series.priceToCoordinate(sequence.wallPrice)
+          if (yCoord != null && !Number.isNaN(Number(yCoord))) {
+            y = Math.max(16, Math.min(h - 16, Number(yCoord)))
+          }
+        } catch {
+          y = null
         }
       }
       if (y == null) {

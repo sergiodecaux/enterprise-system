@@ -68,50 +68,59 @@ const LiqHeatmapOverlay = ({
     }
 
     const redraw = () => {
-      const host = containerRef.current
-      if (!host) return
-      const w = host.clientWidth
-      const h = host.clientHeight
-      if (w < 80 || h < 40) return
-
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-        canvas.width = Math.round(w * dpr)
-        canvas.height = Math.round(h * dpr)
-        canvas.style.width = `${w}px`
-        canvas.style.height = `${h}px`
-      }
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.clearRect(0, 0, w, h)
-      ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity))
-
-      let priceScaleW = 56
       try {
-        const sw = chart.priceScale('right').width()
-        if (typeof sw === 'number' && sw > 8) priceScaleW = sw
-      } catch {
-        /* ignore */
-      }
+        const host = containerRef.current
+        if (!host) return
+        const w = host.clientWidth
+        const h = host.clientHeight
+        if (w < 80 || h < 40) return
 
-      const leftW = edgeOnly ? 0 : Math.min(78, Math.max(52, w * 0.14))
-      const stripW = edgeOnly
-        ? Math.min(22, Math.max(14, w * 0.035))
-        : Math.min(70, Math.max(48, w * 0.13))
-      const stripRight = Math.max(4, w - priceScaleW - 2)
-      const stripLeft = stripRight - stripW
-      const maxLong = model.maxLongEntry
-      const maxShort = model.maxShortEntry
-      const maxLiq = model.maxLiq
+        const dpr = Math.min(window.devicePixelRatio || 1, 2)
+        if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+          canvas.width = Math.round(w * dpr)
+          canvas.height = Math.round(h * dpr)
+          canvas.style.width = `${w}px`
+          canvas.style.height = `${h}px`
+        }
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        ctx.clearRect(0, 0, w, h)
+        ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity))
 
-      for (const bin of model.bins) {
-        const yTop = series.priceToCoordinate(bin.priceHigh)
-        const yBot = series.priceToCoordinate(bin.priceLow)
-        if (yTop == null || yBot == null) continue
-        const top = Number(yTop)
-        const bot = Number(yBot)
-        if (!Number.isFinite(top) || !Number.isFinite(bot)) continue
+        let priceScaleW = 56
+        try {
+          const sw = chart.priceScale('right').width()
+          if (typeof sw === 'number' && sw > 8) priceScaleW = sw
+        } catch {
+          /* ignore */
+        }
+
+        const leftW = edgeOnly ? 0 : Math.min(78, Math.max(52, w * 0.14))
+        const stripW = edgeOnly
+          ? Math.min(22, Math.max(14, w * 0.035))
+          : Math.min(70, Math.max(48, w * 0.13))
+        const stripRight = Math.max(4, w - priceScaleW - 2)
+        const stripLeft = stripRight - stripW
+        const maxLong = model.maxLongEntry
+        const maxShort = model.maxShortEntry
+        const maxLiq = model.maxLiq
+
+        const yOf = (price: number): number | null => {
+          try {
+            const y = series.priceToCoordinate(price)
+            if (y == null) return null
+            const n = Number(y)
+            return Number.isFinite(n) ? n : null
+          } catch {
+            return null
+          }
+        }
+
+        for (const bin of model.bins) {
+          const top = yOf(bin.priceHigh)
+          const bot = yOf(bin.priceLow)
+          if (top == null || bot == null) continue
         const y = Math.min(top, bot)
         const bh = Math.max(1.2, Math.abs(bot - top))
         if (y > h + 6 || y + bh < -6) continue
@@ -197,9 +206,9 @@ const LiqHeatmapOverlay = ({
         }
       }
 
-      const yPx = series.priceToCoordinate(model.currentPrice)
-      if (yPx != null && Number.isFinite(Number(yPx))) {
-        const y = Number(yPx)
+      const yPx = yOf(model.currentPrice)
+      if (yPx != null) {
+        const y = yPx
         ctx.strokeStyle = 'rgba(255,255,255,0.28)'
         ctx.setLineDash([4, 4])
         ctx.lineWidth = 1
@@ -228,9 +237,9 @@ const LiqHeatmapOverlay = ({
             return y
           }
           const addPill = (cluster: EntryCluster, x: number) => {
-            const yCoord = series.priceToCoordinate(cluster.price)
+            const yCoord = yOf(cluster.price)
             if (yCoord == null) return
-            const y = place(Number(yCoord))
+            const y = place(yCoord)
             const isLong = cluster.side === 'LONG'
             const color = isLong ? '#34d399' : '#fb7185'
             const bg = isLong ? 'rgba(6, 40, 28, 0.88)' : 'rgba(48, 12, 22, 0.88)'
@@ -263,6 +272,9 @@ const LiqHeatmapOverlay = ({
         }
       }
       ctx.globalAlpha = 1
+      } catch {
+        /* overlay must never kill the chart */
+      }
     }
 
     redraw()
@@ -272,8 +284,12 @@ const LiqHeatmapOverlay = ({
     ro.observe(box)
 
     return () => {
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
-      chart.unsubscribeCrosshairMove(redraw)
+      try {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
+        chart.unsubscribeCrosshairMove(redraw)
+      } catch {
+        /* chart may already be gone */
+      }
       ro.disconnect()
     }
   }, [chart, series, containerRef, model, visible, opacity, edgeOnly])

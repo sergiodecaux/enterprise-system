@@ -199,7 +199,13 @@ const StoryPathOverlay = ({
         }
         const plotRight = Math.max(72, w - priceScaleW - 4)
 
-        const xStart = chart.timeScale().timeToCoordinate(lastCandleTs as never)
+        const xStart = (() => {
+          try {
+            return chart.timeScale().timeToCoordinate(lastCandleTs as never)
+          } catch {
+            return null
+          }
+        })()
         const x0 =
           xStart != null && Number.isFinite(Number(xStart))
             ? Number(xStart)
@@ -226,10 +232,14 @@ const StoryPathOverlay = ({
         const x1 = x0 + span
 
         const yOf = (price: number): number | null => {
-          const y = series.priceToCoordinate(price)
-          if (y == null) return null
-          const n = Number(y)
-          return Number.isFinite(n) ? n : null
+          try {
+            const y = series.priceToCoordinate(price)
+            if (y == null) return null
+            const n = Number(y)
+            return Number.isFinite(n) ? n : null
+          } catch {
+            return null
+          }
         }
 
         const selected = activeId

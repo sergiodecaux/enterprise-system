@@ -334,9 +334,11 @@ const ChartOverlay = ({
     const timeScale = chart.timeScale()
 
     const redraw = () => {
+      try {
       overlay.innerHTML = ''
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
+      if (containerWidth < 80 || containerHeight < 40) return
       let priceScaleW = 56
       try {
         const w = chart.priceScale('right').width()
@@ -375,13 +377,21 @@ const ChartOverlay = ({
       }> = []
 
       for (const zone of visibleZones) {
-        const topY = series.priceToCoordinate(zone.top)
-        const bottomY = series.priceToCoordinate(zone.bottom)
-        const rawStartX = timeScale.timeToCoordinate(zone.startTime as Time)
-        const rawEndX =
-          zone.endTime != null
-            ? timeScale.timeToCoordinate(zone.endTime as Time)
-            : null
+        let topY: ReturnType<typeof series.priceToCoordinate> = null
+        let bottomY: ReturnType<typeof series.priceToCoordinate> = null
+        let rawStartX: ReturnType<typeof timeScale.timeToCoordinate> = null
+        let rawEndX: ReturnType<typeof timeScale.timeToCoordinate> = null
+        try {
+          topY = series.priceToCoordinate(zone.top)
+          bottomY = series.priceToCoordinate(zone.bottom)
+          rawStartX = timeScale.timeToCoordinate(zone.startTime as Time)
+          rawEndX =
+            zone.endTime != null
+              ? timeScale.timeToCoordinate(zone.endTime as Time)
+              : null
+        } catch {
+          continue
+        }
 
         const startXNum = rawStartX == null ? 0 : Number(rawStartX)
         const endXNum =
@@ -570,6 +580,9 @@ const ChartOverlay = ({
           pointer-events: none;
         `
         overlay.appendChild(pill)
+      }
+      } catch {
+        /* overlay must never kill the chart */
       }
     }
 

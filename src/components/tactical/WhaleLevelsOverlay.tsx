@@ -85,7 +85,13 @@ const WhaleLevelsOverlay = ({
           continue
         }
 
-        const yCoord = series.priceToCoordinate(price)
+        const yCoord = (() => {
+          try {
+            return series.priceToCoordinate(price)
+          } catch {
+            return null
+          }
+        })()
         const isBid = kind === 'BID'
         const color = isBid
           ? 'rgba(34, 211, 238, 0.92)'

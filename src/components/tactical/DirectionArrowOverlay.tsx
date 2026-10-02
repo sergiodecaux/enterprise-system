@@ -46,15 +46,22 @@ const DirectionArrowOverlay = ({
       overlay.innerHTML = ''
       const h = containerRef.current!.clientHeight
       const w = containerRef.current!.clientWidth
-      const yCoord = series.priceToCoordinate(lastPrice)
+      if (w < 80 || h < 40) return
+      let yCoord: ReturnType<typeof series.priceToCoordinate> = null
+      let xCoord: ReturnType<typeof timeScale.timeToCoordinate> = null
+      try {
+        yCoord = series.priceToCoordinate(lastPrice)
+        xCoord = timeScale.timeToCoordinate(lastTime as Time)
+      } catch {
+        return
+      }
       const yNum = Math.max(
         36,
         Math.min(h - 48, yCoord == null ? h * 0.45 : Number(yCoord))
       )
 
-      const xCoord = timeScale.timeToCoordinate(lastTime as Time)
       const xNum =
-        xCoord == null
+        xCoord == null || !Number.isFinite(Number(xCoord))
           ? w - 72
           : Math.min(w - 56, Math.max(48, Number(xCoord) + 28))
 

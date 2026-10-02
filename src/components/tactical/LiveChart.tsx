@@ -299,6 +299,8 @@ const LiveChart = ({
   })
   const [candles, setCandles] = useState<OhlcvCandle[]>([])
   const [lwcData, setLwcData] = useState<CandlestickData[]>([])
+  const lwcDataRef = useRef<CandlestickData[]>([])
+  lwcDataRef.current = lwcData
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -414,16 +416,35 @@ const LiveChart = ({
   const resizeLiveChart = useCallback(() => {
     const chart = chartRef.current
     const box = containerRef.current
-    if (!chart || !box) return
+    if (!chart || !box) return false
     const w = Math.floor(box.clientWidth)
     const h = Math.floor(box.clientHeight)
-    if (w < 16 || h < 16) return
+    if (w < 16 || h < 16) return false
     try {
       chart.applyOptions({ width: w, height: h })
     } catch {
-      /* chart may be mid-move */
+      return false
     }
+    const data = lwcDataRef.current
+    if (data.length && candleRef.current) {
+      try {
+        candleRef.current.setData(data)
+      } catch {
+        /* series not ready until layout exists */
+      }
+    }
+    return true
   }, [])
+
+  const scheduleChartResize = useCallback(() => {
+    const retry = (left: number) => {
+      if (resizeLiveChart()) return
+      if (left <= 0) return
+      window.requestAnimationFrame(() => retry(left - 1))
+    }
+    resizeLiveChart()
+    window.requestAnimationFrame(() => retry(12))
+  }, [resizeLiveChart])
 
   useEffect(() => {
     return () => {
@@ -438,21 +459,22 @@ const LiveChart = ({
     userPanningRef.current = false
     if (chartExpanded) {
       host.style.cssText =
-        'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;background:#0c0e12;padding-top:env(safe-area-inset-top);'
+        'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;width:100%;height:100%;background:#0c0e12;padding-top:env(safe-area-inset-top);'
       document.body.appendChild(host)
-    } else if (fillParent) {
-      host.style.cssText =
-        'position:relative;display:flex;flex-direction:column;width:100%;height:100%;flex:1;min-height:0;'
-      slot.appendChild(host)
+      slot.style.display = 'none'
     } else {
-      host.style.cssText = 'position:relative;display:block;width:100%;'
-      slot.appendChild(host)
+      slot.style.display = ''
+      if (fillParent) {
+        host.style.cssText =
+          'position:relative;display:flex;flex-direction:column;width:100%;height:100%;flex:1;min-height:0;'
+        slot.appendChild(host)
+      } else {
+        host.style.cssText = 'position:relative;display:block;width:100%;'
+        slot.appendChild(host)
+      }
     }
-    window.requestAnimationFrame(() => {
-      resizeLiveChart()
-      window.requestAnimationFrame(resizeLiveChart)
-    })
-  }, [chartExpanded, fillParent, expandHost, resizeLiveChart])
+    scheduleChartResize()
+  }, [chartExpanded, fillParent, expandHost, scheduleChartResize])
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -471,7 +493,7 @@ const LiveChart = ({
     } catch {
       /* ignore */
     }
-    resizeLiveChart()
+    scheduleChartResize()
   }, [
     chartHeight,
     tallChart,
@@ -479,7 +501,7 @@ const LiveChart = ({
     fillParent,
     denseUi,
     storyRightOffset,
-    resizeLiveChart,
+    scheduleChartResize,
   ])
 
   const watchedSetups = useAppStore((s) => s.watchedSetups)
@@ -1816,14 +1838,16 @@ const LiveChart = ({
 
     const load = async (silent = false) => {
       try {
-        if (!silent) {
+        if (!silent && !lwcDataRef.current.length) {
           setLoading(true)
           setError(null)
         }
         const data = await fetchOhlcv(symbol, timeframe, CANDLE_LIMIT[timeframe])
         if (cancelled) return
         if (!data.length) {
-          if (!silent) setError(tRef.current('chart_empty'))
+          if (!silent && !lwcDataRef.current.length) {
+            setError(tRef.current('chart_empty'))
+          }
           return
         }
 
@@ -1844,15 +1868,20 @@ const LiveChart = ({
             close: c[4],
           }))
         if (!mapped.length) {
-          if (!silent) setError(tRef.current('chart_empty'))
+          if (!silent && !lwcDataRef.current.length) {
+            setError(tRef.current('chart_empty'))
+          }
           return
         }
         setCandles(data)
         seedHitBaselineFromCandles(symbol, data)
         setLwcData(mapped)
+        setError(null)
       } catch (err) {
         logger.warn('LiveChart klines failed', err)
-        if (!cancelled && !silent) setError(tRef.current('chart_error'))
+        if (!cancelled && !silent && !lwcDataRef.current.length) {
+          setError(tRef.current('chart_error'))
+        }
       } finally {
         if (!cancelled && !silent) setLoading(false)
       }
@@ -1867,111 +1896,10 @@ const LiveChart = ({
   }, [symbol, timeframe])
 
   useEffect(() => {
-    if (!containerRef.current || chartRef.current) return
-
-    const el = containerRef.current
-    const startW = Math.max(50, Math.floor(el.clientWidth || el.parentElement?.clientWidth || 320))
-    const startH = Math.max(160, Math.floor(el.clientHeight || chartHeightRef.current || CHART_HEIGHT))
-
-    const chart = createChart(el, {
-      layout: {
-        background: { color: '#0c0e12' },
-        textColor: 'rgba(220, 230, 240, 0.55)',
-        fontSize: denseUi ? 12 : 11,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-      },
-      grid: {
-        vertLines: { color: 'rgba(255,255,255,0.04)' },
-        horzLines: { color: 'rgba(255,255,255,0.045)' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Magnet,
-        vertLine: {
-          color: 'rgba(148, 163, 184, 0.45)',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#1e293b',
-        },
-        horzLine: {
-          color: 'rgba(148, 163, 184, 0.45)',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#1e293b',
-        },
-      },
-      timeScale: {
-        borderColor: 'rgba(255,255,255,0.08)',
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: denseUi ? 18 : 22,
-        barSpacing: 8,
-        minBarSpacing: 2,
-        lockVisibleTimeRangeOnResize: false,
-        shiftVisibleRangeOnNewBar: true,
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.1)',
-        scaleMargins: { top: 0.12, bottom: 0.12 },
-        autoScale: true,
-        entireTextOnly: true,
-        alignLabels: true,
-      },
-      width: startW,
-      height: startH,
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: true,
-      },
-      handleScale: {
-        axisPressedMouseMove: { time: true, price: true },
-        mouseWheel: true,
-        pinch: true,
-        axisDoubleClickReset: false,
-      },
-      kineticScroll: {
-        touch: true,
-        mouse: true,
-      },
-    })
-
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: '#22c55e',
-      downColor: '#f43f5e',
-      borderUpColor: '#16a34a',
-      borderDownColor: '#e11d48',
-      wickUpColor: 'rgba(34, 197, 94, 0.7)',
-      wickDownColor: 'rgba(244, 63, 94, 0.7)',
-      lastValueVisible: true,
-      priceLineVisible: true,
-      priceLineColor: 'rgba(148, 163, 184, 0.4)',
-      priceLineWidth: 1,
-      priceLineStyle: 2,
-    })
-
-    chartRef.current = chart
-    candleRef.current = candleSeries
-    setChartInstance(chart)
-    setChartReady((n) => n + 1)
-
-    const syncSize = () => {
-      const box = containerRef.current
-      if (!box || !chartRef.current) return
-      const w = box.clientWidth
-      const h = box.clientHeight
-      if (w > 8 && h > 8) {
-        try {
-          chart.applyOptions({
-            width: Math.floor(w),
-            height: Math.floor(h),
-          })
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    window.requestAnimationFrame(syncSize)
+    let cancelled = false
+    let chart: IChartApi | null = null
+    let sizeRo: ResizeObserver | null = null
+    let waitRo: ResizeObserver | null = null
 
     const onTouchStart = () => {
       userPanningRef.current = true
@@ -1981,37 +1909,155 @@ const LiveChart = ({
         userPanningRef.current = false
       }, 400)
     }
-    containerRef.current.addEventListener('touchstart', onTouchStart, {
-      passive: true,
-    })
-    containerRef.current.addEventListener('touchend', onTouchEnd, {
-      passive: true,
-    })
 
-    const ro = new ResizeObserver((entries) => {
-      if (!entries.length || !chartRef.current) return
-      const w = Math.floor(entries[0].contentRect.width)
-      const h = Math.floor(entries[0].contentRect.height)
-      if (w < 16) return
-      if (userPanningRef.current) return
+    const mountChart = () => {
+      if (cancelled || chartRef.current) return
+      const el = containerRef.current
+      if (!el) return
+      const startW = Math.floor(el.clientWidth)
+      const startH = Math.floor(el.clientHeight)
+      if (startW < 16 || startH < 16) return
+
       try {
-        chart.applyOptions({
-          width: w,
-          height: Math.max(160, h || chartHeightRef.current),
+        chart = createChart(el, {
+          layout: {
+            background: { color: '#0c0e12' },
+            textColor: 'rgba(220, 230, 240, 0.55)',
+            fontSize: denseUi ? 12 : 11,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+          },
+          grid: {
+            vertLines: { color: 'rgba(255,255,255,0.04)' },
+            horzLines: { color: 'rgba(255,255,255,0.045)' },
+          },
+          crosshair: {
+            mode: CrosshairMode.Magnet,
+            vertLine: {
+              color: 'rgba(148, 163, 184, 0.45)',
+              width: 1,
+              style: 2,
+              labelBackgroundColor: '#1e293b',
+            },
+            horzLine: {
+              color: 'rgba(148, 163, 184, 0.45)',
+              width: 1,
+              style: 2,
+              labelBackgroundColor: '#1e293b',
+            },
+          },
+          timeScale: {
+            borderColor: 'rgba(255,255,255,0.08)',
+            timeVisible: true,
+            secondsVisible: false,
+            rightOffset: denseUi ? 18 : 22,
+            barSpacing: 8,
+            minBarSpacing: 2,
+            lockVisibleTimeRangeOnResize: false,
+            shiftVisibleRangeOnNewBar: true,
+          },
+          rightPriceScale: {
+            borderColor: 'rgba(255,255,255,0.1)',
+            scaleMargins: { top: 0.12, bottom: 0.12 },
+            autoScale: true,
+            entireTextOnly: true,
+            alignLabels: true,
+          },
+          width: startW,
+          height: startH,
+          handleScroll: {
+            mouseWheel: true,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: true,
+          },
+          handleScale: {
+            axisPressedMouseMove: { time: true, price: true },
+            mouseWheel: true,
+            pinch: true,
+            axisDoubleClickReset: false,
+          },
+          kineticScroll: {
+            touch: true,
+            mouse: true,
+          },
         })
-      } catch {
-        /* ignore */
+      } catch (err) {
+        logger.warn('LiveChart createChart failed', err)
+        return
       }
-    })
-    ro.observe(containerRef.current)
+
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: '#22c55e',
+        downColor: '#f43f5e',
+        borderUpColor: '#16a34a',
+        borderDownColor: '#e11d48',
+        wickUpColor: 'rgba(34, 197, 94, 0.7)',
+        wickDownColor: 'rgba(244, 63, 94, 0.7)',
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineColor: 'rgba(148, 163, 184, 0.4)',
+        priceLineWidth: 1,
+        priceLineStyle: 2,
+      })
+
+      chartRef.current = chart
+      candleRef.current = candleSeries
+      setChartInstance(chart)
+      setChartReady((n) => n + 1)
+      waitRo?.disconnect()
+      waitRo = null
+
+      const painted = lwcDataRef.current
+      if (painted.length) {
+        try {
+          candleSeries.setData(painted)
+        } catch {
+          /* ignore */
+        }
+      }
+
+      el.addEventListener('touchstart', onTouchStart, { passive: true })
+      el.addEventListener('touchend', onTouchEnd, { passive: true })
+
+      sizeRo = new ResizeObserver((entries) => {
+        if (!entries.length || !chartRef.current) return
+        const w = Math.floor(entries[0].contentRect.width)
+        const h = Math.floor(entries[0].contentRect.height)
+        if (w < 16 || h < 16) return
+        if (userPanningRef.current) return
+        try {
+          chart?.applyOptions({
+            width: w,
+            height: h,
+          })
+        } catch {
+          /* ignore */
+        }
+      })
+      sizeRo.observe(el)
+    }
+
+    mountChart()
+    if (!chartRef.current && containerRef.current) {
+      waitRo = new ResizeObserver(() => mountChart())
+      waitRo.observe(containerRef.current)
+    }
 
     return () => {
-      ro.disconnect()
+      cancelled = true
+      waitRo?.disconnect()
+      sizeRo?.disconnect()
       containerRef.current?.removeEventListener('touchstart', onTouchStart)
       containerRef.current?.removeEventListener('touchend', onTouchEnd)
+      const instance = chart
+      if (!instance) {
+        chartRef.current = null
+        candleRef.current = null
+        return
+      }
       Object.values(lineRefs.current).forEach((s) => {
         try {
-          chart.removeSeries(s)
+          instance.removeSeries(s)
         } catch {
           /* ignore */
         }
@@ -2020,7 +2066,7 @@ const LiveChart = ({
       priceLineRefs.current = []
       liqLineRefs.current = []
       try {
-        chart.remove()
+        instance.remove()
       } catch {
         /* ignore */
       }
@@ -2034,16 +2080,20 @@ const LiveChart = ({
     if (!candleRef.current || !lwcData.length) return
     const key = `${symbol}|${timeframe}`
     const needFit = fittedKeyRef.current !== key
-    candleRef.current.setData(lwcData)
-    if (needFit) {
-      const vis =
-        timeframe === '1m' || timeframe === '5m' ? 90 : 70
-      const from = Math.max(-2, lwcData.length - vis)
-      chartRef.current?.timeScale().setVisibleLogicalRange({
-        from,
-        to: lwcData.length + 5,
-      })
-      fittedKeyRef.current = key
+    try {
+      candleRef.current.setData(lwcData)
+      if (needFit) {
+        const vis =
+          timeframe === '1m' || timeframe === '5m' ? 90 : 70
+        const from = Math.max(-2, lwcData.length - vis)
+        chartRef.current?.timeScale().setVisibleLogicalRange({
+          from,
+          to: lwcData.length + 5,
+        })
+        fittedKeyRef.current = key
+      }
+    } catch {
+      /* 0-size host during portal move */
     }
   }, [lwcData, symbol, timeframe, chartReady])
 
@@ -2056,12 +2106,16 @@ const LiveChart = ({
     const p = ticker.price
     if (Math.abs(last.close - p) / Math.max(p, 1e-12) < 0.00005) return
 
-    candleRef.current.update({
-      ...last,
-      close: p,
-      high: Math.max(last.high, p),
-      low: Math.min(last.low, p),
-    })
+    try {
+      candleRef.current.update({
+        ...last,
+        close: p,
+        high: Math.max(last.high, p),
+        low: Math.min(last.low, p),
+      })
+    } catch {
+      /* chart may be mid-portal */
+    }
   }, [ticker?.price, lwcData, timeframe])
 
   useEffect(() => {
@@ -3092,6 +3146,7 @@ const LiveChart = ({
         }`}
         style={{
           height: chartExpanded || fillParent ? undefined : chartHeight,
+          minHeight: chartExpanded ? Math.max(280, chartHeight) : undefined,
           touchAction: 'none',
         }}
         onTouchStart={(e) => e.stopPropagation()}
@@ -3099,12 +3154,12 @@ const LiveChart = ({
           resolveChartDoubleTap(e.clientX, e.clientY)
         }}
       >
-        {loading && (
+        {loading && lwcData.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-hull/60 font-mono text-xs text-holo/40">
             {t('chart_loading')}
           </div>
         )}
-        {error && !loading && (
+        {error && !loading && lwcData.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center font-mono text-xs text-alert/80">
             {error}
           </div>
@@ -3544,11 +3599,9 @@ const LiveChart = ({
       <div
         ref={expandSlotRef}
         className={
-          chartExpanded
-            ? 'hidden'
-            : fillParent
-              ? 'relative flex min-h-0 w-full flex-1 flex-col'
-              : 'relative w-full'
+          fillParent
+            ? 'relative flex min-h-0 w-full flex-1 flex-col'
+            : 'relative w-full'
         }
       />
       {expandHost ? createPortal(ui, expandHost) : ui}
