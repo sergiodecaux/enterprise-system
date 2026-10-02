@@ -20,7 +20,17 @@ interface Props {
 type Rgba = { r: number; g: number; b: number }
 type Box = { x: number; y: number; w: number; h: number }
 
+function storyHue(zone: LiquidityZone): Rgba | null {
+  if (zone.storyRole === 'PRIMARY') {
+    if (zone.side === 'BEARISH') return { r: 251, g: 113, b: 133 }
+    if (zone.side === 'BULLISH') return { r: 45, g: 212, b: 191 }
+  }
+  return null
+}
+
 function baseHue(zone: LiquidityZone): Rgba {
+  const story = storyHue(zone)
+  if (story) return story
   const id = zone.id ?? ''
   if (id.startsWith('cong_') || id.startsWith('sr_rng') || id.startsWith('sr_cong')) {
     return { r: 244, g: 114, b: 182 }
@@ -104,9 +114,9 @@ function strengthVisual(
 
   if (isPrimary) {
     return {
-      fillA: 0.34,
-      borderA: 0.95,
-      borderW: 2.4,
+      fillA: 0.38,
+      borderA: 1,
+      borderW: 2.6,
       stripeW: 0,
       tier: 'STRONG' as const,
       isFib141: false,
@@ -117,11 +127,26 @@ function strengthVisual(
     }
   }
 
-  if (isSecondary || onlyStrong) {
+  if (isSecondary) {
     return {
-      fillA: 0.04,
-      borderA: 0.42,
-      borderW: 1,
+      fillA: 0.12,
+      borderA: 0.72,
+      borderW: 1.4,
+      stripeW: 0,
+      tier: 'WEAK' as const,
+      isFib141,
+      isCong,
+      isAction,
+      isPrimary: false,
+      outlineOnly: true,
+    }
+  }
+
+  if (onlyStrong) {
+    return {
+      fillA: 0.08,
+      borderA: 0.5,
+      borderW: 1.2,
       stripeW: 0,
       tier: 'WEAK' as const,
       isFib141,
@@ -206,8 +231,8 @@ function compactLabel(zone: LiquidityZone): string {
   return zone.label || zone.type
 }
 
-function zoneCaption(zone: LiquidityZone, many: boolean, isPrimary: boolean): string {
-  if (isPrimary || !many) return zone.contextHint || compactLabel(zone)
+function zoneCaption(zone: LiquidityZone, _many: boolean, isPrimary: boolean): string {
+  if (isPrimary) return zone.contextHint || compactLabel(zone)
   return zone.label || zone.contextHint || compactLabel(zone)
 }
 
@@ -251,7 +276,7 @@ function placeBox(
   plotRight: number,
   containerHeight: number
 ): Box {
-  let px = Math.max(4, Math.min(x, plotRight - w - 8))
+  let px = Math.max(10, Math.min(x, plotRight - w - 10))
   let py = Math.max(2, y)
   for (let i = 0; i < 12; i++) {
     const b = { x: px, y: py, w, h }
@@ -259,7 +284,8 @@ function placeBox(
       !used.some((u) => overlaps(u, b)) &&
       py >= 2 &&
       py + h <= containerHeight - 2 &&
-      px + w <= plotRight - 4
+      px >= 10 &&
+      px + w <= plotRight - 6
     ) {
       used.push(b)
       return b
@@ -270,7 +296,7 @@ function placeBox(
     }
   }
   const fallback = {
-    x: px,
+    x: Math.max(10, Math.min(px, plotRight - w - 10)),
     y: Math.max(2, Math.min(y, containerHeight - h - 2)),
     w,
     h,
@@ -359,29 +385,34 @@ const ChartOverlay = ({
         const height = Math.abs(Number(bottomY) - Number(topY))
         const yPos = Math.min(Number(topY), Number(bottomY))
         const left = Math.max(0, startXNum)
-        const nowCap = plotRight - 10
-        const right = Number.isFinite(endXNum)
+        const nowCap = plotRight - 8
+        const highlighted =
+          Boolean(highlightId && zone.id === highlightId) ||
+          zone.storyRole === 'PRIMARY'
+        const isPrimaryBand = zone.storyRole === 'PRIMARY' || highlighted
+        const histRight = Number.isFinite(endXNum)
           ? Math.min(nowCap, Math.max(left + 8, endXNum))
           : Math.min(nowCap, left + Math.max(48, (nowCap - left) * 0.72))
-        const width = Math.max(8, right - left)
+        const right = isPrimaryBand
+          ? nowCap
+          : Math.max(histRight, Math.min(nowCap, left + Math.max(72, (nowCap - left) * 0.55)))
+        const width = Math.max(12, right - left)
 
         if (height < 1 || yPos < -80 || yPos > containerHeight + 80) continue
         if (left >= plotRight) continue
 
-        const highlighted =
-          Boolean(highlightId && zone.id === highlightId) ||
-          zone.storyRole === 'PRIMARY'
         const hue = baseHue(zone)
         const vis = strengthVisual(zone, opacity, highlighted, onlyStrong)
-        const dimmed = vis.outlineOnly ? 0.88 : 1
+        const dimmed = vis.outlineOnly ? 0.92 : 1
 
         const div = document.createElement('div')
-        const minH = vis.isPrimary || vis.isAction || highlighted ? 8 : 5
-        const fill = vis.outlineOnly
+        const minH = vis.isPrimary || vis.isAction || highlighted ? 14 : 8
+        const fill = vis.isPrimary
           ? rgba(hue, vis.fillA)
-          : vis.isPrimary
+          : vis.outlineOnly
             ? rgba(hue, vis.fillA)
             : `linear-gradient(90deg, ${rgba(hue, vis.fillA)} 0%, ${rgba(hue, vis.fillA * 0.55)} 70%, ${rgba(hue, vis.fillA * 0.2)} 100%)`
+        const dash = vis.outlineOnly || vis.isFib141 ? 'dashed' : 'solid'
         div.style.cssText = `
           position: absolute;
           left: ${left}px;
@@ -389,18 +420,17 @@ const ChartOverlay = ({
           width: ${width}px;
           height: ${Math.max(height, minH)}px;
           background: ${fill};
-          border-top: ${vis.borderW}px ${vis.outlineOnly || vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
-          border-bottom: ${vis.borderW}px ${vis.outlineOnly || vis.isFib141 ? 'dashed' : 'solid'} ${rgba(hue, vis.borderA * dimmed)};
+          border: ${vis.borderW}px ${dash} ${rgba(hue, vis.borderA * dimmed)};
           box-shadow: ${
             vis.isPrimary
-              ? `inset 0 0 0 1.5px ${rgba(hue, 0.45)}, 0 0 10px ${rgba(hue, 0.18)}`
+              ? `inset 0 0 0 1px ${rgba(hue, 0.55)}, 0 0 14px ${rgba(hue, 0.22)}`
               : 'none'
           };
           opacity: ${dimmed};
           pointer-events: none;
           box-sizing: border-box;
           overflow: visible;
-          border-radius: 2px;
+          border-radius: 3px;
         `
 
         const bandH = Math.max(height, minH)
@@ -441,18 +471,34 @@ const ChartOverlay = ({
         if (!story && !showLabels && quiet) continue
         const text = zoneCaption(cap.zone, many, isPrimary)
         if (!text) continue
-        const fontPx = isPrimary ? (compact ? 12 : 11) : compact ? 10 : 9
-        const padX = isPrimary ? (compact ? 8 : 6) : 5
-        const pillH = isPrimary ? (compact ? 20 : 18) : compact ? 16 : 14
-        const pillW = Math.min(
-          Math.max(52, text.length * (fontPx * 0.62) + padX * 2),
-          Math.max(72, plotRight - 16)
-        )
-        const preferAbove = compact && cap.height < 26 && cap.yPos >= pillH + 4
-        const rawX = Math.max(4, Math.min(cap.left + 4, plotRight * 0.42))
+        const fontPx = isPrimary ? (compact ? 11 : 11) : compact ? 10 : 9
+        const padX = isPrimary ? 7 : 5
+        const twoLine = isPrimary && compact && text.length > 22
+        const pillH = twoLine
+          ? compact
+            ? 32
+            : 28
+          : isPrimary
+            ? compact
+              ? 20
+              : 18
+            : compact
+              ? 16
+              : 14
+        const est = text.length * (fontPx * 0.62) + padX * 2
+        const visLeft = Math.max(10, cap.left)
+        const visRight = Math.min(plotRight - 10, cap.left + cap.width)
+        const room = Math.max(96, visRight - visLeft - 8)
+        const pillW = Math.min(Math.max(twoLine ? 108 : 84, est), room, plotRight - 20)
+        const preferAbove =
+          cap.height < (twoLine ? 36 : 26) && cap.yPos >= pillH + 4
+        const preferInside = cap.height >= pillH + 6
+        const rawX = visLeft + 6
         const rawY = preferAbove
           ? cap.yPos - pillH - 2
-          : cap.yPos + Math.max(2, Math.min(6, cap.height * 0.12))
+          : preferInside
+            ? cap.yPos + Math.max(3, (cap.height - pillH) * 0.12)
+            : cap.yPos + 3
         const box = placeBox(
           used,
           rawX,
@@ -462,30 +508,33 @@ const ChartOverlay = ({
           plotRight,
           containerHeight
         )
+        box.x = Math.max(10, box.x)
         const pill = document.createElement('div')
         pill.textContent = text
         pill.style.cssText = `
           position: absolute;
           left: ${box.x}px;
           top: ${box.y}px;
-          max-width: ${Math.max(48, plotRight - box.x - 8)}px;
-          padding: ${isPrimary ? (compact ? '2px 8px' : '1px 6px') : '1px 5px'};
+          width: ${pillW}px;
+          max-width: ${Math.max(80, plotRight - box.x - 10)}px;
+          padding: ${isPrimary ? '2px 7px' : '1px 5px'};
           border-radius: 4px;
           font-size: ${fontPx}px;
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
           font-weight: ${isPrimary ? 800 : 600};
           letter-spacing: 0.01em;
-          color: ${isPrimary ? 'rgba(255,255,255,0.96)' : 'rgba(226,232,240,0.82)'};
-          background: ${isPrimary ? 'rgba(0,0,0,0.78)' : 'rgba(8,10,14,0.55)'};
+          line-height: 1.25;
+          color: ${isPrimary ? 'rgba(255,255,255,0.96)' : 'rgba(226,232,240,0.9)'};
+          background: ${isPrimary ? 'rgba(0,0,0,0.84)' : 'rgba(8,10,14,0.78)'};
           border: ${isPrimary ? 1.5 : 1}px ${isPrimary ? 'solid' : 'dashed'} ${rgba(
             cap.hue,
-            isPrimary ? 0.85 : 0.4
+            isPrimary ? 0.9 : 0.55
           )};
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          white-space: ${twoLine ? 'normal' : 'nowrap'};
+          overflow: visible;
+          word-break: keep-all;
           text-shadow: 0 1px 2px rgba(0,0,0,0.85);
-          opacity: ${isPrimary ? 1 : 0.82};
+          opacity: 1;
           pointer-events: none;
         `
         overlay.appendChild(pill)

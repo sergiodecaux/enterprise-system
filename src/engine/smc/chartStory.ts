@@ -26,10 +26,12 @@ export interface StoryOdds {
   lost: boolean
 }
 
+export type StoryScenarioId = 'hold' | 'sweep' | 'break' | 'chop'
+
 export interface StoryArrow {
-  id: 'hold' | 'fail'
-  kind: 'PRIMARY' | 'FAIL'
-  side: 'LONG' | 'SHORT'
+  id: StoryScenarioId
+  kind: 'PRIMARY' | 'FAIL' | 'SWEEP' | 'CHOP'
+  side: 'LONG' | 'SHORT' | 'RANGE'
   fromPrice: number
   toPrice: number
   toLabel: string
@@ -40,6 +42,27 @@ export interface StoryArrow {
   oddsPct: number
   label: string
   sweepPrice: number | null
+}
+
+export interface StoryScenario {
+  id: StoryScenarioId
+  pct: number
+  side: 'LONG' | 'SHORT' | 'RANGE'
+  /** лонг / шорт / пила */
+  dirLabel: string
+  /** Explicit if-condition, e.g. «если закрепятся над зоной» */
+  condition: string
+  title: string
+  path: PathPoint[]
+  toPrice: number | null
+  toLabel: string
+}
+
+export interface StoryLegendItem {
+  role: 'STRONG' | 'WEAK'
+  text: string
+  range: string
+  take: 'LONG' | 'SHORT' | null
 }
 
 export interface ChartStoryFuture {
@@ -65,6 +88,8 @@ export interface ChartStory {
   future: ChartStoryFuture | null
   odds: StoryOdds | null
   arrows: StoryArrow[]
+  scenarios: StoryScenario[]
+  legend: StoryLegendItem[]
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -123,7 +148,7 @@ export function readZoneMeaning(z: LiquidityZone): ZoneMeaning {
   }
   if (z.type === 'ORDER_BLOCK') {
     return side === 'SHORT'
-      ? { word: 'предл.', meaning: 'предложение', take: 'SHORT' }
+      ? { word: 'предложение', meaning: 'предложение', take: 'SHORT' }
       : { word: 'спрос', meaning: 'спрос', take: 'LONG' }
   }
   if (z.type === 'FVG') {
@@ -132,13 +157,13 @@ export function readZoneMeaning(z: LiquidityZone): ZoneMeaning {
       : { word: 'FVG', meaning: 'гэп спроса', take: 'LONG' }
   }
   if (id.includes('premium') || id.includes('sr_res')) {
-    return { word: 'предл.', meaning: 'предложение', take: 'SHORT' }
+    return { word: 'предложение', meaning: 'предложение', take: 'SHORT' }
   }
   if (id.includes('discount') || id.includes('sr_sup')) {
     return { word: 'спрос', meaning: 'спрос', take: 'LONG' }
   }
   if (id.includes('cong') || z.type === 'VALUE_AREA' || z.type === 'POC') {
-    return { word: 'проторг.', meaning: 'проторговка', take: side }
+    return { word: 'проторговка', meaning: 'проторговка', take: side }
   }
   if (side === 'LONG') return { word: 'спрос', meaning: 'спрос', take: 'LONG' }
   if (side === 'SHORT') return { word: 'предложение', meaning: 'предложение', take: 'SHORT' }
@@ -174,12 +199,17 @@ function strongCaption(
   side: 'LONG' | 'SHORT' | null
 ): { full: string; word: string } {
   const take = side ?? sideOfZone(z)
-  if (take === 'LONG') return { full: 'сильная · спрос · лонг отсюда', word: 'спрос' }
+  if (take === 'LONG') {
+    return { full: 'сильная · спрос · лонг отсюда', word: 'сильная · спрос' }
+  }
   if (take === 'SHORT') {
-    return { full: 'сильная · предложение · шорт отсюда', word: 'предложение' }
+    return {
+      full: 'сильная · предложение · шорт отсюда',
+      word: 'сильная · предложение',
+    }
   }
   const m = readZoneMeaning(z)
-  return { full: `сильная · ${m.meaning}`, word: m.word }
+  return { full: `сильная · ${m.meaning}`, word: `сильная · ${m.word}` }
 }
 
 function weakCaption(
@@ -196,24 +226,20 @@ function weakCaption(
     magnet.price >= z.bottom
   if (isMag) {
     const magRu = humanizeStoryTarget(magnet.label, side)
-    return { full: `слабая · ${magRu}`, word: 'магнит' }
+    return { full: `слабая · ${magRu}`, word: `слабая · ${magRu}` }
   }
   const mid = (z.top + z.bottom) / 2
   const pMid = (primary.top + primary.bottom) / 2
   const above = mid > pMid
   if (side === 'LONG' && above && (m.word === 'BSL' || m.word === 'EQH' || m.take === 'SHORT')) {
-    return {
-      full: `слабая · ${m.meaning === 'равные хаи' ? 'равные хаи' : 'ликвидность сверху'}`,
-      word: m.word,
-    }
+    const meaning = m.meaning === 'равные хаи' ? 'равные хаи' : 'ликвидность сверху'
+    return { full: `слабая · ${meaning}`, word: `слабая · ${meaning}` }
   }
   if (side === 'SHORT' && !above && (m.word === 'SSL' || m.word === 'EQL' || m.take === 'LONG')) {
-    return {
-      full: `слабая · ${m.meaning === 'равные лои' ? 'равные лои' : 'стопы снизу'}`,
-      word: m.word,
-    }
+    const meaning = m.meaning === 'равные лои' ? 'равные лои' : 'стопы снизу'
+    return { full: `слабая · ${meaning}`, word: `слабая · ${meaning}` }
   }
-  return { full: `слабая · ${m.meaning}`, word: m.word }
+  return { full: `слабая · ${m.meaning}`, word: `слабая · ${m.meaning}` }
 }
 
 function holdArrowCaption(side: 'LONG' | 'SHORT', dest: string): string {
@@ -230,8 +256,11 @@ function tagRole(
 ): LiquidityZone {
   if (role === 'PRIMARY') {
     const cap = strongCaption(z, side)
+    const take = side ?? sideOfZone(z)
     return {
       ...z,
+      side:
+        take === 'LONG' ? 'BULLISH' : take === 'SHORT' ? 'BEARISH' : z.side,
       storyRole: 'PRIMARY',
       strengthTier: 'STRONG',
       strength: Math.max(z.strength ?? 8, 11),
@@ -527,68 +556,76 @@ function sweepPriceOf(
   return side === 'LONG' ? primary.bottom : primary.top
 }
 
-function workingPath(opts: {
+/** Straight / 2-segment path — TradingView path-to-target, not a doodle. */
+function twoSeg(
+  a: { t: number; price: number; label: string },
+  b: { t: number; price: number; label: string; key?: boolean },
+  c?: { t: number; price: number; label: string; key?: boolean }
+): PathPoint[] {
+  const pts: PathPoint[] = [
+    { timeOffsetSeconds: a.t, price: a.price, label: a.label },
+    {
+      timeOffsetSeconds: b.t,
+      price: b.price,
+      label: b.label,
+      isKeyLevel: b.key,
+    },
+  ]
+  if (c) {
+    pts.push({
+      timeOffsetSeconds: c.t,
+      price: c.price,
+      label: c.label,
+      isKeyLevel: c.key,
+    })
+  }
+  return pts
+}
+
+function holdPathOf(opts: {
   price: number
   primary: LiquidityZone
   target: { price: number; label: string }
   side: 'LONG' | 'SHORT'
-  kind: StoryNowKind
+  barSeconds: number
+}): PathPoint[] {
+  const { price, primary, target, side, barSeconds } = opts
+  const bar = Math.max(1, barSeconds)
+  const mid = (primary.top + primary.bottom) / 2
+  const leave = side === 'LONG' ? primary.top : primary.bottom
+  const from = Number.isFinite(price) && price > 0 ? (mid + price) / 2 : mid
+  return twoSeg(
+    { t: Math.round(-bar * 0.4), price: from, label: 'зона' },
+    { t: Math.round(bar * 2.2), price: leave, label: 'выход' },
+    { t: Math.round(bar * 8), price: target.price, label: target.label, key: true }
+  )
+}
+
+function sweepPathOf(opts: {
+  price: number
+  primary: LiquidityZone
+  target: { price: number; label: string }
+  side: 'LONG' | 'SHORT'
   barSeconds: number
   sweepPrice: number | null
 }): PathPoint[] {
-  const { price, primary, target, side, kind, barSeconds, sweepPrice } = opts
+  const { price, primary, target, side, barSeconds, sweepPrice } = opts
   const bar = Math.max(1, barSeconds)
-
-  const leave = side === 'LONG' ? primary.top : primary.bottom
-  const from = (primary.top + primary.bottom) / 2
   const sweep =
     sweepPrice && sweepPrice > 0
       ? sweepPrice
       : side === 'LONG'
         ? primary.bottom
         : primary.top
-
-  const pts: PathPoint[] = [
-    {
-      timeOffsetSeconds: Math.round(-bar * 2.2),
-      price: from,
-      label: 'зона',
-    },
-  ]
-  if (kind === 'APPROACHING' || kind === 'OUTSIDE') {
-    pts.push({ timeOffsetSeconds: 0, price, label: 'сейчас' })
-    pts.push({
-      timeOffsetSeconds: Math.round(bar * 1.8),
-      price: sweep,
-      label: 'свип',
-      isKeyLevel: true,
-    })
-  } else if (kind === 'IN_ZONE' || kind === 'BOUNCE') {
-    pts.push({
-      timeOffsetSeconds: Math.round(-bar * 0.6),
-      price: sweep,
-      label: 'свип',
-      isKeyLevel: true,
-    })
-    pts.push({ timeOffsetSeconds: 0, price, label: 'сейчас' })
-  } else {
-    pts.push({ timeOffsetSeconds: 0, price, label: 'сейчас' })
-  }
-  pts.push({
-    timeOffsetSeconds: Math.round(bar * 3.4),
-    price: leave,
-    label: 'выход',
-  })
-  pts.push({
-    timeOffsetSeconds: Math.round(bar * 8),
-    price: target.price,
-    label: target.label || 'цель',
-    isKeyLevel: true,
-  })
-  return pts
+  const now = price > 0 ? price : (primary.top + primary.bottom) / 2
+  return twoSeg(
+    { t: 0, price: now, label: 'сейчас' },
+    { t: Math.round(bar * 2.4), price: sweep, label: 'свип', key: true },
+    { t: Math.round(bar * 8), price: target.price, label: target.label, key: true }
+  )
 }
 
-function failPathOf(opts: {
+function breakPathOf(opts: {
   price: number
   primary: LiquidityZone
   target: { price: number; label: string }
@@ -598,21 +635,31 @@ function failPathOf(opts: {
   const { price, primary, target, side, barSeconds } = opts
   const bar = Math.max(1, barSeconds)
   const through = side === 'LONG' ? primary.bottom : primary.top
-  return [
-    { timeOffsetSeconds: 0, price, label: 'сейчас' },
-    {
-      timeOffsetSeconds: Math.round(bar * 1.8),
-      price: through,
-      label: 'слом',
-      isKeyLevel: true,
-    },
-    {
-      timeOffsetSeconds: Math.round(bar * 8),
-      price: target.price,
-      label: 'если сломают',
-      isKeyLevel: true,
-    },
-  ]
+  const now = price > 0 ? price : (primary.top + primary.bottom) / 2
+  return twoSeg(
+    { t: 0, price: now, label: 'сейчас' },
+    { t: Math.round(bar * 2), price: through, label: 'слом', key: true },
+    { t: Math.round(bar * 8), price: target.price, label: target.label, key: true }
+  )
+}
+
+function chopPathOf(opts: {
+  price: number
+  primary: LiquidityZone
+  barSeconds: number
+}): PathPoint[] {
+  const { price, primary, barSeconds } = opts
+  const bar = Math.max(1, barSeconds)
+  const mid = (primary.top + primary.bottom) / 2
+  const now = price > 0 ? price : mid
+  const far = Math.abs(now - primary.top) >= Math.abs(now - primary.bottom)
+    ? primary.bottom
+    : primary.top
+  return twoSeg(
+    { t: 0, price: now, label: 'сейчас' },
+    { t: Math.round(bar * 3.2), price: far, label: 'край' },
+    { t: Math.round(bar * 7), price: mid, label: 'середина' }
+  )
 }
 
 interface LastTape {
@@ -805,6 +852,154 @@ function scoreLiveOdds(opts: {
   return { pct, failPct, proximity, fact, lost }
 }
 
+function roundFour(hold: number, sweep: number, brk: number, chop: number): {
+  hold: number
+  sweep: number
+  brk: number
+  chop: number
+} {
+  const raw = [hold, sweep, brk, chop].map((n) => Math.max(4, n))
+  const sum = raw.reduce((a, b) => a + b, 0) || 1
+  const rounded = raw.map((n) => Math.round((n / sum) * 100))
+  let drift = 100 - rounded.reduce((a, b) => a + b, 0)
+  let idx = 0
+  for (let i = 1; i < 4; i++) if (rounded[i] > rounded[idx]) idx = i
+  rounded[idx] += drift
+  return { hold: rounded[0], sweep: rounded[1], brk: rounded[2], chop: rounded[3] }
+}
+
+function scoreFourScenarios(opts: {
+  odds: StoryOdds
+  kind: StoryNowKind
+  tape: LastTape
+  bos: { aligned: boolean; against: boolean; held: boolean; kind: string }
+  trapPhase: string | null
+  side: 'LONG' | 'SHORT'
+}): { hold: number; sweep: number; brk: number; chop: number } {
+  const { odds, kind, tape, bos, trapPhase, side } = opts
+  let hold = odds.pct * 0.72
+  let brk = odds.failPct * 0.72
+  let sweep = 14
+  let chop = 12
+
+  const near = odds.proximity
+  hold += near * 5
+  if (kind === 'APPROACHING') {
+    sweep += 10
+    chop += 2
+  } else if (kind === 'IN_ZONE') {
+    chop += 10
+    sweep += 6
+    hold += 2
+  } else if (kind === 'BOUNCE') {
+    hold += 12
+    sweep -= 4
+    chop -= 4
+  } else if (kind === 'OUTSIDE') {
+    sweep += 4
+    chop -= 2
+  }
+
+  if (tape.overlapping) {
+    chop += 12
+    hold -= 6
+  }
+  if (tape.rejected && !odds.lost) {
+    sweep += 8
+    hold += 4
+    brk -= 4
+  }
+  if (tape.heldCloses >= 3 && !odds.lost) {
+    hold += 6
+    brk -= 4
+  }
+
+  const withSide =
+    (side === 'LONG' && tape.displacement === 'UP') ||
+    (side === 'SHORT' && tape.displacement === 'DOWN')
+  const againstSide =
+    (side === 'LONG' && tape.displacement === 'DOWN') ||
+    (side === 'SHORT' && tape.displacement === 'UP')
+  if (withSide) {
+    hold += 10
+    chop -= 6
+  }
+  if (againstSide) {
+    brk += 10
+    hold -= 8
+  }
+
+  if (bos.aligned && bos.held) hold += 8
+  else if (bos.aligned) hold += 4
+  else if (bos.against && bos.held) brk += 8
+  else if (bos.against) brk += 4
+
+  if (trapPhase === 'TRADE_READY') {
+    sweep += 6
+    hold += 5
+  } else if (trapPhase === 'HUNTING' || trapPhase === 'SWEPT') {
+    sweep += 10
+  } else if (trapPhase === 'TRAP') {
+    sweep += 8
+    brk += 4
+  }
+
+  if (odds.lost) {
+    brk += 22
+    hold = Math.min(hold, 14)
+    chop = Math.min(chop, 12)
+    sweep += 2
+  }
+
+  return roundFour(hold, sweep, brk, chop)
+}
+
+function legendOf(
+  primary: LiquidityZone | null,
+  secondary: LiquidityZone[]
+): StoryLegendItem[] {
+  const items: StoryLegendItem[] = []
+  if (primary) {
+    items.push({
+      role: 'STRONG',
+      text: primary.contextHint || strongCaption(primary, sideOfZone(primary)).full,
+      range: `${fmtPx(Math.min(primary.bottom, primary.top))}–${fmtPx(
+        Math.max(primary.bottom, primary.top)
+      )}`,
+      take: sideOfZone(primary),
+    })
+  }
+  for (const z of secondary) {
+    items.push({
+      role: 'WEAK',
+      text: z.contextHint || z.label || readZoneMeaning(z).meaning,
+      range: `${fmtPx(Math.min(z.bottom, z.top))}–${fmtPx(Math.max(z.bottom, z.top))}`,
+      take: sideOfZone(z),
+    })
+  }
+  return items
+}
+
+function dirWord(side: 'LONG' | 'SHORT' | 'RANGE'): string {
+  if (side === 'LONG') return 'лонг'
+  if (side === 'SHORT') return 'шорт'
+  return 'пила'
+}
+
+function holdCondition(side: 'LONG' | 'SHORT'): string {
+  return side === 'LONG' ? 'если закрепятся над зоной' : 'если закрепятся под зоной'
+}
+
+function sweepCondition(side: 'LONG' | 'SHORT'): string {
+  return side === 'LONG'
+    ? 'если снимут лои и закроются обратно'
+    : 'если снимут хаи и закроются обратно'
+}
+
+function breakCondition(side: 'LONG' | 'SHORT'): string {
+  return side === 'LONG' ? 'если закроют ниже зоны' : 'если закроют выше зоны'
+}
+
 export function buildChartStory(opts: {
   zones: LiquidityZone[]
   price: number
@@ -866,47 +1061,22 @@ export function buildChartStory(opts: {
         })
       : null
 
-  const workingSide: 'LONG' | 'SHORT' | null = scoredOdds?.lost
-    ? holdSide === 'LONG'
-      ? 'SHORT'
-      : holdSide === 'SHORT'
-        ? 'LONG'
-        : holdSide
-    : holdSide
-
-  const shownOdds = scoredOdds
-    ? {
-        ...scoredOdds,
-        pct: scoredOdds.lost ? scoredOdds.failPct : scoredOdds.pct,
-        failPct: scoredOdds.lost ? scoredOdds.pct : scoredOdds.failPct,
-      }
-    : null
-
-  const nowLine = nowLineOf(nowKind, workingSide, shownOdds?.pct ?? null)
+  const nowLine = nowLineOf(nowKind, holdSide, scoredOdds?.pct ?? null)
 
   const holdTgt =
-    primary && workingSide && scoredOdds?.lost
-      ? failTargetFrom({
+    primary && holdSide
+      ? targetFrom({
+          setup: opts.setup ?? null,
           rx,
           structure: opts.structure ?? null,
           primary,
-          opposite,
-          side: holdSide ?? workingSide,
+          side: holdSide,
           price,
         })
-      : primary && workingSide
-        ? targetFrom({
-            setup: opts.setup ?? null,
-            rx,
-            structure: opts.structure ?? null,
-            primary,
-            side: workingSide,
-            price,
-          })
-        : null
+      : null
 
   const failTgt =
-    primary && holdSide && !scoredOdds?.lost
+    primary && holdSide
       ? failTargetFrom({
           rx,
           structure: opts.structure ?? null,
@@ -920,102 +1090,160 @@ export function buildChartStory(opts: {
   const holdTgtRu = holdTgt
     ? {
         ...holdTgt,
-        label: humanizeStoryTarget(holdTgt.label || 'цель', workingSide),
+        label: humanizeStoryTarget(holdTgt.label || 'цель', holdSide),
       }
     : null
+  const failSide: 'LONG' | 'SHORT' | null =
+    holdSide === 'LONG' ? 'SHORT' : holdSide === 'SHORT' ? 'LONG' : null
   const failTgtRu = failTgt
     ? {
         ...failTgt,
-        label: humanizeStoryTarget(failTgt.label || 'если сломают', holdSide),
+        label: humanizeStoryTarget(failTgt.label || 'следующая ликвидность', failSide),
       }
     : null
 
-  const showFail =
-    Boolean(failTgtRu) &&
-    (nowKind === 'IN_ZONE' || nowKind === 'APPROACHING' || nowKind === 'BOUNCE')
-
   const arrows: StoryArrow[] = []
+  const scenarios: StoryScenario[] = []
   let future: ChartStoryFuture | null = null
 
-  if (holdTgtRu && workingSide && primary && price > 0) {
-    const sweep = sweepPriceOf(primary, workingSide, opts.structure ?? null)
-    const path = workingPath({
+  if (primary && holdSide && price > 0) {
+    const sweep = sweepPriceOf(primary, holdSide, opts.structure ?? null)
+    const tape = readLastTape(candles, primary, holdSide, atr)
+    const bos = bosAligned(opts.structure ?? null, holdSide)
+    const four = scoredOdds
+      ? scoreFourScenarios({
+          odds: scoredOdds,
+          kind: nowKind,
+          tape,
+          bos,
+          trapPhase: opts.structure?.trap?.phase ?? null,
+          side: holdSide,
+        })
+      : { hold: 40, sweep: 22, brk: 22, chop: 16 }
+
+    const holdDest = holdTgtRu ?? {
+      price: holdSide === 'LONG' ? primary.top + atr * 2 : primary.bottom - atr * 2,
+      label: holdSide === 'LONG' ? 'ликвидность сверху' : 'стопы снизу',
+    }
+    const breakDest = failTgtRu ?? {
+      price: holdSide === 'LONG' ? primary.bottom - atr * 2 : primary.top + atr * 2,
+      label: holdSide === 'LONG' ? 'стопы снизу' : 'ликвидность сверху',
+    }
+
+    const holdPath = holdPathOf({
       price,
       primary,
-      target: holdTgtRu,
-      side: workingSide,
-      kind: nowKind,
+      target: holdDest,
+      side: holdSide,
+      barSeconds,
+    })
+    const sweepPath = sweepPathOf({
+      price,
+      primary,
+      target: holdDest,
+      side: holdSide,
       barSeconds,
       sweepPrice: sweep,
     })
-    const failPath =
-      showFail && failTgtRu && holdSide
-        ? failPathOf({
-            price,
-            primary,
-            target: failTgtRu,
-            side: holdSide,
-            barSeconds,
-          })
-        : null
-
-    const prices = [price, holdTgtRu.price, ...path.map((p) => p.price)].filter(
-      (p) => p > 0 && Number.isFinite(p)
-    )
-    prices.push(primary.top, primary.bottom)
-    const boxLow = Math.min(...prices)
-    const boxHigh = Math.max(...prices)
-    const maxOff = Math.max(1, ...path.map((p) => p.timeOffsetSeconds || 0))
-    const bar = Math.max(1, barSeconds)
-    future = {
-      path,
-      failPath,
-      targetPrice: holdTgtRu.price,
-      targetLabel: holdTgtRu.label,
-      failTargetPrice: showFail && failTgtRu ? failTgtRu.price : null,
-      failTargetLabel: showFail && failTgtRu ? failTgtRu.label : null,
-      boxLow,
-      boxHigh,
-      bars: Math.min(18, Math.max(6, Math.ceil(maxOff / bar) + 2)),
-      side: workingSide,
-    }
+    const lostPath = breakPathOf({
+      price,
+      primary,
+      target: breakDest,
+      side: holdSide,
+      barSeconds,
+    })
+    const rangePath = chopPathOf({ price, primary, barSeconds })
 
     const zStart = timeSec(primary.startTime)
     const zEnd = timeSec(primary.endTime) || zStart
     const fromPrice = (primary.top + primary.bottom) / 2
 
+    scenarios.push(
+      {
+        id: 'hold',
+        pct: four.hold,
+        side: holdSide,
+        dirLabel: dirWord(holdSide),
+        condition: holdCondition(holdSide),
+        title: holdArrowCaption(holdSide, holdDest.label),
+        path: holdPath,
+        toPrice: holdDest.price,
+        toLabel: holdDest.label,
+      },
+      {
+        id: 'sweep',
+        pct: four.sweep,
+        side: holdSide,
+        dirLabel: dirWord(holdSide),
+        condition: sweepCondition(holdSide),
+        title: 'свип → разворот',
+        path: sweepPath,
+        toPrice: holdDest.price,
+        toLabel: holdDest.label,
+      },
+      {
+        id: 'break',
+        pct: four.brk,
+        side: failSide ?? (holdSide === 'LONG' ? 'SHORT' : 'LONG'),
+        dirLabel: dirWord(failSide ?? 'RANGE'),
+        condition: breakCondition(holdSide),
+        title: `слом → ${breakDest.label}`,
+        path: lostPath,
+        toPrice: breakDest.price,
+        toLabel: breakDest.label,
+      },
+      {
+        id: 'chop',
+        pct: four.chop,
+        side: 'RANGE',
+        dirLabel: dirWord('RANGE'),
+        condition: 'если останемся внутри',
+        title: 'пила внутри зоны',
+        path: rangePath,
+        toPrice: (primary.top + primary.bottom) / 2,
+        toLabel: 'середина зоны',
+      }
+    )
+
+    const prices = [
+      price,
+      holdDest.price,
+      breakDest.price,
+      ...holdPath.map((p) => p.price),
+    ].filter((p) => p > 0 && Number.isFinite(p))
+    prices.push(primary.top, primary.bottom)
+    const boxLow = Math.min(...prices)
+    const boxHigh = Math.max(...prices)
+    const maxOff = Math.max(1, ...holdPath.map((p) => p.timeOffsetSeconds || 0))
+    const bar = Math.max(1, barSeconds)
+    future = {
+      path: holdPath,
+      failPath: lostPath,
+      targetPrice: holdDest.price,
+      targetLabel: holdDest.label,
+      failTargetPrice: breakDest.price,
+      failTargetLabel: breakDest.label,
+      boxLow,
+      boxHigh,
+      bars: Math.min(14, Math.max(6, Math.ceil(maxOff / bar) + 2)),
+      side: holdSide,
+    }
+
     arrows.push({
       id: 'hold',
       kind: 'PRIMARY',
-      side: workingSide,
+      side: holdSide,
       fromPrice,
-      toPrice: holdTgtRu.price,
-      toLabel: holdTgtRu.label,
+      toPrice: holdDest.price,
+      toLabel: holdDest.label,
       zoneTop: primary.top,
       zoneBottom: primary.bottom,
       zoneStartSec: zStart,
       zoneEndSec: zEnd,
-      oddsPct: shownOdds?.pct ?? 50,
-      label: holdArrowCaption(workingSide, holdTgtRu.label),
+      oddsPct: four.hold,
+      label: holdArrowCaption(holdSide, holdDest.label),
       sweepPrice: sweep,
     })
-    if (showFail && failTgtRu && holdSide) {
-      arrows.push({
-        id: 'fail',
-        kind: 'FAIL',
-        side: holdSide === 'LONG' ? 'SHORT' : 'LONG',
-        fromPrice: holdSide === 'LONG' ? primary.bottom : primary.top,
-        toPrice: failTgtRu.price,
-        toLabel: failTgtRu.label,
-        zoneTop: primary.top,
-        zoneBottom: primary.bottom,
-        zoneStartSec: zStart,
-        zoneEndSec: zEnd,
-        oddsPct: shownOdds?.failPct ?? 50,
-        label: 'если сломают',
-        sweepPrice: null,
-      })
-    }
   }
 
   return {
@@ -1024,10 +1252,12 @@ export function buildChartStory(opts: {
     displayZones,
     nowKind,
     nowLine,
-    side: workingSide,
+    side: holdSide,
     future,
-    odds: shownOdds,
+    odds: scoredOdds,
     arrows,
+    scenarios,
+    legend: legendOf(primary, secondary),
   }
 }
 

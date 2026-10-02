@@ -1,13 +1,14 @@
 /**
- * TradingView-style future window + SMC arrows from the take zone:
- * bold hold path (sweep → displacement → liquidity), faint fail path on pullback.
+ * TradingView-style path-to-target: one 1–2 segment polyline + arrowhead.
+ * Extra SMC scenarios live in ScenarioBoard — not overlapping doodles.
  */
 
 import { useEffect, useRef } from 'react'
-import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type {
   ChartStoryFuture,
-  StoryArrow,
+  StoryScenario,
+  StoryScenarioId,
 } from '../../engine/smc/chartStory'
 import type { PathPoint } from '../../engine/prediction/types'
 
@@ -19,7 +20,8 @@ interface Props {
   barSeconds: number
   future: ChartStoryFuture | null
   lastPrice: number
-  arrows?: StoryArrow[]
+  scenarios?: StoryScenario[]
+  activeId?: StoryScenarioId | null
 }
 
 function clamp(n: number, a: number, b: number): number {
@@ -38,82 +40,28 @@ function drawArrowHead(
   ctx.translate(x, y)
   ctx.rotate(angle)
   ctx.fillStyle = color
-  ctx.strokeStyle = 'rgba(8,10,14,0.9)'
+  ctx.strokeStyle = 'rgba(8,10,14,0.92)'
   ctx.lineWidth = Math.max(1.2, size * 0.08)
   ctx.beginPath()
   ctx.moveTo(0, 0)
-  ctx.lineTo(-size, -size * 0.48)
-  ctx.lineTo(-size * 0.62, 0)
-  ctx.lineTo(-size, size * 0.48)
+  ctx.lineTo(-size, -size * 0.42)
+  ctx.lineTo(-size * 0.55, 0)
+  ctx.lineTo(-size, size * 0.42)
   ctx.closePath()
   ctx.fill()
   ctx.stroke()
   ctx.restore()
 }
 
-type TagBox = { x: number; y: number; w: number; h: number }
-
-function tagHits(a: TagBox, b: TagBox): boolean {
-  return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y)
-}
-
-function drawCaption(
-  ctx: CanvasRenderingContext2D,
-  lines: string[],
-  x: number,
-  y: number,
-  color: string,
-  bg: string,
-  fontPx: number,
-  plotRight: number,
-  h: number,
-  used: TagBox[],
-  muted: boolean
-) {
-  ctx.font = `${muted ? '600' : '800'} ${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
-  const widths = lines.map((l) => ctx.measureText(l).width)
-  const tw = Math.max(8, ...widths)
-  const lineH = fontPx + 3
-  const th = lines.length * lineH + 6
-  let lx = Math.max(4, Math.min(x, plotRight - tw - 10))
-  let ly = Math.max(fontPx + 6, Math.min(y, h - th - 4))
-  for (let i = 0; i < 10; i++) {
-    const box = { x: lx - 5, y: ly - fontPx - 2, w: tw + 12, h: th }
-    if (!used.some((u) => tagHits(u, box)) && box.x + box.w <= plotRight - 4) {
-      used.push(box)
-      ctx.fillStyle = bg
-      ctx.fillRect(box.x, box.y, box.w, box.h)
-      ctx.fillStyle = color
-      lines.forEach((line, idx) => {
-        ctx.fillText(line, lx, ly + idx * lineH)
-      })
-      return box
-    }
-    ly += th + 3
-    if (ly + th > h - 4) ly = Math.max(fontPx + 6, y - (i + 1) * (th + 3))
-  }
-  const box = { x: lx - 5, y: ly - fontPx - 2, w: tw + 12, h: th }
-  used.push(box)
-  ctx.fillStyle = bg
-  ctx.fillRect(box.x, box.y, box.w, box.h)
-  ctx.fillStyle = color
-  lines.forEach((line, idx) => {
-    ctx.fillText(line, lx, ly + idx * lineH)
-  })
-  return box
-}
-
-function strokePath(
+function strokePolyline(
   ctx: CanvasRenderingContext2D,
   pts: Array<{ x: number; y: number }>,
   color: string,
   width: number,
-  alpha: number,
   dash: number[]
 ) {
   if (pts.length < 2) return
   ctx.save()
-  ctx.globalAlpha = alpha
   ctx.strokeStyle = color
   ctx.lineWidth = width
   ctx.lineJoin = 'round'
@@ -122,13 +70,18 @@ function strokePath(
   ctx.beginPath()
   ctx.moveTo(pts[0].x, pts[0].y)
   for (let i = 1; i < pts.length; i++) {
-    const prev = pts[i - 1]
-    const cur = pts[i]
-    ctx.quadraticCurveTo((prev.x + cur.x) / 2, prev.y, cur.x, cur.y)
+    ctx.lineTo(pts[i].x, pts[i].y)
   }
   ctx.stroke()
   ctx.setLineDash([])
   ctx.restore()
+}
+
+function pathColor(sc: StoryScenario | null, fallbackSide: 'LONG' | 'SHORT'): string {
+  if (!sc) return fallbackSide === 'LONG' ? '#86efac' : '#fda4af'
+  if (sc.id === 'chop') return '#fbbf24'
+  if (sc.id === 'break') return sc.side === 'LONG' ? '#86efac' : '#fda4af'
+  return sc.side === 'LONG' ? '#4ade80' : '#fb7185'
 }
 
 const StoryPathOverlay = ({
@@ -139,7 +92,8 @@ const StoryPathOverlay = ({
   barSeconds,
   future,
   lastPrice,
-  arrows = [],
+  scenarios = [],
+  activeId = 'hold',
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -202,8 +156,8 @@ const StoryPathOverlay = ({
           /* ignore */
         }
         const span = Math.min(
-          plotRight - x0 - 4,
-          Math.max(compact ? 64 : 48, Math.min(future.bars, compact ? 12 : 14) * barPx)
+          plotRight - x0 - 6,
+          Math.max(compact ? 56 : 48, Math.min(future.bars, compact ? 10 : 12) * barPx)
         )
         const x1 = x0 + span
 
@@ -214,177 +168,68 @@ const StoryPathOverlay = ({
           return Number.isFinite(n) ? n : null
         }
 
-        const xOfTime = (sec: number): number | null => {
-          if (!(sec > 0)) return null
-          const x = chart.timeScale().timeToCoordinate(sec as Time)
-          if (x == null) return null
-          const n = Number(x)
-          return Number.isFinite(n) ? n : null
-        }
-
-        const hold = arrows.find((a) => a.kind === 'PRIMARY') ?? arrows[0] ?? null
-        const fail = arrows.find((a) => a.kind === 'FAIL') ?? null
-
-        let xZone = x0
-        if (hold) {
-          const xEnd = xOfTime(hold.zoneEndSec)
-          const xBeg = xOfTime(hold.zoneStartSec)
-          const xRight = xEnd != null ? Math.min(xEnd, x0) : x0
-          if (xBeg != null && Number.isFinite(xBeg)) {
-            xZone = xBeg + Math.max(12, (xRight - xBeg) * 0.78)
-          } else if (xEnd != null) {
-            xZone = xRight
-          }
-        }
-        xZone = clamp(xZone, 8, Math.max(8, x0 - Math.max(22, barPx * 2.2)))
-
-        const yHi = yOf(future.boxHigh)
-        const yLo = yOf(future.boxLow)
-        const yNow = yOf(lastPrice > 0 ? lastPrice : future.path[0]?.price ?? 0)
-        if (yHi == null || yLo == null) return
-
-        const top = clamp(Math.min(yHi, yLo), 8, h - 10)
-        const bot = clamp(Math.max(yHi, yLo), 12, h - 8)
-        const boxH = Math.max(18, bot - top)
-
-        ctx.fillStyle = compact ? 'rgba(212, 175, 110, 0.16)' : 'rgba(212, 175, 110, 0.14)'
-        ctx.strokeStyle = 'rgba(212, 175, 110, 0.42)'
-        ctx.lineWidth = compact ? 1.25 : 1
-        ctx.beginPath()
-        ctx.rect(x0, top, Math.max(8, x1 - x0), boxH)
-        ctx.fill()
-        ctx.stroke()
-
-        ctx.setLineDash([3, 4])
-        ctx.strokeStyle = 'rgba(226, 232, 240, 0.28)'
-        ctx.beginPath()
-        ctx.moveTo(x0, 6)
-        ctx.lineTo(x0, h - 6)
-        ctx.stroke()
-        ctx.setLineDash([])
+        const active =
+          scenarios.find((s) => s.id === activeId) ??
+          scenarios.find((s) => s.id === 'hold') ??
+          null
+        const src: PathPoint[] =
+          active?.path && active.path.length >= 2 ? active.path : future.path
 
         const xAtOffset = (t: number, maxT: number): number => {
           if (t <= 0) {
-            const tMin = Math.min(0, -bar * 2.4)
-            if (tMin >= 0) return x0
-            return xZone + (x0 - xZone) * (t - tMin) / (0 - tMin)
+            return clamp(x0 + t * (barPx / bar), 12, x0)
           }
           return x0 + (x1 - x0) * clamp(t / Math.max(1, maxT), 0, 1)
         }
 
-        const mapPts = (src: PathPoint[]): Array<{ x: number; y: number; label?: string }> => {
-          const maxT = Math.max(
-            1,
-            ...src.map((p) => p.timeOffsetSeconds).filter((t) => t > 0),
-            bar * future.bars
-          )
-          const pts: Array<{ x: number; y: number; label?: string }> = []
-          for (const p of src) {
-            if (!(p.price > 0) || !Number.isFinite(p.price)) continue
-            const y = yOf(p.price)
-            if (y == null) continue
-            pts.push({
-              x: xAtOffset(p.timeOffsetSeconds, maxT),
-              y: clamp(y, 14, h - 16),
-              label: p.label,
-            })
-          }
-          return pts
+        const maxT = Math.max(
+          1,
+          ...src.map((p) => p.timeOffsetSeconds).filter((t) => t > 0),
+          bar * future.bars
+        )
+        let pts: Array<{ x: number; y: number }> = []
+        for (const p of src) {
+          if (!(p.price > 0) || !Number.isFinite(p.price)) continue
+          const y = yOf(p.price)
+          if (y == null) continue
+          pts.push({
+            x: clamp(xAtOffset(p.timeOffsetSeconds, maxT), 8, plotRight - 6),
+            y: clamp(y, 12, h - 14),
+          })
         }
 
-        let holdPts = mapPts(future.path)
-        if (holdPts.length < 2 && yNow != null) {
-          const yT = yOf(future.targetPrice)
-          const yFrom = hold ? yOf(hold.fromPrice) : yNow
-          if (yT != null && yFrom != null) {
-            holdPts = [
-              { x: xZone, y: clamp(yFrom, 14, h - 16), label: 'зона' },
-              { x: x0, y: clamp(yNow, 14, h - 16), label: 'сейчас' },
-              { x: x1 - 6, y: clamp(yT, 14, h - 16), label: future.targetLabel },
+        if (pts.length < 2) {
+          const yFrom = yOf(
+            active?.path[0]?.price ?? lastPrice ?? future.path[0]?.price ?? 0
+          )
+          const yTo = yOf(active?.toPrice ?? future.targetPrice)
+          if (yFrom != null && yTo != null) {
+            pts = [
+              { x: clamp(x0 - barPx * 2, 12, x0), y: clamp(yFrom, 12, h - 14) },
+              { x: x1 - 4, y: clamp(yTo, 12, h - 14) },
             ]
           }
         }
+        if (pts.length < 2) return
 
-        const failPts =
-          future.failPath && future.failPath.length >= 2
-            ? mapPts(future.failPath)
-            : []
+        const color = pathColor(active, future.side)
+        const dashed = active?.id === 'break' || active?.id === 'chop'
+        const width = compact ? 3.6 : 3.2
+        const halo = compact ? 6.4 : 5.6
 
-        const holdColor = future.side === 'LONG' ? '#86efac' : '#fda4af'
-        const failColor = future.side === 'LONG' ? '#fda4af' : '#86efac'
-        const tags: TagBox[] = []
+        strokePolyline(ctx, pts, 'rgba(8,10,14,0.88)', halo, dashed ? [7, 5] : [])
+        strokePolyline(ctx, pts, color, width, dashed ? [7, 5] : [])
 
-        if (failPts.length >= 2) {
-          strokePath(ctx, failPts, 'rgba(8,10,14,0.55)', compact ? 4.2 : 3.4, 0.7, [6, 5])
-          strokePath(ctx, failPts, failColor, compact ? 2.6 : 2.2, 0.72, [6, 5])
-          const fa = failPts[failPts.length - 2]
-          const fb = failPts[failPts.length - 1]
-          ctx.globalAlpha = 0.78
-          drawArrowHead(
-            ctx,
-            fb.x,
-            fb.y,
-            Math.atan2(fb.y - fa.y, fb.x - fa.x),
-            failColor,
-            compact ? 14 : 12
-          )
-          ctx.globalAlpha = 1
-          if (fail) {
-            const pct = Math.round(fail.oddsPct)
-            const fontPx = compact ? 11 : 10
-            const ly = clamp(fb.y + (fb.y > h / 2 ? 18 : -16), compact ? 16 : 14, h - 12)
-            const lx = clamp(fb.x - 24, x0 + 4, Math.max(x0 + 4, plotRight - 90))
-            drawCaption(
-              ctx,
-              ['если сломают', `${pct}%`],
-              lx,
-              ly,
-              'rgba(248,250,252,0.78)',
-              'rgba(8,10,14,0.72)',
-              fontPx,
-              plotRight,
-              h,
-              tags,
-              true
-            )
-          }
-        }
-
-        if (holdPts.length >= 2) {
-          strokePath(ctx, holdPts, 'rgba(8,10,14,0.88)', compact ? 7.2 : 6.2, 1, [])
-          strokePath(ctx, holdPts, holdColor, compact ? 4.4 : 3.8, 1, [])
-          const a = holdPts[holdPts.length - 2]
-          const b = holdPts[holdPts.length - 1]
-          drawArrowHead(
-            ctx,
-            b.x,
-            b.y,
-            Math.atan2(b.y - a.y, b.x - a.x),
-            holdColor,
-            compact ? 18 : 16
-          )
-
-          const dir = hold?.label ?? (future.side === 'LONG' ? 'лонг → ликвидность сверху' : 'шорт → стопы снизу')
-          const pct = hold ? Math.round(hold.oddsPct) : null
-          const fontPx = compact ? 12 : 11
-          const mid = holdPts[Math.min(holdPts.length - 1, Math.max(1, Math.floor(holdPts.length * 0.58)))]
-          const sideSign = mid.y > h / 2 ? -1 : 1
-          const lx = clamp(mid.x - 8, Math.max(8, x0 - 4), Math.max(x0 + 2, plotRight - 120))
-          const ly = clamp(mid.y + sideSign * 20, compact ? 18 : 16, h - 14)
-          drawCaption(
-            ctx,
-            pct != null ? [dir, `${pct}%`] : [dir],
-            lx,
-            ly,
-            holdColor,
-            'rgba(8,10,14,0.88)',
-            fontPx,
-            plotRight,
-            h,
-            tags,
-            false
-          )
-        }
+        const a = pts[pts.length - 2]
+        const b = pts[pts.length - 1]
+        drawArrowHead(
+          ctx,
+          b.x,
+          b.y,
+          Math.atan2(b.y - a.y, b.x - a.x),
+          color,
+          compact ? 16 : 14
+        )
       } catch {
         /* overlay must never kill the chart */
       }
@@ -395,8 +240,8 @@ const StoryPathOverlay = ({
       const current = ts.options().rightOffset ?? 8
       const compactFuture = (containerRef.current?.clientWidth ?? 400) < 560
       const need = Math.min(
-        compactFuture ? 20 : 28,
-        Math.max(compactFuture ? 12 : 14, future.bars + 4)
+        compactFuture ? 16 : 22,
+        Math.max(compactFuture ? 10 : 12, future.bars + 3)
       )
       if (need > current) ts.applyOptions({ rightOffset: need })
     } catch {
@@ -415,7 +260,17 @@ const StoryPathOverlay = ({
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, lastCandleTs, barSeconds, future, lastPrice, arrows])
+  }, [
+    chart,
+    series,
+    containerRef,
+    lastCandleTs,
+    barSeconds,
+    future,
+    lastPrice,
+    scenarios,
+    activeId,
+  ])
 
   if (!future) return null
 

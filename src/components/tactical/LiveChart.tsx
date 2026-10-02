@@ -67,6 +67,7 @@ import StructureHud from './StructureHud'
 import StructureOverlay from './StructureOverlay'
 import StoryPathOverlay from './StoryPathOverlay'
 import NowStoryHud from './NowStoryHud'
+import ScenarioBoard, { ZoneLegend } from './ScenarioBoard'
 import CurvePathOverlay from './CurvePathOverlay'
 import ZoneAdvisorCard from './ZoneAdvisorCard'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
@@ -89,6 +90,7 @@ import { lastClosedBar } from '../../engine/smc/closeCascade'
 import { pickActionZones } from '../../engine/smc/entryZones'
 import { calculateAtr } from '../../engine/smc'
 import { buildChartStory } from '../../engine/smc/chartStory'
+import type { StoryScenarioId } from '../../engine/smc/chartStory'
 import {
   analyzeZoneTap,
   hitZoneAt,
@@ -283,9 +285,11 @@ const LiveChart = ({
   )
   const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
-  const [showLiqMap, setShowLiqMap] = useState(() =>
-    readLsFlag('enterprise_liq_map', false)
-  )
+  const [showLiqMap, setShowLiqMap] = useState(() => {
+    const clean = readLsFlag('enterprise_chart_clean', true)
+    if (clean) return false
+    return readLsFlag('enterprise_liq_map', false)
+  })
   const [audioOn, setAudioOn] = useState(() => {
     try {
       return localStorage.getItem('enterprise_process_audio') === '1'
@@ -323,6 +327,7 @@ const LiveChart = ({
       return true
     }
   })
+  const [storyPathId, setStoryPathId] = useState<StoryScenarioId>('hold')
   const [advisor, setAdvisor] = useState<ZoneAdvisorBrief | null>(null)
   const [advisorBot, setAdvisorBot] = useState<'idle' | 'sent' | 'fail'>('idle')
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
@@ -1712,6 +1717,17 @@ const LiveChart = ({
   const tapZones = cleanMode || onlyStrong ? overlayZones : candidateZones
 
   useEffect(() => {
+    setStoryPathId('hold')
+  }, [symbol, timeframe])
+
+  useEffect(() => {
+    if (cleanMode) {
+      setShowLiqMap(false)
+      writeLsFlag('enterprise_liq_map', false)
+    }
+  }, [cleanMode])
+
+  useEffect(() => {
     if (!selectedSetup?.chartPath || !forecast) return
     if (
       selectedSetup.kind === 'FORECAST_A' ||
@@ -2507,8 +2523,6 @@ const LiveChart = ({
       })
     } else {
       setShowHints(true)
-      setShowLiqMap(true)
-      writeLsFlag('enterprise_liq_map', true)
       setOnlyStrong(false)
       writeLsFlag('enterprise_only_strong', false)
       setChartPreferences({
@@ -2995,7 +3009,7 @@ const LiveChart = ({
 
       <div
         ref={chartShellRef}
-        className={`relative w-full overflow-hidden bg-[#0c0e12] ${
+        className={`relative flex w-full flex-col overflow-hidden bg-[#0c0e12] ${
           chartExpanded || fillParent
             ? 'min-h-0 flex-1 rounded-none border-0'
             : 'rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
@@ -3019,6 +3033,7 @@ const LiveChart = ({
             {error}
           </div>
         )}
+        <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={containerRef}
           className="h-full w-full"
@@ -3100,7 +3115,7 @@ const LiveChart = ({
             zones={overlayZones}
             containerRef={containerRef}
             opacity={cleanMode ? 20 : 24}
-            showLabels={!cleanMode && chartPreferences.showLabels}
+            showLabels={cleanMode || onlyStrong || chartPreferences.showLabels}
             highlightId={
               advisor?.zoneId ??
               highlightedZoneId ??
@@ -3124,7 +3139,8 @@ const LiveChart = ({
             barSeconds={timeframeBarSeconds(timeframe)}
             future={chartStory.future}
             lastPrice={currentPrice}
-            arrows={chartStory.arrows}
+            scenarios={chartStory.scenarios}
+            activeId={storyPathId}
           />
         )}
         {chartReady > 0 && lastCandleTs > 0 && !cleanMode && !pathModeActive && !advisor && !onlyStrong && (
@@ -3156,7 +3172,7 @@ const LiveChart = ({
             }}
           />
         )}
-        {chartReady > 0 && showLiqMap && (
+        {chartReady > 0 && showLiqMap && !cleanMode && (
           <LiqHeatmapOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3165,6 +3181,7 @@ const LiveChart = ({
             visible={showLiqMap}
           />
         )}
+        {!cleanMode && (
         <button
           type="button"
           onClick={() => {
@@ -3192,6 +3209,7 @@ const LiveChart = ({
             {showLiqMap ? 'ON' : 'OFF'}
           </span>
         </button>
+        )}
         {chartReady > 0 && !cleanMode && (
           <WhaleLevelsOverlay
             chart={chartInstance}
@@ -3278,6 +3296,24 @@ const LiveChart = ({
             }
             barSeconds={timeframeBarSeconds(timeframe)}
             containerRef={containerRef}
+          />
+        )}
+        </div>
+        {chartStory.legend.length > 0 && (
+          <ZoneLegend
+            items={chartStory.legend}
+            onlyStrong={cleanMode || onlyStrong}
+          />
+        )}
+        {chartStory.scenarios.length >= 2 && (
+          <ScenarioBoard
+            scenarios={chartStory.scenarios}
+            activeId={storyPathId}
+            onSelect={(id) => {
+              setStoryPathId(id)
+              haptic.impact()
+            }}
+            dense={denseUi}
           />
         )}
       </div>
