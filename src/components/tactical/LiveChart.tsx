@@ -276,6 +276,7 @@ const LiveChart = ({
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [chartExpanded, setChartExpanded] = useState(false)
+  const [showFsScenarios, setShowFsScenarios] = useState(false)
   const [phoneLandscape, setPhoneLandscape] = useState(isPhoneLandscapeNow)
   const [viewportH, setViewportH] = useState(
     () =>
@@ -394,7 +395,10 @@ const LiveChart = ({
   }, [fillParent, chartExpanded, chartReady])
 
   useEffect(() => {
-    if (!chartExpanded) return
+    if (!chartExpanded) {
+      setShowFsScenarios(false)
+      return
+    }
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const onKey = (e: KeyboardEvent) => {
@@ -2663,6 +2667,16 @@ const LiveChart = ({
               {liveSession.label}
             </span>
           )}
+          {chartExpanded && chartStory.nowLine && (
+            <NowStoryHud
+              line={chartStory.nowLine}
+              kind={chartStory.nowKind}
+              side={chartStory.side}
+              oddsPct={chartStory.odds?.pct ?? null}
+              fact={chartStory.odds?.fact ?? null}
+              toolbar
+            />
+          )}
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -2720,6 +2734,23 @@ const LiveChart = ({
           >
             {cleanMode ? t('chart_clean') : t('chart_full')}
           </button>
+          {chartExpanded && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowFsScenarios((v) => !v)
+                haptic.impact()
+              }}
+              className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+                showFsScenarios
+                  ? 'border border-matrix/40 bg-matrix/15 text-matrix'
+                  : 'border border-hull-border text-holo/40 hover:text-holo/70'
+              }`}
+              title="Показать четыре сценария"
+            >
+              Сцен.
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -2994,13 +3025,15 @@ const LiveChart = ({
         </div>
       </div>
 
-      <div className={`shrink-0 ${chartExpanded ? 'px-2' : ''}`}>
+      {!chartExpanded && (
+      <div className="shrink-0">
       <StructureHud
         read={hudRead}
         startCollapsed={cleanMode || inDrawer}
         nowLine={chartStory.nowLine}
       />
       </div>
+      )}
       {!chartExpanded && !fillParent && !cleanMode && (
       <p className="px-1 font-mono text-[9px] text-white/35">
         Сильная зона = диапазон входа. Касание — сценарий. Вправо — куда идём.
@@ -3039,8 +3072,12 @@ const LiveChart = ({
           className="h-full w-full"
           style={{ touchAction: 'none' }}
         />
-        {(lwcData.length > 0 || chartStory.nowLine) && (
-          <div className="pointer-events-none absolute left-1.5 top-1.5 z-20 flex max-w-[min(18rem,68%)] flex-col items-start gap-1">
+        {(lwcData.length > 0 || (!chartExpanded && chartStory.nowLine)) && (
+          <div
+            className={`pointer-events-none absolute left-1.5 top-1.5 z-20 flex flex-col items-start gap-1 ${
+              chartExpanded ? 'max-w-[min(12rem,42%)]' : 'max-w-[min(18rem,68%)]'
+            }`}
+          >
             {lwcData.length > 0 && (
               <div
                 className={`flex flex-wrap items-baseline gap-x-1.5 font-mono text-white/70 ${
@@ -3084,7 +3121,7 @@ const LiveChart = ({
             })()}
               </div>
             )}
-            {chartReady > 0 && chartStory.nowLine && (
+            {!chartExpanded && chartReady > 0 && chartStory.nowLine && (
               <NowStoryHud
                 line={chartStory.nowLine}
                 kind={chartStory.nowKind}
@@ -3124,6 +3161,7 @@ const LiveChart = ({
             }
             quiet={false}
             onlyStrong={cleanMode || onlyStrong}
+            thinLabels={chartExpanded}
           />
         )}
         {chartReady > 0 &&
@@ -3162,7 +3200,7 @@ const LiveChart = ({
             paths={curvePaths}
           />
         )}
-        {advisor && (
+        {advisor && !chartExpanded && (
           <ZoneAdvisorCard
             brief={advisor}
             botStatus={advisorBot}
@@ -3230,7 +3268,7 @@ const LiveChart = ({
             }
           />
         )}
-        {chartReady > 0 && (
+        {chartReady > 0 && !chartExpanded && (
           <ChartHintsOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3300,19 +3338,23 @@ const LiveChart = ({
         )}
         </div>
       </div>
-      <ZoneLegend
-        items={chartStory.legend}
-        onlyStrong={cleanMode || onlyStrong}
-      />
-      <ScenarioBoard
-        scenarios={chartStory.scenarios}
-        activeId={storyPathId}
-        onSelect={(id) => {
-          setStoryPathId(id)
-          haptic.impact()
-        }}
-        dense={denseUi}
-      />
+      {!chartExpanded && (
+        <ZoneLegend
+          items={chartStory.legend}
+          onlyStrong={cleanMode || onlyStrong}
+        />
+      )}
+      {(!chartExpanded || showFsScenarios) && (
+        <ScenarioBoard
+          scenarios={chartStory.scenarios}
+          activeId={storyPathId}
+          onSelect={(id) => {
+            setStoryPathId(id)
+            haptic.impact()
+          }}
+          dense={denseUi}
+        />
+      )}
 
       {!chartExpanded && (
         <>

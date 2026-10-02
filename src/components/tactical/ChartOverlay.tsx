@@ -15,6 +15,8 @@ interface Props {
   quiet?: boolean
   /** One filled take-from zone + faint context — not a wall of bands */
   onlyStrong?: boolean
+  /** Fullscreen: smaller primary caption, skip weak labels and edge prices */
+  thinLabels?: boolean
 }
 
 type Rgba = { r: number; g: number; b: number }
@@ -315,6 +317,7 @@ const ChartOverlay = ({
   highlightId = null,
   quiet = true,
   onlyStrong = true,
+  thinLabels = false,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -447,7 +450,7 @@ const ChartOverlay = ({
         `
 
         const bandH = Math.max(height, minH)
-        if (!quiet && !vis.outlineOnly) {
+        if (!thinLabels && !quiet && !vis.outlineOnly) {
           if (bandH >= 26) {
             const topLbl = document.createElement('div')
             topLbl.textContent = fmtPx(Math.max(zone.top, zone.bottom))
@@ -481,23 +484,33 @@ const ChartOverlay = ({
         const isPrimary = cap.vis.isPrimary
         const story =
           cap.zone.storyRole === 'PRIMARY' || cap.zone.storyRole === 'SECONDARY'
+        if (thinLabels && !isPrimary) continue
         if (!story && !showLabels && quiet) continue
-        const text = zoneCaption(cap.zone, many, isPrimary)
+        let text = zoneCaption(cap.zone, many, isPrimary)
         if (!text) continue
-        const fontPx = isPrimary ? (compact ? 11 : 11) : compact ? 10 : 9
-        const padX = isPrimary ? 7 : 5
-        const twoLine = isPrimary && compact && text.length > 22
-        const pillH = twoLine
-          ? compact
-            ? 32
-            : 28
+        if (thinLabels && text.length > 26) text = `${text.slice(0, 25)}…`
+        const fontPx = thinLabels
+          ? 9
           : isPrimary
-            ? compact
-              ? 20
-              : 18
+            ? 11
             : compact
-              ? 16
-              : 14
+              ? 10
+              : 9
+        const padX = thinLabels ? 5 : isPrimary ? 7 : 5
+        const twoLine = !thinLabels && isPrimary && compact && text.length > 22
+        const pillH = thinLabels
+          ? 16
+          : twoLine
+            ? compact
+              ? 32
+              : 28
+            : isPrimary
+              ? compact
+                ? 20
+                : 18
+              : compact
+                ? 16
+                : 14
         const est = text.length * (fontPx * 0.62) + padX * 2
         const visLeft = Math.max(10, cap.left)
         const visRight = Math.min(plotRight - 10, cap.left + cap.width)
@@ -530,7 +543,7 @@ const ChartOverlay = ({
           top: ${box.y}px;
           width: ${pillW}px;
           max-width: ${Math.max(80, plotRight - box.x - 10)}px;
-          padding: ${isPrimary ? '2px 7px' : '1px 5px'};
+          padding: ${thinLabels ? '1px 5px' : isPrimary ? '2px 7px' : '1px 5px'};
           border-radius: 4px;
           font-size: ${fontPx}px;
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -579,6 +592,7 @@ const ChartOverlay = ({
     highlightId,
     quiet,
     onlyStrong,
+    thinLabels,
   ])
 
   return (

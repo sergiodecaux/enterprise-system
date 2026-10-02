@@ -12,9 +12,19 @@ interface Props {
   fact?: string | null
   /** Phone / Telegram drawer — larger type, narrower pill so candles stay visible. */
   dense?: boolean
+  /** Fullscreen toolbar: one truncated line, never over the candles. */
+  toolbar?: boolean
 }
 
-const NowStoryHud = ({ line, kind, side, oddsPct, fact, dense = false }: Props) => {
+const NowStoryHud = ({
+  line,
+  kind,
+  side,
+  oddsPct,
+  fact,
+  dense = false,
+  toolbar = false,
+}: Props) => {
   if (!line) return null
   const tone =
     kind === 'IN_ZONE'
@@ -34,12 +44,14 @@ const NowStoryHud = ({ line, kind, side, oddsPct, fact, dense = false }: Props) 
       : ''
   return (
     <div
-      className={`rounded-md border font-mono font-bold leading-tight shadow-lg backdrop-blur-md ${tone} ${
-        dense
-          ? 'max-w-full px-2.5 py-1 text-[12px]'
-          : 'max-w-[82%] px-2 py-0.5 text-[10px]'
+      className={`rounded-md border font-mono font-bold leading-tight backdrop-blur-md ${tone} ${
+        toolbar
+          ? 'min-w-0 max-w-[min(16rem,46vw)] shrink truncate px-1.5 py-0.5 text-[10px]'
+          : dense
+            ? 'max-w-full px-2.5 py-1 text-[12px] shadow-lg'
+            : 'max-w-[82%] px-2 py-0.5 text-[10px] shadow-lg'
       }`}
-      title={fact || undefined}
+      title={fact || line}
     >
       {line}
       {pctBit}
