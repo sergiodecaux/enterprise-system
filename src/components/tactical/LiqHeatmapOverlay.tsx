@@ -8,6 +8,10 @@ interface Props {
   containerRef: React.RefObject<HTMLDivElement>
   model: LiqHeatmapModel | null
   visible: boolean
+  /** 0–1, clean mode uses a quieter strip */
+  opacity?: number
+  /** Right-edge density only — does not cover candles with bars/pills */
+  edgeOnly?: boolean
 }
 
 function fmtPx(p: number): string {
@@ -44,6 +48,8 @@ const LiqHeatmapOverlay = ({
   containerRef,
   model,
   visible,
+  opacity = 1,
+  edgeOnly = false,
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const labelsRef = useRef<HTMLDivElement>(null)
@@ -79,9 +85,22 @@ const LiqHeatmapOverlay = ({
       if (!ctx) return
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, h)
+      ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity))
 
-      const leftW = Math.min(78, Math.max(52, w * 0.14))
-      const rightW = Math.min(70, Math.max(48, w * 0.13))
+      let priceScaleW = 56
+      try {
+        const sw = chart.priceScale('right').width()
+        if (typeof sw === 'number' && sw > 8) priceScaleW = sw
+      } catch {
+        /* ignore */
+      }
+
+      const leftW = edgeOnly ? 0 : Math.min(78, Math.max(52, w * 0.14))
+      const stripW = edgeOnly
+        ? Math.min(22, Math.max(14, w * 0.035))
+        : Math.min(70, Math.max(48, w * 0.13))
+      const stripRight = Math.max(4, w - priceScaleW - 2)
+      const stripLeft = stripRight - stripW
       const maxLong = model.maxLongEntry
       const maxShort = model.maxShortEntry
       const maxLiq = model.maxLiq
@@ -101,8 +120,8 @@ const LiqHeatmapOverlay = ({
         const shortN = maxShort > 0 ? bin.shortEntry / maxShort : 0
         const heat = Math.max(longN, shortN)
 
-        if (heat > 0.08) {
-          const band = ctx.createLinearGradient(leftW, y, w - rightW, y)
+        if (!edgeOnly && heat > 0.08) {
+          const band = ctx.createLinearGradient(leftW, y, w - stripW, y)
           if (longN >= shortN) {
             band.addColorStop(0, `rgba(16, 185, 129, ${0.04 + heat * 0.2})`)
             band.addColorStop(0.55, `rgba(16, 185, 129, ${0.02 + heat * 0.1})`)
@@ -113,11 +132,11 @@ const LiqHeatmapOverlay = ({
             band.addColorStop(1, 'rgba(244, 63, 94, 0)')
           }
           ctx.fillStyle = band
-          ctx.fillRect(leftW, y, w - rightW - leftW, bh)
+          ctx.fillRect(leftW, y, w - stripW - leftW, bh)
         }
 
         const barH = Math.max(1.5, bh - 0.6)
-        if (longN > 0.05) {
+        if (!edgeOnly && longN > 0.05) {
           const bw = longN * (leftW - 10)
           const grad = ctx.createLinearGradient(4, y, 4 + bw, y)
           grad.addColorStop(0, 'rgba(16, 185, 129, 0.15)')
@@ -129,7 +148,7 @@ const LiqHeatmapOverlay = ({
           ctx.fill()
           ctx.shadowBlur = 0
         }
-        if (shortN > 0.05) {
+        if (!edgeOnly && shortN > 0.05) {
           const bw = shortN * (leftW - 10)
           const grad = ctx.createLinearGradient(4, y, 4 + bw, y)
           grad.addColorStop(0, 'rgba(244, 63, 94, 0.12)')
@@ -146,25 +165,34 @@ const LiqHeatmapOverlay = ({
         if (maxLiq > 0) {
           const liqL = bin.longLiq / maxLiq
           const liqS = bin.shortLiq / maxLiq
+          const crowd = Math.max(longN, shortN)
           if (liqS > 0.06) {
-            const bw = liqS * (rightW - 8)
-            const grad = ctx.createLinearGradient(w - 4 - bw, y, w - 4, y)
+            const bw = liqS * (stripW - 2)
+            const grad = ctx.createLinearGradient(stripRight - bw, y, stripRight, y)
             grad.addColorStop(0, 'rgba(251, 191, 36, 0.05)')
             grad.addColorStop(1, 'rgba(251, 146, 60, 0.88)')
             ctx.fillStyle = grad
-            roundRect(ctx, w - 4 - bw, y + 0.2, bw, barH * 0.9, 2)
+            roundRect(ctx, stripRight - bw, y + 0.2, bw, barH * 0.9, 2)
             ctx.fill()
           }
           if (liqL > 0.06) {
-            const bw = liqL * (rightW - 8)
-            const grad = ctx.createLinearGradient(w - 4 - bw, y, w - 4, y)
+            const bw = liqL * (stripW - 2)
+            const grad = ctx.createLinearGradient(stripRight - bw, y, stripRight, y)
             grad.addColorStop(0, 'rgba(34, 211, 238, 0.05)')
             grad.addColorStop(1, 'rgba(34, 211, 238, 0.8)')
-            ctx.globalAlpha = 0.85
+            ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity)) * 0.85
             ctx.fillStyle = grad
-            roundRect(ctx, w - 4 - bw, y + 0.2, bw, barH * 0.9, 2)
+            roundRect(ctx, stripRight - bw, y + 0.2, bw, barH * 0.9, 2)
             ctx.fill()
-            ctx.globalAlpha = 1
+            ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity))
+          }
+          if (edgeOnly && crowd > 0.22) {
+            const mark = Math.min(4, 2 + crowd * 3)
+            ctx.fillStyle =
+              longN >= shortN
+                ? 'rgba(52, 211, 153, 0.55)'
+                : 'rgba(251, 113, 133, 0.55)'
+            ctx.fillRect(stripLeft, y + bh * 0.15, mark, Math.max(1, bh * 0.7))
           }
         }
       }
@@ -176,60 +204,65 @@ const LiqHeatmapOverlay = ({
         ctx.setLineDash([4, 4])
         ctx.lineWidth = 1
         ctx.beginPath()
-        ctx.moveTo(2, y)
-        ctx.lineTo(leftW - 2, y)
-        ctx.moveTo(w - rightW + 2, y)
-        ctx.lineTo(w - 2, y)
+        if (!edgeOnly && leftW > 4) {
+          ctx.moveTo(2, y)
+          ctx.lineTo(leftW - 2, y)
+        }
+        ctx.moveTo(stripLeft, y)
+        ctx.lineTo(stripRight, y)
         ctx.stroke()
         ctx.setLineDash([])
       }
 
       if (labels) {
         labels.innerHTML = ''
-        const usedY: number[] = []
-        const place = (raw: number) => {
-          let y = Math.max(16, Math.min(h - 18, raw))
-          for (let i = 0; i < 5; i++) {
-            if (!usedY.some((u) => Math.abs(u - y) < 22)) break
-            y = Math.min(h - 18, y + 22)
+        if (!edgeOnly) {
+          const usedY: number[] = []
+          const place = (raw: number) => {
+            let y = Math.max(16, Math.min(h - 18, raw))
+            for (let i = 0; i < 5; i++) {
+              if (!usedY.some((u) => Math.abs(u - y) < 22)) break
+              y = Math.min(h - 18, y + 22)
+            }
+            usedY.push(y)
+            return y
           }
-          usedY.push(y)
-          return y
-        }
-        const addPill = (cluster: EntryCluster, x: number) => {
-          const yCoord = series.priceToCoordinate(cluster.price)
-          if (yCoord == null) return
-          const y = place(Number(yCoord))
-          const isLong = cluster.side === 'LONG'
-          const color = isLong ? '#34d399' : '#fb7185'
-          const bg = isLong ? 'rgba(6, 40, 28, 0.88)' : 'rgba(48, 12, 22, 0.88)'
-          const pill = document.createElement('div')
-          pill.style.cssText = [
-            'position:absolute',
-            `left:${x}px`,
-            `top:${y - 11}px`,
-            'z-index:2',
-            'display:flex',
-            'align-items:center',
-            'gap:5px',
-            'padding:2px 7px',
-            'border-radius:999px',
-            `border:1px solid ${color}99`,
-            `background:${bg}`,
-            'backdrop-filter:blur(8px)',
-            'box-shadow:0 2px 10px rgba(0,0,0,0.35)',
-            'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
-            'white-space:nowrap',
-            'pointer-events:none',
-          ].join(';')
-          pill.innerHTML = `<span style="width:6px;height:6px;border-radius:99px;background:${color};box-shadow:0 0 6px ${color}"></span>
+          const addPill = (cluster: EntryCluster, x: number) => {
+            const yCoord = series.priceToCoordinate(cluster.price)
+            if (yCoord == null) return
+            const y = place(Number(yCoord))
+            const isLong = cluster.side === 'LONG'
+            const color = isLong ? '#34d399' : '#fb7185'
+            const bg = isLong ? 'rgba(6, 40, 28, 0.88)' : 'rgba(48, 12, 22, 0.88)'
+            const pill = document.createElement('div')
+            pill.style.cssText = [
+              'position:absolute',
+              `left:${x}px`,
+              `top:${y - 11}px`,
+              'z-index:2',
+              'display:flex',
+              'align-items:center',
+              'gap:5px',
+              'padding:2px 7px',
+              'border-radius:999px',
+              `border:1px solid ${color}99`,
+              `background:${bg}`,
+              'backdrop-filter:blur(8px)',
+              'box-shadow:0 2px 10px rgba(0,0,0,0.35)',
+              'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
+              'white-space:nowrap',
+              'pointer-events:none',
+            ].join(';')
+            pill.innerHTML = `<span style="width:6px;height:6px;border-radius:99px;background:${color};box-shadow:0 0 6px ${color}"></span>
             <span style="font-size:9px;font-weight:700;letter-spacing:0.06em;color:${color}">${isLong ? 'ЛОНГ' : 'ШОРТ'}</span>
             <span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.9)">${fmtPx(cluster.price)}</span>`
-          labels.appendChild(pill)
+            labels.appendChild(pill)
+          }
+          for (const c of model.longClusters) addPill(c, 8)
+          for (const c of model.shortClusters) addPill(c, Math.max(8, leftW + 6))
         }
-        for (const c of model.longClusters) addPill(c, 8)
-        for (const c of model.shortClusters) addPill(c, Math.max(8, leftW + 6))
       }
+      ctx.globalAlpha = 1
     }
 
     redraw()
@@ -243,23 +276,23 @@ const LiqHeatmapOverlay = ({
       chart.unsubscribeCrosshairMove(redraw)
       ro.disconnect()
     }
-  }, [chart, series, containerRef, model, visible])
+  }, [chart, series, containerRef, model, visible, opacity, edgeOnly])
 
   if (!visible) return null
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-[11] overflow-hidden">
+    <div className="pointer-events-none absolute inset-0 z-[10] overflow-hidden">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
       <div ref={labelsRef} className="absolute inset-0" />
-      {model && (
+      {model && !edgeOnly && (
         <div className="absolute right-12 top-9 z-[12] flex items-center gap-2 rounded-full border border-white/10 bg-black/50 px-2.5 py-1 font-mono text-[9px] uppercase tracking-wider text-white/70 backdrop-blur-md">
           <span className="inline-flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
-            лонг
+            толпа L
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shadow-[0_0_6px_#fb7185]" />
-            шорт
+            толпа S
           </span>
           <span className="text-white/25">·</span>
           <span className="inline-flex items-center gap-1 text-orange-300/80">

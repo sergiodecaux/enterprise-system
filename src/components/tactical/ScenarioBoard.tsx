@@ -3,7 +3,7 @@ import type {
   StoryScenario,
   StoryScenarioId,
 } from '../../engine/smc/chartStory'
-import { fmtStoryTargetPx } from '../../engine/smc/chartStory'
+import { fmtStoryTargetPx, storyPathColor } from '../../engine/smc/chartStory'
 
 interface BoardProps {
   scenarios: StoryScenario[]
@@ -106,13 +106,23 @@ export const ScenarioBoard = ({
               <button
                 type="button"
                 onClick={() => onSelect(sc.id)}
-                className={`flex w-full items-baseline gap-1.5 rounded-md px-1.5 py-0.5 text-left font-mono leading-tight ${
+                className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left font-mono leading-tight ${
                   on
                     ? 'bg-white/[0.08] ring-1 ring-white/20'
                     : 'hover:bg-white/[0.04]'
                 }`}
                 title={`${sc.title}. ${sc.condition}`}
               >
+                <span
+                  className="h-[7px] w-[7px] shrink-0 rounded-full"
+                  style={{
+                    background: storyPathColor(sc.id, sc.side),
+                    opacity: on ? 1 : 0.45,
+                    boxShadow: on
+                      ? `0 0 6px ${storyPathColor(sc.id, sc.side)}`
+                      : 'none',
+                  }}
+                />
                 <span
                   className={`w-8 shrink-0 text-right font-bold tabular-nums ${
                     dense ? 'text-[11px]' : 'text-[10px]'

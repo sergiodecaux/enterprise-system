@@ -150,6 +150,47 @@ export function leadStoryScenario(rows: StoryScenario[]): StoryScenario | null {
   return rows.reduce((a, b) => (b.pct > a.pct ? b : a))
 }
 
+export function storyPathColor(
+  id: StoryScenarioId,
+  side: StoryScenario['side']
+): string {
+  if (id === 'chop') return '#fbbf24'
+  if (id === 'sweep') return '#22d3ee'
+  if (id === 'break') return side === 'LONG' ? '#6ee7b7' : '#fda4af'
+  return side === 'LONG' ? '#4ade80' : '#fb7185'
+}
+
+/** TF → how far the next reversal magnet may sit (ATR × multiplier). */
+export function tfHorizon(
+  barSeconds: number,
+  atr: number,
+  price: number
+): { dist: number; bars: number; atrMult: number } {
+  let atrMult = 3.6
+  let bars = 18
+  if (barSeconds <= 60) {
+    atrMult = 1.15
+    bars = 12
+  } else if (barSeconds <= 300) {
+    atrMult = 1.7
+    bars = 14
+  } else if (barSeconds <= 900) {
+    atrMult = 2.45
+    bars = 16
+  } else if (barSeconds <= 3600) {
+    atrMult = 3.6
+    bars = 18
+  } else if (barSeconds <= 14_400) {
+    atrMult = 5.5
+    bars = 22
+  } else {
+    atrMult = 8.2
+    bars = 26
+  }
+  const dist = Math.max(atr * atrMult, (price > 0 ? price : atr) * atrMult * 0.00105)
+  return { dist, bars, atrMult }
+}
+
 export interface ZoneMeaning {
   word: string
   meaning: string
@@ -519,6 +560,25 @@ function alignedBeyond(
   return cand <= from - minMove
 }
 
+function clipToHorizon(
+  from: number,
+  candidate: number | null | undefined,
+  side: 'LONG' | 'SHORT',
+  horizon: number,
+  atr: number
+): number {
+  const dir = side === 'LONG' ? 1 : -1
+  const cap = from + dir * horizon
+  const minMove = Math.max(atr * 0.4, horizon * 0.28)
+  const floor = from + dir * minMove
+  const lo = Math.min(floor, cap)
+  const hi = Math.max(floor, cap)
+  const raw =
+    candidate != null && Number.isFinite(candidate) && candidate > 0 ? candidate : cap
+  const toward = side === 'LONG' ? raw >= from : raw <= from
+  return clamp(toward ? raw : cap, lo, hi)
+}
+
 /** Next reversal magnet in the working direction — not a stub past the zone edge. */
 function targetFrom(opts: {
   setup: ConditionalSetup | null
@@ -529,8 +589,9 @@ function targetFrom(opts: {
   side: 'LONG' | 'SHORT' | null
   price: number
   atr: number
+  horizon: number
 }): { price: number; label: string } | null {
-  const { setup, rx, structure, primary, opposite, side, price, atr } = opts
+  const { setup, rx, structure, primary, opposite, side, price, atr, horizon } = opts
   if (!side || !(price > 0)) return null
   const zoneClear =
     primary != null
@@ -540,9 +601,10 @@ function targetFrom(opts: {
       : price
   const from = side === 'LONG' ? Math.max(price, zoneClear) : Math.min(price, zoneClear)
   const minMove = Math.max(
-    atr * 0.9,
-    primary ? Math.abs(primary.top - primary.bottom) * 0.65 : 0,
-    price * 0.0024
+    atr * 0.35,
+    horizon * 0.18,
+    primary ? Math.abs(primary.top - primary.bottom) * 0.28 : 0,
+    price * 0.001
   )
 
   const raw: MagCand[] = []
@@ -611,7 +673,11 @@ function targetFrom(opts: {
     return a.dist - b.dist
   })
   const hit = withDist[0]
-  return hit ? { price: hit.price, label: hit.label } : null
+  if (!hit) return null
+  return {
+    price: clipToHorizon(from, hit.price, side, horizon, atr),
+    label: hit.label,
+  }
 }
 
 function failTargetFrom(opts: {
@@ -622,15 +688,21 @@ function failTargetFrom(opts: {
   side: 'LONG' | 'SHORT'
   price: number
   atr: number
+  horizon: number
 }): { price: number; label: string } | null {
-  const { rx, structure, primary, opposite, side, price, atr } = opts
+  const { rx, structure, primary, opposite, side, price, atr, horizon } = opts
   const fail: 'LONG' | 'SHORT' = side === 'LONG' ? 'SHORT' : 'LONG'
   const zoneClear =
     side === 'LONG'
       ? Math.min(primary.bottom, primary.top)
       : Math.max(primary.top, primary.bottom)
   const from = side === 'LONG' ? Math.min(price, zoneClear) : Math.max(price, zoneClear)
-  const minMove = Math.max(atr * 0.9, Math.abs(primary.top - primary.bottom) * 0.65, price * 0.0024)
+  const minMove = Math.max(
+    atr * 0.35,
+    horizon * 0.18,
+    Math.abs(primary.top - primary.bottom) * 0.28,
+    price * 0.001
+  )
   const raw: MagCand[] = []
   const add = (p: number | null | undefined, label: string, weight: number) => {
     if (p == null || !alignedBeyond(fail, from, p, minMove)) return
@@ -674,7 +746,10 @@ function failTargetFrom(opts: {
     if (Math.abs(b.weight - a.weight) >= 14) return b.weight - a.weight
     return Math.abs(a.price - price) - Math.abs(b.price - price)
   })
-  return { price: raw[0].price, label: raw[0].label }
+  return {
+    price: clipToHorizon(from, raw[0].price, fail, horizon, atr),
+    label: raw[0].label,
+  }
 }
 
 function sweepPriceOf(
@@ -708,32 +783,168 @@ function sweepPriceOf(
   return side === 'LONG' ? Math.min(...hunts) : Math.max(...hunts)
 }
 
-/** Straight / 2–3 segment path — TradingView path-to-target, not a doodle. */
-function ptsToPath(
-  pts: Array<{ t: number; price: number; label: string; key?: boolean }>
-): PathPoint[] {
-  return pts
-    .filter((p) => p.price > 0 && Number.isFinite(p.price))
-    .map((p) => ({
-      timeOffsetSeconds: p.t,
+interface CoinRhythm {
+  /** Typical retrace of the prior impulse, clipped to 0.382–0.618 */
+  retraceFrac: number
+  /** Median candle range / ATR — bar-to-bar noise of this coin */
+  noiseAtr: number
+  impulseBars: number
+  retraceBars: number
+  lastSwing: number
+  /** Recent close-to-close moves as ATR fractions (this coin's tape) */
+  deltas: number[]
+}
+
+function median(xs: number[]): number {
+  if (!xs.length) return 0
+  const s = [...xs].sort((a, b) => a - b)
+  const m = Math.floor(s.length / 2)
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2
+}
+
+function readCoinRhythm(candles: OhlcvCandle[], atr: number): CoinRhythm {
+  const atrN = atr > 0 ? atr : 1e-8
+  const look = candles.slice(-Math.min(64, candles.length))
+  const deltas: number[] = []
+  const ranges: number[] = []
+  for (let i = 1; i < look.length; i++) {
+    const cur = look[i]
+    const prev = look[i - 1]
+    if (!cur || !prev) continue
+    deltas.push((cur[4] - prev[4]) / atrN)
+    ranges.push((cur[2] - cur[3]) / atrN)
+  }
+  const noiseAtr = clamp(median(ranges.length ? ranges : [0.85]), 0.28, 1.55)
+
+  const L = 2
+  const piv: Array<{ i: number; price: number; kind: 'H' | 'L' }> = []
+  for (let i = L; i < look.length - L; i++) {
+    const row = look[i]
+    if (!row) continue
+    const h = row[2]
+    const l = row[3]
+    let isH = true
+    let isLo = true
+    for (let k = i - L; k <= i + L; k++) {
+      if (k === i) continue
+      const other = look[k]
+      if (!other) continue
+      if (other[2] >= h) isH = false
+      if (other[3] <= l) isLo = false
+    }
+    if (isH) piv.push({ i, price: h, kind: 'H' })
+    else if (isLo) piv.push({ i, price: l, kind: 'L' })
+  }
+  const swings: typeof piv = []
+  for (const p of piv) {
+    const last = swings[swings.length - 1]
+    if (!last || last.kind !== p.kind) swings.push(p)
+    else if (p.kind === 'H' && p.price > last.price) swings[swings.length - 1] = p
+    else if (p.kind === 'L' && p.price < last.price) swings[swings.length - 1] = p
+  }
+
+  const retraces: number[] = []
+  const impBars: number[] = []
+  const retBars: number[] = []
+  for (let i = 2; i < swings.length; i++) {
+    const a = swings[i - 2]
+    const b = swings[i - 1]
+    const c = swings[i]
+    if (!a || !b || !c) continue
+    const impulse = Math.abs(b.price - a.price)
+    if (impulse < atrN * 0.35) continue
+    retraces.push(Math.abs(c.price - b.price) / impulse)
+    impBars.push(Math.max(1, b.i - a.i))
+    retBars.push(Math.max(1, c.i - b.i))
+  }
+  const lastA = swings[swings.length - 2]
+  const lastB = swings[swings.length - 1]
+  const lastSwing =
+    lastA && lastB ? Math.abs(lastB.price - lastA.price) : atrN * 2.2
+
+  return {
+    retraceFrac: clamp(median(retraces.length ? retraces : [0.5]), 0.382, 0.618),
+    noiseAtr,
+    impulseBars: clamp(Math.round(median(impBars.length ? impBars : [5])), 2, 10),
+    retraceBars: clamp(Math.round(median(retBars.length ? retBars : [3])), 2, 7),
+    lastSwing: Math.max(lastSwing, atrN * 0.8),
+    deltas: deltas.slice(-16),
+  }
+}
+
+type ZigPt = { t: number; price: number; label: string; key?: boolean }
+
+function ptsToPath(pts: ZigPt[]): PathPoint[] {
+  const out: PathPoint[] = []
+  let lastT = -Infinity
+  for (const p of pts) {
+    if (!(p.price > 0) || !Number.isFinite(p.price)) continue
+    const t = Math.max(p.t, lastT + 1)
+    lastT = t
+    out.push({
+      timeOffsetSeconds: t,
       price: p.price,
-      label: p.label,
+      label: p.label || undefined,
       isKeyLevel: p.key,
-    }))
+    })
+  }
+  return out
 }
 
-function twoSeg(
-  a: { t: number; price: number; label: string },
-  b: { t: number; price: number; label: string; key?: boolean },
-  c?: { t: number; price: number; label: string; key?: boolean }
-): PathPoint[] {
-  return ptsToPath(c ? [a, b, c] : [a, b])
+/** Coin-typical wobble along a leg — recent bar deltas, not a sine doodle. */
+function microAlong(
+  fromT: number,
+  toT: number,
+  fromP: number,
+  toP: number,
+  rhythm: CoinRhythm,
+  atr: number,
+  seed: number,
+  steps: number
+): ZigPt[] {
+  const n = Math.max(1, steps)
+  const deltas = rhythm.deltas.length ? rhythm.deltas : [0]
+  const spanP = toP - fromP
+  const spanT = toT - fromT
+  const noise = atr * rhythm.noiseAtr * 0.28
+  const dir = spanP >= 0 ? 1 : -1
+  const out: ZigPt[] = []
+  for (let i = 1; i < n; i++) {
+    const u = i / n
+    const base = fromP + spanP * u
+    const d = deltas[(seed + i) % deltas.length] ?? 0
+    const env = u * (1 - u) * 4
+    let wobble = d * noise * env
+    const cap = Math.abs(spanP) * 0.24
+    if (dir > 0) wobble = clamp(wobble, -cap, cap)
+    else wobble = clamp(wobble, -cap, cap)
+    out.push({
+      t: Math.round(fromT + spanT * u),
+      price: base + wobble,
+      label: '',
+    })
+  }
+  return out
 }
 
-function horizonBars(from: number, to: number, atr: number): number {
-  const dist = Math.abs(to - from)
-  const atrN = atr > 0 ? dist / atr : 3
-  return clamp(Math.round(6 + atrN * 2.6), 12, 26)
+function appendLeg(
+  pts: ZigPt[],
+  toT: number,
+  toP: number,
+  label: string,
+  rhythm: CoinRhythm,
+  atr: number,
+  seed: number,
+  steps: number,
+  key?: boolean
+) {
+  const last = pts[pts.length - 1]
+  if (!last) {
+    pts.push({ t: toT, price: toP, label, key })
+    return
+  }
+  pts.push(...microAlong(last.t, toT, last.price, toP, rhythm, atr, seed, steps))
+  pts.push({ t: Math.round(toT), price: toP, label, key })
 }
 
 function pullbackIntoZone(
@@ -757,6 +968,19 @@ function pullbackIntoZone(
   return null
 }
 
+function impulseThenRetrace(
+  now: number,
+  target: number,
+  dir: 1 | -1,
+  rhythm: CoinRhythm
+): { peak: number; dip: number } {
+  const travel = Math.abs(target - now)
+  const first = clamp(travel * 0.46, travel * 0.38, travel * 0.55)
+  const peak = now + dir * first
+  const dip = peak - dir * Math.abs(peak - now) * rhythm.retraceFrac
+  return { peak, dip }
+}
+
 function holdPathOf(opts: {
   price: number
   primary: LiquidityZone
@@ -766,38 +990,49 @@ function holdPathOf(opts: {
   atr: number
   kind: StoryNowKind
   fuel: number | null
+  rhythm: CoinRhythm
 }): PathPoint[] {
-  const { price, primary, target, side, barSeconds, atr, kind, fuel } = opts
+  const { price, primary, target, side, barSeconds, atr, kind, fuel, rhythm } = opts
   const bar = Math.max(1, barSeconds)
   const now = price > 0 ? price : (primary.top + primary.bottom) / 2
-  const bars = horizonBars(now, target.price, atr)
+  const hz = tfHorizon(barSeconds, atr, now)
+  const bars = hz.bars
+  const dir: 1 | -1 = side === 'LONG' ? 1 : -1
+  const tEnd = bar * bars
+  const iB = rhythm.impulseBars
+  const rB = rhythm.retraceBars
   const pb = pullbackIntoZone(primary, side, now, kind, fuel)
-  const leave = side === 'LONG' ? primary.top : primary.bottom
-  const pts: Array<{ t: number; price: number; label: string; key?: boolean }> = [
-    { t: 0, price: now, label: 'сейчас' },
-  ]
-  if (pb != null && Math.abs(pb - now) > atr * 0.18) {
-    pts.push({
-      t: Math.round(bar * Math.max(2.2, bars * 0.22)),
-      price: pb,
-      label: 'зона',
-    })
-  } else if (
-    Math.abs(leave - now) > atr * 0.22 &&
-    Math.abs(leave - target.price) > atr * 0.4
-  ) {
-    pts.push({
-      t: Math.round(bar * Math.max(1.8, bars * 0.16)),
-      price: leave,
-      label: 'выход',
-    })
+  const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
+
+  if (pb != null && Math.abs(pb - now) > atr * 0.12) {
+    const tPb = bar * Math.max(2, bars * (rB / (iB + rB + iB)))
+    appendLeg(pts, tPb, pb, 'зона', rhythm, atr, 2, 2)
+    const { peak, dip } = impulseThenRetrace(pb, target.price, dir, rhythm)
+    const t1 = tPb + (tEnd - tPb) * (iB / (iB + rB + iB))
+    const t2 = t1 + (tEnd - tPb) * (rB / (iB + rB + iB))
+    appendLeg(pts, t1, peak, 'импульс', rhythm, atr, 3, 2)
+    appendLeg(pts, t2, dip, 'откат', rhythm, atr, 5, 1)
+    appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 8, 2, true)
+    return ptsToPath(pts)
   }
-  pts.push({
-    t: Math.round(bar * bars),
-    price: target.price,
-    label: target.label,
-    key: true,
-  })
+
+  const { peak, dip } = impulseThenRetrace(now, target.price, dir, rhythm)
+  const leave = side === 'LONG' ? primary.top : primary.bottom
+  const total = iB + rB + iB
+  let t1 = tEnd * (iB / total)
+  const t2 = tEnd * ((iB + rB) / total)
+  if (
+    Math.abs(leave - now) > atr * 0.2 &&
+    Math.abs(leave - target.price) > atr * 0.35 &&
+    Math.sign(leave - now) === dir
+  ) {
+    const tLeave = tEnd * 0.14
+    appendLeg(pts, tLeave, leave, 'выход', rhythm, atr, 1, 1)
+    t1 = Math.max(tLeave + bar * 2, t1)
+  }
+  appendLeg(pts, t1, peak, 'импульс', rhythm, atr, 2, 2)
+  appendLeg(pts, t2, dip, 'откат', rhythm, atr, 6, 1)
+  appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 9, 2, true)
   return ptsToPath(pts)
 }
 
@@ -809,27 +1044,29 @@ function sweepPathOf(opts: {
   barSeconds: number
   atr: number
   sweepPrice: number
+  rhythm: CoinRhythm
 }): PathPoint[] {
-  const { price, primary, target, side, barSeconds, atr, sweepPrice } = opts
+  const { price, primary, target, side, barSeconds, atr, sweepPrice, rhythm } = opts
   const bar = Math.max(1, barSeconds)
   const now = price > 0 ? price : (primary.top + primary.bottom) / 2
-  const sweep = sweepPrice > 0 ? sweepPrice : side === 'LONG' ? primary.bottom : primary.top
-  const bars = horizonBars(now, target.price, atr)
-  return ptsToPath([
-    { t: 0, price: now, label: 'сейчас' },
-    {
-      t: Math.round(bar * Math.max(2.4, bars * 0.24)),
-      price: sweep,
-      label: 'свип',
-      key: true,
-    },
-    {
-      t: Math.round(bar * bars),
-      price: target.price,
-      label: target.label,
-      key: true,
-    },
-  ])
+  const hz = tfHorizon(barSeconds, atr, now)
+  const tEnd = bar * hz.bars
+  const dir: 1 | -1 = side === 'LONG' ? 1 : -1
+  const hunt = sweepPrice > 0 ? sweepPrice : side === 'LONG' ? primary.bottom : primary.top
+  const reclaim = side === 'LONG' ? primary.top : primary.bottom
+  const { peak, dip } = impulseThenRetrace(
+    reclaim,
+    target.price,
+    dir,
+    { ...rhythm, retraceFrac: Math.min(rhythm.retraceFrac, 0.5) }
+  )
+  const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
+  appendLeg(pts, tEnd * 0.18, hunt, 'свип', rhythm, atr, 1, 2, true)
+  appendLeg(pts, tEnd * 0.36, reclaim, 'возврат', rhythm, atr, 4, 2)
+  appendLeg(pts, tEnd * 0.55, peak, 'импульс', rhythm, atr, 7, 2)
+  appendLeg(pts, tEnd * 0.7, dip, 'откат', rhythm, atr, 10, 1)
+  appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 12, 2, true)
+  return ptsToPath(pts)
 }
 
 function breakPathOf(opts: {
@@ -839,53 +1076,49 @@ function breakPathOf(opts: {
   side: 'LONG' | 'SHORT'
   barSeconds: number
   atr: number
+  rhythm: CoinRhythm
 }): PathPoint[] {
-  const { price, primary, target, side, barSeconds, atr } = opts
+  const { price, primary, target, side, barSeconds, atr, rhythm } = opts
   const bar = Math.max(1, barSeconds)
-  const through = side === 'LONG' ? primary.bottom : primary.top
   const now = price > 0 ? price : (primary.top + primary.bottom) / 2
-  const bars = horizonBars(now, target.price, atr)
-  return ptsToPath([
-    { t: 0, price: now, label: 'сейчас' },
-    {
-      t: Math.round(bar * Math.max(2, bars * 0.2)),
-      price: through,
-      label: 'слом',
-      key: true,
-    },
-    {
-      t: Math.round(bar * bars),
-      price: target.price,
-      label: target.label,
-      key: true,
-    },
-  ])
+  const hz = tfHorizon(barSeconds, atr, now)
+  const tEnd = bar * hz.bars
+  const failDir: 1 | -1 = side === 'LONG' ? -1 : 1
+  const through = side === 'LONG' ? primary.bottom : primary.top
+  const { peak, dip } = impulseThenRetrace(through, target.price, failDir, rhythm)
+  const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
+  appendLeg(pts, tEnd * 0.22, through, 'слом', rhythm, atr, 2, 2, true)
+  appendLeg(pts, tEnd * 0.42, peak, 'импульс', rhythm, atr, 5, 2)
+  appendLeg(pts, tEnd * 0.62, dip, 'откат', rhythm, atr, 8, 1)
+  appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 11, 2, true)
+  return ptsToPath(pts)
 }
 
 function chopPathOf(opts: {
   price: number
   primary: LiquidityZone
+  target: { price: number; label: string }
   barSeconds: number
   atr: number
+  rhythm: CoinRhythm
 }): PathPoint[] {
-  const { price, primary, barSeconds, atr } = opts
+  const { price, primary, target, barSeconds, atr, rhythm } = opts
   const bar = Math.max(1, barSeconds)
   const mid = (primary.top + primary.bottom) / 2
   const now = price > 0 ? price : mid
-  const far =
+  const hz = tfHorizon(barSeconds, atr, now)
+  const tEnd = bar * Math.max(10, Math.round(hz.bars * 0.78))
+  const near =
     Math.abs(now - primary.top) <= Math.abs(now - primary.bottom)
-      ? primary.bottom
-      : primary.top
-  const bars = horizonBars(now, far, atr)
-  return ptsToPath([
-    { t: 0, price: now, label: 'сейчас' },
-    {
-      t: Math.round(bar * bars),
-      price: far,
-      label: 'край диапазона',
-      key: true,
-    },
-  ])
+      ? primary.top
+      : primary.bottom
+  const far = target.price
+  const retrace = near + (mid - near) * clamp(rhythm.retraceFrac, 0.45, 0.618)
+  const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
+  appendLeg(pts, tEnd * 0.28, near, 'край', rhythm, atr, 3, 2)
+  appendLeg(pts, tEnd * 0.55, retrace, 'откат', rhythm, atr, 6, 2)
+  appendLeg(pts, tEnd, far, target.label, rhythm, atr, 9, 2, true)
+  return ptsToPath(pts)
 }
 
 interface LastTape {
@@ -1216,16 +1449,35 @@ export function padStoryScenarios(
   rows: StoryScenario[],
   side: 'LONG' | 'SHORT' | null,
   price: number,
-  barSeconds: number
+  barSeconds: number,
+  extra?: { candles?: OhlcvCandle[]; atr?: number; primary?: LiquidityZone | null }
 ): StoryScenario[] {
   const s: 'LONG' | 'SHORT' = side === 'SHORT' ? 'SHORT' : 'LONG'
   const fail: 'LONG' | 'SHORT' = s === 'LONG' ? 'SHORT' : 'LONG'
-  const bar = Math.max(1, barSeconds)
   const now = price > 0 ? price : 1
-  const holdTo = s === 'LONG' ? now * 1.006 : now * 0.994
-  const breakTo = s === 'LONG' ? now * 0.994 : now * 1.006
+  const atr = extra?.atr && extra.atr > 0 ? extra.atr : Math.max(now * 0.004, 1e-8)
+  const candles = extra?.candles ?? []
+  const rhythm = readCoinRhythm(candles, atr)
+  const hz = tfHorizon(barSeconds, atr, now)
+  const holdTo = clipToHorizon(now, s === 'LONG' ? now * 1.006 : now * 0.994, s, hz.dist, atr)
+  const breakTo = clipToHorizon(
+    now,
+    s === 'LONG' ? now * 0.994 : now * 1.006,
+    fail,
+    hz.dist,
+    atr
+  )
+  const band =
+    extra?.primary ??
+    makeSynthBand(now, atr, s, candles, barSeconds)
   const holdDest = s === 'LONG' ? 'ликвидность сверху' : 'стопы снизу'
   const breakDest = s === 'LONG' ? 'стопы снизу' : 'ликвидность сверху'
+  const chopPx =
+    Math.abs(now - band.top) <= Math.abs(now - band.bottom) ? band.bottom : band.top
+  const sweepPx = s === 'LONG' ? band.bottom : band.top
+  const holdT = { price: holdTo, label: holdDest }
+  const breakT = { price: breakTo, label: breakDest }
+  const chopT = { price: chopPx, label: 'край диапазона' }
   const stubs: StoryScenario[] = [
     {
       id: 'hold',
@@ -1234,10 +1486,17 @@ export function padStoryScenarios(
       dirLabel: dirWord(s),
       condition: holdCondition(s),
       title: holdArrowCaption(s, holdDest),
-      path: twoSeg(
-        { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 12), price: holdTo, label: holdDest, key: true }
-      ),
+      path: holdPathOf({
+        price: now,
+        primary: band,
+        target: holdT,
+        side: s,
+        barSeconds,
+        atr,
+        kind: 'IN_ZONE',
+        fuel: null,
+        rhythm,
+      }),
       toPrice: holdTo,
       toLabel: holdDest,
       tipLabel: storyTipLabel(holdTo),
@@ -1249,11 +1508,16 @@ export function padStoryScenarios(
       dirLabel: dirWord(s),
       condition: sweepCondition(s),
       title: 'свип → разворот',
-      path: twoSeg(
-        { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 3), price: s === 'LONG' ? now * 0.997 : now * 1.003, label: 'свип', key: true },
-        { t: Math.round(bar * 12), price: holdTo, label: holdDest, key: true }
-      ),
+      path: sweepPathOf({
+        price: now,
+        primary: band,
+        target: holdT,
+        side: s,
+        barSeconds,
+        atr,
+        sweepPrice: sweepPx,
+        rhythm,
+      }),
       toPrice: holdTo,
       toLabel: holdDest,
       tipLabel: storyTipLabel(holdTo),
@@ -1265,10 +1529,15 @@ export function padStoryScenarios(
       dirLabel: dirWord(fail),
       condition: breakCondition(s),
       title: `слом → ${breakDest}`,
-      path: twoSeg(
-        { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 12), price: breakTo, label: breakDest, key: true }
-      ),
+      path: breakPathOf({
+        price: now,
+        primary: band,
+        target: breakT,
+        side: s,
+        barSeconds,
+        atr,
+        rhythm,
+      }),
       toPrice: breakTo,
       toLabel: breakDest,
       tipLabel: storyTipLabel(breakTo),
@@ -1280,13 +1549,17 @@ export function padStoryScenarios(
       dirLabel: dirWord('RANGE'),
       condition: 'если останемся внутри',
       title: 'пила → край диапазона',
-      path: twoSeg(
-        { t: 0, price: now, label: 'сейчас' },
-        { t: Math.round(bar * 10), price: now, label: 'край диапазона' }
-      ),
-      toPrice: now,
+      path: chopPathOf({
+        price: now,
+        primary: band,
+        target: chopT,
+        barSeconds,
+        atr,
+        rhythm,
+      }),
+      toPrice: chopPx,
       toLabel: 'край диапазона',
-      tipLabel: storyTipLabel(now),
+      tipLabel: storyTipLabel(chopPx),
     },
   ]
   const byId = new Map(rows.map((r) => [r.id, r]))
@@ -1389,6 +1662,8 @@ export function buildChartStory(opts: {
       : null
 
   const nowLine = nowLineOf(nowKind, holdSide, scoredOdds?.pct ?? null)
+  const hz = tfHorizon(barSeconds, atr, livePrice || price)
+  const rhythm = readCoinRhythm(candles, atr)
 
   const holdTgt =
     primary && holdSide
@@ -1401,6 +1676,7 @@ export function buildChartStory(opts: {
           side: holdSide,
           price: livePrice,
           atr,
+          horizon: hz.dist,
         })
       : null
 
@@ -1414,6 +1690,7 @@ export function buildChartStory(opts: {
           side: holdSide,
           price: livePrice,
           atr,
+          horizon: hz.dist,
         })
       : null
 
@@ -1451,25 +1728,40 @@ export function buildChartStory(opts: {
         })
       : { hold: 40, sweep: 22, brk: 22, chop: 16 }
 
-    const holdDest = holdTgtRu ?? {
-      price:
-        holdSide === 'LONG'
-          ? Math.max(primary.top, livePrice) + atr * 3.2
-          : Math.min(primary.bottom, livePrice) - atr * 3.2,
-      label: holdSide === 'LONG' ? 'ликвидность сверху' : 'стопы снизу',
+    const holdDest = {
+      price: clipToHorizon(
+        livePrice,
+        holdTgtRu?.price ??
+          (holdSide === 'LONG'
+            ? Math.max(primary.top, livePrice) + hz.dist
+            : Math.min(primary.bottom, livePrice) - hz.dist),
+        holdSide,
+        hz.dist,
+        atr
+      ),
+      label: holdTgtRu?.label ?? (holdSide === 'LONG' ? 'ликвидность сверху' : 'стопы снизу'),
     }
-    const breakDest = failTgtRu ?? {
-      price:
-        holdSide === 'LONG'
-          ? Math.min(primary.bottom, livePrice) - atr * 3.2
-          : Math.max(primary.top, livePrice) + atr * 3.2,
-      label: holdSide === 'LONG' ? 'стопы снизу' : 'ликвидность сверху',
+    const breakDest = {
+      price: clipToHorizon(
+        livePrice,
+        failTgtRu?.price ??
+          (holdSide === 'LONG'
+            ? Math.min(primary.bottom, livePrice) - hz.dist
+            : Math.max(primary.top, livePrice) + hz.dist),
+        failSide ?? (holdSide === 'LONG' ? 'SHORT' : 'LONG'),
+        hz.dist,
+        atr
+      ),
+      label: failTgtRu?.label ?? (holdSide === 'LONG' ? 'стопы снизу' : 'ликвидность сверху'),
     }
+    const chopEdge =
+      Math.abs(livePrice - primary.top) <= Math.abs(livePrice - primary.bottom)
+        ? primary.bottom
+        : primary.top
+    const chopBeyond = hz.atrMult > 4 ? atr * 0.4 : 0
+    const chopDir = chopEdge >= livePrice ? 1 : -1
     const chopDest = {
-      price:
-        Math.abs(livePrice - primary.top) <= Math.abs(livePrice - primary.bottom)
-          ? primary.bottom
-          : primary.top,
+      price: chopEdge + chopDir * chopBeyond,
       label: 'край диапазона',
     }
 
@@ -1483,6 +1775,7 @@ export function buildChartStory(opts: {
       atr,
       kind: nowKind,
       fuel: fuelPx,
+      rhythm,
     })
     const sweepPath = sweepPathOf({
       price: livePrice,
@@ -1492,6 +1785,7 @@ export function buildChartStory(opts: {
       barSeconds,
       atr,
       sweepPrice: sweep,
+      rhythm,
     })
     const lostPath = breakPathOf({
       price: livePrice,
@@ -1500,12 +1794,15 @@ export function buildChartStory(opts: {
       side: holdSide,
       barSeconds,
       atr,
+      rhythm,
     })
     const rangePath = chopPathOf({
       price: livePrice,
       primary,
+      target: chopDest,
       barSeconds,
       atr,
+      rhythm,
     })
 
     const zStart = timeSec(primary.startTime)
@@ -1563,7 +1860,11 @@ export function buildChartStory(opts: {
       }
     )
 
-    const packed = padStoryScenarios(scenarios, holdSide, livePrice, barSeconds)
+    const packed = padStoryScenarios(scenarios, holdSide, livePrice, barSeconds, {
+      candles,
+      atr,
+      primary,
+    })
     const lead = leadStoryScenario(packed) ?? packed[0]
     const leadPath = lead?.path?.length ? lead.path : holdPath
     const leadTarget = lead?.toPrice ?? holdDest.price
@@ -1573,13 +1874,14 @@ export function buildChartStory(opts: {
       holdDest.price,
       breakDest.price,
       chopDest.price,
-      ...leadPath.map((p) => p.price),
+      ...holdPath.map((p) => p.price),
+      ...sweepPath.map((p) => p.price),
+      ...lostPath.map((p) => p.price),
+      ...rangePath.map((p) => p.price),
     ].filter((p) => p > 0 && Number.isFinite(p))
     prices.push(primary.top, primary.bottom)
     const boxLow = Math.min(...prices)
     const boxHigh = Math.max(...prices)
-    const maxOff = Math.max(1, ...leadPath.map((p) => p.timeOffsetSeconds || 0))
-    const bar = Math.max(1, barSeconds)
     const futureSide: 'LONG' | 'SHORT' =
       lead && lead.side !== 'RANGE' ? lead.side : holdSide
     future = {
@@ -1592,7 +1894,7 @@ export function buildChartStory(opts: {
       failTargetLabel: breakDest.label,
       boxLow,
       boxHigh,
-      bars: Math.min(26, Math.max(12, Math.ceil(maxOff / bar) + 2)),
+      bars: hz.bars,
       side: futureSide,
     }
 
@@ -1624,7 +1926,11 @@ export function buildChartStory(opts: {
     future,
     odds: scoredOdds,
     arrows,
-    scenarios: padStoryScenarios(scenarios, holdSide, livePrice || price, barSeconds),
+    scenarios: padStoryScenarios(scenarios, holdSide, livePrice || price, barSeconds, {
+      candles,
+      atr,
+      primary,
+    }),
     legend: legend.length
       ? legend
       : [

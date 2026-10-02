@@ -287,11 +287,9 @@ const LiveChart = ({
   )
   const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
-  const [showLiqMap, setShowLiqMap] = useState(() => {
-    const clean = readLsFlag('enterprise_chart_clean', true)
-    if (clean) return false
-    return readLsFlag('enterprise_liq_map', false)
-  })
+  const [showLiqMap, setShowLiqMap] = useState(() =>
+    readLsFlag('enterprise_liq_layer', true)
+  )
   const [audioOn, setAudioOn] = useState(() => {
     try {
       return localStorage.getItem('enterprise_process_audio') === '1'
@@ -493,7 +491,7 @@ const LiveChart = ({
   const currentPrice = ticker?.price ?? signal?.price ?? 0
   const lastClose = candles.length ? candles[candles.length - 1][4] : 0
   const mapPrice = currentPrice > 0 ? currentPrice : lastClose
-  const liqModel = useLiqHeatmap(symbol, candles, mapPrice, showLiqMap)
+  const liqModel = useLiqHeatmap(symbol, candles, mapPrice, true)
   const liveBookImbalance =
     orderBookMetrics != null ? orderBookMetrics.imbalance / 100 : null
   /** 5% OBI buckets — forecast ignores sub-bucket noise */
@@ -1779,13 +1777,6 @@ const LiveChart = ({
   }, [chartStory, storyPathId, chartReady])
 
   useEffect(() => {
-    if (cleanMode) {
-      setShowLiqMap(false)
-      writeLsFlag('enterprise_liq_map', false)
-    }
-  }, [cleanMode])
-
-  useEffect(() => {
     if (!selectedSetup?.chartPath || !forecast) return
     if (
       selectedSetup.kind === 'FORECAST_A' ||
@@ -2341,7 +2332,7 @@ const LiveChart = ({
     }
     liqLineRefs.current = []
 
-    if (!eqLiquidityMap || cleanMode) return
+    if (!eqLiquidityMap) return
 
     const drawLiqLevel = (level: EqualLevel) => {
       const isBSL = level.type === 'HIGH'
@@ -2550,8 +2541,6 @@ const LiveChart = ({
       setActiveScenarios(new Set(['A']))
       setSessionSettings({ enabled: false })
       setShowHints(false)
-      setShowLiqMap(false)
-      writeLsFlag('enterprise_liq_map', false)
       setOnlyStrong(true)
       writeLsFlag('enterprise_only_strong', true)
       setChartPreferences({
@@ -3213,7 +3202,7 @@ const LiveChart = ({
               chartStory.primary?.id ??
               actionPick.launchId
             }
-            quiet={false}
+            quiet={chartExpanded}
             onlyStrong={cleanMode || onlyStrong}
             thinLabels={chartExpanded}
           />
@@ -3264,22 +3253,25 @@ const LiveChart = ({
             }}
           />
         )}
-        {chartReady > 0 && showLiqMap && !cleanMode && (
+        {chartReady > 0 && (
           <LiqHeatmapOverlay
             chart={chartInstance}
             series={candleRef.current}
             containerRef={containerRef}
             model={liqModel}
-            visible={showLiqMap}
+            visible
+            opacity={
+              cleanMode ? (showLiqMap ? 0.52 : 0.36) : showLiqMap ? 1 : 0.42
+            }
+            edgeOnly={cleanMode || chartExpanded || !showLiqMap}
           />
         )}
-        {!cleanMode && (
         <button
           type="button"
           onClick={() => {
             setShowLiqMap((v) => {
               const next = !v
-              writeLsFlag('enterprise_liq_map', next)
+              writeLsFlag('enterprise_liq_layer', next)
               return next
             })
             haptic.impact()
@@ -3289,10 +3281,10 @@ const LiveChart = ({
               ? 'border-emerald-400/40 bg-emerald-950/80 text-emerald-200'
               : 'border-white/15 bg-black/65 text-white/55 hover:text-white/85'
           }`}
-          title="Карта лонгов, шортов и ликвидаций"
+          title="Ликвидность: толпа L/S и уровни китов"
         >
           <Flame className="h-3.5 w-3.5" />
-          L/S
+          {cleanMode ? 'ликв' : 'L/S'}
           <span
             className={`rounded px-1 py-px text-[8px] ${
               showLiqMap ? 'bg-emerald-400/20' : 'bg-white/10'
@@ -3301,8 +3293,7 @@ const LiveChart = ({
             {showLiqMap ? 'ON' : 'OFF'}
           </span>
         </button>
-        )}
-        {chartReady > 0 && !cleanMode && (
+        {chartReady > 0 && (
           <WhaleLevelsOverlay
             chart={chartInstance}
             series={candleRef.current}

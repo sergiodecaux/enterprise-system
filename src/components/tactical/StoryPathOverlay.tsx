@@ -1,6 +1,6 @@
 /**
- * TradingView-style path-to-target: 1–2 segment polyline + arrowhead + tip label.
- * Extra SMC scenarios live in ScenarioBoard — not overlapping doodles.
+ * Four forecast polylines: impulse → retrace → continuation.
+ * Selected row is bold; the other three stay thin and faint.
  */
 
 import { useEffect, useRef } from 'react'
@@ -10,7 +10,7 @@ import type {
   StoryScenario,
   StoryScenarioId,
 } from '../../engine/smc/chartStory'
-import { leadStoryScenario, storyTipLabel } from '../../engine/smc/chartStory'
+import { leadStoryScenario, storyPathColor, storyTipLabel } from '../../engine/smc/chartStory'
 import type { PathPoint } from '../../engine/prediction/types'
 
 interface Props {
@@ -42,7 +42,7 @@ function drawArrowHead(
   ctx.rotate(angle)
   ctx.fillStyle = color
   ctx.strokeStyle = 'rgba(8,10,14,0.92)'
-  ctx.lineWidth = Math.max(1.2, size * 0.08)
+  ctx.lineWidth = Math.max(1, size * 0.08)
   ctx.beginPath()
   ctx.moveTo(0, 0)
   ctx.lineTo(-size, -size * 0.42)
@@ -111,10 +111,12 @@ function strokePolyline(
   pts: Array<{ x: number; y: number }>,
   color: string,
   width: number,
-  dash: number[]
+  dash: number[],
+  alpha: number
 ) {
   if (pts.length < 2) return
   ctx.save()
+  ctx.globalAlpha = alpha
   ctx.strokeStyle = color
   ctx.lineWidth = width
   ctx.lineJoin = 'round'
@@ -130,11 +132,18 @@ function strokePolyline(
   ctx.restore()
 }
 
-function pathColor(sc: StoryScenario | null, fallbackSide: 'LONG' | 'SHORT'): string {
-  if (!sc) return fallbackSide === 'LONG' ? '#86efac' : '#fda4af'
-  if (sc.id === 'chop') return '#fbbf24'
-  if (sc.id === 'break') return sc.side === 'LONG' ? '#86efac' : '#fda4af'
-  return sc.side === 'LONG' ? '#4ade80' : '#fb7185'
+function hexAlpha(color: string, a: number): string {
+  if (color.startsWith('#') && (color.length === 7 || color.length === 4)) {
+    const h =
+      color.length === 4
+        ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+        : color
+    const r = parseInt(h.slice(1, 3), 16)
+    const g = parseInt(h.slice(3, 5), 16)
+    const b = parseInt(h.slice(5, 7), 16)
+    return `rgba(${r},${g},${b},${a})`
+  }
+  return color
 }
 
 const StoryPathOverlay = ({
@@ -211,7 +220,7 @@ const StoryPathOverlay = ({
         const room = Math.max(24, plotRight - x0 - 10)
         const want = Math.max(
           compact ? 120 : 160,
-          Math.min(future.bars, compact ? 18 : 22) * barPx
+          Math.min(future.bars, compact ? 18 : 24) * barPx
         )
         const span = Math.min(room, want)
         const x1 = x0 + span
@@ -227,22 +236,34 @@ const StoryPathOverlay = ({
           ? scenarios.find((s) => s.id === activeId) ?? null
           : null
         const active =
-          selected ?? leadStoryScenario(scenarios) ?? scenarios.find((s) => s.id === 'hold') ?? null
-        const src: PathPoint[] =
-          active?.path && active.path.length >= 2 ? active.path : future.path
+          selected ??
+          leadStoryScenario(scenarios) ??
+          scenarios.find((s) => s.id === 'hold') ??
+          null
 
-        const xAtOffset = (t: number, maxT: number): number => {
-          if (t <= 0) {
-            return clamp(x0 + t * (barPx / bar), 12, x0)
-          }
-          return x0 + (x1 - x0) * clamp(t / Math.max(1, maxT), 0, 1)
-        }
+        const rows =
+          scenarios.length >= 4
+            ? scenarios.slice(0, 4)
+            : active
+              ? [active]
+              : []
 
         const maxT = Math.max(
           1,
-          ...src.map((p) => p.timeOffsetSeconds).filter((t) => t > 0),
-          bar * Math.max(8, future.bars * 0.7)
+          bar * Math.max(8, future.bars * 0.7),
+          ...rows.flatMap((sc) =>
+            sc.path.map((p) => p.timeOffsetSeconds).filter((t) => t > 0)
+          ),
+          ...future.path.map((p) => p.timeOffsetSeconds).filter((t) => t > 0)
         )
+
+        const xAtOffset = (t: number): number => {
+          if (t <= 0) {
+            return clamp(x0 + t * (barPx / bar), 12, x0)
+          }
+          return x0 + (x1 - x0) * clamp(t / maxT, 0, 1)
+        }
+
         const yLo = 14
         const yHi = h - 16
         const yToward = (price: number): number | null => {
@@ -251,65 +272,65 @@ const StoryPathOverlay = ({
           if (!(lastPrice > 0) || !(price > 0)) return null
           return price > lastPrice ? yLo : yHi
         }
-        let pts: Array<{ x: number; y: number }> = []
-        for (let i = 0; i < src.length; i++) {
-          const p = src[i]
-          if (!(p.price > 0) || !Number.isFinite(p.price)) continue
-          const isEnd = i === src.length - 1
-          const y = isEnd ? yToward(p.price) : yOf(p.price)
-          if (y == null) continue
-          pts.push({
-            x: clamp(xAtOffset(p.timeOffsetSeconds, maxT), 8, plotRight - 6),
-            y: clamp(y, yLo, yHi),
-          })
+
+        const mapPath = (src: PathPoint[]): Array<{ x: number; y: number }> => {
+          const pts: Array<{ x: number; y: number }> = []
+          for (const p of src) {
+            if (!(p.price > 0) || !Number.isFinite(p.price)) continue
+            const y = yOf(p.price) ?? yToward(p.price)
+            if (y == null) continue
+            pts.push({
+              x: clamp(xAtOffset(p.timeOffsetSeconds), 8, plotRight - 6),
+              y: clamp(y, yLo, yHi),
+            })
+          }
+          return pts
         }
 
-        const yFrom = yToward(
-          active?.path[0]?.price ?? lastPrice ?? future.path[0]?.price ?? 0
-        )
-        const targetPx = active?.toPrice ?? future.targetPrice
-        const yTo = yToward(targetPx)
-        if (pts.length < 2) {
-          if (yFrom != null && yTo != null) {
-            pts = [
-              { x: x0, y: yFrom },
-              { x: x1 - 4, y: yTo },
-            ]
+        const drawOne = (sc: StoryScenario, on: boolean) => {
+          const src: PathPoint[] =
+            sc.path && sc.path.length >= 2 ? sc.path : on ? future.path : []
+          let pts = mapPath(src)
+          if (pts.length < 2) return
+          const color = storyPathColor(sc.id, sc.side)
+          const dashed = sc.id === 'break' || sc.id === 'chop'
+          const dash = dashed ? (on ? [7, 5] : [5, 6]) : []
+          if (on) {
+            strokePolyline(ctx, pts, 'rgba(8,10,14,0.88)', compact ? 6.2 : 5.4, dash, 1)
+            strokePolyline(ctx, pts, color, compact ? 3.4 : 3.1, dash, 1)
+          } else {
+            strokePolyline(ctx, pts, hexAlpha(color, 0.42), compact ? 1.45 : 1.25, dash, 1)
           }
-        } else if (yTo != null) {
-          const last = pts[pts.length - 1]
-          if (Math.abs(last.y - yTo) > 3 || last.x < x1 - 10) {
-            pts[pts.length - 1] = { x: x1 - 4, y: yTo }
+          const a = pts[pts.length - 2]
+          const b = pts[pts.length - 1]
+          if (a && b) {
+            drawArrowHead(
+              ctx,
+              b.x,
+              b.y,
+              Math.atan2(b.y - a.y, b.x - a.x),
+              on ? color : hexAlpha(color, 0.55),
+              on ? (compact ? 16 : 15) : compact ? 9 : 8
+            )
+          }
+          if (on) {
+            const tip =
+              sc.tipLabel ||
+              future.tipLabel ||
+              (sc.toPrice && sc.toPrice > 0 ? storyTipLabel(sc.toPrice) : '')
+            if (tip && b) {
+              drawTipLabel(ctx, b.x, b.y, tip, color, plotRight, h, compact)
+            }
           }
         }
-        if (pts.length < 2) return
 
-        const color = pathColor(active, future.side)
-        const dashed =
-          active != null && (active.id === 'break' || active.id === 'chop')
-        const width = compact ? 3.8 : 3.4
-        const halo = compact ? 6.6 : 5.8
-
-        strokePolyline(ctx, pts, 'rgba(8,10,14,0.88)', halo, dashed ? [7, 5] : [])
-        strokePolyline(ctx, pts, color, width, dashed ? [7, 5] : [])
-
-        const a = pts[pts.length - 2]
-        const b = pts[pts.length - 1]
-        drawArrowHead(
-          ctx,
-          b.x,
-          b.y,
-          Math.atan2(b.y - a.y, b.x - a.x),
-          color,
-          compact ? 18 : 16
-        )
-
-        const tip =
-          active?.tipLabel ||
-          future.tipLabel ||
-          (targetPx > 0 ? storyTipLabel(targetPx) : '')
-        if (tip) {
-          drawTipLabel(ctx, b.x, b.y, tip, color, plotRight, h, compact)
+        const order = [...rows].sort((a, b) => {
+          const ao = active && a.id === active.id ? 1 : 0
+          const bo = active && b.id === active.id ? 1 : 0
+          return ao - bo
+        })
+        for (const sc of order) {
+          drawOne(sc, Boolean(active && sc.id === active.id))
         }
       } catch {
         /* overlay must never kill the chart */
@@ -321,7 +342,7 @@ const StoryPathOverlay = ({
       const current = ts.options().rightOffset ?? 8
       const compactFuture = (containerRef.current?.clientWidth ?? 400) < 560
       const need = Math.min(
-        compactFuture ? 24 : 30,
+        compactFuture ? 26 : 32,
         Math.max(compactFuture ? 16 : 18, future.bars + 4)
       )
       if (need > current) ts.applyOptions({ rightOffset: need })
@@ -356,7 +377,7 @@ const StoryPathOverlay = ({
   if (!future) return null
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-[11] overflow-hidden">
+    <div className="pointer-events-none absolute inset-0 z-[12] overflow-hidden">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </div>
   )
