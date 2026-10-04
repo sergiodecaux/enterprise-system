@@ -10,6 +10,8 @@ interface BoardProps {
   activeId: StoryScenarioId
   onSelect: (id: StoryScenarioId) => void
   dense?: boolean
+  /** Global daily frame — LTF arrows sit inside this magnet. */
+  dailyLine?: string | null
 }
 
 interface LegendProps {
@@ -87,6 +89,7 @@ export const ScenarioBoard = ({
   activeId,
   onSelect,
   dense = false,
+  dailyLine = null,
 }: BoardProps) => {
   const rows =
     scenarios.length >= 4
@@ -98,6 +101,16 @@ export const ScenarioBoard = ({
         dense ? 'px-1.5 py-1' : 'px-2 py-1.5'
       }`}
     >
+      {dailyLine ? (
+        <p
+          className={`truncate font-mono font-bold text-violet-200/90 ${
+            dense ? 'mb-0.5 px-1.5 text-[10px]' : 'mb-1 px-1.5 text-[11px]'
+          }`}
+          title={dailyLine}
+        >
+          {dailyLine}
+        </p>
+      ) : null}
       <ul className="flex flex-col gap-0.5">
         {rows.map((sc) => {
           const on = sc.id === activeId

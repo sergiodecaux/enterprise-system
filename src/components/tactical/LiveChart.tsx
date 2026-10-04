@@ -1726,6 +1726,10 @@ const LiveChart = ({
         liquidityMap: eqLiquidityMap,
         sequence:
           sequenceHit && sequenceHit.expiresAt > Date.now() ? sequenceHit : null,
+        whale: whaleState,
+        walls: orderBookMetrics?.walls ?? null,
+        liqHeatmap: liqModel,
+        mmIntent: mmSnap,
       }),
     [
       candidateZones,
@@ -1744,6 +1748,10 @@ const LiveChart = ({
       signal,
       eqLiquidityMap,
       sequenceHit,
+      whaleState,
+      orderBookMetrics?.walls,
+      liqModel,
+      mmSnap,
     ]
   )
 
@@ -2800,6 +2808,7 @@ const LiveChart = ({
               side={chartStory.side}
               oddsPct={chartStory.odds?.pct ?? null}
               fact={chartStory.odds?.fact ?? null}
+              dailyLine={chartStory.dailyFrame?.line ?? null}
               toolbar
             />
           )}
@@ -3255,6 +3264,7 @@ const LiveChart = ({
                 side={chartStory.side}
                 oddsPct={chartStory.odds?.pct ?? null}
                 fact={chartStory.odds?.fact ?? null}
+                dailyLine={chartStory.dailyFrame?.line ?? null}
                 dense={denseUi}
               />
             )}
@@ -3484,6 +3494,7 @@ const LiveChart = ({
             haptic.impact()
           }}
           dense={denseUi}
+          dailyLine={chartStory.dailyFrame?.line ?? null}
         />
       )}
 

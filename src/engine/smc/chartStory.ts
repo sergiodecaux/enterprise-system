@@ -10,7 +10,15 @@ import type { LiquidityZone } from '../indicators/types'
 import type { PathPoint } from '../prediction/types'
 import type { SequenceHit } from '../sequence/types'
 import type { ConditionalSetup } from '../setups'
-import type { CoinSignal, LiquidityMap } from '../types'
+import type {
+  CoinSignal,
+  LiquidityMap,
+  MmIntentSnapshot,
+  OrderBookWall,
+  WhaleWatcherState,
+} from '../types'
+import type { LiqHeatmapModel } from '../derivatives/liqHeatmap'
+import { buildWhaleSitMap, type WhaleSitMap } from '../orderbook/whaleSitLevels'
 import { readCloseQuality } from './mmTrapThesis'
 import type { StructureEvent, StructureRead } from './structureRead'
 import type { ZoneReaction, ZoneReactionBoard } from './zoneReaction'
@@ -46,6 +54,27 @@ export interface StoryArrow {
   sweepPrice: number | null
 }
 
+export type StoryTfName = '1м' | '5м' | '15м' | '1ч' | '4ч' | 'дневка'
+export type StoryTfRing = 'near' | 'mid' | 'daily'
+
+export interface DailyFrame {
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  side: 'LONG' | 'SHORT' | null
+  magnet: number | null
+  magnetLabel: string
+  rangeLow: number | null
+  rangeHigh: number | null
+  /** «дневка: бычья, цель 84500 · хай дня» */
+  line: string
+}
+
+export interface FuelWaypoint {
+  price: number
+  label: string
+  where: 'below' | 'above'
+  kind: 'SSL' | 'BSL' | 'WHALE' | 'MM' | 'SQUEEZE' | 'SWING'
+}
+
 export interface StoryScenario {
   id: StoryScenarioId
   pct: number
@@ -58,12 +87,13 @@ export interface StoryScenario {
   path: PathPoint[]
   toPrice: number | null
   toLabel: string
-  /** Arrow-tip caption, e.g. «цель 84500 · разворот» */
+  /** Arrow-tip caption, e.g. «цель 4ч 84500» */
   tipLabel: string
   /** Hunt already printed — keep the row, hide the arrow into the same pool */
   spent?: boolean
   spentNote?: string
   spentPrice?: number | null
+  fuelPrice?: number | null
 }
 
 export type SpentKind = 'SSL' | 'BSL'
@@ -116,6 +146,9 @@ export interface ChartStory {
   scenarios: StoryScenario[]
   legend: StoryLegendItem[]
   spent: SpentLiquidity
+  dailyFrame: DailyFrame | null
+  fuel: FuelWaypoint | null
+  tfName: StoryTfName
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -174,8 +207,28 @@ export function fmtStoryTargetPx(p: number): string {
   return p.toPrecision(5)
 }
 
-export function storyTipLabel(price: number): string {
-  return `цель ${fmtStoryTargetPx(price)} · разворот`
+export function tfNameOf(barSeconds: number): StoryTfName {
+  if (barSeconds <= 60) return '1м'
+  if (barSeconds <= 300) return '5м'
+  if (barSeconds <= 900) return '15м'
+  if (barSeconds <= 3600) return '1ч'
+  if (barSeconds <= 14_400) return '4ч'
+  return 'дневка'
+}
+
+export function tfRingOf(barSeconds: number): StoryTfRing {
+  if (barSeconds <= 900) return 'near'
+  if (barSeconds <= 14_400) return 'mid'
+  return 'daily'
+}
+
+export function storyTipLabel(price: number, tfName?: string | null): string {
+  const tf = tfName?.trim() ? `${tfName.trim()} ` : ''
+  return `цель ${tf}${fmtStoryTargetPx(price)}`
+}
+
+export function storyDestLabel(tfName: string): string {
+  return `цель · ${tfName}`
 }
 
 export function leadStoryScenario(rows: StoryScenario[]): StoryScenario | null {
@@ -224,6 +277,241 @@ export function tfHorizon(
   }
   const dist = Math.max(atr * atrMult, (price > 0 ? price : atr) * atrMult * 0.00105)
   return { dist, bars, atrMult }
+}
+
+function ringBoost(ring: StoryTfRing, bucket: 'setup' | 'h1' | 'h4' | 'd1' | 'w1'): number {
+  if (ring === 'near') {
+    if (bucket === 'setup' || bucket === 'h1') return 10
+    if (bucket === 'h4') return -8
+    if (bucket === 'd1') return -18
+    return -22
+  }
+  if (ring === 'mid') {
+    if (bucket === 'h4') return 10
+    if (bucket === 'd1') return 6
+    if (bucket === 'setup') return 2
+    if (bucket === 'h1') return -6
+    return -10
+  }
+  if (bucket === 'd1') return 14
+  if (bucket === 'w1') return 10
+  if (bucket === 'h4') return -8
+  if (bucket === 'h1') return -16
+  return 0
+}
+
+function biasToSide(raw: string | null | undefined): 'LONG' | 'SHORT' | null {
+  const s = (raw ?? '').toUpperCase()
+  if (s === 'BULLISH' || s === 'LONG' || s === 'UP') return 'LONG'
+  if (s === 'BEARISH' || s === 'SHORT' || s === 'DOWN') return 'SHORT'
+  return null
+}
+
+function biasWord(bias: DailyFrame['bias']): string {
+  if (bias === 'BULLISH') return 'бычья'
+  if (bias === 'BEARISH') return 'медвежья'
+  return 'нейтральная'
+}
+
+function unusedDailyMagnet(
+  structure: StructureRead | null,
+  spent: SpentLiquidity | null,
+  side: 'LONG' | 'SHORT' | null,
+  price: number,
+  atr: number
+): { price: number; label: string } | null {
+  const d1 = structure?.d1 ?? null
+  const w1 = structure?.w1 ?? null
+  if (side === 'LONG') {
+    const cands: Array<{ price: number; label: string }> = []
+    if (d1?.nextBsl) cands.push({ price: d1.nextBsl, label: 'BSL дня' })
+    if (d1?.dealingHigh) cands.push({ price: d1.dealingHigh, label: 'хай дня' })
+    if (d1?.lastSwingHigh?.price) {
+      cands.push({ price: d1.lastSwingHigh.price, label: 'свинг дня' })
+    }
+    if (w1?.nextBsl) cands.push({ price: w1.nextBsl, label: 'хай недели' })
+    const hit = cands.find(
+      (c) =>
+        c.price > price &&
+        !(spent?.bsl && sameLevel(c.price, spent.bsl.price, atr, price))
+    )
+    return hit ?? cands.find((c) => c.price > 0) ?? null
+  }
+  if (side === 'SHORT') {
+    const cands: Array<{ price: number; label: string }> = []
+    if (d1?.nextSsl) cands.push({ price: d1.nextSsl, label: 'SSL дня' })
+    if (d1?.dealingLow) cands.push({ price: d1.dealingLow, label: 'лой дня' })
+    if (d1?.lastSwingLow?.price) {
+      cands.push({ price: d1.lastSwingLow.price, label: 'свинг дня' })
+    }
+    if (w1?.nextSsl) cands.push({ price: w1.nextSsl, label: 'лой недели' })
+    const hit = cands.find(
+      (c) =>
+        c.price < price &&
+        !(spent?.ssl && sameLevel(c.price, spent.ssl.price, atr, price))
+    )
+    return hit ?? cands.find((c) => c.price > 0) ?? null
+  }
+  return null
+}
+
+export function readDailyFrame(opts: {
+  structure?: StructureRead | null
+  signal?: CoinSignal | null
+  spent?: SpentLiquidity | null
+  price: number
+  atr: number
+}): DailyFrame {
+  const { structure, signal, spent, price, atr } = opts
+  const d1 = structure?.d1 ?? null
+  const fromSignal = biasToSide(signal?.dailyBias)
+  const fromD1 =
+    d1?.trend === 'BULLISH' ? 'LONG' : d1?.trend === 'BEARISH' ? 'SHORT' : null
+  const fromBias =
+    structure?.bias === 'BULLISH'
+      ? 'LONG'
+      : structure?.bias === 'BEARISH'
+        ? 'SHORT'
+        : null
+  const side = fromSignal ?? fromD1 ?? fromBias
+  const bias: DailyFrame['bias'] =
+    side === 'LONG' ? 'BULLISH' : side === 'SHORT' ? 'BEARISH' : 'NEUTRAL'
+  const mag = unusedDailyMagnet(structure ?? null, spent ?? null, side, price, atr)
+  const rangeLow = d1 && d1.dealingLow > 0 ? d1.dealingLow : null
+  const rangeHigh = d1 && d1.dealingHigh > 0 ? d1.dealingHigh : null
+  const magnet = mag?.price && mag.price > 0 ? mag.price : null
+  const magnetLabel = mag?.label ?? (side === 'SHORT' ? 'лой дня' : 'хай дня')
+  const tip =
+    magnet != null
+      ? `${fmtStoryTargetPx(magnet)} · ${magnetLabel}`
+      : magnetLabel
+  return {
+    bias,
+    side,
+    magnet,
+    magnetLabel,
+    rangeLow,
+    rangeHigh,
+    line: `дневка: ${biasWord(bias)}, цель ${tip}`,
+  }
+}
+
+function clipByDailyFrame(
+  from: number,
+  target: number,
+  side: 'LONG' | 'SHORT',
+  daily: DailyFrame | null,
+  scenario: StoryScenarioId,
+  atr: number
+): number {
+  if (!daily || scenario === 'break') return target
+  const mag = daily.magnet
+  const aligned = !daily.side || daily.side === side
+  if (aligned && mag != null && mag > 0) {
+    if (side === 'LONG') {
+      if (mag > from) return Math.min(target, mag)
+      return target
+    }
+    if (mag < from) return Math.max(target, mag)
+    return target
+  }
+  const lo = daily.rangeLow
+  const hi = daily.rangeHigh
+  if (lo != null && hi != null && hi > lo) {
+    const pad = Math.max(atr * 0.15, (hi - lo) * 0.02)
+    return clamp(target, lo + pad * 0.15, hi - pad * 0.15)
+  }
+  return target
+}
+
+export function pickFuelWaypoint(opts: {
+  price: number
+  atr: number
+  side: 'LONG' | 'SHORT' | null
+  structure?: StructureRead | null
+  spent?: SpentLiquidity | null
+  liquidityMap?: LiquidityMap | null
+  whale?: WhaleSitMap | null
+  mm?: MmIntentSnapshot | null
+  signal?: CoinSignal | null
+  primary?: LiquidityZone | null
+}): FuelWaypoint | null {
+  const { price, atr, side, structure, spent, liquidityMap, whale, mm, signal, primary } =
+    opts
+  if (!(price > 0) || !side) return null
+  const pad = Math.max(atr * 0.18, price * 0.0008)
+  const skipSsl = Boolean(spent?.ssl)
+  const skipBsl = Boolean(spent?.bsl)
+  const squeeze = signal?.memePulse?.squeeze
+  const wantBelow = squeeze?.inProgress ? false : side === 'LONG'
+  type FuelCand = FuelWaypoint & { weight: number }
+  const cands: FuelCand[] = []
+  const add = (
+    p: number | null | undefined,
+    label: string,
+    kind: FuelWaypoint['kind'],
+    where: FuelWaypoint['where'],
+    weight: number
+  ) => {
+    if (p == null || !(p > 0) || !Number.isFinite(p)) return
+    if (where === 'below' && !(p < price - pad)) return
+    if (where === 'above' && !(p > price + pad)) return
+    if (where === 'below' && skipSsl && spent?.ssl && sameLevel(p, spent.ssl.price, atr, price)) {
+      return
+    }
+    if (where === 'above' && skipBsl && spent?.bsl && sameLevel(p, spent.bsl.price, atr, price)) {
+      return
+    }
+    const w = primary && inPrimaryZone(primary, p) ? weight - 6 : weight
+    cands.push({ price: p, label, where, kind, weight: w })
+  }
+
+  const hunt = mm?.hunt
+  if (hunt?.microIsStopHunt && hunt.microTarget) {
+    const where: FuelWaypoint['where'] = hunt.microTarget < price ? 'below' : 'above'
+    add(hunt.microTarget, hunt.microLabel || 'охота MM', 'MM', where, 110)
+  }
+  if (structure?.fuel?.price) {
+    const where: FuelWaypoint['where'] =
+      structure.fuel.price < price ? 'below' : 'above'
+    add(structure.fuel.price, structure.fuel.label || 'топливо', 'SWING', where, 100)
+  }
+  if (whale?.nearestBelow && !skipSsl) {
+    add(whale.nearestBelow.price, whale.nearestBelow.shortLabel || 'киты снизу', 'WHALE', 'below', 92)
+  }
+  if (whale?.nearestAbove && !skipBsl) {
+    add(whale.nearestAbove.price, whale.nearestAbove.shortLabel || 'киты сверху', 'WHALE', 'above', 92)
+  }
+  if (!skipSsl) {
+    add(liquidityMap?.nearestSSL?.price, 'SSL', 'SSL', 'below', 88)
+    add(structure?.h1?.nextSsl, 'SSL часа', 'SSL', 'below', 84)
+    add(structure?.h4?.nextSsl, 'SSL 4ч', 'SSL', 'below', 80)
+    add(structure?.trap?.crowdLongs, 'стопы лонгов', 'SSL', 'below', 86)
+    add(primary?.bottom, 'лой зоны', 'SWING', 'below', 62)
+  }
+  if (!skipBsl) {
+    add(liquidityMap?.nearestBSL?.price, 'BSL', 'BSL', 'above', 88)
+    add(structure?.h1?.nextBsl, 'BSL часа', 'BSL', 'above', 84)
+    add(structure?.h4?.nextBsl, 'BSL 4ч', 'BSL', 'above', 80)
+    add(structure?.trap?.crowdShorts, 'стопы шортов', 'BSL', 'above', 86)
+    add(primary?.top, 'хай зоны', 'SWING', 'above', 62)
+  }
+  if (squeeze?.inProgress || squeeze?.setup) {
+    add(structure?.h1?.nextBsl ?? structure?.h4?.nextBsl, 'сквиз шортов', 'SQUEEZE', 'above', 96)
+  }
+
+  if (!cands.length) return null
+  const scored = cands.map((c) => {
+    const prefer = (wantBelow && c.where === 'below') || (!wantBelow && c.where === 'above')
+    return {
+      ...c,
+      score: c.weight + (prefer ? 16 : 0) - Math.abs(c.price - price) / Math.max(atr, 1e-8),
+    }
+  })
+  scored.sort((a, b) => b.score - a.score)
+  const hit = scored[0]
+  if (!hit) return null
+  return { price: hit.price, label: hit.label, where: hit.where, kind: hit.kind }
 }
 
 export interface ZoneMeaning {
@@ -637,8 +925,26 @@ function targetFrom(opts: {
   atr: number
   horizon: number
   spent?: SpentLiquidity | null
+  ring?: StoryTfRing
+  daily?: DailyFrame | null
+  mm?: MmIntentSnapshot | null
+  whale?: WhaleSitMap | null
 }): { price: number; label: string } | null {
-  const { setup, rx, structure, primary, opposite, side, price, atr, horizon, spent } = opts
+  const {
+    setup,
+    rx,
+    structure,
+    primary,
+    opposite,
+    side,
+    price,
+    atr,
+    horizon,
+    spent,
+    mm,
+    whale,
+  } = opts
+  const ring = opts.ring ?? 'mid'
   if (!side || !(price > 0)) return null
   const zoneClear =
     primary != null
@@ -665,34 +971,48 @@ function targetFrom(opts: {
   }
 
   if (setup?.magnet && setup.magnet.price > 0) {
-    add(setup.magnet.price, setup.magnet.label || 'магнит', 100)
+    add(setup.magnet.price, setup.magnet.label || 'магнит', 100 + ringBoost(ring, 'setup'))
   }
   const mag = structure?.magnet
-  if (mag && mag.price > 0) add(mag.price, mag.label || 'магнит', 98)
+  if (mag && mag.price > 0) add(mag.price, mag.label || 'магнит', 98 + ringBoost(ring, 'h1'))
   if (structure?.intra?.dest?.price) {
-    add(structure.intra.dest.price, structure.intra.dest.label || 'цель', 94)
+    add(
+      structure.intra.dest.price,
+      structure.intra.dest.label || 'цель',
+      94 + ringBoost(ring, ring === 'near' ? 'h1' : 'h4')
+    )
   }
-  if (setup?.targetsLadder?.r2) add(setup.targetsLadder.r2, 'цель 2', 92)
-  if (setup?.target) add(setup.target, setup.magnet?.label ?? 'цель', 88)
+  if (setup?.targetsLadder?.r2) add(setup.targetsLadder.r2, 'цель 2', 92 + ringBoost(ring, 'setup'))
+  if (setup?.target) add(setup.target, setup.magnet?.label ?? 'цель', 88 + ringBoost(ring, 'setup'))
   if (rx?.destination?.price) add(rx.destination.price, rx.destination.label, 90)
   if (rx?.targetIfHold?.price) add(rx.targetIfHold.price, rx.targetIfHold.label, 86)
 
   if (side === 'LONG') {
-    add(structure?.h4?.nextBsl, 'BSL', 88)
-    add(structure?.h1?.nextBsl, 'BSL', 84)
-    add(structure?.d1?.nextBsl, 'BSL дня', 82)
-    add(structure?.h4?.lastSwingHigh?.price, 'хай 4ч', 76)
-    add(structure?.h1?.lastSwingHigh?.price, 'хай 1ч', 72)
-    add(structure?.h4?.dealingHigh, 'премиум 4ч', 64)
-    add(structure?.d1?.dealingHigh, 'хай дня', 60)
+    add(structure?.h1?.nextBsl, 'BSL часа', 84 + ringBoost(ring, 'h1'))
+    add(structure?.h1?.lastSwingHigh?.price, 'хай 1ч', 78 + ringBoost(ring, 'h1'))
+    add(structure?.h4?.nextBsl, 'BSL 4ч', 88 + ringBoost(ring, 'h4'))
+    add(structure?.h4?.lastSwingHigh?.price, 'хай 4ч', 76 + ringBoost(ring, 'h4'))
+    add(structure?.h4?.dealingHigh, 'премиум 4ч', 70 + ringBoost(ring, 'h4'))
+    add(structure?.d1?.nextBsl, 'BSL дня', 86 + ringBoost(ring, 'd1'))
+    add(structure?.d1?.dealingHigh, 'хай дня', 84 + ringBoost(ring, 'd1'))
+    add(structure?.d1?.lastSwingHigh?.price, 'свинг дня', 72 + ringBoost(ring, 'd1'))
+    add(structure?.w1?.nextBsl, 'хай недели', 80 + ringBoost(ring, 'w1'))
+    add(opts.daily?.magnet, opts.daily?.magnetLabel || 'магнит дня', 90 + ringBoost(ring, 'd1'))
+    add(mm?.hunt.macroTarget, mm?.hunt.macroLabel || 'макро MM', 82)
+    if (whale?.nearestAbove) add(whale.nearestAbove.price, 'киты сверху', 74)
   } else {
-    add(structure?.h4?.nextSsl, 'SSL', 88)
-    add(structure?.h1?.nextSsl, 'SSL', 84)
-    add(structure?.d1?.nextSsl, 'SSL дня', 82)
-    add(structure?.h4?.lastSwingLow?.price, 'лой 4ч', 76)
-    add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 72)
-    add(structure?.h4?.dealingLow, 'дисконт 4ч', 64)
-    add(structure?.d1?.dealingLow, 'лой дня', 60)
+    add(structure?.h1?.nextSsl, 'SSL часа', 84 + ringBoost(ring, 'h1'))
+    add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 78 + ringBoost(ring, 'h1'))
+    add(structure?.h4?.nextSsl, 'SSL 4ч', 88 + ringBoost(ring, 'h4'))
+    add(structure?.h4?.lastSwingLow?.price, 'лой 4ч', 76 + ringBoost(ring, 'h4'))
+    add(structure?.h4?.dealingLow, 'дисконт 4ч', 70 + ringBoost(ring, 'h4'))
+    add(structure?.d1?.nextSsl, 'SSL дня', 86 + ringBoost(ring, 'd1'))
+    add(structure?.d1?.dealingLow, 'лой дня', 84 + ringBoost(ring, 'd1'))
+    add(structure?.d1?.lastSwingLow?.price, 'свинг дня', 72 + ringBoost(ring, 'd1'))
+    add(structure?.w1?.nextSsl, 'лой недели', 80 + ringBoost(ring, 'w1'))
+    add(opts.daily?.magnet, opts.daily?.magnetLabel || 'магнит дня', 90 + ringBoost(ring, 'd1'))
+    add(mm?.hunt.macroTarget, mm?.hunt.macroLabel || 'макро MM', 82)
+    if (whale?.nearestBelow) add(whale.nearestBelow.price, 'киты снизу', 74)
   }
 
   if (opposite) {
@@ -700,7 +1020,7 @@ function targetFrom(opts: {
     const meaning = readZoneMeaning(opposite)
     add(edge, meaning.meaning || opposite.label || 'противоположная зона', 85)
   }
-  if (setup?.targetsLadder?.r1) add(setup.targetsLadder.r1, 'цель 1', 62)
+  if (setup?.targetsLadder?.r1) add(setup.targetsLadder.r1, 'цель 1', 62 + ringBoost(ring, 'h1'))
   if (primary?.target) add(primary.target, 'цель', 50)
 
   const leadPath = structure?.scenarios?.scenarios[0]
@@ -740,8 +1060,10 @@ function failTargetFrom(opts: {
   atr: number
   horizon: number
   spent?: SpentLiquidity | null
+  ring?: StoryTfRing
 }): { price: number; label: string } | null {
   const { rx, structure, primary, opposite, side, price, atr, horizon, spent } = opts
+  const ring = opts.ring ?? 'mid'
   const fail: 'LONG' | 'SHORT' = side === 'LONG' ? 'SHORT' : 'LONG'
   const zoneClear =
     side === 'LONG'
@@ -767,21 +1089,25 @@ function failTargetFrom(opts: {
   if (side === 'LONG') {
     const dump = rx?.nextIfBreakDown
     if (dump) add(dump.top, dump.label || 'SSL', 94)
-    add(structure?.h1?.nextSsl, 'SSL', 90)
-    add(structure?.h4?.nextSsl, 'SSL', 92)
-    add(structure?.d1?.nextSsl, 'SSL дня', 84)
-    add(structure?.h4?.lastSwingLow?.price, 'лой 4ч', 76)
-    add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 72)
-    add(structure?.h4?.dealingLow, 'дисконт 4ч', 64)
+    add(structure?.h1?.nextSsl, 'SSL часа', 90 + ringBoost(ring, 'h1'))
+    add(structure?.h4?.nextSsl, 'SSL 4ч', 92 + ringBoost(ring, 'h4'))
+    add(structure?.d1?.nextSsl, 'SSL дня', 88 + ringBoost(ring, 'd1'))
+    add(structure?.d1?.dealingLow, 'лой дня', 80 + ringBoost(ring, 'd1'))
+    add(structure?.w1?.nextSsl, 'лой недели', 76 + ringBoost(ring, 'w1'))
+    add(structure?.h4?.lastSwingLow?.price, 'лой 4ч', 76 + ringBoost(ring, 'h4'))
+    add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 72 + ringBoost(ring, 'h1'))
+    add(structure?.h4?.dealingLow, 'дисконт 4ч', 64 + ringBoost(ring, 'h4'))
   } else {
     const dump = rx?.nextIfBreakUp
     if (dump) add(dump.bottom, dump.label || 'BSL', 94)
-    add(structure?.h1?.nextBsl, 'BSL', 90)
-    add(structure?.h4?.nextBsl, 'BSL', 92)
-    add(structure?.d1?.nextBsl, 'BSL дня', 84)
-    add(structure?.h4?.lastSwingHigh?.price, 'хай 4ч', 76)
-    add(structure?.h1?.lastSwingHigh?.price, 'хай 1ч', 72)
-    add(structure?.h4?.dealingHigh, 'премиум 4ч', 64)
+    add(structure?.h1?.nextBsl, 'BSL часа', 90 + ringBoost(ring, 'h1'))
+    add(structure?.h4?.nextBsl, 'BSL 4ч', 92 + ringBoost(ring, 'h4'))
+    add(structure?.d1?.nextBsl, 'BSL дня', 88 + ringBoost(ring, 'd1'))
+    add(structure?.d1?.dealingHigh, 'хай дня', 80 + ringBoost(ring, 'd1'))
+    add(structure?.w1?.nextBsl, 'хай недели', 76 + ringBoost(ring, 'w1'))
+    add(structure?.h4?.lastSwingHigh?.price, 'хай 4ч', 76 + ringBoost(ring, 'h4'))
+    add(structure?.h1?.lastSwingHigh?.price, 'хай 1ч', 72 + ringBoost(ring, 'h1'))
+    add(structure?.h4?.dealingHigh, 'премиум 4ч', 64 + ringBoost(ring, 'h4'))
   }
   if (opposite) {
     const edge = fail === 'LONG' ? opposite.bottom : opposite.top
@@ -1044,6 +1370,8 @@ function holdPathOf(opts: {
   atr: number
   kind: StoryNowKind
   fuel: number | null
+  fuelWay?: FuelWaypoint | null
+  tfName?: string
   rhythm: CoinRhythm
 }): PathPoint[] {
   const { price, primary, target, side, barSeconds, atr, kind, fuel, rhythm } = opts
@@ -1055,18 +1383,37 @@ function holdPathOf(opts: {
   const tEnd = bar * bars
   const iB = rhythm.impulseBars
   const rB = rhythm.retraceBars
-  const pb = pullbackIntoZone(primary, side, now, kind, fuel)
+  const destLabel = opts.tfName ? storyDestLabel(opts.tfName) : target.label
+  const way = opts.fuelWay
+  const fuelPx =
+    way && way.price > 0 && Math.abs(way.price - now) > atr * 0.15
+      ? way.price
+      : fuel
+  const fuelIsDetour =
+    fuelPx != null &&
+    Math.abs(fuelPx - now) > atr * 0.15 &&
+    Math.abs(fuelPx - target.price) > atr * 0.2 &&
+    Math.sign(fuelPx - now) !== dir
+  const fuelOnWay =
+    fuelPx != null &&
+    !fuelIsDetour &&
+    Math.abs(fuelPx - now) > atr * 0.15 &&
+    Math.sign(fuelPx - now) === dir &&
+    Math.abs(fuelPx - target.price) > atr * 0.2
+  const pb = fuelIsDetour
+    ? fuelPx
+    : pullbackIntoZone(primary, side, now, kind, fuelPx)
   const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
 
   if (pb != null && Math.abs(pb - now) > atr * 0.12) {
     const tPb = bar * Math.max(2, bars * (rB / (iB + rB + iB)))
-    appendLeg(pts, tPb, pb, 'зона', rhythm, atr, 2, 2)
+    appendLeg(pts, tPb, pb, fuelIsDetour || fuelOnWay ? 'топливо' : 'зона', rhythm, atr, 2, 2, true)
     const { peak, dip } = impulseThenRetrace(pb, target.price, dir, rhythm)
     const t1 = tPb + (tEnd - tPb) * (iB / (iB + rB + iB))
     const t2 = t1 + (tEnd - tPb) * (rB / (iB + rB + iB))
     appendLeg(pts, t1, peak, 'импульс', rhythm, atr, 3, 2)
     appendLeg(pts, t2, dip, 'откат', rhythm, atr, 5, 1)
-    appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 8, 2, true)
+    appendLeg(pts, tEnd, target.price, destLabel, rhythm, atr, 8, 2, true)
     return ptsToPath(pts)
   }
 
@@ -1075,7 +1422,11 @@ function holdPathOf(opts: {
   const total = iB + rB + iB
   let t1 = tEnd * (iB / total)
   const t2 = tEnd * ((iB + rB) / total)
-  if (
+  if (fuelOnWay && fuelPx != null) {
+    const tFuel = tEnd * 0.2
+    appendLeg(pts, tFuel, fuelPx, 'топливо', rhythm, atr, 1, 2, true)
+    t1 = Math.max(tFuel + bar * 2, t1)
+  } else if (
     Math.abs(leave - now) > atr * 0.2 &&
     Math.abs(leave - target.price) > atr * 0.35 &&
     Math.sign(leave - now) === dir
@@ -1086,7 +1437,7 @@ function holdPathOf(opts: {
   }
   appendLeg(pts, t1, peak, 'импульс', rhythm, atr, 2, 2)
   appendLeg(pts, t2, dip, 'откат', rhythm, atr, 6, 1)
-  appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 9, 2, true)
+  appendLeg(pts, tEnd, target.price, destLabel, rhythm, atr, 9, 2, true)
   return ptsToPath(pts)
 }
 
@@ -1098,6 +1449,8 @@ function sweepPathOf(opts: {
   barSeconds: number
   atr: number
   sweepPrice: number
+  fuelWay?: FuelWaypoint | null
+  tfName?: string
   rhythm: CoinRhythm
 }): PathPoint[] {
   const { price, primary, target, side, barSeconds, atr, sweepPrice, rhythm } = opts
@@ -1106,8 +1459,17 @@ function sweepPathOf(opts: {
   const hz = tfHorizon(barSeconds, atr, now)
   const tEnd = bar * hz.bars
   const dir: 1 | -1 = side === 'LONG' ? 1 : -1
-  const hunt = sweepPrice > 0 ? sweepPrice : side === 'LONG' ? primary.bottom : primary.top
+  const way = opts.fuelWay
+  const hunt =
+    way && way.price > 0
+      ? way.price
+      : sweepPrice > 0
+        ? sweepPrice
+        : side === 'LONG'
+          ? primary.bottom
+          : primary.top
   const reclaim = side === 'LONG' ? primary.top : primary.bottom
+  const destLabel = opts.tfName ? storyDestLabel(opts.tfName) : target.label
   const { peak, dip } = impulseThenRetrace(
     reclaim,
     target.price,
@@ -1115,11 +1477,11 @@ function sweepPathOf(opts: {
     { ...rhythm, retraceFrac: Math.min(rhythm.retraceFrac, 0.5) }
   )
   const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
-  appendLeg(pts, tEnd * 0.18, hunt, 'свип', rhythm, atr, 1, 2, true)
+  appendLeg(pts, tEnd * 0.18, hunt, 'топливо', rhythm, atr, 1, 2, true)
   appendLeg(pts, tEnd * 0.36, reclaim, 'возврат', rhythm, atr, 4, 2)
   appendLeg(pts, tEnd * 0.55, peak, 'импульс', rhythm, atr, 7, 2)
   appendLeg(pts, tEnd * 0.7, dip, 'откат', rhythm, atr, 10, 1)
-  appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 12, 2, true)
+  appendLeg(pts, tEnd, target.price, destLabel, rhythm, atr, 12, 2, true)
   return ptsToPath(pts)
 }
 
@@ -1130,6 +1492,7 @@ function breakPathOf(opts: {
   side: 'LONG' | 'SHORT'
   barSeconds: number
   atr: number
+  tfName?: string
   rhythm: CoinRhythm
 }): PathPoint[] {
   const { price, primary, target, side, barSeconds, atr, rhythm } = opts
@@ -1139,12 +1502,13 @@ function breakPathOf(opts: {
   const tEnd = bar * hz.bars
   const failDir: 1 | -1 = side === 'LONG' ? -1 : 1
   const through = side === 'LONG' ? primary.bottom : primary.top
+  const destLabel = opts.tfName ? storyDestLabel(opts.tfName) : target.label
   const { peak, dip } = impulseThenRetrace(through, target.price, failDir, rhythm)
   const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
   appendLeg(pts, tEnd * 0.22, through, 'слом', rhythm, atr, 2, 2, true)
   appendLeg(pts, tEnd * 0.42, peak, 'импульс', rhythm, atr, 5, 2)
   appendLeg(pts, tEnd * 0.62, dip, 'откат', rhythm, atr, 8, 1)
-  appendLeg(pts, tEnd, target.price, target.label, rhythm, atr, 11, 2, true)
+  appendLeg(pts, tEnd, target.price, destLabel, rhythm, atr, 11, 2, true)
   return ptsToPath(pts)
 }
 
@@ -1154,6 +1518,7 @@ function chopPathOf(opts: {
   target: { price: number; label: string }
   barSeconds: number
   atr: number
+  tfName?: string
   rhythm: CoinRhythm
 }): PathPoint[] {
   const { price, primary, target, barSeconds, atr, rhythm } = opts
@@ -1167,11 +1532,12 @@ function chopPathOf(opts: {
       ? primary.top
       : primary.bottom
   const far = target.price
+  const destLabel = opts.tfName ? storyDestLabel(opts.tfName) : target.label
   const retrace = near + (mid - near) * clamp(rhythm.retraceFrac, 0.45, 0.618)
   const pts: ZigPt[] = [{ t: 0, price: now, label: 'сейчас' }]
   appendLeg(pts, tEnd * 0.28, near, 'край', rhythm, atr, 3, 2)
   appendLeg(pts, tEnd * 0.55, retrace, 'откат', rhythm, atr, 6, 2)
-  appendLeg(pts, tEnd, far, target.label, rhythm, atr, 9, 2, true)
+  appendLeg(pts, tEnd, far, destLabel, rhythm, atr, 9, 2, true)
   return ptsToPath(pts)
 }
 
@@ -1779,6 +2145,68 @@ function roundFour(
   return { hold: rounded[0]!, sweep: rounded[1]!, brk: rounded[2]!, chop: rounded[3]! }
 }
 
+function factorTilt(opts: {
+  side: 'LONG' | 'SHORT'
+  daily: DailyFrame | null
+  signal?: CoinSignal | null
+  mm?: MmIntentSnapshot | null
+  whale?: WhaleSitMap | null
+  unusedBsl: boolean
+  unusedSsl: boolean
+}): { hold: number; sweep: number; brk: number; chop: number } {
+  let hold = 0
+  let sweep = 0
+  let brk = 0
+  let chop = 0
+  const { side, daily, signal, mm, whale, unusedBsl, unusedSsl } = opts
+  if (daily?.side === side) hold += 8
+  else if (daily?.side && daily.side !== side) brk += 8
+
+  const htf = signal?.htfTrend
+  if (htf) {
+    const htfSide = biasToSide(htf.bias)
+    const w = htf.label === 'STRONG' ? 7 : htf.label === 'MEDIUM' ? 4 : 2
+    if (htfSide === side) hold += w
+    else if (htfSide && htfSide !== side) brk += Math.max(3, w - 1)
+  }
+
+  if (mm?.drive === 'UP' && side === 'LONG') hold += 5
+  else if (mm?.drive === 'DOWN' && side === 'SHORT') hold += 5
+  else if (mm?.drive === 'UP' && side === 'SHORT') brk += 4
+  else if (mm?.drive === 'DOWN' && side === 'LONG') brk += 4
+  if (mm?.hunt.microIsStopHunt) sweep += 5
+
+  if (whale?.accumulation === side) hold += 4
+  if (whale?.nearestBelow && side === 'LONG') sweep += 3
+  if (whale?.nearestAbove && side === 'SHORT') sweep += 3
+
+  const sq = signal?.memePulse?.squeeze
+  if (sq?.inProgress && side === 'LONG') hold += 8
+  if (sq?.inProgress && side === 'SHORT') brk += 6
+  if (sq?.shortBlocked && side === 'SHORT') hold -= 8
+
+  if (signal?.mss?.detected) {
+    if (signal.mss.direction === 'BULLISH' && side === 'LONG') hold += 5
+    if (signal.mss.direction === 'BEARISH' && side === 'SHORT') hold += 5
+    if (signal.mss.direction === 'BULLISH' && side === 'SHORT') brk += 4
+    if (signal.mss.direction === 'BEARISH' && side === 'LONG') brk += 4
+  }
+  if (signal?.raid?.type === 'BULL_SWEEP' && side === 'LONG') {
+    hold += 4
+    sweep -= 6
+  }
+  if (signal?.raid?.type === 'BEAR_SWEEP' && side === 'SHORT') {
+    hold += 4
+    sweep -= 6
+  }
+
+  if (unusedBsl && side === 'LONG') hold += 3
+  if (unusedSsl && side === 'SHORT') hold += 3
+  if (!unusedBsl && !unusedSsl) chop += 3
+
+  return { hold, sweep, brk, chop }
+}
+
 function scoreFourScenarios(opts: {
   odds: StoryOdds
   kind: StoryNowKind
@@ -1787,6 +2215,12 @@ function scoreFourScenarios(opts: {
   trapPhase: string | null
   side: 'LONG' | 'SHORT'
   spent?: SpentLiquidity | null
+  daily?: DailyFrame | null
+  signal?: CoinSignal | null
+  mm?: MmIntentSnapshot | null
+  whale?: WhaleSitMap | null
+  unusedBsl?: boolean
+  unusedSsl?: boolean
 }): { hold: number; sweep: number; brk: number; chop: number } {
   const { odds, kind, tape, bos, trapPhase, side, spent } = opts
   let hold = odds.pct * 0.72
@@ -1902,6 +2336,20 @@ function scoreFourScenarios(opts: {
     if (!huntSpent) sweep += 2
   }
 
+  const tilt = factorTilt({
+    side,
+    daily: opts.daily ?? null,
+    signal: opts.signal ?? null,
+    mm: opts.mm ?? null,
+    whale: opts.whale ?? null,
+    unusedBsl: Boolean(opts.unusedBsl),
+    unusedSsl: Boolean(opts.unusedSsl),
+  })
+  hold += tilt.hold
+  sweep += tilt.sweep
+  brk += tilt.brk
+  chop += tilt.chop
+
   return roundFour(hold, sweep, brk, chop, huntSpent)
 }
 
@@ -1947,6 +2395,9 @@ export function padStoryScenarios(
     atr?: number
     primary?: LiquidityZone | null
     spent?: SpentLiquidity | null
+    tfName?: StoryTfName
+    fuelWay?: FuelWaypoint | null
+    daily?: DailyFrame | null
   }
 ): StoryScenario[] {
   const s: 'LONG' | 'SHORT' = side === 'SHORT' ? 'SHORT' : 'LONG'
@@ -1956,7 +2407,9 @@ export function padStoryScenarios(
   const candles = extra?.candles ?? []
   const rhythm = readCoinRhythm(candles, atr)
   const hz = tfHorizon(barSeconds, atr, now)
-  const holdTo = clipToHorizon(now, s === 'LONG' ? now * 1.006 : now * 0.994, s, hz.dist, atr)
+  const tfName = extra?.tfName ?? tfNameOf(barSeconds)
+  const holdRaw = clipToHorizon(now, s === 'LONG' ? now * 1.006 : now * 0.994, s, hz.dist, atr)
+  const holdTo = clipByDailyFrame(now, holdRaw, s, extra?.daily ?? null, 'hold', atr)
   const breakTo = clipToHorizon(
     now,
     s === 'LONG' ? now * 0.994 : now * 1.006,
@@ -1971,17 +2424,18 @@ export function padStoryScenarios(
   const breakDest = s === 'LONG' ? 'стопы снизу' : 'ликвидность сверху'
   const chopPx =
     Math.abs(now - band.top) <= Math.abs(now - band.bottom) ? band.bottom : band.top
-  const sweepPx = s === 'LONG' ? band.bottom : band.top
+  const sweepPx = extra?.fuelWay?.price ?? (s === 'LONG' ? band.bottom : band.top)
   const holdT = { price: holdTo, label: holdDest }
   const breakT = { price: breakTo, label: breakDest }
   const chopT = { price: chopPx, label: 'край диапазона' }
+  const fuelWay = extra?.fuelWay ?? null
   const stubs: StoryScenario[] = [
     {
       id: 'hold',
       pct: 40,
       side: s,
       dirLabel: dirWord(s),
-      condition: holdCondition(s, extra?.spent),
+      condition: holdCondition(s, extra?.spent, fuelWay),
       title: holdArrowCaption(s, holdDest),
       path: holdPathOf({
         price: now,
@@ -1991,12 +2445,15 @@ export function padStoryScenarios(
         barSeconds,
         atr,
         kind: 'IN_ZONE',
-        fuel: null,
+        fuel: fuelWay?.price ?? null,
+        fuelWay,
+        tfName,
         rhythm,
       }),
       toPrice: holdTo,
       toLabel: holdDest,
-      tipLabel: storyTipLabel(holdTo),
+      tipLabel: storyTipLabel(holdTo, tfName),
+      fuelPrice: fuelWay?.price ?? null,
     },
     {
       id: 'sweep',
@@ -2019,11 +2476,14 @@ export function padStoryScenarios(
             barSeconds,
             atr,
             sweepPrice: sweepPx,
+            fuelWay,
+            tfName,
             rhythm,
           }),
       toPrice: sweepIsSpent(s, extra?.spent) ? null : holdTo,
       toLabel: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : holdDest,
-      tipLabel: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : storyTipLabel(holdTo),
+      tipLabel: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : storyTipLabel(holdTo, tfName),
+      fuelPrice: sweepIsSpent(s, extra?.spent) ? null : fuelWay?.price ?? sweepPx,
     },
     {
       id: 'break',
@@ -2039,11 +2499,12 @@ export function padStoryScenarios(
         side: s,
         barSeconds,
         atr,
+        tfName,
         rhythm,
       }),
       toPrice: breakTo,
       toLabel: breakDest,
-      tipLabel: storyTipLabel(breakTo),
+      tipLabel: storyTipLabel(breakTo, tfName),
     },
     {
       id: 'chop',
@@ -2058,21 +2519,28 @@ export function padStoryScenarios(
         target: chopT,
         barSeconds,
         atr,
+        tfName,
         rhythm,
       }),
       toPrice: chopPx,
       toLabel: 'край диапазона',
-      tipLabel: storyTipLabel(chopPx),
+      tipLabel: storyTipLabel(chopPx, tfName),
     },
   ]
   const byId = new Map(rows.map((r) => [r.id, r]))
   return stubs.map((stub) => byId.get(stub.id) ?? stub)
 }
 
-function holdCondition(side: 'LONG' | 'SHORT', spent?: SpentLiquidity | null): string {
+function holdCondition(
+  side: 'LONG' | 'SHORT',
+  spent?: SpentLiquidity | null,
+  fuel?: FuelWaypoint | null
+): string {
   if (side === 'LONG' && spent?.ssl?.reclaimed) return 'лои сняты — ищем лонг к BSL'
   if (side === 'SHORT' && spent?.bsl?.reclaimed) return 'хаи сняты — ищем шорт к SSL'
   if (side === 'LONG' && spent?.bsl?.reclaimed) return 'хаи сняты — не сжимать в те же EQH'
+  if (fuel?.where === 'below') return 'если возьмут топливо снизу и пойдут к цели'
+  if (fuel?.where === 'above') return 'если возьмут топливо сверху и пойдут к цели'
   return side === 'LONG' ? 'если закрепятся над зоной' : 'если закрепятся под зоной'
 }
 
@@ -2110,6 +2578,10 @@ export function buildChartStory(opts: {
   signal?: CoinSignal | null
   liquidityMap?: LiquidityMap | null
   sequence?: SequenceHit | null
+  whale?: WhaleWatcherState | null
+  walls?: OrderBookWall[] | null
+  liqHeatmap?: LiqHeatmapModel | null
+  mmIntent?: MmIntentSnapshot | null
 }): ChartStory {
   const price = opts.price
   const atr = opts.atr && opts.atr > 0 ? opts.atr : Math.max(price * 0.004, 1e-8)
@@ -2164,6 +2636,34 @@ export function buildChartStory(opts: {
     sequence: opts.sequence ?? null,
     primary: rawPrimary,
   })
+  const mmSnap = opts.mmIntent ?? opts.signal?.mmIntent ?? null
+  const whaleSit = buildWhaleSitMap({
+    price: livePrice,
+    whale: opts.whale ?? null,
+    liquidityMap: opts.liquidityMap ?? null,
+    liqHeatmap: opts.liqHeatmap ?? null,
+    walls: opts.walls ?? null,
+    spent,
+  })
+  const dailyFrame = readDailyFrame({
+    structure: opts.structure ?? null,
+    signal: opts.signal ?? null,
+    spent,
+    price: livePrice,
+    atr,
+  })
+  const tfName = tfNameOf(barSeconds)
+  const ring = tfRingOf(barSeconds)
+  const unusedBsl = Boolean(
+    (opts.liquidityMap?.nearestBSL?.isActive ?? true) &&
+      opts.liquidityMap?.nearestBSL?.price &&
+      !spent.bsl
+  )
+  const unusedSsl = Boolean(
+    (opts.liquidityMap?.nearestSSL?.isActive ?? true) &&
+      opts.liquidityMap?.nearestSSL?.price &&
+      !spent.ssl
+  )
   const tapePeek =
     rawPrimary && draftSide
       ? readLastTape(candles, rawPrimary, draftSide, atr)
@@ -2178,6 +2678,18 @@ export function buildChartStory(opts: {
   const holdSide = workingSideFromSpent(draftSide, spent, tapePeek, fromSetup)
   const primary = rawPrimary ? tagRole(rawPrimary, 'PRIMARY', holdSide) : null
   const nowKind = nowKindOf(primary, rx, livePrice || price, atr, holdSide)
+  const fuelWay = pickFuelWaypoint({
+    price: livePrice,
+    atr,
+    side: holdSide,
+    structure: opts.structure ?? null,
+    spent,
+    liquidityMap: opts.liquidityMap ?? null,
+    whale: whaleSit,
+    mm: mmSnap,
+    signal: opts.signal ?? null,
+    primary,
+  })
 
   const magnet = opts.structure?.magnet ?? null
   const secondary = primary
@@ -2219,6 +2731,10 @@ export function buildChartStory(opts: {
           atr,
           horizon: hz.dist,
           spent,
+          ring,
+          daily: dailyFrame,
+          mm: mmSnap,
+          whale: whaleSit,
         })
       : null
 
@@ -2234,6 +2750,7 @@ export function buildChartStory(opts: {
           atr,
           horizon: hz.dist,
           spent,
+          ring,
         })
       : null
 
@@ -2269,6 +2786,12 @@ export function buildChartStory(opts: {
           trapPhase: opts.structure?.trap?.phase ?? null,
           side: holdSide,
           spent,
+          daily: dailyFrame,
+          signal: opts.signal ?? null,
+          mm: mmSnap,
+          whale: whaleSit,
+          unusedBsl,
+          unusedSsl,
         })
       : { hold: 40, sweep: 22, brk: 22, chop: 16 }
     const huntSpent = sweepIsSpent(holdSide, spent)
@@ -2276,14 +2799,21 @@ export function buildChartStory(opts: {
       holdSide === 'LONG' ? spent.ssl?.price ?? null : spent.bsl?.price ?? null
 
     const holdDest = {
-      price: clipToHorizon(
+      price: clipByDailyFrame(
         livePrice,
-        holdTgtRu?.price ??
-          (holdSide === 'LONG'
-            ? Math.max(primary.top, livePrice) + hz.dist
-            : Math.min(primary.bottom, livePrice) - hz.dist),
+        clipToHorizon(
+          livePrice,
+          holdTgtRu?.price ??
+            (holdSide === 'LONG'
+              ? Math.max(primary.top, livePrice) + hz.dist
+              : Math.min(primary.bottom, livePrice) - hz.dist),
+          holdSide,
+          hz.dist,
+          atr
+        ),
         holdSide,
-        hz.dist,
+        dailyFrame,
+        'hold',
         atr
       ),
       label: holdTgtRu?.label ?? (holdSide === 'LONG' ? 'ликвидность сверху' : 'стопы снизу'),
@@ -2308,11 +2838,18 @@ export function buildChartStory(opts: {
     const chopBeyond = hz.atrMult > 4 ? atr * 0.4 : 0
     const chopDir = chopEdge >= livePrice ? 1 : -1
     const chopDest = {
-      price: chopEdge + chopDir * chopBeyond,
+      price: clipByDailyFrame(
+        livePrice,
+        chopEdge + chopDir * chopBeyond,
+        chopEdge >= livePrice ? 'LONG' : 'SHORT',
+        dailyFrame,
+        'chop',
+        atr
+      ),
       label: 'край диапазона',
     }
 
-    const fuelPx = opts.structure?.fuel?.price ?? null
+    const fuelPx = fuelWay?.price ?? opts.structure?.fuel?.price ?? null
     const holdPath = holdPathOf({
       price: livePrice,
       primary,
@@ -2322,6 +2859,8 @@ export function buildChartStory(opts: {
       atr,
       kind: nowKind,
       fuel: fuelPx,
+      fuelWay,
+      tfName,
       rhythm,
     })
     const sweepPath = huntSpent
@@ -2334,6 +2873,8 @@ export function buildChartStory(opts: {
           barSeconds,
           atr,
           sweepPrice: sweep,
+          fuelWay,
+          tfName,
           rhythm,
         })
     const lostPath = breakPathOf({
@@ -2343,6 +2884,7 @@ export function buildChartStory(opts: {
       side: holdSide,
       barSeconds,
       atr,
+      tfName,
       rhythm,
     })
     const rangePath = chopPathOf({
@@ -2351,6 +2893,7 @@ export function buildChartStory(opts: {
       target: chopDest,
       barSeconds,
       atr,
+      tfName,
       rhythm,
     })
 
@@ -2364,12 +2907,13 @@ export function buildChartStory(opts: {
         pct: four.hold,
         side: holdSide,
         dirLabel: dirWord(holdSide),
-        condition: holdCondition(holdSide, spent),
+        condition: holdCondition(holdSide, spent, fuelWay),
         title: holdArrowCaption(holdSide, holdDest.label),
         path: holdPath,
         toPrice: holdDest.price,
         toLabel: holdDest.label,
-        tipLabel: storyTipLabel(holdDest.price),
+        tipLabel: storyTipLabel(holdDest.price, tfName),
+        fuelPrice: fuelWay?.price ?? null,
       },
       {
         id: 'sweep',
@@ -2383,10 +2927,11 @@ export function buildChartStory(opts: {
         path: sweepPath,
         toPrice: huntSpent ? null : holdDest.price,
         toLabel: huntSpent ? 'уже сняли' : holdDest.label,
-        tipLabel: huntSpent ? 'уже сняли' : storyTipLabel(holdDest.price),
+        tipLabel: huntSpent ? 'уже сняли' : storyTipLabel(holdDest.price, tfName),
         spent: huntSpent,
         spentNote: huntSpent ? 'уже сняли' : undefined,
         spentPrice: spentHuntPx,
+        fuelPrice: huntSpent ? null : fuelWay?.price ?? sweep,
       },
       {
         id: 'break',
@@ -2398,7 +2943,7 @@ export function buildChartStory(opts: {
         path: lostPath,
         toPrice: breakDest.price,
         toLabel: breakDest.label,
-        tipLabel: storyTipLabel(breakDest.price),
+        tipLabel: storyTipLabel(breakDest.price, tfName),
       },
       {
         id: 'chop',
@@ -2410,7 +2955,7 @@ export function buildChartStory(opts: {
         path: rangePath,
         toPrice: chopDest.price,
         toLabel: chopDest.label,
-        tipLabel: storyTipLabel(chopDest.price),
+        tipLabel: storyTipLabel(chopDest.price, tfName),
       }
     )
 
@@ -2419,6 +2964,9 @@ export function buildChartStory(opts: {
       atr,
       primary,
       spent,
+      tfName,
+      fuelWay,
+      daily: dailyFrame,
     })
     const lead = leadStoryScenario(packed) ?? packed[0]
     const leadPath = lead?.path?.length ? lead.path : holdPath
@@ -2444,7 +2992,7 @@ export function buildChartStory(opts: {
       failPath: lostPath,
       targetPrice: leadTarget,
       targetLabel: leadLabel,
-      tipLabel: lead?.tipLabel ?? storyTipLabel(leadTarget),
+      tipLabel: lead?.tipLabel ?? storyTipLabel(leadTarget, tfName),
       failTargetPrice: breakDest.price,
       failTargetLabel: breakDest.label,
       boxLow,
@@ -2486,6 +3034,9 @@ export function buildChartStory(opts: {
       atr,
       primary,
       spent,
+      tfName,
+      fuelWay,
+      daily: dailyFrame,
     }),
     legend: legend.length
       ? legend
@@ -2498,6 +3049,9 @@ export function buildChartStory(opts: {
           },
         ],
     spent,
+    dailyFrame,
+    fuel: fuelWay,
+    tfName,
   }
 }
 

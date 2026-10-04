@@ -72,6 +72,40 @@ function roundRect(
   ctx.closePath()
 }
 
+function drawWaypointLabel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  text: string,
+  color: string,
+  plotRight: number,
+  h: number,
+  compact: boolean
+) {
+  const fontPx = compact ? 9 : 10
+  ctx.save()
+  ctx.font = `700 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
+  const padX = compact ? 4 : 5
+  const padY = compact ? 2 : 3
+  const tw = ctx.measureText(text).width
+  const bw = tw + padX * 2
+  const bh = fontPx + padY * 2
+  let lx = x - bw / 2
+  let ly = y + 10
+  if (lx < 6) lx = 6
+  if (lx + bw > plotRight - 4) lx = Math.max(6, plotRight - bw - 4)
+  if (ly + bh > h - 4) ly = Math.max(4, y - bh - 8)
+  roundRect(ctx, lx, ly, bw, bh, 3)
+  ctx.fillStyle = 'rgba(8,10,14,0.82)'
+  ctx.fill()
+  ctx.strokeStyle = hexAlpha(color, 0.75)
+  ctx.lineWidth = 1
+  ctx.stroke()
+  ctx.fillStyle = 'rgba(255,255,255,0.88)'
+  ctx.fillText(text, lx + padX, ly + bh - padY - 1)
+  ctx.restore()
+}
+
 function drawTipLabel(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -320,8 +354,10 @@ const StoryPathOverlay = ({
           return price > lastPrice ? yLo : yHi
         }
 
-        const mapPath = (src: PathPoint[]): Array<{ x: number; y: number }> => {
-          const pts: Array<{ x: number; y: number }> = []
+        const mapPath = (
+          src: PathPoint[]
+        ): Array<{ x: number; y: number; label?: string; key?: boolean }> => {
+          const pts: Array<{ x: number; y: number; label?: string; key?: boolean }> = []
           for (const p of src) {
             if (!(p.price > 0) || !Number.isFinite(p.price)) continue
             const y = yOf(p.price) ?? yToward(p.price)
@@ -329,6 +365,8 @@ const StoryPathOverlay = ({
             pts.push({
               x: clamp(xAtOffset(p.timeOffsetSeconds), 8, plotRight - 6),
               y: clamp(y, yLo, yHi),
+              label: p.label,
+              key: p.isKeyLevel,
             })
           }
           return pts
@@ -384,6 +422,19 @@ const StoryPathOverlay = ({
               (sc.toPrice && sc.toPrice > 0 ? storyTipLabel(sc.toPrice) : '')
             if (tip && b && tip !== 'уже сняли') {
               drawTipLabel(ctx, b.x, b.y, tip, color, plotRight, h, compact)
+            }
+            const marked = pts.find((p) => p.label === 'топливо')
+            if (marked && marked !== b) {
+              drawWaypointLabel(
+                ctx,
+                marked.x,
+                marked.y,
+                'топливо',
+                color,
+                plotRight,
+                h,
+                compact
+              )
             }
           }
         }

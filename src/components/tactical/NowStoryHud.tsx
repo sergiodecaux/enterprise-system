@@ -14,6 +14,7 @@ interface Props {
   dense?: boolean
   /** Fullscreen toolbar: one truncated line, never over the candles. */
   toolbar?: boolean
+  dailyLine?: string | null
 }
 
 const NowStoryHud = ({
@@ -24,6 +25,7 @@ const NowStoryHud = ({
   fact,
   dense = false,
   toolbar = false,
+  dailyLine = null,
 }: Props) => {
   if (!line) return null
   const tone =
@@ -51,11 +53,16 @@ const NowStoryHud = ({
             ? 'max-w-full px-2.5 py-1 text-[12px] shadow-lg'
             : 'max-w-[82%] px-2 py-0.5 text-[10px] shadow-lg'
       }`}
-      title={fact || line}
+      title={[fact || line, dailyLine].filter(Boolean).join(' · ')}
     >
       {line}
       {pctBit}
       {arrow ? ` ${arrow}` : ''}
+      {dailyLine && !toolbar ? (
+        <span className="mt-0.5 block font-semibold text-violet-200/85">
+          {dailyLine}
+        </span>
+      ) : null}
     </div>
   )
 }
