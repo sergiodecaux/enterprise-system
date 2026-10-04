@@ -33,6 +33,7 @@ export interface CoinBriefRow {
   base: string
   price: number
   chg24: number
+  chg15: number
   bias1h: 'BULL' | 'BEAR' | 'FLAT'
   bias4h: 'BULL' | 'BEAR' | 'FLAT'
   bias1d: 'BULL' | 'BEAR' | 'FLAT'
@@ -173,7 +174,14 @@ function liqNote(
   return parts.length ? parts.join(' · ') : 'ликвидационные карманы без явного края'
 }
 
-async function loadCoinRow(
+function chgFrom(candles: Candle[], barsBack: number): number {
+  if (candles.length <= barsBack) return 0
+  const last = candles[candles.length - 1]![4]
+  const prev = candles[candles.length - 1 - barsBack]![4]
+  return prev > 0 ? ((last - prev) / prev) * 100 : 0
+}
+
+export async function loadCoinRow(
   symbol: string,
   ticker: VaneTicker | undefined,
   kv: VaneKv | undefined,
@@ -187,9 +195,9 @@ async function loadCoinRow(
     fetchKlinesCached(kv, symbol, 'Min60', 48),
     fetchKlinesCached(kv, symbol, 'Hour4', 90),
     fetchKlinesCached(kv, symbol, 'Day1', 40),
-    kind === 'hourly'
-      ? fetchKlinesCached(kv, symbol, 'Min15', 64)
-      : Promise.resolve([] as Candle[]),
+    kind === 'daily'
+      ? Promise.resolve([] as Candle[])
+      : fetchKlinesCached(kv, symbol, 'Min15', 64),
   ])
   if (c4h.length < 20) return null
 
@@ -272,6 +280,7 @@ async function loadCoinRow(
     base,
     price,
     chg24: Number(ticker?.riseFallRate ?? 0) * 100,
+    chg15: chgFrom(c15m, 1),
     bias1h,
     bias4h,
     bias1d,

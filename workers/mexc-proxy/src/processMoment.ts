@@ -11,7 +11,7 @@ import {
 
 const STATE_KEY = 'scanner:process_moment_book_v1'
 const DEDUP_PREFIX = 'process:moment:dedup:'
-const MAX_SYMBOLS = 3
+const MAX_SYMBOLS = 6
 const MIN_CONF = 78
 const DEDUP_MS = 25 * 60_000
 

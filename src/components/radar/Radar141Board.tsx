@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Star } from 'lucide-react'
 import { toFlatSymbol, toRadarLabel } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
+import { useRadarFavoriteToggle } from '../../hooks/useRadarFavoriteToggle'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { AltMacroStrip } from '../market/AltMacroStrip'
 import {
@@ -163,7 +164,7 @@ const Radar141Board = ({
   const filters = useAppStore((s) => s.radar141Filters)
   const setFilters = useAppStore((s) => s.setRadar141Filters)
   const favorites = useAppStore((s) => s.radarFavorites)
-  const toggleFav = useAppStore((s) => s.toggleRadarFavorite)
+  const toggleFav = useRadarFavoriteToggle()
   const selectCoin = useAppStore((s) => s.selectCoin)
   const setDrawerOpen = useAppStore((s) => s.setDrawerOpen)
   const [openId, setOpenId] = useState<string | null>(null)

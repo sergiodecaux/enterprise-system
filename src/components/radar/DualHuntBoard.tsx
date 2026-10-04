@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Star } from 'lucide-react'
 import { toRadarLabel } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
+import { useRadarFavoriteToggle } from '../../hooks/useRadarFavoriteToggle'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { buildDualHunt, type DualHuntCard, type HuntSide } from '../../engine/radar/dualHunt'
 import { AltMacroStrip } from '../market/AltMacroStrip'
@@ -175,7 +176,7 @@ const DualHuntBoard = () => {
   const surgicalEntries = useAppStore((s) => s.surgicalEntries)
   const whaleWatcher = useAppStore((s) => s.whaleWatcher)
   const favorites = useAppStore((s) => s.radarFavorites)
-  const toggleFav = useAppStore((s) => s.toggleRadarFavorite)
+  const toggleFav = useRadarFavoriteToggle()
   const selectCoin = useAppStore((s) => s.selectCoin)
   const setDrawerOpen = useAppStore((s) => s.setDrawerOpen)
   const workerCtx = useWorkerMarketContext()

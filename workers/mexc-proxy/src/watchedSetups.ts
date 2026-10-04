@@ -93,7 +93,7 @@ export interface WatchAlert {
   text: string
   dedupeKey: string
   /** READY / INVALIDATED used for Elite journal + paper */
-  kind?: 'READY' | 'INVALIDATED' | 'PHASE' | 'DIGEST'
+  kind?: 'READY' | 'INVALIDATED' | 'PHASE' | 'DIGEST' | 'TOUCH'
   watchId?: string
   symbol?: string
   setup?: ConditionalSetupPayload
@@ -1386,6 +1386,14 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
 
       // Hard lifecycle: track in KV, but do NOT spam TG on every phase.
       // Elite only wants READY (enter) and INVALIDATED (cancel).
+      if (
+        price &&
+        snap.lifecycle === 'TOUCH' &&
+        working.lastLifecyclePhase !== 'TOUCH'
+      ) {
+        const touch = formatLifecyclePhase(updated, snap)
+        alerts.push({ ...touch, kind: 'TOUCH' })
+      }
       if (price && status === 'READY' && !working.readyNotified) {
         // Raise bar: need reaction + book + decent setup probability
         const actionable =
@@ -1418,7 +1426,8 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
   void snapshots
 
   const forceKv = alerts.some(
-    (a) => a.kind === 'READY' || a.kind === 'INVALIDATED'
+    (a) =>
+      a.kind === 'READY' || a.kind === 'INVALIDATED' || a.kind === 'TOUCH'
   )
   await saveWatches(env, next, forceKv)
   return alerts

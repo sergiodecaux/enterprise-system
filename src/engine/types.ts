@@ -302,7 +302,9 @@ export interface AppState {
   extraWatchlist: string[]
   /** Radar starred coins (internal symbols) */
   radarFavorites: string[]
-  toggleRadarFavorite: (internalSymbol: string) => void
+  toggleRadarFavorite: (
+    internalSymbol: string
+  ) => { ok: true } | { ok: false; reason: 'limit' }
   chartPreferences: ChartPreferences
   sessionSettings: SessionSettings
   newsSettings: NewsSettings

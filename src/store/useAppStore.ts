@@ -34,6 +34,7 @@ import {
 } from '../engine/sentiment/types'
 import {
   DEFAULT_TELEGRAM_ALERT_SETTINGS,
+  MAX_RADAR_FAVORITES,
   TELEGRAM_ALERT_SETTINGS_KEY,
   type TelegramAlertSettings,
 } from '../engine/telegram/types'
@@ -307,12 +308,16 @@ export const useAppStore = create<AppState>()(
     toggleRadarFavorite: (internalSymbol: string) => {
       const current = get().radarFavorites
       const on = current.includes(internalSymbol)
+      if (!on && current.length >= MAX_RADAR_FAVORITES) {
+        return { ok: false as const, reason: 'limit' as const }
+      }
       const next = on
         ? current.filter((s) => s !== internalSymbol)
         : [...current, internalSymbol]
       saveRadarFavorites(next)
       set({ radarFavorites: next })
       if (!on) get().addToWatchlist(internalSymbol)
+      return { ok: true as const }
     },
 
     selectCoin: (symbol: string | null) => {

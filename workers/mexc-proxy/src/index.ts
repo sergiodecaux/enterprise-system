@@ -15,7 +15,8 @@
  *   curl "https://api.telegram.org/bot<MEME_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook"
  *   curl "https://api.telegram.org/bot<SNIPER_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook/sniper"
  *
- * Crons: predator every 2m, paper on odd minutes, Elite hourly at :05, daily 00:05 UTC
+ * Crons: predator every 2m, paper on odd minutes, Elite favorites digest :00/:15/:30/:45,
+ * hourly at :05, daily 00:05 UTC
  */
 
 import type { ScanAlert, TradePlanPayload } from './scanner'
@@ -25,7 +26,24 @@ import { BOT_ENGINE, SNIPER_ENGINE } from './botEngine'
 import {
   buildEliteBriefing,
   buildEliteCoinBrief,
+  buildSetupScene,
+  chatMonitorsSymbol,
+  chatsWatchingSymbol,
+  digestSlot,
+  formatChatDigestHtml,
+  formatFavListHtml,
+  hasLiveSetupIdea,
+  inferEliteScene,
   isEliteAssistantOnly,
+  loadFavoriteMarketRows,
+  loadFavorites,
+  markUrgentFired,
+  normalizeFavSymbol,
+  normalizeFavSymbols,
+  runFavoritesDigest,
+  saveFavorites,
+  tgSendPhotoPng,
+  type SnapshotScene,
 } from './elite'
 import {
   channelForAlertType,
@@ -460,12 +478,14 @@ export type CronRole =
   | 'jewel'
   | 'elite_hourly'
   | 'elite_daily'
+  | 'favorites_digest'
   | 'all'
 
 function cronRoleFromExpression(cron: string): CronRole {
   if (cron === '1-59/2 * * * *') return 'paper'
   if (cron === '* * * * *') return 'vane'
   if (cron === '*/2 * * * *') return 'predator'
+  if (cron === '0,15,30,45 * * * *') return 'favorites_digest'
   if (cron === '5 * * * *') return 'elite_hourly'
   if (cron === '5 0 * * *') return 'elite_daily'
   // legacy every-3m vane expression
@@ -944,6 +964,7 @@ async function handleTelegram(
       roleParam === 'jewel' ||
       roleParam === 'elite_hourly' ||
       roleParam === 'elite_daily' ||
+      roleParam === 'favorites_digest' ||
       roleParam === 'all'
         ? roleParam
         : 'all'
@@ -1276,6 +1297,42 @@ async function handleTelegram(
     if (!chatId) return json({ error: 'chatId required' }, 400)
     const watches = await listWatchesForChat(env, chatId)
     return json({ ok: true, watches })
+  }
+
+  if (path === '/telegram/favorites' && request.method === 'POST') {
+    const fwd = await forwardToEliteProxy(env, request, '/telegram/favorites')
+    if (fwd) return fwd
+    const body = (await request.json()) as {
+      chatId: number
+      symbols?: unknown
+      digestOn?: boolean
+      urgentOn?: boolean
+    }
+    if (!body?.chatId || typeof body.chatId !== 'number') {
+      return json({ error: 'chatId required' }, 400)
+    }
+    await upsertSubscriber(
+      env,
+      {
+        chatId: body.chatId,
+        subscribedAt: Date.now(),
+        sniper: true,
+        meme: false,
+      },
+      'sniper'
+    )
+    const auth = await assertAlertAuth(env, request, body.chatId)
+    if (!auth.ok) return json({ error: auth.error }, 401)
+    const prev = await loadFavorites(env.SUBSCRIBERS, body.chatId)
+    const saved = await saveFavorites(env.SUBSCRIBERS, body.chatId, {
+      symbols: normalizeFavSymbols(body.symbols ?? prev?.symbols ?? []),
+      digestOn:
+        body.digestOn !== undefined ? body.digestOn !== false : prev?.digestOn !== false,
+      urgentOn:
+        body.urgentOn !== undefined ? body.urgentOn !== false : prev?.urgentOn !== false,
+      updatedAt: Date.now(),
+    })
+    return json({ ok: true, written: saved.written, favorites: saved.record })
   }
 
   if (path === '/telegram/journal/reset-peak' && request.method === 'POST') {
@@ -1860,6 +1917,125 @@ async function broadcastAlert(
   }
 
   return { ok: sent > 0, sent, failed }
+}
+
+function favSnapDedupeKey(chatId: number, symbol: string, kind: string): string {
+  const slot = digestSlot()
+  return `telegram:dedup:sniper:favsnap:${chatId}:${symbol}:${kind}:${slot}`
+}
+
+async function maybeSendFavSnapshot(
+  env: Env,
+  chatId: number,
+  scene: SnapshotScene,
+  kind: string
+): Promise<boolean> {
+  const token = tokenForChannel(env, 'sniper')
+  if (!token || !(scene.entry > 0)) return false
+  const key = favSnapDedupeKey(chatId, scene.symbol, kind)
+  const prev = await runtimeGet(key)
+  if (prev) return false
+  const kv = env.SUBSCRIBERS
+    ? {
+        get: (k: string) => env.SUBSCRIBERS!.get(k),
+        put: (k: string, v: string) => env.SUBSCRIBERS!.put(k, v),
+      }
+    : undefined
+  const built = await buildSetupScene(scene.symbol, scene, kv)
+  if (!built) return false
+  const ok = await tgSendPhotoPng({
+    token,
+    chatId,
+    png: built.png,
+    caption: scene.caption,
+  })
+  if (ok) await runtimePut(key, String(Date.now()))
+  return ok
+}
+
+async function sceneFromPlan(
+  env: Env,
+  symbol: string,
+  side: 'LONG' | 'SHORT',
+  entry?: number,
+  extra?: Partial<SnapshotScene>
+): Promise<SnapshotScene | null> {
+  const kv = env.SUBSCRIBERS
+    ? {
+        get: (k: string) => env.SUBSCRIBERS!.get(k),
+        put: (k: string, v: string) => env.SUBSCRIBERS!.put(k, v),
+      }
+    : undefined
+  return inferEliteScene(symbol, kv, {
+    side,
+    ...(entry && entry > 0 ? { entry } : {}),
+    ...extra,
+  })
+}
+
+async function sniperChatIds(env: Env): Promise<number[]> {
+  const subs = await listSubscribers(env, 'sniper')
+  return subs.filter((s) => s.sniper !== false).map((s) => s.chatId)
+}
+
+async function sendSniperToFavoriteChats(
+  env: Env,
+  a: ScanAlert
+): Promise<{ sent: number; failed: number; chats: number[] }> {
+  const symbol = a.tradePlan?.symbol
+  if (!symbol) {
+    const r = await broadcastAlert(env, {
+      type: a.type,
+      channel: 'sniper',
+      title: a.title,
+      text: a.text,
+      dedupeKey: a.dedupeKey,
+    })
+    return { sent: r.sent, failed: r.failed, chats: [] }
+  }
+  const chats = await chatsWatchingSymbol(
+    env.SUBSCRIBERS,
+    await sniperChatIds(env),
+    symbol,
+    { urgentOnly: true }
+  )
+  if (!chats.length) return { sent: 0, failed: 0, chats: [] }
+  let sent = 0
+  let failed = 0
+  for (const chatId of chats) {
+    const r = await broadcastAlert(env, {
+      type: a.type,
+      channel: 'sniper',
+      chatId,
+      title: a.title,
+      text: a.text,
+      dedupeKey: `${a.dedupeKey}:${chatId}`,
+    })
+    sent += r.sent
+    failed += r.failed
+    if (r.sent > 0) {
+      await markUrgentFired(env.SUBSCRIBERS, chatId, symbol)
+      const plan = a.tradePlan
+      if (plan?.entryIdeal || plan?.signalPrice) {
+        const scene = await sceneFromPlan(
+          env,
+          normalizeFavSymbol(symbol) ?? symbol,
+          plan.side,
+          plan.entryIdeal || plan.signalPrice,
+          {
+            target: plan.target1 ?? plan.tp,
+            zoneLow: plan.zoneLow,
+            zoneHigh: plan.zoneHigh,
+            magnetPrice: plan.target3,
+            magnetLabel: plan.targetLabel,
+            caption: `${a.title}\n${a.text}`.slice(0, 900),
+          }
+        )
+        if (scene) await maybeSendFavSnapshot(env, chatId, scene, 'sniper')
+      }
+    }
+  }
+  return { sent, failed, chats }
 }
 
 async function maybeHeartbeat(env: Env): Promise<number> {
@@ -2574,15 +2750,13 @@ async function runCronScan(
         return
       }
 
-      const cr = await broadcastAlert(env, {
-        type: 'SNIPER',
-        channel: 'sniper',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-      })
+      const cr = await sendSniperToFavoriteChats(env, a)
       sent += cr.sent
       failed += cr.failed
+      if (cr.sent === 0 && cr.chats.length === 0) {
+        skipped++
+        return
+      }
 
       if (cr.sent > 0) {
         try {
@@ -2683,15 +2857,13 @@ async function runCronScan(
         return
       }
 
-      const cr = await broadcastAlert(env, {
-        type: 'SNIPER',
-        channel: 'sniper',
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-      })
+      const cr = await sendSniperToFavoriteChats(env, a)
       sent += cr.sent
       failed += cr.failed
+      if (cr.sent === 0 && cr.chats.length === 0) {
+        skipped++
+        return
+      }
 
       if (cr.sent > 0) {
         try {
@@ -2733,14 +2905,21 @@ async function runCronScan(
     const alertChannel = channelForAlertType(a.type)
     let shouldCreateWatch = a.watchOnly
     if (!a.watchOnly) {
-      const r = await broadcastAlert(env, {
-        type: a.type,
-        channel: alertChannel,
-        title: a.title,
-        text: a.text,
-        dedupeKey: a.dedupeKey,
-      })
-      if (r.skipped) {
+      const r =
+        a.type === 'SNIPER'
+          ? await sendSniperToFavoriteChats(env, a)
+          : await broadcastAlert(env, {
+              type: a.type,
+              channel: alertChannel,
+              title: a.title,
+              text: a.text,
+              dedupeKey: a.dedupeKey,
+            })
+      if ('chats' in r && r.chats.length === 0 && r.sent === 0) {
+        skipped++
+        return
+      }
+      if ('skipped' in r && r.skipped) {
         skipped++
       } else {
         sent += r.sent
@@ -2780,11 +2959,14 @@ async function runCronScan(
     if (shouldCreateWatch && a.tradePlan && a.needsPullbackWatch) {
       try {
         const setup = planToPullbackWatch(a.tradePlan, a.winPct, a.type)
-        const subs = await listSubscribers(env, 'sniper')
-        for (const sub of subs) {
-          if (sub.sniper === false) continue
+        const chats = await chatsWatchingSymbol(
+          env.SUBSCRIBERS,
+          await sniperChatIds(env),
+          a.tradePlan.symbol
+        )
+        for (const chatId of chats) {
           await createWatchesBatch(env, {
-            chatId: sub.chatId,
+            chatId,
             symbol: a.tradePlan.symbol,
             internalSymbol: a.tradePlan.symbol,
             setups: [setup],
@@ -3075,9 +3257,14 @@ async function runCronScan(
             (t.status === 'OPEN' || t.status === 'WAITING')
         )
         .map((t) => t.symbol)
+      const favPins: string[] = []
+      for (const id of await sniperChatIds(env)) {
+        const rec = await loadFavorites(env.SUBSCRIBERS, id)
+        if (rec?.symbols.length) favPins.push(...rec.symbols)
+      }
       const sniperAlerts = await runVaneScan({
         kv,
-        pinSymbols,
+        pinSymbols: [...new Set([...pinSymbols, ...favPins])],
         batchSize: 5,
       })
       for (const a of sniperAlerts) {
@@ -3136,13 +3323,28 @@ async function runCronScan(
     if (!env.TELEGRAM_SNIPER_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN) return
     try {
       const alerts = await monitorWatchedSetups(env)
-      // Hard filter: Elite alts = actionable only
+      // Hard filter: Elite alts = actionable only; TOUCH only for favorites
       const actionable = alerts.filter(
-        (a) => a.kind === 'READY' || a.kind === 'INVALIDATED'
+        (a) =>
+          a.kind === 'READY' ||
+          a.kind === 'INVALIDATED' ||
+          a.kind === 'TOUCH'
       )
       let budget = 4
       for (const a of actionable) {
         if (budget <= 0) break
+        const requireFav = a.kind === 'TOUCH'
+        if (
+          a.symbol &&
+          !(await chatMonitorsSymbol(
+            env.SUBSCRIBERS,
+            a.chatId,
+            a.symbol,
+            { requireFav }
+          ))
+        ) {
+          continue
+        }
         const r = await broadcastAlert(env, {
           type: 'SETUP_WATCH',
           channel: 'sniper',
@@ -3155,6 +3357,34 @@ async function runCronScan(
           watchAlerts += r.sent
           sent += r.sent
           budget--
+          if (a.symbol) {
+            await markUrgentFired(env.SUBSCRIBERS, a.chatId, a.symbol)
+            const setup = a.setup
+            if (setup && (a.kind === 'READY' || a.kind === 'TOUCH')) {
+              const scene = await sceneFromPlan(
+                env,
+                normalizeFavSymbol(a.symbol) ?? a.symbol,
+                setup.side,
+                setup.limitEntry,
+                {
+                  target: setup.target,
+                  zoneLow: setup.entryZone.bottom,
+                  zoneHigh: setup.entryZone.top,
+                  magnetPrice: setup.magnet?.price,
+                  magnetLabel: setup.magnet?.label,
+                  caption: `${a.title}\n${a.text}`.slice(0, 900),
+                }
+              )
+              if (scene) {
+                await maybeSendFavSnapshot(
+                  env,
+                  a.chatId,
+                  scene,
+                  a.kind ?? 'watch'
+                )
+              }
+            }
+          }
         } else {
           failed += r.failed
         }
@@ -3276,10 +3506,18 @@ async function runCronScan(
       const watches = await listWatches(env)
       const now = Date.now()
       const bySym = new Map<string, number>()
+      for (const id of await sniperChatIds(env)) {
+        const rec = await loadFavorites(env.SUBSCRIBERS, id)
+        if (!rec || rec.urgentOn === false) continue
+        for (const sym of rec.symbols) {
+          if (!bySym.has(sym)) bySym.set(sym, id)
+        }
+      }
       for (const w of watches) {
         if (w.expiresAt <= now) continue
         const sym = (w.internalSymbol || w.symbol || '').toUpperCase()
         if (!sym || sym.includes('MEME')) continue
+        if (!(await chatMonitorsSymbol(env.SUBSCRIBERS, w.chatId, sym))) continue
         if (!bySym.has(sym)) bySym.set(sym, w.chatId)
       }
       const moments = await scanProcessMoments({
@@ -3304,6 +3542,21 @@ async function runCronScan(
           watchAlerts += r.sent
           sent += r.sent
           momentBudget--
+          if (m.chatId && m.symbol) {
+            await markUrgentFired(env.SUBSCRIBERS, m.chatId, m.symbol)
+            const scene = await sceneFromPlan(
+              env,
+              normalizeFavSymbol(m.symbol) ?? m.symbol,
+              m.side,
+              undefined,
+              {
+                caption: `${m.title}\n${m.text}`.slice(0, 900),
+              }
+            )
+            if (scene && scene.entry > 0) {
+              await maybeSendFavSnapshot(env, m.chatId, scene, 'sweep')
+            }
+          }
         } else {
           failed += r.failed
         }
@@ -3340,6 +3593,38 @@ async function runCronScan(
 
   if (lane === 'elite' && role === 'elite_daily') {
     await runEliteBrief('daily')
+  }
+
+  if (lane === 'elite' && (role === 'favorites_digest' || role === 'all')) {
+    try {
+      const ids = await sniperChatIds(env)
+      const digestKv = env.SUBSCRIBERS
+        ? {
+            get: (key: string) => env.SUBSCRIBERS!.get(key),
+            put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+          }
+        : undefined
+      const result = await runFavoritesDigest({
+        kv: digestKv,
+        chatIds: ids,
+        send: (chatId, html) => tgSend(env, chatId, html, 'sniper'),
+        alreadySent: async (chatId, slot) => {
+          const key = `telegram:dedup:sniper:favdigest:${chatId}:${slot}`
+          return Boolean(await runtimeGet(key))
+        },
+        markSent: async (chatId, slot) => {
+          const key = `telegram:dedup:sniper:favdigest:${chatId}:${slot}`
+          await runtimePut(key, String(Date.now()))
+        },
+      })
+      sent += result.sent
+      skipped += result.skipped
+      console.log(
+        `[elite] favdigest sent=${result.sent} skipped=${result.skipped} symbols=${result.symbols}`
+      )
+    } catch (err) {
+      console.error('[cron] favorites digest failed', err)
+    }
   }
 
   const result = {
@@ -3618,7 +3903,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · как Mini App «Сигналы»: зоны, SMC, confluence.\nВход в TG только когда сетап <b>READY</b>.\nПрокси: <code>mexc-proxy-f</code> (Money bot 7).\nМемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/status · /journal · /trades · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · как Mini App «Сигналы»: зоны, SMC, confluence.\nМониторинг — <b>звёзды</b> в Mini App (макс. 6).\nДайджест каждые 15 мин · срочный алерт при READY / зоне / свипе.\nСнимок графика с меткой входа — только на важное.\nПрокси: <code>mexc-proxy-f</code> (Money bot 7).\nМемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/digest · /digest_off · /fav\n/status · /journal · /trades · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nJeweler Burst · PEAK + RANGE · направление по forecast/event/tape/walls · phase+BTC+sync+3-snapshot стакан · quality от 68 · paper-first.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
@@ -3742,6 +4027,141 @@ async function dispatchCommand(
     } catch (err) {
       console.error('[brief]', err)
       await tgSend(env, chatId, 'Не удалось собрать доклад.', channel)
+    }
+    return
+  }
+
+  if (cmd === 'digest' || cmd === 'digest_off' || cmd === 'fav') {
+    if (channel !== 'sniper') {
+      await tgSend(
+        env,
+        chatId,
+        'Избранное и 15-мин дайджест — в @Enterpriseelite_bot.',
+        channel
+      )
+      return
+    }
+    const list = await listSubscribers(env, channel)
+    const me = list.find((s) => s.chatId === chatId)
+    if (!me) {
+      await tgSend(env, chatId, 'Сначала /start', channel)
+      return
+    }
+    const prev = await loadFavorites(env.SUBSCRIBERS, chatId)
+    const { arg } = parseCommand(text)
+
+    if (cmd === 'digest_off') {
+      const saved = await saveFavorites(env.SUBSCRIBERS, chatId, {
+        symbols: prev?.symbols ?? [],
+        digestOn: false,
+        urgentOn: prev?.urgentOn !== false,
+        updatedAt: Date.now(),
+      })
+      await tgSend(
+        env,
+        chatId,
+        saved.record.symbols.length
+          ? '⏸ 15-мин дайджест выключен. Срочные алерты по звёздам остаются.\n/digest — включить и прислать сейчас.'
+          : '⏸ Дайджест выключен. Поставь звезду в Mini App — иначе мониторить нечего.',
+        channel
+      )
+      return
+    }
+
+    if (cmd === 'fav') {
+      if (!arg) {
+        await tgSend(env, chatId, formatFavListHtml(prev), channel)
+        return
+      }
+      const sym = normalizeFavSymbol(arg.replace(/^-/, ''))
+      if (!sym) {
+        await tgSend(env, chatId, 'Формат: /fav BTC  или  /fav -ETH', channel)
+        return
+      }
+      const have = prev?.symbols ?? []
+      const next = have.includes(sym)
+        ? have.filter((s) => s !== sym)
+        : [...have, sym]
+      const saved = await saveFavorites(env.SUBSCRIBERS, chatId, {
+        symbols: next,
+        digestOn: prev?.digestOn !== false,
+        urgentOn: prev?.urgentOn !== false,
+        updatedAt: Date.now(),
+      })
+      await tgSend(env, chatId, formatFavListHtml(saved.record), channel)
+      return
+    }
+
+    const saved = await saveFavorites(env.SUBSCRIBERS, chatId, {
+      symbols: prev?.symbols ?? [],
+      digestOn: true,
+      urgentOn: prev?.urgentOn !== false,
+      updatedAt: Date.now(),
+    })
+    if (!saved.record.symbols.length) {
+      await tgSend(
+        env,
+        chatId,
+        'Нет избранного. Поставь звезду в Mini App (макс. 6) или /fav BTC.',
+        channel
+      )
+      return
+    }
+    await tgSend(env, chatId, '⏳ Сводка по избранному…', channel)
+    const kvLocal = env.SUBSCRIBERS
+      ? {
+          get: (key: string) => env.SUBSCRIBERS!.get(key),
+          put: (key: string, value: string) => env.SUBSCRIBERS!.put(key, value),
+        }
+      : undefined
+    const focus = arg ? normalizeFavSymbol(arg) : null
+    const symbols = focus
+      ? saved.record.symbols.filter((s) => s === focus)
+      : saved.record.symbols
+    if (focus && !symbols.length) {
+      await tgSend(env, chatId, `Нет ${focus} в избранном. /fav`, channel)
+      return
+    }
+    const market = await loadFavoriteMarketRows(symbols, kvLocal)
+    const html = await formatChatDigestHtml(
+      { ...saved.record, symbols },
+      market,
+      chatId
+    )
+    if (html) await tgSend(env, chatId, html, channel)
+    else await tgSend(env, chatId, 'Сейчас пусто по избранному.', channel)
+
+    const watches = await listWatchesForChat(env, chatId)
+    for (const symbol of symbols) {
+      const row = market.get(symbol)
+      const liveWatch = watches.find((w) => {
+        const ws = normalizeFavSymbol(w.internalSymbol || w.symbol)
+        return (
+          ws === symbol &&
+          (w.lastStatus === 'READY' ||
+            w.lastLifecyclePhase === 'TOUCH' ||
+            w.lastLifecyclePhase === 'READY' ||
+            w.lastLifecyclePhase === 'FUEL')
+        )
+      })
+      const liveIdea = row ? hasLiveSetupIdea(row) : false
+      if (!liveWatch && !liveIdea) continue
+      const setup = liveWatch?.setup
+      const scene = await sceneFromPlan(
+        env,
+        symbol,
+        setup?.side ?? (row?.scalpIdea?.includes('SHORT') ? 'SHORT' : 'LONG'),
+        setup?.limitEntry,
+        {
+          target: setup?.target,
+          zoneLow: setup?.entryZone.bottom,
+          zoneHigh: setup?.entryZone.top,
+          magnetPrice: setup?.magnet?.price,
+          magnetLabel: setup?.magnet?.label,
+          caption: `⭐ ${symbol.replace('_USDT', '')} · живой сетап`,
+        }
+      )
+      if (scene) await maybeSendFavSnapshot(env, chatId, scene, 'digest')
     }
     return
   }

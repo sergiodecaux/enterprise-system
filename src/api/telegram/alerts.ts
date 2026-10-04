@@ -23,6 +23,8 @@ function getAlertSecret(): string {
   return (import.meta.env.VITE_ALERT_SECRET as string | undefined)?.trim() ?? ''
 }
 
+export { NEED_START_ELITE } from '../../engine/telegram/types'
+
 export function isTelegramAlertsConfigured(): boolean {
   return Boolean(getProxyBase())
 }
@@ -202,6 +204,38 @@ export async function removeWatchedSetup(input: {
     return res.ok
   } catch {
     return false
+  }
+}
+
+export async function syncTelegramFavorites(input: {
+  chatId: number
+  symbols: string[]
+  digestOn?: boolean
+  urgentOn?: boolean
+}): Promise<{
+  ok: boolean
+  reason?: string
+  symbols?: string[]
+}> {
+  try {
+    const res = await postJson('/telegram/favorites', input, true)
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      error?: string
+      favorites?: { symbols?: string[] }
+    }
+    if (res.status === 401) {
+      return {
+        ok: false,
+        reason: data.error?.includes('/start') ? 'need_start' : 'unauthorized',
+      }
+    }
+    if (!res.ok) {
+      return { ok: false, reason: data.error ?? `http_${res.status}` }
+    }
+    return { ok: true, symbols: data.favorites?.symbols }
+  } catch {
+    return { ok: false, reason: 'network' }
   }
 }
 

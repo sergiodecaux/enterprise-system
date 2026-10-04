@@ -13,6 +13,7 @@ import {
   type MexcTicker,
 } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
+import { MAX_RADAR_FAVORITES } from '../../engine/telegram/types'
 import { analyzeSymbol } from '../../engine/ProbabilityEngine'
 import { resolveDailyBias, detectMarketStructure } from '../../engine/smc'
 import { logger } from '../../utils/logger'
@@ -81,7 +82,10 @@ const CoinSearch = () => {
     try {
       void loadWorkerMarketContext()
       addToWatchlist(ticker.symbol)
-      if (!radarFavorites.includes(ticker.symbol)) {
+      if (
+        !radarFavorites.includes(ticker.symbol) &&
+        radarFavorites.length < MAX_RADAR_FAVORITES
+      ) {
         toggleRadarFavorite(ticker.symbol)
       }
 

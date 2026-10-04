@@ -9,6 +9,8 @@ export interface TelegramAlertSettings {
   setupWatch: boolean
   /** Касание / выход 141 на радаре */
   radar141: boolean
+  /** 15-мин дайджест избранного в Elite-боте */
+  favoritesDigest: boolean
   /** Мин. confidence / heat для отправки */
   minSniperConfidence: number
   minMemeHeat: number
@@ -28,6 +30,7 @@ export const DEFAULT_TELEGRAM_ALERT_SETTINGS: TelegramAlertSettings = {
   meme: true,
   setupWatch: true,
   radar141: true,
+  favoritesDigest: true,
   minSniperConfidence: 70,
   minMemeHeat: 50,
   manualChatId: '',
@@ -36,3 +39,11 @@ export const DEFAULT_TELEGRAM_ALERT_SETTINGS: TelegramAlertSettings = {
 }
 
 export const TELEGRAM_ALERT_SETTINGS_KEY = 'enterprise_telegram_alerts'
+
+export const MAX_RADAR_FAVORITES = 6
+
+export const FAVORITE_LIMIT_RU =
+  'Можно следить максимум за 6 монетами. Уберите звезду у другой, чтобы добавить эту.'
+
+export const NEED_START_ELITE =
+  'Напиши /start боту @Enterpriseelite_bot и открой Mini App из Telegram'

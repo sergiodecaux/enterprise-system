@@ -2,6 +2,7 @@ import { ChevronRight, Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { CoinSignal } from '../../engine/types'
 import { useAppStore } from '../../store/useAppStore'
+import { useRadarFavoriteToggle } from '../../hooks/useRadarFavoriteToggle'
 import WinRateBar from './WinRateBar'
 import SentimentBadge from './SentimentBadge'
 import { toRadarLabel } from '../../api/mexc'
@@ -17,7 +18,7 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
   const newsSettings = useAppStore((s) => s.newsSettings)
   const coinSentiments = useAppStore((s) => s.newsIntel.coinSentiments)
   const favorites = useAppStore((s) => s.radarFavorites)
-  const toggleFav = useAppStore((s) => s.toggleRadarFavorite)
+  const toggleFav = useRadarFavoriteToggle()
   const isFav = favorites.includes(signal.internalSymbol)
   const label = toRadarLabel(signal.internalSymbol)
   const baseSym = signal.internalSymbol.split('/')[0]

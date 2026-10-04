@@ -10,6 +10,7 @@ import { useNewsIntelligence } from './hooks/useNewsIntelligence'
 import { useRadar141Screener } from './hooks/useRadar141Screener'
 import { useTelegramWebApp } from './hooks/useTelegramWebApp'
 import { useTelegramAlerts } from './hooks/useTelegramAlerts'
+import { useTelegramFavoritesSync } from './hooks/useTelegramFavoritesSync'
 import { useSniperSignalFire } from './hooks/useSniperSignalFire'
 import { useSignalJournalResolver } from './hooks/useSignalJournalResolver'
 import { useDesktopLayout } from './hooks/useDesktopLayout'
@@ -60,6 +61,7 @@ function TabBar({
 function App() {
   useTelegramWebApp()
   useTelegramAlerts()
+  useTelegramFavoritesSync()
   useSniperSignalFire()
   useMexcScanner()
   useNewsIntelligence()

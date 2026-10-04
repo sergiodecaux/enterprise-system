@@ -173,6 +173,18 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
             />
           </label>
 
+          <label className="flex items-center justify-between">
+            <span className="font-mono text-xs text-holo/80">
+              Дайджест избранного 15 мин
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.favoritesDigest !== false}
+              onChange={(e) => setSettings({ favoritesDigest: e.target.checked })}
+              className="accent-matrix"
+            />
+          </label>
+
           <div>
             <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
               Мин. Confidence снайпер: {settings.minSniperConfidence}%
@@ -277,10 +289,10 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
               )}
 
           <p className="font-mono text-[10px] leading-relaxed text-holo/35">
-            1) Создайте бота у @BotFather 2) Задеплойте worker с секретами 3)
-            Нажмите /start у бота 4) Включите алерты здесь. «Слежение за сетапами»
-            — бот напишет, когда выбранный сетап станет READY (даже если Mini App
-            закрыт, после деплоя worker).
+            1) Нажмите /start у @Enterpriseelite_bot 2) Поставьте звезду у монеты
+            (макс. 6) — бот мониторит только избранное. 3) Дайджест каждые 15 мин
+            и срочный алерт при READY / зоне / свипе. Снимок графика — только на
+            важное событие, с меткой входа.
           </p>
         </div>
       </div>
