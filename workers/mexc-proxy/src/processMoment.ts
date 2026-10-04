@@ -8,6 +8,7 @@ import {
   readOrderBookEvent,
   type OrderBookSnapshot,
 } from './orderBookReader'
+import { formatMomentUrgent } from './elite/narrative'
 
 const STATE_KEY = 'scanner:process_moment_book_v1'
 const DEDUP_PREFIX = 'process:moment:dedup:'
@@ -136,19 +137,9 @@ export async function scanProcessMoments(opts: {
 
       const side = ev.side
       const kind = ev.kind
-      const title = `⚡ МОМЕНТ · ${displayOf(symbol)} · ${side}`
-      const text = [
-        `${kind} · conf ${ev.confidence}`,
-        ev.notes.slice(0, 3).join('\n'),
-        read.tape
-          ? `Tape buy ${read.tape.buyFlowPct.toFixed(0)}% · move ${read.tape.priceMoveBps.toFixed(0)} bps`
-          : null,
-        '',
-        'Источник: process moment (стакан+лента) · не meme PEAK/PUMP',
-        'Открой Mini App → график для ProcessStrip / подтверждения.',
-      ]
-        .filter(Boolean)
-        .join('\n')
+      const copy = formatMomentUrgent({ symbol, side, kind })
+      const title = copy.title
+      const text = copy.text
 
       out.push({
         symbol,

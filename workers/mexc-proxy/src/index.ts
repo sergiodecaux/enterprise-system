@@ -32,6 +32,9 @@ import {
   digestSlot,
   formatChatDigestHtml,
   formatFavListHtml,
+  formatSnapshotCaption,
+  formatSniperFavoriteUrgent,
+  formatWatchUrgent,
   hasLiveSetupIdea,
   inferEliteScene,
   isEliteAssistantOnly,
@@ -1811,23 +1814,13 @@ function formatWatchArmedMessage(watch: WatchedSetupRecord): {
   text: string
 } {
   const s = watch.setup
-  const icon = s.side === 'LONG' ? '🟢' : '🔴'
-  const style = s.tradeStyle ?? ''
-  return {
-    title: `👁 Сигнал · ${watch.symbol} · слежу`,
-    text: [
-      `${icon} ${s.side} ${watch.symbol}${style ? ` · ${style}` : ''}`,
-      s.title,
-      '',
-      `Зона: ${s.entryZone.bottom} – ${s.entryZone.top}`,
-      `Лимит: ${s.limitEntry} · SL ${s.invalidation} · TP ${s.targetsLadder?.r2 ?? s.target}`,
-      `Win% ~${Math.round(s.probability)}%`,
-      '',
-      'Источник: Mini App → вкладка Сигналы',
-      'В TG придёт только READY (вход) или INVALIDATED — без спама фаз.',
-      'Не входи до READY.',
-    ].join('\n'),
-  }
+  return formatWatchUrgent({
+    kind: 'ARMED',
+    symbol: watch.symbol,
+    side: s.side,
+    entry: s.limitEntry,
+    target: s.targetsLadder?.r2 ?? s.target ?? s.magnet?.price,
+  })
 }
 
 /**
@@ -2003,12 +1996,21 @@ async function sendSniperToFavoriteChats(
   let sent = 0
   let failed = 0
   for (const chatId of chats) {
+    const human = a.tradePlan
+      ? formatSniperFavoriteUrgent({
+          symbol,
+          side: a.tradePlan.side,
+          entry: a.tradePlan.entryIdeal || a.tradePlan.signalPrice,
+          target: a.tradePlan.target1 ?? a.tradePlan.tp,
+          chased: Boolean(a.needsPullbackWatch || a.watchOnly),
+        })
+      : { title: a.title, text: a.text }
     const r = await broadcastAlert(env, {
       type: a.type,
       channel: 'sniper',
       chatId,
-      title: a.title,
-      text: a.text,
+      title: human.title,
+      text: human.text,
       dedupeKey: `${a.dedupeKey}:${chatId}`,
     })
     sent += r.sent
@@ -2027,8 +2029,14 @@ async function sendSniperToFavoriteChats(
             zoneLow: plan.zoneLow,
             zoneHigh: plan.zoneHigh,
             magnetPrice: plan.target3,
-            magnetLabel: plan.targetLabel,
-            caption: `${a.title}\n${a.text}`.slice(0, 900),
+            magnetLabel: 'MAGNET',
+            caption: formatSnapshotCaption({
+              symbol,
+              side: plan.side,
+              kind: 'SNIPER',
+              entry: plan.entryIdeal || plan.signalPrice,
+              target: plan.target1 ?? plan.tp,
+            }),
           }
         )
         if (scene) await maybeSendFavSnapshot(env, chatId, scene, 'sniper')
@@ -3371,8 +3379,15 @@ async function runCronScan(
                   zoneLow: setup.entryZone.bottom,
                   zoneHigh: setup.entryZone.top,
                   magnetPrice: setup.magnet?.price,
-                  magnetLabel: setup.magnet?.label,
-                  caption: `${a.title}\n${a.text}`.slice(0, 900),
+                  magnetLabel: 'MAGNET',
+                  caption: formatSnapshotCaption({
+                    symbol: a.symbol,
+                    side: setup.side,
+                    kind: a.kind === 'READY' ? 'READY' : 'TOUCH',
+                    entry: setup.limitEntry,
+                    target: setup.targetsLadder?.r2 ?? setup.target ?? setup.magnet?.price,
+                    price: setup.limitEntry,
+                  }),
                 }
               )
               if (scene) {
@@ -3550,7 +3565,11 @@ async function runCronScan(
               m.side,
               undefined,
               {
-                caption: `${m.title}\n${m.text}`.slice(0, 900),
+                caption: formatSnapshotCaption({
+                  symbol: m.symbol,
+                  side: m.side,
+                  kind: 'MOMENT',
+                }),
               }
             )
             if (scene && scene.entry > 0) {
@@ -4156,9 +4175,18 @@ async function dispatchCommand(
           target: setup?.target,
           zoneLow: setup?.entryZone.bottom,
           zoneHigh: setup?.entryZone.top,
-          magnetPrice: setup?.magnet?.price,
-          magnetLabel: setup?.magnet?.label,
-          caption: `⭐ ${symbol.replace('_USDT', '')} · живой сетап`,
+          magnetPrice: setup?.magnet?.price ?? row?.story?.bsl ?? row?.story?.ssl,
+          magnetLabel: 'MAGNET',
+          caption: formatSnapshotCaption({
+            symbol,
+            side:
+              setup?.side ??
+              row?.story?.side ??
+              (row?.scalpIdea?.includes('SHORT') ? 'SHORT' : 'LONG'),
+            kind: 'DIGEST',
+            entry: setup?.limitEntry ?? row?.story?.entry,
+            target: setup?.target ?? row?.story?.target,
+          }),
         }
       )
       if (scene) await maybeSendFavSnapshot(env, chatId, scene, 'digest')

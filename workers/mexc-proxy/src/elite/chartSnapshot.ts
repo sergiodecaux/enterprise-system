@@ -428,9 +428,7 @@ export async function inferEliteScene(
     zoneLow: hint?.zoneLow ?? zone?.zoneLow ?? entry * 0.994,
     zoneHigh: hint?.zoneHigh ?? zone?.zoneHigh ?? entry * 1.006,
     magnetPrice: hint?.magnetPrice ?? magnet?.price,
-    magnetLabel:
-      hint?.magnetLabel ??
-      (magnet ? `1D MAGNET ${magnet.tf}` : '1D MAGNET'),
+    magnetLabel: hint?.magnetLabel ?? 'MAGNET',
     caption: hint?.caption ?? '',
   }
 }

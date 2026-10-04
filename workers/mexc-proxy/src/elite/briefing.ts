@@ -28,6 +28,18 @@ export const ELITE_BRIEF_SYMBOLS = [
 
 export type BriefKind = 'hourly' | 'daily'
 
+export interface CoinStory {
+  side: 'LONG' | 'SHORT' | null
+  phase: 'TOUCH' | 'APPROACH' | 'FAR' | null
+  align: 'WITH' | 'WAIT' | null
+  style: 'SCALP' | 'INTRADAY' | null
+  entry: number | null
+  target: number | null
+  ssl: number | null
+  bsl: number | null
+  quiet: boolean
+}
+
 export interface CoinBriefRow {
   symbol: string
   base: string
@@ -47,6 +59,8 @@ export interface CoinBriefRow {
   intraIdea: string | null
   liqNote: string | null
   newsNote: string | null
+  /** Structured picture for the 15-min favorites digest (hourly/daily HTML ignores this). */
+  story: CoinStory
 }
 
 export interface EliteBriefing {
@@ -294,6 +308,71 @@ export async function loadCoinRow(
     intraIdea,
     liqNote: liqNote(price, map, funding),
     newsNote,
+    story: buildCoinStory({
+      price,
+      map,
+      atr15,
+      bias1h,
+      bias4h,
+      scalpIdea,
+      intraIdea,
+      preferLong,
+      preferShort,
+    }),
+  }
+}
+
+function buildCoinStory(opts: {
+  price: number
+  map: ReturnType<typeof buildHtfLiquidityMap>
+  atr15: number
+  bias1h: string
+  bias4h: string
+  scalpIdea: string | null
+  intraIdea: string | null
+  preferLong: boolean
+  preferShort: boolean
+}): CoinStory {
+  const zLong = findSmartZone('LONG', opts.price, opts.map, opts.atr15, {
+    relaxed: true,
+  })
+  const zShort = findSmartZone('SHORT', opts.price, opts.map, opts.atr15, {
+    relaxed: true,
+  })
+  const idea = opts.scalpIdea ?? opts.intraIdea
+
+  let side: 'LONG' | 'SHORT' | null = null
+  if (idea?.includes('LONG') && !idea.includes('SHORT')) side = 'LONG'
+  else if (idea?.includes('SHORT')) side = 'SHORT'
+  else if (opts.preferLong && zLong) side = 'LONG'
+  else if (opts.preferShort && zShort) side = 'SHORT'
+  else if (zLong && !zShort) side = 'LONG'
+  else if (zShort && !zLong) side = 'SHORT'
+  else if (zLong && zShort) {
+    const dL = phaseDist(opts.price, zLong.zoneLow, zLong.zoneHigh).distPct
+    const dS = phaseDist(opts.price, zShort.zoneLow, zShort.zoneHigh).distPct
+    side = dL <= dS ? 'LONG' : 'SHORT'
+  }
+
+  const zone = side === 'LONG' ? zLong : side === 'SHORT' ? zShort : null
+  const phase = zone
+    ? phaseDist(opts.price, zone.zoneLow, zone.zoneHigh).phase
+    : null
+  const withHtf =
+    (side === 'LONG' && (opts.bias4h === 'BULL' || opts.bias1h === 'BULL')) ||
+    (side === 'SHORT' && (opts.bias4h === 'BEAR' || opts.bias1h === 'BEAR'))
+  const quiet = !idea && (phase === 'FAR' || phase == null)
+
+  return {
+    side,
+    phase: phase === 'TOUCH' || phase === 'APPROACH' || phase === 'FAR' ? phase : null,
+    align: side ? (withHtf ? 'WITH' : 'WAIT') : null,
+    style: opts.scalpIdea ? 'SCALP' : opts.intraIdea ? 'INTRADAY' : null,
+    entry: zone?.limitEntry ?? null,
+    target: zone?.target ?? null,
+    ssl: opts.map.nearestSSL?.price ?? null,
+    bsl: opts.map.nearestBSL?.price ?? null,
+    quiet,
   }
 }
 

@@ -10,28 +10,10 @@ import {
   unionFavoriteSymbols,
   wasUrgentRecent,
 } from './favorites'
-
-function fmtPx(n: number): string {
-  if (!(n > 0)) return '—'
-  if (n >= 1000) return n.toFixed(2)
-  if (n >= 1) return n.toFixed(4)
-  return n.toPrecision(4)
-}
-
-function fmtChg(n: number): string {
-  if (!Number.isFinite(n)) return '—'
-  return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
-}
-
-function ideaHint(row: CoinBriefRow): string | null {
-  const idea = row.scalpIdea ?? row.intraIdea
-  if (!idea) return null
-  if (idea.includes('TOUCH')) return 'зона TOUCH'
-  if (idea.includes('APPROACH')) return 'подход к зоне'
-  return null
-}
+import { DIGEST_FOOTER, formatFavoriteCoinHtml } from './narrative'
 
 export function hasLiveSetupIdea(row: CoinBriefRow): boolean {
+  if (row.story?.phase === 'TOUCH' && row.story.align === 'WITH') return true
   const idea = row.scalpIdea ?? row.intraIdea
   if (!idea) return false
   return idea.includes('TOUCH') || idea.includes('READY')
@@ -64,23 +46,18 @@ export async function formatChatDigestHtml(
 ): Promise<string | null> {
   if (!record.digestOn || record.symbols.length === 0) return null
   const when = new Date(now).toISOString().replace('T', ' ').slice(11, 16)
-  const lines: string[] = [`⭐ <b>Избранное · ${when} UTC</b>`]
+  const blocks: string[] = [`⭐ <b>Избранное</b> · ${when} UTC`]
   let any = false
   for (const symbol of record.symbols) {
     const row = rows.get(symbol)
     if (!row) continue
     any = true
     const urgent = await wasUrgentRecent(chatId, symbol)
-    const hint = urgent ? 'см. алерт' : ideaHint(row)
-    const px = `${fmtPx(row.price)} · Δ15м ${fmtChg(row.chg15)} · Δ24ч ${fmtChg(row.chg24)}`
-    const bias = `4H ${row.bias4h}`
-    lines.push(
-      `<b>${row.base}</b> ${px} · ${bias}${hint ? ` · ${hint}` : ''}`
-    )
+    blocks.push('', formatFavoriteCoinHtml(row, { urgentRecent: urgent }))
   }
   if (!any) return null
-  lines.push('', '/digest_off · /fav')
-  return lines.join('\n')
+  blocks.push('', DIGEST_FOOTER)
+  return blocks.join('\n')
 }
 
 export async function runFavoritesDigest(opts: {

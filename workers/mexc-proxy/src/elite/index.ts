@@ -6,6 +6,7 @@ export {
   ELITE_BRIEF_SYMBOLS,
   type BriefKind,
   type CoinBriefRow,
+  type CoinStory,
   type EliteBriefing,
 } from './briefing'
 export {
@@ -28,6 +29,14 @@ export {
   loadFavoriteMarketRows,
   runFavoritesDigest,
 } from './favoritesDigest'
+export {
+  DIGEST_FOOTER,
+  formatFavoriteCoinHtml,
+  formatMomentUrgent,
+  formatSnapshotCaption,
+  formatSniperFavoriteUrgent,
+  formatWatchUrgent,
+} from './narrative'
 export {
   buildSetupScene,
   inferEliteScene,

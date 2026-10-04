@@ -14,6 +14,7 @@ import {
   type MovePotential,
 } from './movePotential'
 import { kvPutThrottled } from './kvWrite'
+import { formatWatchUrgent } from './elite/narrative'
 
 export type SetupStatus =
   | 'HYPOTHESIS'
@@ -852,49 +853,20 @@ function formatLifecyclePhase(
   snap: WatchEvalSnapshot
 ): WatchAlert {
   const s = w.setup
-  const icon = s.side === 'LONG' ? '🟢' : '🔴'
-  const phase = snap.lifecycle
-  const titleMap: Record<LifecyclePhase, string> = {
-    FAR: `⏳ FAR · ${w.symbol}`,
-    APPROACH: `📍 APPROACH · ${w.symbol}`,
-    TOUCH: `🖐 TOUCH · ${w.symbol}`,
-    REACTION: `⚡ REACTION · ${w.symbol}`,
-    FUEL: `⛽ FUEL · ${w.symbol}`,
-    READY: `🎯 READY · ${w.symbol}`,
-    INVALIDATED: `⛔ INVALIDATED · ${w.symbol}`,
-  }
-  const chain = 'APPROACH → TOUCH → REACTION → FUEL → READY'
+  const oneTarget = s.targetsLadder?.r2 ?? s.target ?? s.magnet?.price
+  const copy = formatWatchUrgent({
+    kind: snap.lifecycle === 'INVALIDATED' ? 'INVALIDATED' : 'TOUCH',
+    symbol: w.symbol,
+    side: s.side,
+    price: snap.price,
+    entry: s.limitEntry,
+    target: oneTarget,
+  })
   return {
     chatId: w.chatId,
-    title: titleMap[phase] ?? `Фаза ${phase}`,
-    text: [
-      `${icon} ${s.side} ${w.symbol} · ${s.title}`,
-      `Фаза: ${phase}`,
-      `Цепочка: ${chain}`,
-      '',
-      snap.narrative,
-      `Цена: ${fmtPx(snap.price)}`,
-      `Зона: ${fmtPx(s.entryZone.bottom)} – ${fmtPx(s.entryZone.top)}`,
-      s.targetsLadder
-        ? `Лимит: ${fmtPx(s.limitEntry)} · 1R ${fmtPx(s.targetsLadder.r1)} → 2R ${fmtPx(s.targetsLadder.r2)} → 3R ${fmtPx(s.targetsLadder.r3)} · SL ${fmtPx(s.invalidation)}`
-        : `Лимит: ${fmtPx(s.limitEntry)} · TP: ${fmtPx(s.target)} · SL: ${fmtPx(s.invalidation)}`,
-      s.magnet ? `Магнит: ${s.magnet.label} @ ${fmtPx(s.magnet.price)}` : null,
-      `Реакция: ${snap.reactionOk ? '✓' : '·'} · Закреп: ${snap.acceptanceOk ? '✓' : '·'} · Стакан: ${snap.bookOk ? '✓' : '·'}`,
-      `Структура: ${snap.structureOk ? '✓' : '✗'} · Сила: ${snap.strengthOk ? '✓' : '·'}${
-        snap.btcRs != null ? ` (RS ${snap.btcRs >= 0 ? '+' : ''}${snap.btcRs.toFixed(1)}%)` : ''
-      }`,
-      snap.htfSummary
-        ? `HTF: ${snap.htfSummary}`
-        : null,
-      snap.movePotential
-        ? `📈 ${snap.movePotential.summary}`
-        : null,
-      snap.qualityNote ? `· ${snap.qualityNote}` : null,
-      `Win% сетапа: ~${Math.round(s.probability)}%`,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-    dedupeKey: `watch:${w.watchId}:phase:${phase}:${Math.floor(Date.now() / 120_000)}`,
+    title: copy.title,
+    text: copy.text,
+    dedupeKey: `watch:${w.watchId}:phase:${snap.lifecycle}:${Math.floor(Date.now() / 120_000)}`,
     kind: 'PHASE',
     watchId: w.watchId,
     symbol: w.symbol,
@@ -905,50 +877,22 @@ function formatLifecyclePhase(
 function formatReady(
   w: WatchedSetupRecord,
   price: number,
-  snap?: WatchEvalSnapshot
+  _snap?: WatchEvalSnapshot
 ): WatchAlert {
   const s = w.setup
-  const icon = s.side === 'LONG' ? '🟢' : '🔴'
-  const isJewel =
-    s.title.includes('💎') ||
-    s.kind === 'BOUNCE_SSL' ||
-    s.kind === 'BOUNCE_BSL' ||
-    s.kind === 'SURGICAL' ||
-    s.kind === 'MM_HUNT'
+  const oneTarget = s.targetsLadder?.r2 ?? s.target ?? s.magnet?.price
+  const copy = formatWatchUrgent({
+    kind: 'READY',
+    symbol: w.symbol,
+    side: s.side,
+    price,
+    entry: s.limitEntry,
+    target: oneTarget,
+  })
   return {
     chatId: w.chatId,
-    title: isJewel
-      ? `💎 ${icon} Ювелирный ${s.side} · ${w.symbol}`
-      : `🎯 Вход возможен · ${w.symbol}`,
-    text: [
-      `${s.side} ${w.symbol} · ${s.title}`,
-      `Статус: READY`,
-      `Цена сейчас: ${price}`,
-      '',
-      `Лимит (вход): ${s.limitEntry}`,
-      `Зона: ${s.entryZone.bottom} – ${s.entryZone.top}`,
-      `Стоп / Inv: ${s.invalidation}`,
-      s.targetsLadder
-        ? `TP: 1R ${s.targetsLadder.r1} (~${s.targetsLadder.pReach1}%) → 2R ${s.targetsLadder.r2} (~${s.targetsLadder.pReach2}%) → 3R ${s.targetsLadder.r3} (~${s.targetsLadder.pReach3}%)`
-        : `Цель (TP): ${s.target}`,
-      s.magnet
-        ? `Магнит: ${s.magnet.label} @ ${s.magnet.price}`
-        : null,
-      s.globalView
-        ? `Глобально: ${s.globalView.bias} — ${s.globalView.summary}`
-        : null,
-      snap?.qualityNote
-        ? `Качество: ${snap.qualityNote}`
-        : 'Качество: закреп + структура + сила стороны ✓',
-      `Вероятность: ~${Math.round(s.probability)}%`,
-      '',
-      `Условие: ${s.triggerSummary}`,
-      ...(s.reasoning?.slice(0, 3) ?? []),
-      '',
-      'Источник: Mini App → Сигналы · журнал Lab WR',
-    ]
-      .filter(Boolean)
-      .join('\n'),
+    title: copy.title,
+    text: copy.text,
     dedupeKey: `watch:${w.watchId}:READY`,
     kind: 'READY',
     watchId: w.watchId,
@@ -960,21 +904,20 @@ function formatReady(
 function formatInvalidated(
   w: WatchedSetupRecord,
   price: number,
-  snap?: WatchEvalSnapshot
+  _snap?: WatchEvalSnapshot
 ): WatchAlert {
+  const copy = formatWatchUrgent({
+    kind: 'INVALIDATED',
+    symbol: w.symbol,
+    side: w.setup.side,
+    price,
+    entry: w.setup.limitEntry,
+    target: w.setup.target,
+  })
   return {
     chatId: w.chatId,
-    title: `⛔ Сетап снят · ${w.symbol}`,
-    text: [
-      `${w.setup.side} ${w.symbol} · ${w.setup.title}`,
-      `Статус: INVALIDATED`,
-      `Цена: ${price}`,
-      `Inv: ${w.setup.invalidation}`,
-      snap?.narrative ?? 'HTF close / слом условий — слежение остановлено.',
-      snap?.qualityNote ? `Причина: ${snap.qualityNote}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n'),
+    title: copy.title,
+    text: copy.text,
     dedupeKey: `watch:${w.watchId}:INVALIDATED`,
     kind: 'INVALIDATED',
     watchId: w.watchId,
