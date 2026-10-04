@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import {
-  CORE_WATCHLIST,
+  PINNED_WATCHLIST,
   fetchOhlcv,
   fetchTickers,
   sleep,
@@ -61,7 +61,7 @@ export function useRadar141Screener(enabled = true) {
           .filter((t) => t.volume24h >= 4_000_000 && t.lastPrice > 0)
           .sort((a, b) => b.volume24h - a.volume24h)
 
-        const pinned = new Set<string>([...CORE_WATCHLIST, ...extra, ...favs])
+        const pinned = new Set<string>([...PINNED_WATCHLIST, ...extra, ...favs])
         const universe: string[] = []
         for (const s of pinned) {
           if (!universe.includes(s)) universe.push(s)

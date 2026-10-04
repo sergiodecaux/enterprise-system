@@ -1,6 +1,7 @@
 import {
   fetchFundingRate,
   fetchTicker,
+  isCommodityApiSymbol,
   toApiSymbol,
 } from './index'
 
@@ -24,6 +25,19 @@ export async function assertUsdtPerpetual(
 
   if (!apiSymbol.endsWith('_USDT') || apiSymbol.includes('USDC')) {
     return { ok: false, apiSymbol, reason: 'not_usdt_perp' }
+  }
+
+  // Gold / silver / WTI oil are live USDT-M perps (funding may be 0).
+  if (isCommodityApiSymbol(apiSymbol)) {
+    try {
+      const ticker = await fetchTicker(apiSymbol)
+      if (!ticker || !(ticker.lastPrice > 0)) {
+        return { ok: false, apiSymbol, reason: 'no_ticker' }
+      }
+      return { ok: true, apiSymbol }
+    } catch {
+      return { ok: false, apiSymbol, reason: 'verify_failed' }
+    }
   }
 
   try {

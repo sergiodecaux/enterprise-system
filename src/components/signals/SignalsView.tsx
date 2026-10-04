@@ -12,7 +12,7 @@ import {
   Check,
 } from 'lucide-react'
 import {
-  CORE_WATCHLIST,
+  PINNED_WATCHLIST,
   fetchOhlcv,
   fetchTickers,
   filterTickersByQuery,
@@ -50,6 +50,9 @@ import {
 } from '../../engine/analysis'
 import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { AltMacroStrip } from '../market/AltMacroStrip'
+import { loadJournal, SETUP_LABELS } from '../../engine/journal'
+import { isSniperFireNew, sniperFireKey } from '../../engine/sniper/fire'
+import { directionLabel } from '../../i18n/displayMaps'
 
 const BTC = 'BTC/USDT:USDT'
 
@@ -112,6 +115,16 @@ const SignalsView = () => {
   const upsertWatchedSetup = useAppStore((s) => s.upsertWatchedSetup)
   const telegramSettings = useAppStore((s) => s.telegramAlertSettings)
   const extraWatchlist = useAppStore((s) => s.extraWatchlist)
+  const journalVersion = useAppStore((s) => s.journalVersion)
+  const selectCoin = useAppStore((s) => s.selectCoin)
+  const setDrawerOpen = useAppStore((s) => s.setDrawerOpen)
+
+  const firedSniper = useMemo(() => {
+    return loadJournal()
+      .filter((e) => e.source === 'SNIPER' && e.status === 'OPEN')
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 8)
+  }, [journalVersion])
 
   const results = useMemo(() => {
     if (query.trim().length < 1) return []
@@ -187,7 +200,7 @@ const SignalsView = () => {
         timestamp: selected.timestamp,
       })
       if (
-        !(CORE_WATCHLIST as readonly string[]).includes(symbol) &&
+        !(PINNED_WATCHLIST as readonly string[]).includes(symbol) &&
         !extraWatchlist.includes(symbol)
       ) {
         addToWatchlist(symbol)
@@ -483,6 +496,66 @@ const SignalsView = () => {
           {workerCtx?.newsLabel ? ` · News ${workerCtx.newsLabel}` : ''}
         </p>
       </div>
+
+      {firedSniper.length > 0 && (
+        <div className="border-b border-hull-border px-4 py-3">
+          <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/45">
+            Снайпер выбросил
+          </div>
+          <div className="space-y-1.5">
+            {firedSniper.map((entry) => {
+              const key = sniperFireKey(entry)
+              const fresh = isSniperFireNew(key)
+              const isLong = entry.direction === 'LONG'
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  onClick={() => {
+                    haptic.impact()
+                    selectCoin(entry.symbol)
+                    setDrawerOpen(true)
+                  }}
+                  className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left ${
+                    isLong
+                      ? 'border-matrix/25 bg-matrix/[0.06]'
+                      : 'border-alert/25 bg-alert/[0.06]'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate font-mono text-xs font-bold text-holo">
+                        {entry.displayName}
+                      </span>
+                      <span
+                        className={`font-mono text-[10px] font-bold uppercase ${
+                          isLong ? 'text-matrix' : 'text-alert'
+                        }`}
+                      >
+                        {directionLabel(entry.direction)}
+                      </span>
+                      {fresh && (
+                        <span className="rounded border border-matrix/40 bg-matrix/15 px-1 py-px font-mono text-[8px] font-bold uppercase text-matrix">
+                          NEW
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[10px] text-holo/45">
+                      {SETUP_LABELS[entry.setupType] ?? entry.setupTag}
+                      {entry.tradeStyle ? ` · ${entry.tradeStyle}` : ''}
+                      {' · '}
+                      SL {fmtPx(entry.sl)} · TP {fmtPx(entry.tp1)}
+                    </div>
+                  </div>
+                  <div className="shrink-0 font-mono text-sm font-bold text-holo">
+                    {Math.round(entry.confidenceAtSignal)}%
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div ref={wrapRef} className="relative px-4 pt-4">

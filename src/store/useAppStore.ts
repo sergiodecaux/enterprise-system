@@ -41,7 +41,7 @@ import {
   linkTradeToJournal,
   resolveJournalByTrade,
 } from '../engine/journal'
-import { CORE_WATCHLIST } from '../api/mexc'
+import { PINNED_WATCHLIST } from '../api/mexc'
 import { DEFAULT_RADAR141_FILTERS } from '../engine/radar141'
 
 const defaultMarketContext: MarketContext = {
@@ -55,7 +55,7 @@ const defaultMarketContext: MarketContext = {
   btcTrend: 'RANGING',
   emaConfirms: false,
   lastScanAt: null,
-  watchlistSize: CORE_WATCHLIST.length,
+  watchlistSize: PINNED_WATCHLIST.length,
   scanProgress: '',
 }
 
@@ -285,8 +285,8 @@ export const useAppStore = create<AppState>()(
     },
 
     addToWatchlist: (internalSymbol: string) => {
-      const core = new Set<string>(CORE_WATCHLIST)
-      if (core.has(internalSymbol)) return false
+      const pinned = new Set<string>(PINNED_WATCHLIST)
+      if (pinned.has(internalSymbol)) return false
       const current = get().extraWatchlist
       if (current.includes(internalSymbol)) return false
       const next = [...current, internalSymbol]

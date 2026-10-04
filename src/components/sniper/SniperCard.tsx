@@ -9,9 +9,17 @@ import ConfidenceScore from '../trades/ConfidenceScore'
 
 interface SniperCardProps {
   signal: SniperSignal
+  firedAt?: number | null
+  isNewFire?: boolean
+  isCommodity?: boolean
 }
 
-const SniperCard = ({ signal }: SniperCardProps) => {
+const SniperCard = ({
+  signal,
+  firedAt = null,
+  isNewFire = false,
+  isCommodity = false,
+}: SniperCardProps) => {
   const { haptic, showAlert } = useTelegramWebApp()
   const selectCoin = useAppStore((s) => s.selectCoin)
   const setDrawerOpen = useAppStore((s) => s.setDrawerOpen)
@@ -166,6 +174,22 @@ const SniperCard = ({ signal }: SniperCardProps) => {
                     ? '🕯 SWING [4H–1D]'
                     : '🎯 INTRADAY [H1]'}
               </span>
+              {isCommodity && (
+                <span className="rounded-md border border-amber-400/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-amber-200/90">
+                  Сырьё
+                </span>
+              )}
+              {firedAt != null && (
+                <span
+                  className={`rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase ${
+                    isNewFire
+                      ? 'border border-matrix/50 bg-matrix/20 text-matrix'
+                      : 'border border-holo/20 bg-holo/10 text-holo/55'
+                  }`}
+                >
+                  {isNewFire ? 'NEW · выброшен' : 'выброшен'}
+                </span>
+              )}
             </div>
             <div className="font-mono text-sm text-holo/60">
               ${formatPrice(signal.price)}

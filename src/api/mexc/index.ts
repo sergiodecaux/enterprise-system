@@ -59,6 +59,38 @@ const STABLE_BLACKLIST = new Set([
   'USDP_USDT',
 ])
 
+/**
+ * MEXC USDT-M commodity perps — verified via contract/ticker + contract/detail.
+ * Dead on this venue: XAG_USDT, WTI_USDT, CL_USDT.
+ * Silver is SILVER_USDT (XAG in the English name). Oil WTI is USOIL_USDT.
+ */
+export const COMMODITY_API_SYMBOLS = [
+  'XAU_USDT',
+  'SILVER_USDT',
+  'USOIL_USDT',
+] as const
+
+export const COMMODITY_WATCHLIST = [
+  'XAU/USDT:USDT',
+  'SILVER/USDT:USDT',
+  'USOIL/USDT:USDT',
+] as const
+
+const COMMODITY_RU_LABELS: Record<string, string> = {
+  XAU_USDT: 'Золото',
+  SILVER_USDT: 'Серебро',
+  USOIL_USDT: 'Нефть (WTI)',
+}
+
+/** Russian / English / ticker aliases for CoinSearch (normalized uppercase). */
+const COMMODITY_SEARCH_ALIASES: Record<string, readonly string[]> = {
+  XAU_USDT: ['ЗОЛОТО', 'GOLD', 'XAU'],
+  SILVER_USDT: ['СЕРЕБРО', 'SILVER', 'XAG'],
+  USOIL_USDT: ['НЕФТЬ', 'OIL', 'WTI', 'USOIL', 'CL'],
+}
+
+const COMMODITY_API_SET = new Set<string>(COMMODITY_API_SYMBOLS)
+
 /** BTC + 8 ликвидных альтов — быстрый скан Mini App (остальное через поиск) */
 export const CORE_WATCHLIST = [
   'BTC/USDT:USDT',
@@ -72,8 +104,22 @@ export const CORE_WATCHLIST = [
   'TON/USDT:USDT',
 ] as const
 
+/** Always-scanned universe: core crypto + commodity perps */
+export const PINNED_WATCHLIST = [
+  ...CORE_WATCHLIST,
+  ...COMMODITY_WATCHLIST,
+] as const
+
 /** @deprecated use CORE_WATCHLIST */
 export const LITE_WATCHLIST = CORE_WATCHLIST
+
+export function isCommodityApiSymbol(apiSymbol: string): boolean {
+  return COMMODITY_API_SET.has(toApiSymbol(apiSymbol))
+}
+
+export function isCommoditySymbol(internal: string): boolean {
+  return isCommodityApiSymbol(internal)
+}
 
 export function getMexcBaseUrl(): string {
   const proxy = getProxyBaseUrl()
@@ -115,8 +161,19 @@ export function toInternalSymbol(apiSymbol: string): string {
 }
 
 export function toDisplayName(internal: string): string {
+  const api = toApiSymbol(internal)
+  const ru = COMMODITY_RU_LABELS[api]
+  if (ru) return ru
   // BTC/USDT:USDT → BTC/USDT
   return internal.replace(':USDT', '')
+}
+
+/** Compact radar / hunt title + hint (XAU under «Золото», USDT under BTC). */
+export function toRadarLabel(internal: string): { title: string; hint: string } {
+  if (isCommoditySymbol(internal)) {
+    return { title: toDisplayName(internal), hint: toBaseTicker(internal) }
+  }
+  return { title: toBaseTicker(internal), hint: 'USDT' }
 }
 
 /** Base ticker: BTC/USDT:USDT → BTC */
@@ -277,7 +334,12 @@ export async function fetchTickers(): Promise<MexcTicker[]> {
     const json = await mexcGet<MexcTickerResponse>('/api/v1/contract/ticker')
     const rows = Array.isArray(json.data) ? json.data : json.data ? [json.data] : []
     const data = rows
-      .filter((row) => row.symbol?.endsWith('_USDT') && !STABLE_BLACKLIST.has(row.symbol))
+      .filter((row) => {
+        if (!row.symbol?.endsWith('_USDT')) return false
+        // Commodities are USDT-M perps, not stables — never drop them here.
+        if (COMMODITY_API_SET.has(row.symbol)) return true
+        return !STABLE_BLACKLIST.has(row.symbol)
+      })
       .map((row) => ({
         symbol: toInternalSymbol(row.symbol),
         apiSymbol: row.symbol,
@@ -406,8 +468,18 @@ export function filterTickersByQuery(
     .filter((t) => {
       const base = t.apiSymbol.replace(/_USDT$/, '')
       const flat = toFlatSymbol(t.symbol)
-      const display = toDisplayName(t.symbol).toUpperCase().replace(/[/:_-]/g, '')
-      return base.includes(q) || flat.includes(q) || display.includes(q)
+      const display = toDisplayName(t.symbol)
+        .toUpperCase()
+        .replace(/[/:_\s()-]/g, '')
+      if (base.includes(q) || flat.includes(q) || display.includes(q)) return true
+      const aliases = COMMODITY_SEARCH_ALIASES[t.apiSymbol]
+      if (!aliases) return false
+      return aliases.some(
+        (alias) =>
+          alias === q ||
+          alias.startsWith(q) ||
+          (q.length >= alias.length && q.startsWith(alias))
+      )
     })
     .sort((a, b) => b.volume24h - a.volume24h)
     .slice(0, limit)

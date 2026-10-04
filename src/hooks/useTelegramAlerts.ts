@@ -5,22 +5,20 @@ import {
   isTelegramAlertsConfigured,
   subscribeTelegramAlerts,
 } from '../api/telegram/alerts'
-import { pushCoinSignalAlert, pushMemeAlert, pushRadar141Alert } from '../api/telegram/formatters'
-import { isSniperQuality, toSniperSignal } from '../engine/sniperMode'
+import { pushMemeAlert, pushRadar141Alert } from '../api/telegram/formatters'
 import { logger } from '../utils/logger'
 
 /**
- * Подписка на Telegram-алерты + пуш новых Sniper/Meme сигналов.
+ * Подписка на Telegram-алерты + пуш Meme / Radar141.
+ * Снайперские сигналы — useSniperSignalFire.
  */
 export function useTelegramAlerts() {
   const { userId, isInTelegram } = useTelegramWebApp()
   const settings = useAppStore((s) => s.telegramAlertSettings)
   const setSettings = useAppStore((s) => s.setTelegramAlertSettings)
-  const signals = useAppStore((s) => s.signals)
   const memeSignals = useAppStore((s) => s.memeSignals)
   const radar141Rows = useAppStore((s) => s.radar141Rows)
 
-  const sentSniperRef = useRef<Set<string>>(new Set())
   const sentMemeRef = useRef<Set<string>>(new Set())
   const sentRadarRef = useRef<Set<string>>(new Set())
   const subscribeOnceRef = useRef(false)
@@ -67,31 +65,7 @@ export function useTelegramAlerts() {
     isInTelegram,
   ])
 
-  // Push sniper-quality setups
-  useEffect(() => {
-    if (!settings.enabled || !settings.sniper) return
-    if (!isTelegramAlertsConfigured()) return
-
-    for (const signal of signals) {
-      if (!isSniperQuality(signal)) continue
-      let sniper
-      try {
-        sniper = toSniperSignal(signal)
-      } catch {
-        continue
-      }
-
-      if (sniper.calibratedWinRate < settings.minSniperConfidence) continue
-
-      const key = `${sniper.symbol}:${sniper.direction}:${sniper.tradeStyle}`
-      if (sentSniperRef.current.has(key)) continue
-      sentSniperRef.current.add(key)
-
-      void pushCoinSignalAlert(sniper).then(() => {
-        logger.info(`[TG] Sniper alert ${key}`)
-      })
-    }
-  }, [signals, settings.enabled, settings.sniper, settings.minSniperConfidence])
+  // Sniper fires + Telegram: useSniperSignalFire (persisted de-dupe)
 
   // Push meme critical / strong with setup tags
   useEffect(() => {

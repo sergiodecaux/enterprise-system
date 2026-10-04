@@ -1,4 +1,4 @@
-import type { MexcTicker } from '../../api/mexc'
+import { isCommodityApiSymbol, type MexcTicker } from '../../api/mexc'
 
 /** Blue chips — не мемы, исключаем из сканера */
 const BLUE_CHIP_BASES = new Set([
@@ -153,6 +153,7 @@ export function isBlueChip(ticker: MexcTicker): boolean {
 
 export type MemeRejectReason =
   | 'blue_chip'
+  | 'commodity'
   | 'bad_price'
   | 'low_volume'
   | 'low_oi'
@@ -165,6 +166,7 @@ export type MemeRejectReason =
 export function memeRejectReason(ticker: MexcTicker): MemeRejectReason | null {
   if (!ticker.apiSymbol.endsWith('_USDT')) return 'not_usdt'
   if (ticker.apiSymbol.includes('USDC')) return 'usdc'
+  if (isCommodityApiSymbol(ticker.apiSymbol)) return 'commodity'
   if (isBlueChip(ticker)) return 'blue_chip'
   if (ticker.lastPrice <= 0 || ticker.lastPrice > MAX_MEME_PRICE) return 'bad_price'
   if (ticker.volume24h < MIN_VOLUME_USD) return 'low_volume'
@@ -202,6 +204,7 @@ export interface MemeUniverseStats {
 export function summarizeMemeUniverse(tickers: MexcTicker[]): MemeUniverseStats {
   const rejected: Record<MemeRejectReason, number> = {
     blue_chip: 0,
+    commodity: 0,
     bad_price: 0,
     low_volume: 0,
     low_oi: 0,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import {
-  CORE_WATCHLIST,
+  PINNED_WATCHLIST,
   fetchOhlcv,
   fetchDepth,
   fetchRecentTrades,
@@ -52,12 +52,12 @@ const COIN_DELAY_MS = 80
 const TICKER_POLL_MS = 12_000
 
 /**
- * MEXC scanner — BTC+8 альтов (CORE_WATCHLIST) + монеты из поиска.
+ * MEXC scanner — BTC+8 альтов + commodities (PINNED_WATCHLIST) + монеты из поиска.
  */
 export const useMexcScanner = () => {
   const isMountedRef = useRef(true)
   const cooldownRef = useRef<Record<string, number>>({})
-  const watchlistRef = useRef<string[]>([...CORE_WATCHLIST])
+  const watchlistRef = useRef<string[]>([...PINNED_WATCHLIST])
   const btc1hRef = useRef<import('../api/mexc').OhlcvCandle[]>([])
   const wallTrackersRef = useRef<
     Record<string, ReturnType<typeof createWallTracker>>
@@ -77,7 +77,7 @@ export const useMexcScanner = () => {
 
   const syncWatchlist = useCallback(() => {
     const extra = useAppStore.getState().extraWatchlist
-    const merged = Array.from(new Set<string>([...CORE_WATCHLIST, ...extra]))
+    const merged = Array.from(new Set<string>([...PINNED_WATCHLIST, ...extra]))
     watchlistRef.current = merged
     return merged
   }, [])

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Star } from 'lucide-react'
-import { toBaseTicker, toFlatSymbol } from '../../api/mexc'
+import { toFlatSymbol, toRadarLabel } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { AltMacroStrip } from '../market/AltMacroStrip'
@@ -43,13 +43,15 @@ function Chip({
 }
 
 function CoinName({ row }: { row: Radar141Row }) {
-  const base = toBaseTicker(row.internalSymbol) || row.displayName
+  const label = toRadarLabel(row.internalSymbol)
   return (
     <div className="flex min-w-0 items-baseline gap-1">
       <span className="whitespace-nowrap font-mono text-[13px] font-bold tracking-wide text-white">
-        {base}
+        {label.title}
       </span>
-      <span className="shrink-0 font-mono text-[10px] text-white/35">USDT</span>
+      <span className="shrink-0 font-mono text-[10px] text-white/35">
+        {label.hint}
+      </span>
     </div>
   )
 }
@@ -184,6 +186,9 @@ const Radar141Board = ({
     visible.find((r) => r.internalSymbol === openId) ??
     (mode === 'map' ? leaders.strong[0] ?? leaders.weak[0] : visible[0]) ??
     null
+  const selectedLabel = selected
+    ? toRadarLabel(selected.internalSymbol)
+    : null
 
   const openChart = (row: Radar141Row) => {
     const signals = useAppStore.getState().signals
@@ -317,9 +322,9 @@ const Radar141Board = ({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="font-mono text-[13px] font-bold text-white">
-                {toBaseTicker(selected.internalSymbol)}
+                {selectedLabel?.title}
                 <span className="ml-1 text-[11px] font-normal text-white/40">
-                  /USDT
+                  {selectedLabel?.hint === 'USDT' ? '/USDT' : selectedLabel?.hint}
                 </span>
               </p>
               <p className="mt-0.5 font-mono text-[10px] text-white/45">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { Bot, Magnet, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toBaseTicker } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
@@ -856,10 +857,10 @@ const TacticalDrawer = () => {
                 )}
                 <NewsPanel
                   coinSentiment={
-                    newsIntel.coinSentiments[signal.displayName.split('/')[0]] ??
+                    newsIntel.coinSentiments[toBaseTicker(signal.internalSymbol)] ??
                     null
                   }
-                  symbol={signal.displayName.split('/')[0]}
+                  symbol={toBaseTicker(signal.internalSymbol)}
                 />
               </div>
             </CollapsibleSection>

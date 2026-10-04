@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Star } from 'lucide-react'
+import { toRadarLabel } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { buildDualHunt, type DualHuntCard, type HuntSide } from '../../engine/radar/dualHunt'
@@ -38,6 +39,7 @@ function HuntRow({
   onFav: () => void
 }) {
   const long = card.side === 'LONG'
+  const label = toRadarLabel(card.internalSymbol)
   return (
     <div className="flex items-center gap-2 border-b border-white/[0.06] px-3 py-2.5">
       <button
@@ -64,10 +66,10 @@ function HuntRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-1">
             <span className="whitespace-nowrap font-mono text-[13px] font-bold tracking-wide text-white">
-              {card.ticker}
+              {label.title}
             </span>
             <span className="shrink-0 font-mono text-[10px] text-white/35">
-              USDT
+              {label.hint}
             </span>
             {card.settingUp && (
               <span className="shrink-0 font-mono text-[9px] uppercase text-amber-200/80">

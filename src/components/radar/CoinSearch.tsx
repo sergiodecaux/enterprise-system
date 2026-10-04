@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Search, Plus, Loader2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
-  CORE_WATCHLIST,
+  PINNED_WATCHLIST,
   fetchOhlcv,
   fetchTickers,
   filterTickersByQuery,
   sleep,
   toDisplayName,
   toFlatSymbol,
+  toRadarLabel,
   type MexcTicker,
 } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
@@ -43,7 +44,7 @@ const CoinSearch = () => {
   const marketContext = useAppStore((s) => s.marketContext)
 
   const known = useMemo(() => {
-    return new Set<string>([...CORE_WATCHLIST, ...extraWatchlist])
+    return new Set<string>([...PINNED_WATCHLIST, ...extraWatchlist])
   }, [extraWatchlist])
 
   const results = useMemo(() => {
@@ -223,6 +224,7 @@ const CoinSearch = () => {
           {results.map((ticker) => {
             const inList = known.has(ticker.symbol)
             const isAdding = adding === ticker.symbol
+            const label = toRadarLabel(ticker.symbol)
             return (
               <button
                 key={ticker.symbol}
@@ -234,6 +236,11 @@ const CoinSearch = () => {
                 <div>
                   <div className="text-sm font-mono font-bold text-holo">
                     {toDisplayName(ticker.symbol)}
+                    {label.hint !== 'USDT' && (
+                      <span className="ml-1.5 text-[10px] font-normal text-holo/40">
+                        {label.hint}
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs font-mono text-holo/40">
                     ${ticker.lastPrice.toLocaleString('ru-RU')} ·{' '}

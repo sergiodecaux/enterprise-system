@@ -1,8 +1,13 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { Crosshair, AlertCircle, TrendingUp } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { getSniperSignals } from '../../engine/sniperMode'
-import { recordCoinSignal } from '../../engine/journal'
+import {
+  getSniperFiredAt,
+  isSniperFireNew,
+  sniperFireKey,
+} from '../../engine/sniper/fire'
+import { isCommoditySymbol } from '../../api/mexc'
 import type { TradeSide } from '../../engine/smc'
 import type { TradeStyle } from '../../engine/types'
 import SniperCard from './SniperCard'
@@ -16,6 +21,8 @@ const SniperView = () => {
   const [activeFilter, setActiveFilter] = useState<'ALL' | TradeSide>('ALL')
   const [styleFilter, setStyleFilter] = useState<'ALL' | TradeStyle>('ALL')
 
+  const journalVersion = useAppStore((s) => s.journalVersion)
+
   const sniperSignals = useMemo(() => {
     const enriched = signals.map((s) => ({
       ...s,
@@ -27,18 +34,18 @@ const SniperView = () => {
     return all.filter((s) => s.direction === activeFilter)
   }, [signals, buyerAggression, activeFilter, styleFilter])
 
-  const bumpJournal = useAppStore((s) => s.bumpJournalVersion)
-
-  // Журнал отработок: каждый sniper-quality сигнал
-  useEffect(() => {
-    if (!sniperSignals.length) return
-    let logged = 0
+  const firedMeta = useMemo(() => {
+    const map: Record<string, { at: number; isNew: boolean }> = {}
     for (const s of sniperSignals) {
-      const conf = s.calibratedWinRate || s.styleConfidence || s.probabilityPct
-      if (recordCoinSignal(s, conf)) logged++
+      const key = sniperFireKey(s)
+      const at = getSniperFiredAt(key)
+      if (at != null) map[key] = { at, isNew: isSniperFireNew(key) }
     }
-    if (logged > 0) bumpJournal()
-  }, [sniperSignals, bumpJournal])
+    return map
+  }, [sniperSignals, journalVersion])
+
+  const firedCount = Object.keys(firedMeta).length
+  const newCount = Object.values(firedMeta).filter((m) => m.isNew).length
 
   const totalCount = sniperSignals.length
   const longCount = sniperSignals.filter((s) => s.direction === 'LONG').length
@@ -127,16 +134,33 @@ const SniperView = () => {
               Нет снайперских сигналов
             </p>
             <p className="max-w-xs text-center font-mono text-xs text-holo/30">
-              Ожидаем сетапы с подтверждением фильтров силы (Scalp / Intraday)
+              Ожидаем сетапы с фильтрами силы. Золото / серебро / нефть
+              тоже в скане — сигнал выбросится, если пройдут.
             </p>
           </div>
         )}
 
         {totalCount > 0 && (
           <div className="space-y-3">
-            {sniperSignals.map((signal) => (
-              <SniperCard key={`${signal.symbol}_${signal.tradeStyle}`} signal={signal} />
-            ))}
+            {(firedCount > 0 || newCount > 0) && (
+              <p className="font-mono text-[10px] text-holo/40">
+                Выброшено в Сигналы: {firedCount}
+                {newCount > 0 ? ` · новых ${newCount}` : ''}
+              </p>
+            )}
+            {sniperSignals.map((signal) => {
+              const key = sniperFireKey(signal)
+              const meta = firedMeta[key]
+              return (
+                <SniperCard
+                  key={`${signal.symbol}_${signal.tradeStyle}`}
+                  signal={signal}
+                  firedAt={meta?.at ?? null}
+                  isNewFire={meta?.isNew ?? false}
+                  isCommodity={isCommoditySymbol(signal.internalSymbol)}
+                />
+              )
+            })}
           </div>
         )}
       </div>

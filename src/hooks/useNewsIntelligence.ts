@@ -9,7 +9,7 @@ import { fetchAllNews, fetchFearGreed, fearGreedToBoost } from '../api/news'
 import { aggregateSentiment } from '../engine/sentiment/analyzer'
 import { isRelevantForCoin } from '../engine/sentiment/relevance'
 import { useAppStore } from '../store/useAppStore'
-import { CORE_WATCHLIST } from '../api/mexc'
+import { PINNED_WATCHLIST } from '../api/mexc'
 
 const REFRESH_INTERVAL = 5 * 60 * 1000
 const NEWS_BOOT_DELAY_MS = 8_000
@@ -49,7 +49,7 @@ export function useNewsIntelligence() {
 
       const symbols = Array.from(
         new Set([
-          ...CORE_WATCHLIST.map(extractSymbol),
+          ...PINNED_WATCHLIST.map(extractSymbol),
           ...extraWatchlist.map(extractSymbol),
           ...signals.map((s) => extractSymbol(s.internalSymbol)),
         ])

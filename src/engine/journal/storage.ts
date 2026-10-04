@@ -65,6 +65,31 @@ export function findOpenDuplicate(
   )
 }
 
+/** Open sniper fire for the same coin + side + style (no short window — avoids re-emit). */
+export function findOpenSniperFire(
+  entries: SignalJournalEntry[],
+  params: {
+    internalSymbol: string
+    direction: 'LONG' | 'SHORT'
+    tradeStyle?: string | null
+  }
+): SignalJournalEntry | undefined {
+  return entries.find((e) => {
+    if (e.status !== 'OPEN') return false
+    if (e.internalSymbol !== params.internalSymbol) return false
+    if (e.direction !== params.direction) return false
+    if (e.source !== 'SNIPER' && e.source !== 'SMC') return false
+    if (
+      params.tradeStyle &&
+      e.tradeStyle &&
+      e.tradeStyle !== params.tradeStyle
+    ) {
+      return false
+    }
+    return true
+  })
+}
+
 export function getAnalytics(entries: SignalJournalEntry[]): JournalAnalytics {
   return computeJournalAnalytics(entries)
 }

@@ -4,7 +4,7 @@ import type { CoinSignal } from '../../engine/types'
 import { useAppStore } from '../../store/useAppStore'
 import WinRateBar from './WinRateBar'
 import SentimentBadge from './SentimentBadge'
-import { toBaseTicker } from '../../api/mexc'
+import { toRadarLabel } from '../../api/mexc'
 
 interface CoinRowProps {
   signal: CoinSignal
@@ -19,7 +19,7 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
   const favorites = useAppStore((s) => s.radarFavorites)
   const toggleFav = useAppStore((s) => s.toggleRadarFavorite)
   const isFav = favorites.includes(signal.internalSymbol)
-  const ticker = toBaseTicker(signal.internalSymbol)
+  const label = toRadarLabel(signal.internalSymbol)
   const baseSym = signal.internalSymbol.split('/')[0]
   const sentiment =
     newsSettings.enabled && newsSettings.showSentimentBadge
@@ -94,10 +94,10 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-1">
           <span className="whitespace-nowrap font-mono text-sm font-bold text-holo">
-            {ticker}
+            {label.title}
           </span>
           <span className="shrink-0 font-mono text-[10px] text-holo/35">
-            USDT
+            {label.hint}
           </span>
           <SentimentBadge sentiment={sentiment} />
         </div>

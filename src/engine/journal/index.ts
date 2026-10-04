@@ -4,6 +4,7 @@ import { calcPnlAndR } from './stats'
 import type { JournalOutcome, SignalJournalEntry } from './types'
 import {
   findOpenDuplicate,
+  findOpenSniperFire,
   loadJournal,
   saveJournal,
   upsertJournalEntry,
@@ -32,6 +33,7 @@ export {
   clearJournal,
   getAnalytics,
   findOpenDuplicate,
+  findOpenSniperFire,
 } from './storage'
 
 const MIN_MEME_HEAT_TO_LOG = 55
@@ -173,6 +175,85 @@ export function recordCoinSignal(
   entries = upsertJournalEntry(entries, entry)
   saveJournal(entries)
   return entry
+}
+
+/**
+ * Durable sniper fire: new OPEN journal row, or refresh of an existing one.
+ * `isNew` is true only on the first emit (Telegram / «выброшен» badge).
+ */
+export function recordSniperFire(
+  signal: CoinSignal,
+  confidence: number
+): { entry: SignalJournalEntry; isNew: boolean } | null {
+  if (!signal.direction || signal.sl == null || signal.tp1 == null) return null
+
+  const classified = classifySmcSetup(signal)
+  let entries = loadJournal()
+  const existing = findOpenSniperFire(entries, {
+    internalSymbol: signal.internalSymbol,
+    direction: signal.direction,
+    tradeStyle: signal.tradeStyle ?? null,
+  })
+
+  const entryPrice =
+    signal.ltfChoCH?.surgicalEntryPrice ?? signal.price
+  const reasons =
+    'sniperReasons' in signal && Array.isArray((signal as { sniperReasons?: string[] }).sniperReasons)
+      ? (signal as { sniperReasons: string[] }).sniperReasons.slice(0, 5)
+      : signal.zones.slice(0, 4)
+
+  if (existing) {
+    const updated: SignalJournalEntry = {
+      ...existing,
+      confidenceAtSignal: Math.max(existing.confidenceAtSignal, confidence),
+      entryPrice,
+      sl: signal.sl,
+      tp1: signal.tp1,
+      tp2: signal.tp2,
+      setupTag: classified.setupTag,
+      setupType: classified.setupType,
+      source: 'SNIPER',
+      factors: reasons.length ? reasons : existing.factors,
+    }
+    entries = upsertJournalEntry(entries, updated)
+    saveJournal(entries)
+    return { entry: updated, isNew: false }
+  }
+
+  const entry: SignalJournalEntry = {
+    id: newId(),
+    symbol: signal.symbol,
+    internalSymbol: signal.internalSymbol,
+    displayName: signal.displayName,
+    direction: signal.direction,
+    source: 'SNIPER',
+    setupType: classified.setupType,
+    setupTag: classified.setupTag,
+    tradeStyle: signal.tradeStyle ?? null,
+    confidenceAtSignal: confidence,
+    entryPrice,
+    sl: signal.sl,
+    tp1: signal.tp1,
+    tp2: signal.tp2,
+    createdAt: Date.now(),
+    status: 'OPEN',
+    resolvedAt: null,
+    exitPrice: null,
+    pnlPercent: null,
+    rMultiple: null,
+    mfePercent: 0,
+    maePercent: 0,
+    linkedTradeId: null,
+    mmStatus: null,
+    isMeme: !!signal.memePulse,
+    factors: reasons,
+    resolveSource: null,
+    notes: null,
+  }
+
+  entries = upsertJournalEntry(entries, entry)
+  saveJournal(entries)
+  return { entry, isNew: true }
 }
 
 export function linkTradeToJournal(

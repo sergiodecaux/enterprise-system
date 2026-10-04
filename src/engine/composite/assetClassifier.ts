@@ -2,7 +2,7 @@ import type { TrendDirection } from '../smc'
 import type { BuyerAggressionResult } from '../types'
 import type { SpreadPressureResult } from '../meme'
 import { isMemeTicker } from '../meme/memeFilter'
-import type { MexcTicker } from '../../api/mexc'
+import { isCommoditySymbol, type MexcTicker } from '../../api/mexc'
 
 export type AssetType = 'BLUE_CHIP' | 'ALT' | 'MEME'
 export type MarketPhase =
@@ -52,6 +52,10 @@ export function classifyAsset(
   }
 ): AssetType {
   const base = getAssetBase(internalSymbol)
+
+  if (isCommoditySymbol(internalSymbol)) {
+    return 'ALT'
+  }
 
   if (options?.hasMemePulse) {
     return 'MEME'
