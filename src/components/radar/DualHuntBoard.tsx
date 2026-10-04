@@ -42,14 +42,14 @@ function HuntRow({
   const long = card.side === 'LONG'
   const label = toRadarLabel(card.internalSymbol)
   return (
-    <div className="flex items-center gap-2 border-b border-white/[0.06] px-3 py-2.5">
+    <div className="flex items-start gap-2 border-b border-white/[0.06] px-3 py-2.5">
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation()
           onFav()
         }}
-        className={`shrink-0 rounded-md p-1 ${
+        className={`mt-0.5 shrink-0 rounded-md p-1 ${
           favorite ? 'text-amber-300' : 'text-white/25 hover:text-white/60'
         }`}
         title={favorite ? 'Убрать из избранного' : 'В избранное'}
@@ -59,9 +59,9 @@ function HuntRow({
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <span className="w-5 shrink-0 font-mono text-[10px] text-white/30">
+        <span className="mt-0.5 w-5 shrink-0 font-mono text-[10px] text-white/30">
           {rank}
         </span>
         <div className="min-w-0 flex-1">
@@ -78,8 +78,14 @@ function HuntRow({
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-white/50">
+          <p className="mt-0.5 truncate font-mono text-[10px] text-white/55">
             {card.reason}
+          </p>
+          <p className="mt-0.5 truncate font-mono text-[10px] text-white/40">
+            стрим: {card.streamTo}
+          </p>
+          <p className="mt-0.5 truncate font-mono text-[10px] text-white/35">
+            топливо: {card.fuelWhere} · {card.targetQuality} {card.distanceLabel}
           </p>
         </div>
         <div className="shrink-0 text-right">
@@ -92,10 +98,14 @@ function HuntRow({
           >
             {long ? 'лонг' : 'шорт'}
           </div>
+          <div
+            className={`mt-1 font-mono text-[9px] ${
+              card.targetQuality === 'хорошо' ? 'text-emerald-200/80' : 'text-white/40'
+            }`}
+          >
+            {card.targetQuality}
+          </div>
           <div className="mt-1 flex items-center justify-end gap-1">
-            <span className="font-mono text-[9px] tabular-nums text-white/40">
-              {card.score}
-            </span>
             <WinRateBar value={card.probability} compact label="Score" />
           </div>
         </div>
@@ -137,7 +147,7 @@ function HuntLane({
             : 'border-rose-400/15 text-rose-200'
         }`}
       >
-        {long ? 'Лонг — готовятся расти' : 'Шорт — готовятся падать'}
+        {long ? 'Лонг — цель сверху' : 'Шорт — цель снизу'}
         <span
           className={`ml-2 font-normal ${
             long ? 'text-emerald-200/50' : 'text-rose-200/50'
@@ -175,6 +185,9 @@ const DualHuntBoard = () => {
   const mmIntent = useAppStore((s) => s.mmIntent)
   const surgicalEntries = useAppStore((s) => s.surgicalEntries)
   const whaleWatcher = useAppStore((s) => s.whaleWatcher)
+  const liveTickets = useAppStore((s) => s.liveTickets)
+  const orderBookMetrics = useAppStore((s) => s.orderBookMetrics)
+  const sequenceHits = useAppStore((s) => s.sequenceHits)
   const favorites = useAppStore((s) => s.radarFavorites)
   const toggleFav = useRadarFavoriteToggle()
   const selectCoin = useAppStore((s) => s.selectCoin)
@@ -194,8 +207,21 @@ const DualHuntBoard = () => {
         mmIntent,
         surgicalEntries,
         whaleWatcher,
+        liveTickets,
+        orderBookMetrics,
+        sequenceHits,
       }),
-    [signals, radarRows, liquidityMaps, mmIntent, surgicalEntries, whaleWatcher]
+    [
+      signals,
+      radarRows,
+      liquidityMaps,
+      mmIntent,
+      surgicalEntries,
+      whaleWatcher,
+      liveTickets,
+      orderBookMetrics,
+      sequenceHits,
+    ]
   )
 
   const scanning = isScanning || radarMeta.scanning
@@ -254,7 +280,7 @@ const DualHuntBoard = () => {
       <p className="px-4 pb-1 font-mono text-[10px] text-white/35">
         {scanning
           ? radarMeta.progress || 'охота за сетапами…'
-          : `лонг ${hunt.longs.length} · шорт ${hunt.shorts.length}`}
+          : `лонг ${hunt.longs.length} · шорт ${hunt.shorts.length} · топливо + цель`}
         {radarMeta.error ? ` · ${radarMeta.error}` : ''}
       </p>
 
@@ -272,7 +298,7 @@ const DualHuntBoard = () => {
             <HuntLane
               side="LONG"
               cards={hunt.longs}
-              empty="Пока нет лонгов в наборе — ждём свип / зону."
+              empty="Нет лонгов с живой целью сверху."
               scanning={scanning}
               favSet={favSet}
               onOpen={openCard}
@@ -283,7 +309,7 @@ const DualHuntBoard = () => {
             <HuntLane
               side="SHORT"
               cards={hunt.shorts}
-              empty="Пока нет шортов в наборе — ждём свип / зону."
+              empty="Нет шортов с живой целью снизу."
               scanning={scanning}
               favSet={favSet}
               onOpen={openCard}

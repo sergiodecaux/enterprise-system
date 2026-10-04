@@ -1,15 +1,31 @@
 import { toBaseTicker, toFlatSymbol } from '../../api/mexc'
 import type { Radar141Row } from '../radar141/types'
+import type { SequenceHit } from '../sequence/types'
 import type {
   CoinSignal,
   LiquidityMap,
+  LiveTicker,
   MmIntentSnapshot,
+  OrderBookMetrics,
   SurgicalEntrySnapshot,
   WhaleWatcherState,
 } from '../types'
-import { inferWhaleAccumulation } from '../orderbook/whaleSitLevels'
+import {
+  detectSpentLiquidity,
+  fmtStoryTargetPx,
+  humanizeStoryTarget,
+  pickFuelWaypoint,
+  readDailyFrame,
+  tfHorizon,
+  type DailyFrame,
+  type FuelWaypoint,
+  type SpentLiquidity,
+} from '../smc/chartStory'
+import { buildWhaleSitMap, inferWhaleAccumulation } from '../orderbook/whaleSitLevels'
+import { isSniperQuality } from '../sniperMode'
 
 export type HuntSide = 'LONG' | 'SHORT'
+export type TargetQuality = 'хорошо' | 'средне'
 
 export interface DualHuntCard {
   symbol: string
@@ -17,7 +33,12 @@ export interface DualHuntCard {
   displayName: string
   ticker: string
   side: HuntSide
+  /** Почему сейчас — одна строка, без дампа цифр */
   reason: string
+  streamTo: string
+  fuelWhere: string
+  targetQuality: TargetQuality
+  distanceLabel: string
   score: number
   probability: number
   settingUp: boolean
@@ -32,6 +53,9 @@ export interface DualHuntInput {
   mmIntent?: Record<string, MmIntentSnapshot>
   surgicalEntries?: Record<string, SurgicalEntrySnapshot>
   whaleWatcher?: Record<string, WhaleWatcherState>
+  liveTickets?: Record<string, LiveTicker>
+  orderBookMetrics?: Record<string, OrderBookMetrics>
+  sequenceHits?: Record<string, SequenceHit>
 }
 
 export interface DualHuntResult {
@@ -39,8 +63,9 @@ export interface DualHuntResult {
   shorts: DualHuntCard[]
 }
 
-const LIST_CAP = 12
-const MIN_SCORE = 22
+const LIST_CAP = 6
+const MIN_SCORE = 38
+const TIE_BAND = 10
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n))
@@ -59,119 +84,50 @@ function overlaySignal(
   }
 }
 
-function dailyToSide(bias: string | null | undefined): HuntSide | null {
-  if (bias === 'BULLISH') return 'LONG'
-  if (bias === 'BEARISH') return 'SHORT'
-  return null
+function tickerOf(
+  internal: string,
+  symbol: string | undefined,
+  tickets: Record<string, LiveTicker> | undefined
+): LiveTicker | undefined {
+  if (!tickets) return undefined
+  return (
+    (symbol ? tickets[symbol] : undefined) ??
+    tickets[toFlatSymbol(internal)] ??
+    tickets[internal]
+  )
 }
 
-function htfToSide(
-  bias: string | null | undefined
-): HuntSide | null {
-  if (bias === 'BULLISH' || bias === 'LONG') return 'LONG'
-  if (bias === 'BEARISH' || bias === 'SHORT') return 'SHORT'
-  return null
+function estimateAtr(price: number, radar: Radar141Row | undefined): number {
+  if (radar && radar.atrPct > 0 && price > 0) return (radar.atrPct / 100) * price
+  return price > 0 ? price * 0.008 : 0
 }
 
-function voteSide(
-  signal: CoinSignal | null,
-  radar: Radar141Row | undefined,
-  liq: LiquidityMap | undefined,
-  whale?: WhaleWatcherState | null
-): { side: HuntSide | null; long: number; short: number } {
-  let long = 0
-  let short = 0
-  const add = (side: HuntSide | null | undefined, w: number) => {
-    if (side === 'LONG') long += w
-    else if (side === 'SHORT') short += w
-  }
-
-  if (signal) {
-    add(signal.direction, 3)
-    add(signal.scoreCard?.direction, 3)
-    const mm = signal.mmIntent
-    if (mm?.preferredSide && mm.confidence >= 40) add(mm.preferredSide, 2)
-    const surg = signal.surgicalEntry
-    if (
-      surg &&
-      (surg.status === 'WAITING_SWEEP' ||
-        surg.status === 'WAITING_CONFIRM' ||
-        surg.status === 'READY')
-    ) {
-      add(surg.side, 3)
-    }
-    add(dailyToSide(signal.dailyBias), 2)
-    if (signal.mss?.detected) add(htfToSide(signal.mss.direction), 2)
-    if (signal.raid?.type === 'BULL_SWEEP') add('LONG', 2)
-    if (signal.raid?.type === 'BEAR_SWEEP') add('SHORT', 2)
-    add(htfToSide(signal.htfTrend?.bias), 1)
-    add(signal.globalFib?.entryBias ?? null, 1)
-    add(signal.ote?.direction ?? null, 1)
-    const sq = signal.memePulse?.squeeze
-    if (sq?.setup || sq?.inProgress) add('LONG', 2)
-    if (signal.memePulse?.backside?.detected) add('SHORT', 2)
-  }
-
-  if (radar) {
-    add(radar.preferredSide, 2)
-    add(radar.htfBias === 'FLAT' ? null : radar.htfBias, 1)
-    if (radar.rsLabel === 'STRONG') add('LONG', 1)
-    if (radar.rsLabel === 'WEAK') add('SHORT', 1)
-  }
-
-  const bsl = liq?.nearestBSL
-  const ssl = liq?.nearestSSL
-  if (bsl?.isActive && ssl?.isActive) {
-    if (ssl.distancePct < bsl.distancePct) add('LONG', 1)
-    else if (bsl.distancePct < ssl.distancePct) add('SHORT', 1)
-  }   else if (ssl?.isActive) add('LONG', 1)
-  else if (bsl?.isActive) add('SHORT', 1)
-
-  const whaleAcc = inferWhaleAccumulation(whale)
-  if (whaleAcc) add(whaleAcc.side, 2)
-
-  if (long === 0 && short === 0) return { side: null, long, short }
-  if (long === short) {
-    const fallback =
-      signal?.direction ??
-      signal?.scoreCard?.direction ??
-      radar?.preferredSide ??
-      null
-    return { side: fallback, long, short }
-  }
-  return { side: long > short ? 'LONG' : 'SHORT', long, short }
+function barSecondsOf(signal: CoinSignal | null): number {
+  if (signal?.tradeStyle === 'SCALP') return 300
+  if (signal?.tradeStyle === 'SWING') return 14_400
+  return 3_600
 }
 
-function isSettingUp(
-  side: HuntSide,
-  signal: CoinSignal | null,
-  radar: Radar141Row | undefined
-): boolean {
-  const surg = signal?.surgicalEntry
-  if (
-    surg &&
-    surg.side === side &&
-    (surg.status === 'WAITING_SWEEP' || surg.status === 'WAITING_CONFIRM')
-  ) {
-    return true
+function sameLevel(a: number, b: number, atr: number, price: number): boolean {
+  if (!(a > 0) || !(b > 0)) return false
+  const tol = Math.max(atr * 0.35, price * 0.0015, Math.abs(a) * 0.0008)
+  return Math.abs(a - b) <= tol
+}
+
+function freshChochFlip(side: HuntSide, signal: CoinSignal | null): boolean {
+  if (!signal) return false
+  if (side === 'LONG') {
+    if (signal.mss?.detected && signal.mss.direction === 'BULLISH') return true
+    if (signal.ltfChoCH?.detected) return true
+    return false
   }
-  if (signal?.ote?.priceInZone && (signal.ote.direction ?? side) === side) {
-    return true
-  }
-  if (
-    signal?.raid?.isFresh &&
-    ((side === 'LONG' && signal.raid.type === 'BULL_SWEEP') ||
-      (side === 'SHORT' && signal.raid.type === 'BEAR_SWEEP'))
-  ) {
-    return true
-  }
-  if (signal?.globalFib?.near141 || signal?.globalFib?.inReactionZone) return true
-  if (radar?.trigger === 'APPROACH_141' || radar?.trigger === 'INSIDE_141') {
-    return true
-  }
-  const sq = signal?.memePulse?.squeeze
-  if (sq?.setup && !sq.inProgress) return true
-  if (radar?.volRegime === 'THIN' && radar.trigger !== 'IN_GAP') return true
+  return Boolean(signal.mss?.detected && signal.mss.direction === 'BEARISH')
+}
+
+function isChopOnly(signal: CoinSignal | null, radar: Radar141Row | undefined): boolean {
+  if (radar?.volRegime === 'CHOP') return true
+  if (signal?.marketRegime === 'VOLATILE_CHOP') return true
+  if (signal?.memePulse?.toxic?.detected) return true
   return false
 }
 
@@ -186,190 +142,400 @@ function isExtended(side: HuntSide, signal: CoinSignal | null, radar: Radar141Ro
   }
   if (radar?.trigger === 'IN_GAP' || radar?.trigger === 'EXIT_141') return true
   if (radar?.testKind === 'EXHAUSTED') return true
-  if (signal?.surgicalEntry?.status === 'MISSED') return true
   return false
 }
 
-function pickReason(
+function isSettingUp(
   side: HuntSide,
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
-  liq: LiquidityMap | undefined,
-  whale?: WhaleWatcherState | null
-): string {
-  const raid = signal?.raid
-  if (
-    raid?.isFresh &&
-    ((side === 'LONG' && raid.type === 'BULL_SWEEP') ||
-      (side === 'SHORT' && raid.type === 'BEAR_SWEEP'))
-  ) {
-    return side === 'LONG' ? 'свип лоёв' : 'свип хаёв'
-  }
-
+  fuelClose: boolean
+): boolean {
   const surg = signal?.surgicalEntry
-  if (surg && surg.side === side && surg.status === 'WAITING_SWEEP') {
-    return side === 'LONG' ? 'свип снизу близко' : 'свип сверху близко'
+  if (
+    surg &&
+    surg.side === side &&
+    (surg.status === 'WAITING_SWEEP' || surg.status === 'WAITING_CONFIRM')
+  ) {
+    return true
   }
-
-  const whaleAcc = inferWhaleAccumulation(whale)
-  if (whaleAcc && whaleAcc.side === side) {
-    return whaleAcc.side === 'LONG' ? 'киты набирают лонг' : 'киты набирают шорт'
-  }
-
+  if (signal?.ote?.priceInZone && (signal.ote.direction ?? side) === side) return true
+  if (fuelClose) return true
+  if (radar?.trigger === 'APPROACH_141' || radar?.trigger === 'INSIDE_141') return true
   const sq = signal?.memePulse?.squeeze
-  if (sq?.setup || (radar?.volRegime === 'THIN' && radar.trigger !== 'IN_GAP')) {
-    return 'топливо / сжатие'
-  }
-
-  if (signal?.mss?.detected && htfToSide(signal.mss.direction) === side) {
-    return side === 'LONG' ? 'MSS вверх' : 'MSS вниз'
-  }
-
-  if (signal?.ltfChoCH?.detected) {
-    return side === 'LONG' ? 'смещение вверх' : 'смещение вниз'
-  }
-
-  const bsl = liq?.nearestBSL
-  const ssl = liq?.nearestSSL
-  if (side === 'SHORT' && bsl?.isActive && bsl.distancePct <= 1.6) {
-    return 'ликвидность сверху'
-  }
-  if (side === 'LONG' && ssl?.isActive && ssl.distancePct <= 1.6) {
-    return 'ликвидность снизу'
-  }
-  if (bsl?.isActive && ssl?.isActive) {
-    if (side === 'SHORT' && bsl.distancePct <= ssl.distancePct) return 'ликвидность сверху'
-    if (side === 'LONG' && ssl.distancePct <= bsl.distancePct) return 'ликвидность снизу'
-  }
-
-  const mm = signal?.mmIntent
-  if (mm?.preferredSide === side && mm.hunt.microIsStopHunt) {
-    return side === 'LONG' ? 'ликвидность снизу' : 'ликвидность сверху'
-  }
-
-  if (radar?.trigger === 'APPROACH_141' || radar?.trigger === 'INSIDE_141') {
-    return radar.triggerLabel || 'подход к 141'
-  }
-  if (signal?.globalFib?.near141 || signal?.globalFib?.inReactionZone) {
-    return 'подход к 141'
-  }
-  if (surg && surg.side === side && surg.status === 'WAITING_CONFIRM') {
-    return 'ждём подтверждение'
-  }
-  if (signal?.scoreCard?.ready && signal.scoreCard.direction === side) {
-    return 'сетап готов'
-  }
-  if (signal?.hasActiveSetup && signal.direction === side) {
-    return 'активный сетап'
-  }
-  if (mm?.preferredSide === side) {
-    return side === 'LONG' ? 'ММ гонит вверх' : 'ММ гонит вниз'
-  }
-  if (radar?.preferredSide === side) {
-    return radar.scoreWhy.split(':')[0] || (side === 'LONG' ? 'лонг-набор' : 'шорт-набор')
-  }
-  return side === 'LONG' ? 'готовятся расти' : 'готовятся падать'
+  if (sq?.setup && !sq.inProgress) return true
+  return false
 }
 
-function huntScore(
+function fuelKindRu(fuel: FuelWaypoint, side: HuntSide): string {
+  const where =
+    fuel.where === 'below' ? 'снизу' : fuel.where === 'above' ? 'сверху' : 'в зоне'
+  switch (fuel.kind) {
+    case 'SSL':
+      return `SSL ${where}`
+    case 'BSL':
+      return `BSL ${where}`
+    case 'WHALE':
+      return side === 'LONG' ? 'киты на бидах' : 'киты на асках'
+    case 'FVG':
+      return `незакрытый FVG ${where}`
+    case 'SESSION':
+      return `${fuel.label} ${where}`
+    case 'MM':
+      return fuel.label || 'охота MM'
+    case 'SQUEEZE':
+      return 'сжатие'
+    default:
+      return fuel.label ? `${fuel.label} ${where}` : `топливо ${where}`
+  }
+}
+
+function inZoneFuel(
   side: HuntSide,
+  price: number,
+  atr: number,
+  signal: CoinSignal | null,
+  liq: LiquidityMap | undefined,
+  whaleBelow: number | null,
+  whaleAbove: number | null,
+  spent: SpentLiquidity
+): FuelWaypoint | null {
+  const pad = Math.max(atr * 0.35, price * 0.0012)
+  const ote = signal?.ote
+  if (ote?.priceInZone && (ote.direction ?? side) === side) {
+    return {
+      price,
+      label: side === 'LONG' ? 'в зоне спроса' : 'в зоне предложения',
+      where: side === 'LONG' ? 'below' : 'above',
+      kind: 'SWING',
+    }
+  }
+  const surg = signal?.surgicalEntry
+  if (
+    surg &&
+    surg.side === side &&
+    surg.zoneTop != null &&
+    surg.zoneBottom != null &&
+    price <= surg.zoneTop &&
+    price >= surg.zoneBottom &&
+    surg.status === 'WAITING_SWEEP'
+  ) {
+    return {
+      price,
+      label: 'в зоне входа',
+      where: side === 'LONG' ? 'below' : 'above',
+      kind: 'SWING',
+    }
+  }
+  if (
+    signal?.globalFib?.inReactionZone &&
+    (signal.globalFib.entryBias ?? side) === side
+  ) {
+    return {
+      price,
+      label: side === 'LONG' ? 'дисконт' : 'премиум',
+      where: side === 'LONG' ? 'below' : 'above',
+      kind: 'SWING',
+    }
+  }
+  if (side === 'LONG') {
+    const ssl = liq?.nearestSSL
+    if (
+      ssl?.isActive &&
+      Math.abs(ssl.price - price) <= pad &&
+      !(spent.ssl && sameLevel(ssl.price, spent.ssl.price, atr, price))
+    ) {
+      return { price: ssl.price, label: 'SSL', where: 'below', kind: 'SSL' }
+    }
+    if (
+      whaleBelow != null &&
+      Math.abs(whaleBelow - price) <= pad &&
+      !(spent.ssl && sameLevel(whaleBelow, spent.ssl.price, atr, price))
+    ) {
+      return { price: whaleBelow, label: 'киты на бидах', where: 'below', kind: 'WHALE' }
+    }
+  } else {
+    const bsl = liq?.nearestBSL
+    if (
+      bsl?.isActive &&
+      Math.abs(bsl.price - price) <= pad &&
+      !(spent.bsl && sameLevel(bsl.price, spent.bsl.price, atr, price))
+    ) {
+      return { price: bsl.price, label: 'BSL', where: 'above', kind: 'BSL' }
+    }
+    if (
+      whaleAbove != null &&
+      Math.abs(whaleAbove - price) <= pad &&
+      !(spent.bsl && sameLevel(whaleAbove, spent.bsl.price, atr, price))
+    ) {
+      return { price: whaleAbove, label: 'киты на асках', where: 'above', kind: 'WHALE' }
+    }
+  }
+  return null
+}
+
+function resolveFuel(
+  side: HuntSide,
+  price: number,
+  atr: number,
+  signal: CoinSignal | null,
+  liq: LiquidityMap | undefined,
+  spent: SpentLiquidity,
+  whale: ReturnType<typeof buildWhaleSitMap>,
+  mm: MmIntentSnapshot | null | undefined
+): FuelWaypoint | null {
+  const picked = pickFuelWaypoint({
+    price,
+    atr,
+    side,
+    spent,
+    liquidityMap: liq ?? null,
+    whale,
+    mm: mm ?? null,
+    signal,
+  })
+  const want: FuelWaypoint['where'] = side === 'LONG' ? 'below' : 'above'
+  if (picked && picked.where === want) {
+    const spentPool = side === 'LONG' ? spent.ssl : spent.bsl
+    if (!spentPool || !sameLevel(picked.price, spentPool.price, atr, price)) {
+      const sit = picked.where === 'below' ? whale.nearestBelow : whale.nearestAbove
+      const magnetOnly = sit?.source === 'MAGNET' && !whale.accumulation
+      if (picked.kind === 'WHALE' && magnetOnly) {
+        return {
+          ...picked,
+          kind: side === 'LONG' ? 'SSL' : 'BSL',
+          label: side === 'LONG' ? 'SSL' : 'BSL',
+        }
+      }
+      return picked
+    }
+  }
+  return inZoneFuel(
+    side,
+    price,
+    atr,
+    signal,
+    liq,
+    whale.nearestBelow?.spent ? null : whale.nearestBelow?.price ?? null,
+    whale.nearestAbove?.spent ? null : whale.nearestAbove?.price ?? null,
+    spent
+  )
+}
+
+interface StreamTarget {
+  price: number
+  label: string
+  distPct: number
+  rMultiple: number | null
+  quality: TargetQuality
+}
+
+function addTarget(
+  cands: Array<{ price: number; label: string; weight: number }>,
+  price: number | null | undefined,
+  label: string,
+  weight: number
+) {
+  if (price == null || !(price > 0) || !Number.isFinite(price)) return
+  cands.push({ price, label, weight })
+}
+
+function pickStreamTarget(
+  side: HuntSide,
+  price: number,
+  atr: number,
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
   liq: LiquidityMap | undefined,
-  whale?: WhaleWatcherState | null
-): number {
-  let score = 0
-  if (signal) {
-    score += signal.probabilityPct * 0.42
-    score += (signal.score ?? 0) * 4
-    if (signal.scoreCard) score += signal.scoreCard.percent * 0.22
-  } else if (radar) {
-    score += radar.opportunityScore * 0.45
-    if (radar.gap) score += radar.gap.flyProb * 0.2
+  spent: SpentLiquidity,
+  daily: DailyFrame,
+  ticker: LiveTicker | undefined,
+  fuel: FuelWaypoint
+): StreamTarget | null {
+  const barSec = barSecondsOf(signal)
+  const horizon = tfHorizon(barSec, atr, price)
+  const style = signal?.tradeStyle ?? 'INTRADAY'
+  const minDist = Math.max(atr * 0.45, price * 0.0028)
+  const maxPct = style === 'SCALP' ? 0.035 : style === 'SWING' ? 0.14 : 0.085
+  const maxDist = Math.min(horizon.dist * 1.15, price * maxPct)
+  const spentPool = side === 'LONG' ? spent.bsl : spent.ssl
+  const inv =
+    signal?.invalidationPrice && signal.invalidationPrice > 0
+      ? signal.invalidationPrice
+      : signal?.sl && signal.sl > 0
+        ? signal.sl
+        : fuel.price
+
+  const raw: Array<{ price: number; label: string; weight: number }> = []
+  if (side === 'LONG') {
+    addTarget(raw, daily.magnet != null && daily.magnet > price ? daily.magnet : null, daily.magnetLabel || 'магнит дня', 96)
+    addTarget(raw, ticker && ticker.high24h > price ? ticker.high24h : null, 'PDH', 92)
+    if (liq?.nearestBSL?.isActive) addTarget(raw, liq.nearestBSL.price, 'BSL', 90)
+    for (const eq of liq?.equalHighs ?? []) {
+      if (eq.isActive) addTarget(raw, eq.price, 'равные хаи', 78)
+    }
+    addTarget(raw, signal?.mmIntent?.hunt.macroTarget, signal?.mmIntent?.hunt.macroLabel || 'макро MM', 84)
+    addTarget(raw, signal?.surgicalEntry?.macroTarget, 'цель входа', 80)
+    if (!signal?.unrealisticTp) {
+      addTarget(raw, signal?.tp1, 'цель 1', 70)
+      addTarget(raw, signal?.tp2, 'цель 2', 62)
+      addTarget(raw, signal?.tpDaily, 'цель дня', 86)
+    }
+    const fib = signal?.globalFib?.price141
+    if (fib != null && fib > price) addTarget(raw, fib, signal?.globalFib?.activeLabel || '141', 74)
+    if (radar?.gap && radar.gap.upper.price > price) {
+      addTarget(raw, radar.gap.upper.price, radar.gap.upper.label || 'gap сверху', 72)
+    }
+  } else {
+    addTarget(raw, daily.magnet != null && daily.magnet < price ? daily.magnet : null, daily.magnetLabel || 'магнит дня', 96)
+    addTarget(raw, ticker && ticker.low24h > 0 && ticker.low24h < price ? ticker.low24h : null, 'PDL', 92)
+    if (liq?.nearestSSL?.isActive) addTarget(raw, liq.nearestSSL.price, 'SSL', 90)
+    for (const eq of liq?.equalLows ?? []) {
+      if (eq.isActive) addTarget(raw, eq.price, 'равные лои', 78)
+    }
+    addTarget(raw, signal?.mmIntent?.hunt.macroTarget, signal?.mmIntent?.hunt.macroLabel || 'макро MM', 84)
+    addTarget(raw, signal?.surgicalEntry?.macroTarget, 'цель входа', 80)
+    if (!signal?.unrealisticTp) {
+      addTarget(raw, signal?.tp1, 'цель 1', 70)
+      addTarget(raw, signal?.tp2, 'цель 2', 62)
+      addTarget(raw, signal?.tpDaily, 'цель дня', 86)
+    }
+    const fib = signal?.globalFib?.price141
+    if (fib != null && fib < price) addTarget(raw, fib, signal?.globalFib?.activeLabel || '141', 74)
+    if (radar?.gap && radar.gap.lower.price < price) {
+      addTarget(raw, radar.gap.lower.price, radar.gap.lower.label || 'gap снизу', 72)
+    }
   }
 
-  const settingUp = isSettingUp(side, signal, radar)
-  if (settingUp) score += 16
+  const scored: Array<StreamTarget & { score: number }> = []
+  for (const c of raw) {
+    const ahead = side === 'LONG' ? c.price > price + minDist : c.price < price - minDist
+    if (!ahead) continue
+    const dist = Math.abs(c.price - price)
+    if (dist < minDist || dist > maxDist) continue
+    if (spentPool && sameLevel(c.price, spentPool.price, atr, price)) continue
+    if (sameLevel(c.price, fuel.price, atr, price)) continue
 
-  if (radar?.trigger === 'APPROACH_141') score += 26
-  if (radar?.trigger === 'INSIDE_141') score += 22
-  if (signal?.ote?.priceInZone) score += 16
-  if (signal?.globalFib?.near141) score += 12
-  if (signal?.globalFib?.inReactionZone) score += 10
+    const distPct = price > 0 ? (dist / price) * 100 : 0
+    const atrMult = atr > 0 ? dist / atr : 0
+    const risk = inv > 0 ? Math.abs(price - inv) : 0
+    const rMultiple = risk > 0 ? dist / risk : null
+    if (rMultiple != null && rMultiple < 0.75) continue
+    if (rMultiple != null && rMultiple > 6 && c.weight < 90) continue
 
+    const rOk = rMultiple != null && rMultiple >= 1 && rMultiple <= 3.2
+    const atrOk = atrMult >= 0.8 && atrMult <= 3.2
+    const quality: TargetQuality = rOk || atrOk ? 'хорошо' : 'средне'
+    const rScore =
+      rMultiple == null ? 4 : rOk ? 18 : rMultiple > 3.2 && rMultiple <= 4.5 ? 6 : 0
+    scored.push({
+      price: c.price,
+      label: c.label,
+      distPct,
+      rMultiple,
+      quality,
+      score: c.weight + rScore - Math.abs(atrMult - 1.8) * 3,
+    })
+  }
+  if (!scored.length) return null
+  scored.sort((a, b) => b.score - a.score)
+  const hit = scored[0]
+  return {
+    price: hit.price,
+    label: hit.label,
+    distPct: hit.distPct,
+    rMultiple: hit.rMultiple,
+    quality: hit.quality,
+  }
+}
+
+function dailyBlocksLong(
+  daily: DailyFrame,
+  price: number,
+  flipped: boolean
+): boolean {
+  if (flipped) return false
+  if (daily.side !== 'SHORT') return false
+  if (daily.magnet != null && daily.magnet < price) return true
+  return true
+}
+
+function dailyBlocksShort(
+  daily: DailyFrame,
+  price: number,
+  flipped: boolean
+): boolean {
+  if (flipped) return false
+  if (daily.side !== 'LONG') return false
+  if (daily.magnet != null && daily.magnet > price) return true
+  return true
+}
+
+function whyNow(
+  side: HuntSide,
+  fuel: FuelWaypoint,
+  target: StreamTarget,
+  signal: CoinSignal | null
+): string {
+  const dest = humanizeStoryTarget(target.label, side)
   const surg = signal?.surgicalEntry
-  if (surg && surg.side === side) {
-    if (surg.status === 'WAITING_SWEEP') score += 26
-    else if (surg.status === 'WAITING_CONFIRM') score += 22
-    else if (surg.status === 'READY') score += 14
-    else if (surg.status === 'MISSED' || surg.status === 'INVALIDATED') score -= 14
+  if (surg && surg.side === side && surg.status === 'WAITING_SWEEP') {
+    return side === 'LONG' ? `ждут свип снизу → на ${dest}` : `ждут свип сверху → на ${dest}`
   }
-
-  const raid = signal?.raid
-  if (
-    raid?.isFresh &&
-    ((side === 'LONG' && raid.type === 'BULL_SWEEP') ||
-      (side === 'SHORT' && raid.type === 'BEAR_SWEEP'))
-  ) {
-    score += 20
+  if (fuel.kind === 'WHALE') {
+    return side === 'LONG' ? `киты на бидах → стрим на ${dest}` : `киты на асках → стрим на ${dest}`
   }
+  if (fuel.label.includes('в зоне') || fuel.label.includes('дисконт') || fuel.label.includes('премиум')) {
+    return side === 'LONG' ? `сидят в спросе → на ${dest}` : `сидят в предложении → на ${dest}`
+  }
+  if (signal?.mss?.detected && (signal.mss.direction === 'BULLISH') === (side === 'LONG')) {
+    return side === 'LONG' ? `CHoCH вверх, цель ${dest}` : `CHoCH вниз, цель ${dest}`
+  }
+  return side === 'LONG'
+    ? `берут топливо снизу → на ${dest}`
+    : `берут топливо сверху → на ${dest}`
+}
 
-  const sq = signal?.memePulse?.squeeze
-  if (sq?.setup && !sq.inProgress) score += 16
-  else if (sq?.inProgress) score += 4
+function huntScore(opts: {
+  side: HuntSide
+  signal: CoinSignal | null
+  radar: Radar141Row | undefined
+  fuel: FuelWaypoint
+  target: StreamTarget
+  daily: DailyFrame
+  settingUp: boolean
+  whaleSide: HuntSide | null
+}): number {
+  const { side, signal, radar, fuel, target, daily, settingUp, whaleSide } = opts
+  let score = 28
+  if (target.quality === 'хорошо') score += 18
+  else score += 8
+  if (target.rMultiple != null && target.rMultiple >= 1 && target.rMultiple <= 3.2) score += 12
+  if (fuel.kind === 'SSL' || fuel.kind === 'BSL' || fuel.kind === 'WHALE' || fuel.kind === 'FVG') {
+    score += 10
+  } else if (fuel.kind === 'SWING' || fuel.kind === 'SESSION') {
+    score += 8
+  }
+  if (settingUp) score += 10
+  if (daily.side === side) score += 12
+  else if (daily.side == null) score += 2
 
-  if (radar?.volRegime === 'THIN' && radar.trigger !== 'IN_GAP') score += 8
-  if (signal?.scoreCard?.ready && signal.scoreCard.direction === side) score += 18
-  if (signal?.hasActiveSetup && signal.direction === side) score += 14
+  if (signal && isSniperQuality(signal) && signal.direction === side) score += 10
+  if (whaleSide === side) score += 8
+  else if (whaleSide && whaleSide !== side) score -= 6
+
+  if (signal?.scoreCard?.ready && signal.scoreCard.direction === side) score += 8
+  if (radar?.liquidityGrade === 'A') score += 6
+  else if (radar?.liquidityGrade === 'B') score += 3
+  else if (radar?.liquidityGrade === 'D') score -= 10
+
+  if (radar?.newsRisk) score -= 6
+  if (isExtended(side, signal, radar) && !settingUp) score -= 16
+  if (signal?.unrealisticTp) score -= 10
 
   const mm = signal?.mmIntent
-  if (mm?.preferredSide === side && mm.confidence >= 50) score += 10
-  else if (mm?.preferredSide && mm.preferredSide !== side) score -= 8
-
-  const daily = dailyToSide(signal?.dailyBias)
-  if (daily === side) score += 12
-  else if (daily && daily !== side) score -= 16
-
-  if (signal?.mss?.detected && htfToSide(signal.mss.direction) === side) score += 12
-  else if (signal?.mss?.detected && htfToSide(signal.mss.direction) && htfToSide(signal.mss.direction) !== side) {
-    score -= 8
-  }
-
-  const magnet =
-    side === 'LONG' ? liq?.nearestSSL : liq?.nearestBSL
-  if (magnet?.isActive && magnet.distancePct <= 1.2) score += 12
-  else if (magnet?.isActive && magnet.distancePct <= 2.2) score += 6
-
-  const whaleAcc = inferWhaleAccumulation(whale)
-  if (whaleAcc?.side === side) score += 8
-  else if (whaleAcc && whaleAcc.side !== side) score -= 4
-
-  if (radar?.testKind === 'FIRST') score += 8
-  else if (radar?.testKind === 'RETEST') score += 3
-  else if (radar?.testKind === 'EXHAUSTED') score -= 18
-
-  if (radar?.preferredSide === side) score += 6
-  if (radar?.trendAlign && radar.htfBias === side) score += 6
-
-  const chg = signal?.priceChange24h ?? radar?.change24h ?? 0
-  if (side === 'LONG' && chg >= 8) score -= 12
-  if (side === 'LONG' && chg >= 15) score -= 16
-  if (side === 'SHORT' && chg <= -8) score -= 12
-  if (side === 'SHORT' && chg <= -15) score -= 16
-
-  const rsi = signal?.currentRSI
-  if (rsi != null) {
-    if (side === 'LONG' && rsi >= 72) score -= 18
-    if (side === 'LONG' && rsi >= 80) score -= 10
-    if (side === 'SHORT' && rsi <= 28) score -= 18
-    if (side === 'SHORT' && rsi <= 20) score -= 10
-  }
-
-  if (radar?.trigger === 'IN_GAP') score -= 24
-  if (radar?.trigger === 'EXIT_141') score -= 20
-  if (radar?.newsRisk) score -= 8
-
-  if (isExtended(side, signal, radar) && !settingUp) score -= 18
+  if (mm?.preferredSide === side && mm.confidence >= 50) score += 6
+  else if (mm?.preferredSide && mm.preferredSide !== side) score -= 6
 
   return clamp(Math.round(score), 0, 100)
 }
@@ -386,39 +552,121 @@ function probabilityOf(
   return hunt
 }
 
-function toCard(
+function evaluateSide(
   side: HuntSide,
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
   liq: LiquidityMap | undefined,
-  whale?: WhaleWatcherState | null
+  whaleState: WhaleWatcherState | null | undefined,
+  mm: MmIntentSnapshot | null | undefined,
+  ticker: LiveTicker | undefined,
+  sequence: SequenceHit | null | undefined,
+  walls: OrderBookMetrics | undefined
 ): DualHuntCard | null {
   const internal = signal?.internalSymbol ?? radar?.internalSymbol
   if (!internal) return null
-  const score = huntScore(side, signal, radar, liq, whale)
-  if (score < MIN_SCORE) return null
-  const settingUp = isSettingUp(side, signal, radar)
-  if (isExtended(side, signal, radar) && !settingUp && score < 40) return null
+  const price = signal?.price ?? radar?.price ?? ticker?.price ?? 0
+  if (!(price > 0)) return null
+  if (radar?.liquidityGrade === 'D' && !signal?.hasActiveSetup) return null
+  if (isChopOnly(signal, radar) && !freshChochFlip(side, signal)) return null
 
+  const atr = estimateAtr(price, radar)
+  const spent = detectSpentLiquidity({
+    candles: [],
+    price,
+    atr,
+    signal,
+    liquidityMap: liq ?? null,
+    sequence: sequence ?? null,
+  })
+
+  const whaleMap = buildWhaleSitMap({
+    price,
+    whale: whaleState ?? null,
+    liquidityMap: liq ?? null,
+    walls: walls?.walls ?? null,
+    spent,
+  })
+
+  const daily = readDailyFrame({
+    signal,
+    spent,
+    price,
+    atr,
+  })
+  if (!daily.side && radar?.htfBias && radar.htfBias !== 'FLAT') {
+    daily.side = radar.htfBias
+    daily.bias = radar.htfBias === 'LONG' ? 'BULLISH' : 'BEARISH'
+  }
+  const flipped = freshChochFlip(side, signal)
+  if (side === 'LONG' && dailyBlocksLong(daily, price, flipped)) return null
+  if (side === 'SHORT' && dailyBlocksShort(daily, price, flipped)) return null
+
+  const fuel = resolveFuel(side, price, atr, signal, liq, spent, whaleMap, mm)
+  if (!fuel) return null
+
+  const target = pickStreamTarget(
+    side,
+    price,
+    atr,
+    signal,
+    radar,
+    liq,
+    spent,
+    daily,
+    ticker,
+    fuel
+  )
+  if (!target) return null
+
+  const fuelClose =
+    Math.abs(fuel.price - price) <= Math.max(atr * 0.9, price * 0.004) ||
+    fuel.label.includes('в зоне') ||
+    fuel.label.includes('дисконт') ||
+    fuel.label.includes('премиум')
+  const settingUp = isSettingUp(side, signal, radar, fuelClose)
+  if (isExtended(side, signal, radar) && !settingUp) return null
+
+  const whaleAcc = inferWhaleAccumulation(whaleState) ?? (
+    whaleMap.accumulation
+      ? { side: whaleMap.accumulation, reason: whaleMap.accumulationReason ?? '' }
+      : null
+  )
+  const score = huntScore({
+    side,
+    signal,
+    radar,
+    fuel,
+    target,
+    daily,
+    settingUp,
+    whaleSide: whaleAcc?.side ?? null,
+  })
+  if (score < MIN_SCORE) return null
+
+  const destName = humanizeStoryTarget(target.label, side)
   return {
     symbol: signal?.symbol ?? toFlatSymbol(internal),
     internalSymbol: internal,
     displayName: signal?.displayName ?? radar?.displayName ?? internal,
     ticker: toBaseTicker(internal),
     side,
-    reason: pickReason(side, signal, radar, liq, whale),
+    reason: whyNow(side, fuel, target, signal),
+    streamTo: `${destName} ≈ ${fmtStoryTargetPx(target.price)}`,
+    fuelWhere: fuelKindRu(fuel, side),
+    targetQuality: target.quality,
+    distanceLabel: `≈${target.distPct.toFixed(1)}%`,
     score,
     probability: probabilityOf(signal, radar, score),
     settingUp,
-    price: signal?.price ?? radar?.price ?? 0,
-    priceChange24h: signal?.priceChange24h ?? radar?.change24h ?? 0,
+    price,
+    priceChange24h: signal?.priceChange24h ?? radar?.change24h ?? ticker?.priceChange24h ?? 0,
   }
 }
 
 /**
- * Split the scanned universe into two ranked hunts:
- * longs preparing to rise vs shorts preparing to drop.
- * A coin enters only one list — the stronger side.
+ * Tradable hunt: long only with unused fuel below/in-zone and an unused
+ * target above; short only with the inverse. Same scanner universe.
  */
 export function buildDualHunt(input: DualHuntInput): DualHuntResult {
   const radarByKey = new Map<string, Radar141Row>()
@@ -436,8 +684,7 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
     const radar =
       radarHint ??
       (signal
-        ? radarByKey.get(signal.internalSymbol) ??
-          radarByKey.get(signal.symbol)
+        ? radarByKey.get(signal.internalSymbol) ?? radarByKey.get(signal.symbol)
         : undefined)
     const key = signal?.internalSymbol ?? radar?.internalSymbol
     if (!key || seen.has(key)) return
@@ -445,12 +692,45 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
 
     const liq = input.liquidityMaps?.[key]
     const whale = input.whaleWatcher?.[key] ?? null
-    const voted = voteSide(signal, radar, liq, whale)
-    if (!voted.side) return
-    const card = toCard(voted.side, signal, radar, liq, whale)
-    if (!card) return
-    if (card.side === 'LONG') longs.push(card)
-    else shorts.push(card)
+    const mm = signal?.mmIntent ?? input.mmIntent?.[key]
+    const ticker = tickerOf(key, signal?.symbol ?? radar?.symbol, input.liveTickets)
+    const sequence =
+      input.sequenceHits?.[key] ??
+      (signal ? input.sequenceHits?.[signal.symbol] : undefined)
+    const walls = input.orderBookMetrics?.[key]
+
+    const longCard = evaluateSide(
+      'LONG',
+      signal,
+      radar,
+      liq,
+      whale,
+      mm,
+      ticker,
+      sequence,
+      walls
+    )
+    const shortCard = evaluateSide(
+      'SHORT',
+      signal,
+      radar,
+      liq,
+      whale,
+      mm,
+      ticker,
+      sequence,
+      walls
+    )
+
+    if (longCard && shortCard) {
+      const gap = longCard.score - shortCard.score
+      if (Math.abs(gap) < TIE_BAND) return
+      if (gap > 0) longs.push(longCard)
+      else shorts.push(shortCard)
+      return
+    }
+    if (longCard) longs.push(longCard)
+    else if (shortCard) shorts.push(shortCard)
   }
 
   for (const raw of input.signals) {
@@ -461,6 +741,9 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
   }
 
   const rank = (a: DualHuntCard, b: DualHuntCard) => {
+    if (a.targetQuality !== b.targetQuality) {
+      return a.targetQuality === 'хорошо' ? -1 : 1
+    }
     if (a.settingUp !== b.settingUp) return a.settingUp ? -1 : 1
     if (b.score !== a.score) return b.score - a.score
     return b.probability - a.probability
