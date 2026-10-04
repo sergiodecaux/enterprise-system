@@ -16,7 +16,7 @@
  *   curl "https://api.telegram.org/bot<SNIPER_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook/sniper"
  *
  * Crons: predator every 2m, paper on odd minutes, Elite favorites digest :00/:15/:30/:45,
- * Elite tactic hunt on */2 (DualHunt «Можно»), hourly at :05, daily 00:05 UTC
+ * Elite tactic hunt every 2m (DualHunt READY / Mozhno shelf), hourly at :05, daily 00:05 UTC
  */
 
 import type { ScanAlert, TradePlanPayload } from './scanner'
