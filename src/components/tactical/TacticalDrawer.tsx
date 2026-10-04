@@ -24,6 +24,8 @@ import type {
   BuyerAggressionResult,
 } from '../../engine/types'
 import WhaleAlertBanner from './WhaleAlertBanner'
+import WhaleSitStrip from './WhaleSitStrip'
+import { buildWhaleSitMap } from '../../engine/orderbook/whaleSitLevels'
 import SessionDNAPanel from './SessionDNAPanel'
 import LTFAlignmentPanel from './LTFAlignmentPanel'
 import PO3Panel from './PO3Panel'
@@ -500,6 +502,15 @@ const TacticalDrawer = () => {
     if (signal) pushSignalSnapshot(signal)
   }, [signal])
 
+  const drawerWhaleSit = useMemo(() => {
+    if (!signal) return null
+    return buildWhaleSitMap({
+      price: signal.price,
+      whale: whaleState,
+      liquidityMap,
+    })
+  }, [signal, whaleState, liquidityMap])
+
   const compositeAnalysis = useMemo(() => {
     if (!signal) return null
     return buildCompositeAnalysis(
@@ -659,20 +670,34 @@ const TacticalDrawer = () => {
           </div>
 
           {/* Киты: фиксированная полоса под шапкой — не плавают внизу графика */}
-          {whaleState &&
-            whaleState.alerts.filter((a) => a.isActive && !a.isExpired).length >
-              0 && (
-              <div className="border-b border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-1.5">
-              <div className="max-h-[2.4rem] space-y-1 overflow-y-auto overscroll-contain">
-                  {whaleState.alerts
-                    .filter((a) => a.isActive && !a.isExpired)
-                    .slice(0, isDesktop ? 2 : 1)
-                    .map((alert) => (
+          {(() => {
+            const alerts =
+              whaleState?.alerts.filter((a) => a.isActive && !a.isExpired) ?? []
+            if (alerts.length > 0) {
+              return (
+                <div className="border-b border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-1.5">
+                  <div className="max-h-[2.4rem] space-y-1 overflow-y-auto overscroll-contain">
+                    {alerts.slice(0, isDesktop ? 2 : 1).map((alert) => (
                       <WhaleAlertBanner key={alert.id} alert={alert} />
                     ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            }
+            if (
+              drawerWhaleSit &&
+              (drawerWhaleSit.nearestBelow ||
+                drawerWhaleSit.nearestAbove ||
+                drawerWhaleSit.accumulationReason)
+            ) {
+              return (
+                <div className="border-b border-cyan-500/15 px-3 py-1">
+                  <WhaleSitStrip sit={drawerWhaleSit} />
+                </div>
+              )
+            }
+            return null
+          })()}
         </div>
 
         <div

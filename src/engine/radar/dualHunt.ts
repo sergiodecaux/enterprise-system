@@ -5,7 +5,9 @@ import type {
   LiquidityMap,
   MmIntentSnapshot,
   SurgicalEntrySnapshot,
+  WhaleWatcherState,
 } from '../types'
+import { inferWhaleAccumulation } from '../orderbook/whaleSitLevels'
 
 export type HuntSide = 'LONG' | 'SHORT'
 
@@ -29,6 +31,7 @@ export interface DualHuntInput {
   liquidityMaps?: Record<string, LiquidityMap>
   mmIntent?: Record<string, MmIntentSnapshot>
   surgicalEntries?: Record<string, SurgicalEntrySnapshot>
+  whaleWatcher?: Record<string, WhaleWatcherState>
 }
 
 export interface DualHuntResult {
@@ -73,7 +76,8 @@ function htfToSide(
 function voteSide(
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
-  liq: LiquidityMap | undefined
+  liq: LiquidityMap | undefined,
+  whale?: WhaleWatcherState | null
 ): { side: HuntSide | null; long: number; short: number } {
   let long = 0
   let short = 0
@@ -120,8 +124,11 @@ function voteSide(
   if (bsl?.isActive && ssl?.isActive) {
     if (ssl.distancePct < bsl.distancePct) add('LONG', 1)
     else if (bsl.distancePct < ssl.distancePct) add('SHORT', 1)
-  } else if (ssl?.isActive) add('LONG', 1)
+  }   else if (ssl?.isActive) add('LONG', 1)
   else if (bsl?.isActive) add('SHORT', 1)
+
+  const whaleAcc = inferWhaleAccumulation(whale)
+  if (whaleAcc) add(whaleAcc.side, 2)
 
   if (long === 0 && short === 0) return { side: null, long, short }
   if (long === short) {
@@ -187,7 +194,8 @@ function pickReason(
   side: HuntSide,
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
-  liq: LiquidityMap | undefined
+  liq: LiquidityMap | undefined,
+  whale?: WhaleWatcherState | null
 ): string {
   const raid = signal?.raid
   if (
@@ -201,6 +209,11 @@ function pickReason(
   const surg = signal?.surgicalEntry
   if (surg && surg.side === side && surg.status === 'WAITING_SWEEP') {
     return side === 'LONG' ? 'свип снизу близко' : 'свип сверху близко'
+  }
+
+  const whaleAcc = inferWhaleAccumulation(whale)
+  if (whaleAcc && whaleAcc.side === side) {
+    return whaleAcc.side === 'LONG' ? 'киты набирают лонг' : 'киты набирают шорт'
   }
 
   const sq = signal?.memePulse?.squeeze
@@ -262,7 +275,8 @@ function huntScore(
   side: HuntSide,
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
-  liq: LiquidityMap | undefined
+  liq: LiquidityMap | undefined,
+  whale?: WhaleWatcherState | null
 ): number {
   let score = 0
   if (signal) {
@@ -326,6 +340,10 @@ function huntScore(
   if (magnet?.isActive && magnet.distancePct <= 1.2) score += 12
   else if (magnet?.isActive && magnet.distancePct <= 2.2) score += 6
 
+  const whaleAcc = inferWhaleAccumulation(whale)
+  if (whaleAcc?.side === side) score += 8
+  else if (whaleAcc && whaleAcc.side !== side) score -= 4
+
   if (radar?.testKind === 'FIRST') score += 8
   else if (radar?.testKind === 'RETEST') score += 3
   else if (radar?.testKind === 'EXHAUSTED') score -= 18
@@ -372,11 +390,12 @@ function toCard(
   side: HuntSide,
   signal: CoinSignal | null,
   radar: Radar141Row | undefined,
-  liq: LiquidityMap | undefined
+  liq: LiquidityMap | undefined,
+  whale?: WhaleWatcherState | null
 ): DualHuntCard | null {
   const internal = signal?.internalSymbol ?? radar?.internalSymbol
   if (!internal) return null
-  const score = huntScore(side, signal, radar, liq)
+  const score = huntScore(side, signal, radar, liq, whale)
   if (score < MIN_SCORE) return null
   const settingUp = isSettingUp(side, signal, radar)
   if (isExtended(side, signal, radar) && !settingUp && score < 40) return null
@@ -387,7 +406,7 @@ function toCard(
     displayName: signal?.displayName ?? radar?.displayName ?? internal,
     ticker: toBaseTicker(internal),
     side,
-    reason: pickReason(side, signal, radar, liq),
+    reason: pickReason(side, signal, radar, liq, whale),
     score,
     probability: probabilityOf(signal, radar, score),
     settingUp,
@@ -425,9 +444,10 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
     seen.add(key)
 
     const liq = input.liquidityMaps?.[key]
-    const voted = voteSide(signal, radar, liq)
+    const whale = input.whaleWatcher?.[key] ?? null
+    const voted = voteSide(signal, radar, liq, whale)
     if (!voted.side) return
-    const card = toCard(voted.side, signal, radar, liq)
+    const card = toCard(voted.side, signal, radar, liq, whale)
     if (!card) return
     if (card.side === 'LONG') longs.push(card)
     else shorts.push(card)

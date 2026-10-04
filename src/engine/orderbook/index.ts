@@ -28,6 +28,14 @@ export {
   WHALE_ZONE_MAX_PCT,
   WHALE_ALERT_TTL_MS,
 } from './whaleDetector'
+export {
+  buildWhaleSitMap,
+  inferWhaleAccumulation,
+  formatSitVolume,
+  type WhaleSitMap,
+  type WhaleSitCluster,
+  type WhaleSitSide,
+} from './whaleSitLevels'
 export { createHeatmap3D, addSnapshot3D } from './heatmap3d'
 export type { Heatmap3DState, Heatmap3DPoint } from './heatmap3d'
 export {

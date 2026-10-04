@@ -119,6 +119,8 @@ import { useLiqHeatmap } from '../../hooks/useLiqHeatmap'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { buildLiqHeatmap } from '../../engine/derivatives/liqHeatmap'
 import WhaleLevelsOverlay from './WhaleLevelsOverlay'
+import WhaleSitStrip from './WhaleSitStrip'
+import { buildWhaleSitMap } from '../../engine/orderbook/whaleSitLevels'
 import LiqHeatmapOverlay from './LiqHeatmapOverlay'
 import SequenceProcessOverlay from './SequenceProcessOverlay'
 import ProcessStrip from './ProcessStrip'
@@ -2465,6 +2467,26 @@ const LiveChart = ({
     return { floor, ceil }
   }, [lwcData])
 
+  const whaleSit = useMemo(
+    () =>
+      buildWhaleSitMap({
+        price: mapPrice,
+        whale: whaleState,
+        liquidityMap: eqLiquidityMap,
+        liqHeatmap: liqModel,
+        walls: orderBookMetrics?.walls ?? null,
+        spent: chartStory.spent,
+      }),
+    [
+      mapPrice,
+      whaleState,
+      eqLiquidityMap,
+      liqModel,
+      orderBookMetrics?.walls,
+      chartStory.spent,
+    ]
+  )
+
   const resetChartView = useCallback(() => {
     const chart = chartRef.current
     if (!chart) return
@@ -3360,7 +3382,7 @@ const LiveChart = ({
             chart={chartInstance}
             series={candleRef.current}
             containerRef={containerRef}
-            whaleState={whaleState}
+            clusters={whaleSit.clusters}
             priceFloor={candlePriceSpan.floor}
             priceCeil={candlePriceSpan.ceil}
           />
@@ -3445,6 +3467,7 @@ const LiveChart = ({
         )}
         </div>
       </div>
+      <WhaleSitStrip sit={whaleSit} />
       {!chartExpanded && (
         <ZoneLegend
           items={chartStory.legend}

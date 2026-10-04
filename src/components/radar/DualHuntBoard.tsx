@@ -171,6 +171,7 @@ const DualHuntBoard = () => {
   const liquidityMaps = useAppStore((s) => s.liquidityMaps)
   const mmIntent = useAppStore((s) => s.mmIntent)
   const surgicalEntries = useAppStore((s) => s.surgicalEntries)
+  const whaleWatcher = useAppStore((s) => s.whaleWatcher)
   const favorites = useAppStore((s) => s.radarFavorites)
   const toggleFav = useAppStore((s) => s.toggleRadarFavorite)
   const selectCoin = useAppStore((s) => s.selectCoin)
@@ -189,8 +190,9 @@ const DualHuntBoard = () => {
         liquidityMaps,
         mmIntent,
         surgicalEntries,
+        whaleWatcher,
       }),
-    [signals, radarRows, liquidityMaps, mmIntent, surgicalEntries]
+    [signals, radarRows, liquidityMaps, mmIntent, surgicalEntries, whaleWatcher]
   )
 
   const scanning = isScanning || radarMeta.scanning
