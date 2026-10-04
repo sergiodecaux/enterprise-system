@@ -185,6 +185,18 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
             />
           </label>
 
+          <label className="flex items-center justify-between">
+            <span className="font-mono text-xs text-holo/80">
+              Охота по тактике
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.tacticHunt !== false}
+              onChange={(e) => setSettings({ tacticHunt: e.target.checked })}
+              className="accent-matrix"
+            />
+          </label>
+
           <div>
             <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
               Мин. Confidence снайпер: {settings.minSniperConfidence}%
@@ -289,10 +301,10 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
               )}
 
           <p className="font-mono text-[10px] leading-relaxed text-holo/35">
-            1) Нажмите /start у @Enterpriseelite_bot 2) Поставьте звезду у монеты
-            (макс. 6) — бот мониторит только избранное. 3) Дайджест каждые 15 мин
-            и срочный алерт при READY / зоне / свипе. Снимок графика — только на
-            важное событие, с меткой входа.
+            1) Нажмите /start у @Enterpriseelite_bot. 2) Охота по тактике ищет
+            «Можно» на воркере — приложение можно закрыть. Ждут и Стримит во
+            вход не приходят. 3) Звезда (макс. 6) — 15-мин сводка. Снимок
+            графика только на вход, с меткой.
           </p>
         </div>
       </div>

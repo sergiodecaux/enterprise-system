@@ -16,7 +16,7 @@
  *   curl "https://api.telegram.org/bot<SNIPER_TOKEN>/setWebhook?url=https://<worker>/telegram/webhook/sniper"
  *
  * Crons: predator every 2m, paper on odd minutes, Elite favorites digest :00/:15/:30/:45,
- * hourly at :05, daily 00:05 UTC
+ * Elite tactic hunt on */2 (DualHunt «Можно»), hourly at :05, daily 00:05 UTC
  */
 
 import type { ScanAlert, TradePlanPayload } from './scanner'
@@ -32,21 +32,32 @@ import {
   digestSlot,
   formatChatDigestHtml,
   formatFavListHtml,
+  formatHuntUrgent,
   formatSnapshotCaption,
   formatSniperFavoriteUrgent,
   formatWatchUrgent,
   hasLiveSetupIdea,
+  huntEnabled,
   inferEliteScene,
   isEliteAssistantOnly,
+  isTacticReady,
+  judgeTacticHunt,
   loadFavoriteMarketRows,
   loadFavorites,
+  loadHuntInput,
   markUrgentFired,
   normalizeFavSymbol,
   normalizeFavSymbols,
+  pickHuntSymbols,
   runFavoritesDigest,
   saveFavorites,
+  scanTacticHunt,
+  tacticAllowsEntry,
   tgSendPhotoPng,
+  unionHuntUniverse,
+  wasUrgentRecent,
   type SnapshotScene,
+  type TacticHuntVerdict,
 } from './elite'
 import {
   channelForAlertType,
@@ -1310,6 +1321,7 @@ async function handleTelegram(
       symbols?: unknown
       digestOn?: boolean
       urgentOn?: boolean
+      huntOn?: boolean
     }
     if (!body?.chatId || typeof body.chatId !== 'number') {
       return json({ error: 'chatId required' }, 400)
@@ -1333,6 +1345,8 @@ async function handleTelegram(
         body.digestOn !== undefined ? body.digestOn !== false : prev?.digestOn !== false,
       urgentOn:
         body.urgentOn !== undefined ? body.urgentOn !== false : prev?.urgentOn !== false,
+      huntOn:
+        body.huntOn !== undefined ? body.huntOn !== false : prev?.huntOn !== false,
       updatedAt: Date.now(),
     })
     return json({ ok: true, written: saved.written, favorites: saved.record })
@@ -1423,9 +1437,9 @@ async function handleTelegram(
       targetBlock,
       '',
       `<b>Стратегия:</b>`,
-      '• как Mini App: зоны HTF, SMC hunt, confluence, ScoreCard',
-      '• вход только READY (или INVALIDATED)',
-      '• /scan · /brief · /zone · слежение из вкладки Сигналы',
+      '• как Mini App DualHunt: неснятое топливо, цель впереди, вход «Можно»',
+      '• Ждут и Стримит во вход не шлём; снимок только на вход',
+      '• /hunt · /digest · /fav · /brief · слежение из вкладки Сигналы',
       '',
       `Журнал lab <code>v293</code>.`,
       new Date().toISOString(),
@@ -2508,8 +2522,42 @@ async function runCronScan(
       }
     : undefined
 
+  const huntBySymbol = new Map<string, TacticHuntVerdict | null>()
+  const huntVerdict = async (symbol: string): Promise<TacticHuntVerdict | null> => {
+    const key = normalizeFavSymbol(symbol) ?? symbol.toUpperCase()
+    if (huntBySymbol.has(key)) return huntBySymbol.get(key) ?? null
+    try {
+      const input = await loadHuntInput(key, undefined, kv)
+      const v = input ? judgeTacticHunt(input) : null
+      huntBySymbol.set(key, v)
+      return v
+    } catch {
+      huntBySymbol.set(key, null)
+      return null
+    }
+  }
+
   const deliver = async (a: ScanAlert) => {
     if (seenDedup.has(a.dedupeKey)) return
+    if (
+      lane === 'elite' &&
+      a.type === 'SNIPER' &&
+      a.tradePlan &&
+      !a.watchOnly &&
+      !a.needsPullbackWatch
+    ) {
+      const v = await huntVerdict(a.tradePlan.symbol)
+      if (!tacticAllowsEntry(v, a.tradePlan.side)) {
+        skipped++
+        console.log(
+          '[cron] vane blocked tactic gate',
+          a.tradePlan.symbol,
+          a.tradePlan.side,
+          v?.shelf ?? 'none'
+        )
+        return
+      }
+    }
     // Exclusive meme lane: only Cloudflare Jeweler Burst signals.
     if (a.type === 'MEME') {
       const plan = a.tradePlan
@@ -3250,6 +3298,89 @@ async function runCronScan(
     }
   }
 
+  const runTacticHunt = async () => {
+    if (lane !== 'elite') return
+    if (!env.TELEGRAM_SNIPER_BOT_TOKEN && !env.TELEGRAM_BOT_TOKEN) return
+    try {
+      const ids = await sniperChatIds(env)
+      const favPins: string[] = []
+      const huntChats: number[] = []
+      for (const id of ids) {
+        const rec = await loadFavorites(env.SUBSCRIBERS, id)
+        if (rec?.symbols.length) favPins.push(...rec.symbols)
+        if (huntEnabled(rec)) huntChats.push(id)
+      }
+      if (!huntChats.length) return
+      const universe = unionHuntUniverse(favPins)
+      const batch = pickHuntSymbols(universe, [...new Set(favPins)])
+      const verdicts = await scanTacticHunt({ symbols: batch, kv })
+      for (const v of verdicts) huntBySymbol.set(v.symbol, v)
+      for (const s of batch) {
+        if (!huntBySymbol.has(s)) huntBySymbol.set(s, null)
+      }
+
+      let huntBudget = 3
+      for (const v of verdicts) {
+        if (huntBudget <= 0) break
+        if (!isTacticReady(v)) continue
+        const copy = formatHuntUrgent({
+          symbol: v.symbol,
+          side: v.side,
+          reason: v.reason,
+          fuelWhere: v.fuelWhere,
+          streamTo: v.streamTo,
+          entry: v.entry,
+          target: v.targetPx,
+        })
+        let delivered = false
+        for (const chatId of huntChats) {
+          if (await wasUrgentRecent(chatId, v.symbol)) continue
+          const slot = digestSlot()
+          const r = await broadcastAlert(env, {
+            type: 'SYSTEM',
+            channel: 'sniper',
+            chatId,
+            title: copy.title,
+            text: copy.text,
+            dedupeKey: `hunt:${chatId}:${v.symbol}:${v.side}:${slot}`,
+          })
+          if (r.sent > 0) {
+            sent += r.sent
+            watchAlerts += r.sent
+            delivered = true
+            await markUrgentFired(env.SUBSCRIBERS, chatId, v.symbol)
+            const scene = await sceneFromPlan(env, v.symbol, v.side, v.entry, {
+              target: v.targetPx,
+              zoneLow: v.zoneLow,
+              zoneHigh: v.zoneHigh,
+              magnetPrice: v.magnetPx ?? undefined,
+              magnetLabel: v.magnetLabel ?? undefined,
+              marks: [{ price: v.fuelPx, label: 'FUEL' }],
+              caption: formatSnapshotCaption({
+                symbol: v.symbol,
+                side: v.side,
+                kind: 'HUNT',
+                entry: v.entry,
+                target: v.targetPx,
+                price: v.entry,
+              }),
+            })
+            if (scene) await maybeSendFavSnapshot(env, chatId, scene, 'hunt')
+          } else {
+            failed += r.failed
+          }
+        }
+        if (delivered) huntBudget--
+      }
+      const readyN = verdicts.filter((v) => isTacticReady(v)).length
+      console.log(
+        `[elite] tactic hunt scanned=${batch.length} ready=${readyN} universe=${universe.length}`
+      )
+    } catch (err) {
+      console.error('[cron] tactic hunt failed', err)
+    }
+  }
+
   const runVane = async () => {
     // Elite Assistant mode: no auto trade spam on Enterpriseelite_bot
     if (isEliteAssistantOnly(env)) {
@@ -3332,12 +3463,27 @@ async function runCronScan(
     try {
       const alerts = await monitorWatchedSetups(env)
       // Hard filter: Elite alts = actionable only; TOUCH only for favorites
-      const actionable = alerts.filter(
-        (a) =>
-          a.kind === 'READY' ||
-          a.kind === 'INVALIDATED' ||
-          a.kind === 'TOUCH'
-      )
+      const actionable: typeof alerts = []
+      for (const a of alerts) {
+        if (a.kind === 'INVALIDATED' || a.kind === 'TOUCH') {
+          actionable.push(a)
+          continue
+        }
+        if (a.kind !== 'READY') continue
+        if (a.symbol && a.setup) {
+          const v = await huntVerdict(a.symbol)
+          if (!tacticAllowsEntry(v, a.setup.side)) {
+            console.log(
+              '[cron] watch READY blocked tactic gate',
+              a.symbol,
+              a.setup.side,
+              v?.shelf ?? 'none'
+            )
+            continue
+          }
+        }
+        actionable.push(a)
+      }
       let budget = 4
       for (const a of actionable) {
         if (budget <= 0) break
@@ -3593,6 +3739,10 @@ async function runCronScan(
 
   if (lane !== 'elite' && (role === 'predator' || role === 'all')) {
     await runPredator()
+  }
+
+  if (lane === 'elite' && (role === 'predator' || role === 'all')) {
+    await runTacticHunt()
   }
 
   if (
@@ -3922,7 +4072,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · как Mini App «Сигналы»: зоны, SMC, confluence.\nМониторинг — <b>звёзды</b> в Mini App (макс. 6).\nДайджест каждые 15 мин · срочный алерт при READY / зоне / свипе.\nСнимок графика с меткой входа — только на важное.\nПрокси: <code>mexc-proxy-f</code> (Money bot 7).\nМемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/digest · /digest_off · /fav\n/status · /journal · /trades · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · тактика Mini App: неснятое топливо, цель впереди, вход в зоне.\nОхота «Можно» идёт на воркере даже если приложение закрыто.\nЖдут и Стримит во вход не шлём. Не догонять.\nЗвёзды — 15-мин сводка (макс. 6). Охота смотрит и закреплённые монеты радара.\nСнимок графика — только на вход.\nПрокси: <code>mexc-proxy-f</code>. Мемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/digest · /digest_off · /fav · /hunt · /hunt_off\n/status · /journal · /trades · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nJeweler Burst · PEAK + RANGE · направление по forecast/event/tape/walls · phase+BTC+sync+3-snapshot стакан · quality от 68 · paper-first.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {
@@ -4050,6 +4200,44 @@ async function dispatchCommand(
     return
   }
 
+  if (cmd === 'hunt' || cmd === 'hunt_off') {
+    if (channel !== 'sniper') {
+      await tgSend(
+        env,
+        chatId,
+        'Охота по тактике — в @Enterpriseelite_bot.',
+        channel
+      )
+      return
+    }
+    const list = await listSubscribers(env, channel)
+    const me = list.find((s) => s.chatId === chatId)
+    if (!me) {
+      await tgSend(env, chatId, 'Сначала /start', channel)
+      return
+    }
+    const prev = await loadFavorites(env.SUBSCRIBERS, chatId)
+    const on = cmd === 'hunt'
+    const saved = await saveFavorites(env.SUBSCRIBERS, chatId, {
+      symbols: prev?.symbols ?? [],
+      digestOn: prev?.digestOn !== false,
+      urgentOn: prev?.urgentOn !== false,
+      huntOn: on,
+      updatedAt: Date.now(),
+    })
+    await tgSend(
+      env,
+      chatId,
+      on
+        ? saved.record.symbols.length
+          ? 'Охота по тактике включена. Пришлю «Можно» по закреплённым и избранному — Ждут и Стримит во вход не идут.\n/hunt_off — выключить.'
+          : 'Охота по тактике включена. Смотрю закреплённые монеты радара; звезда нужна только для 15-мин сводки.\n/hunt_off — выключить.'
+        : 'Охота выключена. 15-мин сводка по звёздам остаётся, если она включена.\n/hunt — снова включить.',
+      channel
+    )
+    return
+  }
+
   if (cmd === 'digest' || cmd === 'digest_off' || cmd === 'fav') {
     if (channel !== 'sniper') {
       await tgSend(
@@ -4074,6 +4262,7 @@ async function dispatchCommand(
         symbols: prev?.symbols ?? [],
         digestOn: false,
         urgentOn: prev?.urgentOn !== false,
+        huntOn: prev?.huntOn !== false,
         updatedAt: Date.now(),
       })
       await tgSend(
@@ -4105,6 +4294,7 @@ async function dispatchCommand(
         symbols: next,
         digestOn: prev?.digestOn !== false,
         urgentOn: prev?.urgentOn !== false,
+        huntOn: prev?.huntOn !== false,
         updatedAt: Date.now(),
       })
       await tgSend(env, chatId, formatFavListHtml(saved.record), channel)
@@ -4115,6 +4305,7 @@ async function dispatchCommand(
       symbols: prev?.symbols ?? [],
       digestOn: true,
       urgentOn: prev?.urgentOn !== false,
+      huntOn: prev?.huntOn !== false,
       updatedAt: Date.now(),
     })
     if (!saved.record.symbols.length) {

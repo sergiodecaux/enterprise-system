@@ -241,6 +241,51 @@ export function formatMomentUrgent(opts: {
   }
 }
 
+export function formatHuntUrgent(opts: {
+  symbol: string
+  side: 'LONG' | 'SHORT'
+  reason: string
+  fuelWhere: string
+  streamTo: string
+  entry: number
+  target: number
+  doNotChase?: boolean
+}): { title: string; text: string } {
+  const ticker = tickerOf(opts.symbol)
+  const side = sideWord(opts.side)
+  const entry = opts.entry > 0 ? fmtHumanPx(opts.entry) : null
+  const target = opts.target > 0 ? fmtHumanPx(opts.target) : null
+  const chase =
+    opts.side === 'LONG' ? 'Не догонять выше.' : 'Не догонять ниже.'
+  const fuel =
+    opts.side === 'LONG'
+      ? `Топливо ${opts.fuelWhere || 'ещё ниже'} — снимать уже потраченное не будем.`
+      : `Топливо ${opts.fuelWhere || 'ещё выше'} — снимать уже потраченное не будем.`
+  const dest = opts.streamTo
+    ? `Стримится к ${opts.streamTo}.`
+    : opts.side === 'LONG'
+      ? 'Стримится к ликвидности сверху.'
+      : 'Стримится к стопам снизу.'
+  const where =
+    entry && target
+      ? `Вход около ${entry}, цель ${target}.`
+      : entry
+        ? `Вход около ${entry}.`
+        : `Можно смотреть ${side} от зоны.`
+  return {
+    title: `${ticker} — можно ${side}`,
+    text: [
+      opts.reason ? `${opts.reason[0]!.toUpperCase()}${opts.reason.slice(1)}.` : '',
+      fuel,
+      dest,
+      `${where} ${chase}`,
+      'Не сигнал.',
+    ]
+      .filter(Boolean)
+      .join(' '),
+  }
+}
+
 export function formatSniperFavoriteUrgent(opts: {
   symbol: string
   side: 'LONG' | 'SHORT'
@@ -280,7 +325,7 @@ export function formatSniperFavoriteUrgent(opts: {
 export function formatSnapshotCaption(opts: {
   symbol: string
   side?: 'LONG' | 'SHORT' | null
-  kind?: 'READY' | 'TOUCH' | 'INVALIDATED' | 'MOMENT' | 'DIGEST' | 'SNIPER'
+  kind?: 'READY' | 'TOUCH' | 'INVALIDATED' | 'MOMENT' | 'DIGEST' | 'SNIPER' | 'HUNT'
   entry?: number | null
   target?: number | null
   price?: number | null
@@ -292,7 +337,7 @@ export function formatSnapshotCaption(opts: {
   const price = opts.price && opts.price > 0 ? fmtHumanPx(opts.price) : null
   const head = `<b>${ticker}</b>`
 
-  if (opts.kind === 'READY' || opts.kind === 'SNIPER') {
+  if (opts.kind === 'READY' || opts.kind === 'SNIPER' || opts.kind === 'HUNT') {
     const where =
       entry && target
         ? `можно ${side} от ${entry}, цель ${target}`

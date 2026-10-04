@@ -15,6 +15,11 @@ import {
 } from './movePotential'
 import { kvPutThrottled } from './kvWrite'
 import { formatWatchUrgent } from './elite/narrative'
+import {
+  buildHuntInput,
+  judgeTacticHunt,
+  tacticAllowsEntry,
+} from './elite/tacticHunt'
 
 export type SetupStatus =
   | 'HYPOTHESIS'
@@ -1343,7 +1348,16 @@ export async function monitorWatchedSetups(env: Env): Promise<WatchAlert[]> {
           snap.reactionOk &&
           snap.bookOk !== false &&
           (working.setup.probability ?? 0) >= 55
-        if (actionable) {
+        const huntIn = buildHuntInput({
+          symbol: mexcSym,
+          price,
+          candles4h: c4h,
+          candles1d: c1d,
+          candles1h: c1h,
+        })
+        const hunt = huntIn ? judgeTacticHunt(huntIn) : null
+        const tacticOk = tacticAllowsEntry(hunt, working.setup.side)
+        if (actionable && tacticOk) {
           alerts.push(formatReady(updated, price, snap))
           updated.readyNotified = true
         }

@@ -11,6 +11,8 @@ export interface TelegramAlertSettings {
   radar141: boolean
   /** 15-мин дайджест избранного в Elite-боте */
   favoritesDigest: boolean
+  /** Охота по тактике DualHunt «Можно» — даже без звезды */
+  tacticHunt: boolean
   /** Мин. confidence / heat для отправки */
   minSniperConfidence: number
   minMemeHeat: number
@@ -31,6 +33,7 @@ export const DEFAULT_TELEGRAM_ALERT_SETTINGS: TelegramAlertSettings = {
   setupWatch: true,
   radar141: true,
   favoritesDigest: true,
+  tacticHunt: true,
   minSniperConfidence: 70,
   minMemeHeat: 50,
   manualChatId: '',

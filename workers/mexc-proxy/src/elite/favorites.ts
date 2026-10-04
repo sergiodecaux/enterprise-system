@@ -9,6 +9,8 @@ export interface FavoriteRecord {
   symbols: string[]
   digestOn: boolean
   urgentOn: boolean
+  /** DualHunt «Можно» hunt — default ON for Elite subscribers */
+  huntOn: boolean
   updatedAt: number
 }
 
@@ -49,8 +51,14 @@ export function normalizeFavSymbols(raw: unknown): string[] {
   return out
 }
 
+export function huntEnabled(record: FavoriteRecord | null | undefined): boolean {
+  return record?.huntOn !== false
+}
+
 export function sameFavList(a: FavoriteRecord, b: FavoriteRecord): boolean {
-  if (a.digestOn !== b.digestOn || a.urgentOn !== b.urgentOn) return false
+  if (a.digestOn !== b.digestOn || a.urgentOn !== b.urgentOn || a.huntOn !== b.huntOn) {
+    return false
+  }
   if (a.symbols.length !== b.symbols.length) return false
   return a.symbols.every((s, i) => s === b.symbols[i])
 }
@@ -64,6 +72,7 @@ function parseRecord(raw: string | null): FavoriteRecord | null {
       symbols: normalizeFavSymbols(parsed.symbols),
       digestOn: parsed.digestOn !== false,
       urgentOn: parsed.urgentOn !== false,
+      huntOn: parsed.huntOn !== false,
       updatedAt: Number(parsed.updatedAt) || 0,
     }
   } catch {
@@ -100,6 +109,7 @@ export async function saveFavorites(
     symbols: normalizeFavSymbols(next.symbols),
     digestOn: next.digestOn !== false,
     urgentOn: next.urgentOn !== false,
+    huntOn: next.huntOn !== false,
     updatedAt: next.updatedAt || Date.now(),
   }
   const prev = await loadFavorites(kv, chatId)
@@ -110,7 +120,8 @@ export async function saveFavorites(
     !prev &&
     record.symbols.length === 0 &&
     record.digestOn &&
-    record.urgentOn
+    record.urgentOn &&
+    record.huntOn
   ) {
     memoryFav.set(favKey(chatId), record)
     return { written: false, record }
@@ -251,11 +262,12 @@ export function formatFavListHtml(record: FavoriteRecord | null): string {
   if (!record || record.symbols.length === 0) {
     return [
       '<b>⭐ Избранное пусто</b>',
-      'Поставь звезду в Mini App (макс. 6 монет).',
-      'Это список, который Elite мониторит.',
+      'Поставь звезду в Mini App (макс. 6 монет) — для 15-мин сводки.',
+      'Охота по тактике смотрит закреплённые монеты радара даже без звёзд.',
       '',
       '/digest — сводка сейчас',
       '/digest_off — выключить 15-мин дайджест',
+      '/hunt · /hunt_off — охота «Можно»',
     ].join('\n')
   }
   const coins = record.symbols.map((s) => `• <code>${s.replace('_USDT', '')}</code>`).join('\n')
@@ -265,7 +277,8 @@ export function formatFavListHtml(record: FavoriteRecord | null): string {
     '',
     `Дайджест 15 мин: <b>${record.digestOn ? 'вкл' : 'выкл'}</b>`,
     `Срочные алерты: <b>${record.urgentOn ? 'вкл' : 'выкл'}</b>`,
+    `Охота по тактике: <b>${record.huntOn ? 'вкл' : 'выкл'}</b>`,
     '',
-    '/digest · /digest_off · /fav BTC',
+    '/digest · /digest_off · /fav BTC · /hunt · /hunt_off',
   ].join('\n')
 }

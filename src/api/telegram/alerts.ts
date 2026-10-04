@@ -212,6 +212,7 @@ export async function syncTelegramFavorites(input: {
   symbols: string[]
   digestOn?: boolean
   urgentOn?: boolean
+  huntOn?: boolean
 }): Promise<{
   ok: boolean
   reason?: string

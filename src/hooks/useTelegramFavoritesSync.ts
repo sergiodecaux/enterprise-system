@@ -24,7 +24,7 @@ export function useTelegramFavoritesSync() {
         : settings.subscribedChatId
     if (!chatId) return
 
-    const sig = `${chatId}:${favorites.join(',')}:${settings.favoritesDigest !== false}`
+    const sig = `${chatId}:${favorites.join(',')}:${settings.favoritesDigest !== false}:${settings.tacticHunt !== false}`
     if (sig === lastSig.current) return
     lastSig.current = sig
 
@@ -37,6 +37,7 @@ export function useTelegramFavoritesSync() {
         symbols: favorites,
         digestOn: settings.favoritesDigest !== false,
         urgentOn: true,
+        huntOn: settings.tacticHunt !== false,
       })
       if (res.ok) {
         logger.info(`[TG] Favorites synced ${favorites.length}`)
@@ -51,6 +52,7 @@ export function useTelegramFavoritesSync() {
   }, [
     favorites,
     settings.favoritesDigest,
+    settings.tacticHunt,
     settings.manualChatId,
     settings.subscribedChatId,
     userId,

@@ -15,6 +15,7 @@ export {
   chatMonitorsSymbol,
   digestSlot,
   formatFavListHtml,
+  huntEnabled,
   loadFavorites,
   markUrgentFired,
   normalizeFavSymbol,
@@ -32,11 +33,26 @@ export {
 export {
   DIGEST_FOOTER,
   formatFavoriteCoinHtml,
+  formatHuntUrgent,
   formatMomentUrgent,
   formatSnapshotCaption,
   formatSniperFavoriteUrgent,
   formatWatchUrgent,
 } from './narrative'
+export {
+  ELITE_HUNT_PINNED,
+  buildHuntInput,
+  isTacticReady,
+  judgeTacticHunt,
+  loadHuntInput,
+  pickHuntSymbols,
+  scanTacticHunt,
+  tacticAllowsEntry,
+  unionHuntUniverse,
+  type HuntShelf,
+  type HuntSide,
+  type TacticHuntVerdict,
+} from './tacticHunt'
 export {
   buildSetupScene,
   inferEliteScene,
