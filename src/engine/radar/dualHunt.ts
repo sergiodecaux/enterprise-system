@@ -54,12 +54,34 @@ export interface DualHuntCard {
   settingUp: boolean
   price: number
   priceChange24h: number
+  targetPx: number
+  fuelPx: number
 }
 
 export interface HuntShelfCounts {
   ready: number
   wait: number
   stream: number
+}
+
+/** Sticky shelf TTL — incumbents stay unless HARD invalidation. */
+export const HUNT_STICKY_TTL_MS = 3 * 60 * 1000
+
+export interface HuntStickyEntry {
+  card: DualHuntCard
+  side: HuntSide
+  targetPx: number
+  fuelPx: number
+  atr: number
+  mountedAt: number
+  lastOkAt: number
+  order: number
+}
+
+export type HuntStickyState = Map<string, HuntStickyEntry>
+
+export function createHuntSticky(): HuntStickyState {
+  return new Map()
 }
 
 export interface DualHuntInput {
@@ -72,6 +94,8 @@ export interface DualHuntInput {
   liveTickets?: Record<string, LiveTicker>
   orderBookMetrics?: Record<string, OrderBookMetrics>
   sequenceHits?: Record<string, SequenceHit>
+  sticky?: HuntStickyState
+  now?: number
 }
 
 export interface DualHuntResult {
@@ -85,6 +109,8 @@ const LIST_CAP = 6
 const MIN_SCORE_READY = 38
 const MIN_SCORE_WAIT = 32
 const MIN_SCORE_STREAM = 34
+const MIN_BOARD_CARDS = 3
+const MIN_UNIVERSE_FOR_FLOOR = 10
 const SHELF_ORDER: Record<HuntShelf, number> = {
   READY: 0,
   WAIT: 1,
@@ -121,9 +147,18 @@ function tickerOf(
   )
 }
 
-function estimateAtr(price: number, radar: Radar141Row | undefined): number {
+function estimateAtr(
+  price: number,
+  radar: Radar141Row | undefined,
+  stickyAtr?: number
+): number {
   if (radar && radar.atrPct > 0 && price > 0) return (radar.atrPct / 100) * price
+  if (stickyAtr && stickyAtr > 0) return stickyAtr
   return price > 0 ? price * 0.008 : 0
+}
+
+function atrIsReady(radar: Radar141Row | undefined): boolean {
+  return Boolean(radar && radar.atrPct > 0)
 }
 
 function barSecondsOf(signal: CoinSignal | null): number {
@@ -297,6 +332,11 @@ function crowdedSameSide(
   return crowded && !liq.nearestSSL?.isActive
 }
 
+function targetClearlySwept(side: HuntSide, price: number, targetPx: number): boolean {
+  if (!(targetPx > 0) || !(price > 0)) return false
+  return side === 'LONG' ? price > targetPx : price < targetPx
+}
+
 function stretchTowardTarget(
   side: HuntSide,
   price: number,
@@ -304,16 +344,17 @@ function stretchTowardTarget(
   fuel: FuelWaypoint,
   target: StreamTarget,
   signal: CoinSignal | null,
-  radar: Radar141Row | undefined
+  radar: Radar141Row | undefined,
+  sticky: boolean
 ): { stream: boolean; drop: boolean } {
   const remaining = Math.abs(target.price - price)
   const span = Math.abs(target.price - fuel.price)
   const done = span > 0 ? 1 - remaining / span : 0
   const atrLeft = atr > 0 ? remaining / atr : 99
-  if (done >= 0.88 || atrLeft < 0.35) return { stream: true, drop: true }
-  if (sameLevel(price, target.price, atr, price)) return { stream: false, drop: true }
-  if (side === 'LONG' && price >= target.price) return { stream: false, drop: true }
-  if (side === 'SHORT' && price <= target.price) return { stream: false, drop: true }
+  if (targetClearlySwept(side, price, target.price)) return { stream: false, drop: true }
+
+  const nearDone = done >= 0.88 || atrLeft < 0.35
+  if (nearDone) return { stream: true, drop: !sticky }
 
   const leftFuel =
     side === 'LONG'
@@ -353,16 +394,18 @@ export function countShelves(cards: DualHuntCard[]): HuntShelfCounts {
   return out
 }
 
-function capLane(cards: DualHuntCard[]): DualHuntCard[] {
-  const ready = cards.filter((c) => c.shelf === 'READY')
-  const wait = cards.filter((c) => c.shelf === 'WAIT')
-  const stream = cards.filter((c) => c.shelf === 'STREAM')
+function capLane(cards: DualHuntCard[], incumbents: Set<string>): DualHuntCard[] {
+  if (cards.length <= LIST_CAP) return cards
+  const held = cards.filter((c) => incumbents.has(c.internalSymbol))
+  const fresh = cards.filter((c) => !incumbents.has(c.internalSymbol))
   const out: DualHuntCard[] = []
-  for (const pack of [ready, wait, stream]) {
-    for (const c of pack) {
-      if (out.length >= LIST_CAP) return out
-      out.push(c)
-    }
+  for (const c of held) {
+    if (out.length >= LIST_CAP) return out
+    out.push(c)
+  }
+  for (const c of fresh) {
+    if (out.length >= LIST_CAP) return out
+    out.push(c)
   }
   return out
 }
@@ -572,12 +615,16 @@ function pickStreamTarget(
   spent: SpentLiquidity,
   daily: DailyFrame,
   ticker: LiveTicker | undefined,
-  fuel: FuelWaypoint
+  fuel: FuelWaypoint,
+  opts?: { stickyPx?: number; loose?: boolean }
 ): StreamTarget | null {
   const barSec = barSecondsOf(signal)
   const horizon = tfHorizon(barSec, atr, price)
   const style = signal?.tradeStyle ?? 'INTRADAY'
-  const minDist = Math.max(atr * 0.45, price * 0.0028)
+  const loose = Boolean(opts?.loose)
+  const minDist = loose
+    ? Math.max(atr * 0.25, price * 0.0012)
+    : Math.max(atr * 0.45, price * 0.0028)
   const maxPct = style === 'SCALP' ? 0.035 : style === 'SWING' ? 0.14 : 0.085
   const maxDist = Math.min(horizon.dist * 1.15, price * maxPct)
   const spentPool = side === 'LONG' ? spent.bsl : spent.ssl
@@ -587,6 +634,7 @@ function pickStreamTarget(
       : signal?.sl && signal.sl > 0
         ? signal.sl
         : fuel.price
+  const stickyEps = Math.max(price * 0.0004, atr * 0.05)
 
   const raw: Array<{ price: number; label: string; weight: number }> = []
   if (side === 'LONG') {
@@ -628,13 +676,18 @@ function pickStreamTarget(
       addTarget(raw, radar.gap.lower.price, radar.gap.lower.label || 'gap снизу', 72)
     }
   }
+  if (opts?.stickyPx && opts.stickyPx > 0) {
+    addTarget(raw, opts.stickyPx, 'цель', 99)
+  }
 
   const scored: Array<StreamTarget & { score: number }> = []
   for (const c of raw) {
-    const ahead = side === 'LONG' ? c.price > price + minDist : c.price < price - minDist
+    const isSticky = opts?.stickyPx != null && sameLevel(c.price, opts.stickyPx, atr, price)
+    const gate = isSticky ? stickyEps : minDist
+    const ahead = side === 'LONG' ? c.price > price + gate : c.price < price - gate
     if (!ahead) continue
     const dist = Math.abs(c.price - price)
-    if (dist < minDist || dist > maxDist) continue
+    if (dist < gate || (!isSticky && dist > maxDist)) continue
     if (spentPool && sameLevel(c.price, spentPool.price, atr, price)) continue
     if (sameLevel(c.price, fuel.price, atr, price)) continue
 
@@ -642,8 +695,9 @@ function pickStreamTarget(
     const atrMult = atr > 0 ? dist / atr : 0
     const risk = inv > 0 ? Math.abs(price - inv) : 0
     const rMultiple = risk > 0 ? dist / risk : null
-    if (rMultiple != null && rMultiple < 0.75) continue
-    if (rMultiple != null && rMultiple > 6 && c.weight < 90) continue
+    const minR = loose || isSticky ? 0.45 : 0.75
+    if (rMultiple != null && rMultiple < minR) continue
+    if (!loose && !isSticky && rMultiple != null && rMultiple > 6 && c.weight < 90) continue
 
     const rOk = rMultiple != null && rMultiple >= 1 && rMultiple <= 3.2
     const atrOk = atrMult >= 0.8 && atrMult <= 3.2
@@ -791,6 +845,148 @@ function probabilityOf(
   return hunt
 }
 
+type HardKill =
+  | 'target_swept'
+  | 'zone_broken'
+  | 'invalidation'
+  | 'fuel_gone'
+  | 'opp_choch'
+  | 'daily_against'
+
+interface SideJudge {
+  ready: boolean
+  hard: HardKill | null
+  quality: DualHuntCard | null
+  floor: DualHuntCard | null
+  targetPx: number | null
+  fuelPx: number | null
+  atr: number
+}
+
+function dailySideKnown(
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined
+): boolean {
+  if (signal?.dailyBias === 'BULLISH' || signal?.dailyBias === 'BEARISH') return true
+  return radar?.htfBias === 'LONG' || radar?.htfBias === 'SHORT'
+}
+
+function spentFlagsReady(
+  signal: CoinSignal | null,
+  liq: LiquidityMap | undefined,
+  sequence: SequenceHit | null | undefined
+): boolean {
+  if (liq) return true
+  if (sequence) return true
+  if (signal?.raid) return true
+  if (signal?.mss?.detected) return true
+  if (signal?.ltfChoCH?.detected) return true
+  return Boolean(signal)
+}
+
+function judgementReady(
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined,
+  liq: LiquidityMap | undefined,
+  sequence: SequenceHit | null | undefined
+): boolean {
+  if (!dailySideKnown(signal, radar)) return false
+  if (!atrIsReady(radar)) return false
+  if (!spentFlagsReady(signal, liq, sequence)) return false
+  return true
+}
+
+function oppositeChoch(side: HuntSide, signal: CoinSignal | null): boolean {
+  const struct = lastStructureSide(signal)
+  if (!struct || struct === side) return false
+  return freshChochFlip(struct, signal)
+}
+
+function junkLongVsSpentDaily(
+  side: HuntSide,
+  daily: DailyFrame,
+  spent: SpentLiquidity,
+  price: number,
+  flipped: boolean
+): boolean {
+  if (side !== 'LONG' || flipped) return false
+  if (daily.side !== 'SHORT') return false
+  if (spent.bsl) return true
+  if (daily.magnet != null && daily.magnet < price) return true
+  return true
+}
+
+function applyDaily(
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined,
+  spent: SpentLiquidity,
+  price: number,
+  atr: number
+): DailyFrame {
+  const daily = readDailyFrame({ signal, spent, price, atr })
+  if (!daily.side && radar?.htfBias && radar.htfBias !== 'FLAT') {
+    daily.side = radar.htfBias
+    daily.bias = radar.htfBias === 'LONG' ? 'BULLISH' : 'BEARISH'
+  }
+  return daily
+}
+
+function makeCard(
+  side: HuntSide,
+  internal: string,
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined,
+  ticker: LiveTicker | undefined,
+  shelf: HuntShelf,
+  fuel: FuelWaypoint,
+  target: StreamTarget,
+  score: number,
+  settingUp: boolean,
+  price: number
+): DualHuntCard {
+  return {
+    symbol: signal?.symbol ?? toFlatSymbol(internal),
+    internalSymbol: internal,
+    displayName: signal?.displayName ?? radar?.displayName ?? internal,
+    ticker: toBaseTicker(internal),
+    side,
+    shelf,
+    shelfLabel: SHELF_RU[shelf],
+    reason: whyNow(side, shelf, fuel, target, signal),
+    streamTo: humanizeStoryTarget(target.label, side),
+    fuelWhere: fuelKindRu(fuel, side),
+    doNotChase: shelf === 'STREAM',
+    targetQuality: target.quality,
+    distanceLabel: `≈${target.distPct.toFixed(1)}%`,
+    score,
+    probability: probabilityOf(signal, radar, score),
+    settingUp,
+    price,
+    priceChange24h: signal?.priceChange24h ?? radar?.change24h ?? ticker?.priceChange24h ?? 0,
+    targetPx: target.price,
+    fuelPx: fuel.price,
+  }
+}
+
+function pickShelf(
+  stretchStream: boolean,
+  fuelClose: boolean,
+  inZone: boolean,
+  signal: CoinSignal | null,
+  liq: LiquidityMap | undefined,
+  side: HuntSide,
+  forceWait: boolean
+): HuntShelf {
+  if (stretchStream) return 'STREAM'
+  if (forceWait) return 'WAIT'
+  if (fuelClose || inZone) {
+    if (sessionIsDead(signal) && !inZone) return 'WAIT'
+    if (crowdedSameSide(side, signal, liq)) return 'WAIT'
+    return 'READY'
+  }
+  return 'WAIT'
+}
+
 function evaluateSide(
   side: HuntSide,
   signal: CoinSignal | null,
@@ -800,19 +996,41 @@ function evaluateSide(
   mm: MmIntentSnapshot | null | undefined,
   ticker: LiveTicker | undefined,
   sequence: SequenceHit | null | undefined,
-  walls: OrderBookMetrics | undefined
-): DualHuntCard | null {
+  walls: OrderBookMetrics | undefined,
+  sticky: HuntStickyEntry | null
+): SideJudge {
+  const blank: SideJudge = {
+    ready: false,
+    hard: null,
+    quality: null,
+    floor: null,
+    targetPx: sticky?.targetPx ?? null,
+    fuelPx: sticky?.fuelPx ?? null,
+    atr: sticky?.atr ?? 0,
+  }
   const internal = signal?.internalSymbol ?? radar?.internalSymbol
-  if (!internal) return null
+  if (!internal) return blank
   const price = signal?.price ?? radar?.price ?? ticker?.price ?? 0
-  if (!(price > 0)) return null
-  if (radar?.liquidityGrade === 'D' && !signal?.hasActiveSetup) return null
-  if (isChopOnly(signal, radar) && !freshChochFlip(side, signal)) return null
+  if (!(price > 0)) return blank
 
-  const atr = estimateAtr(price, radar)
-  if (invalidationHit(side, price, signal)) return null
-  if (zoneBrokenAgainst(side, price, atr, signal)) return null
-  if (equalBothSides(liq, price, atr) && !freshChochFlip(side, signal)) return null
+  const atr = estimateAtr(price, radar, sticky?.atr)
+  const ready = judgementReady(signal, radar, liq, sequence)
+
+  if (invalidationHit(side, price, signal)) {
+    return { ...blank, ready, hard: 'invalidation', atr }
+  }
+  if (zoneBrokenAgainst(side, price, atr, signal)) {
+    return { ...blank, ready, hard: 'zone_broken', atr }
+  }
+  if (oppositeChoch(side, signal)) {
+    return { ...blank, ready, hard: 'opp_choch', atr }
+  }
+  if (sticky && targetClearlySwept(side, price, sticky.targetPx)) {
+    return { ...blank, ready, hard: 'target_swept', atr }
+  }
+
+  if (!ready) return { ...blank, atr }
+
   const spent = detectSpentLiquidity({
     candles: [],
     price,
@@ -821,7 +1039,6 @@ function evaluateSide(
     liquidityMap: liq ?? null,
     sequence: sequence ?? null,
   })
-
   const whaleMap = buildWhaleSitMap({
     price,
     whale: whaleState ?? null,
@@ -829,23 +1046,22 @@ function evaluateSide(
     walls: walls?.walls ?? null,
     spent,
   })
-
-  const daily = readDailyFrame({
-    signal,
-    spent,
-    price,
-    atr,
-  })
-  if (!daily.side && radar?.htfBias && radar.htfBias !== 'FLAT') {
-    daily.side = radar.htfBias
-    daily.bias = radar.htfBias === 'LONG' ? 'BULLISH' : 'BEARISH'
-  }
+  const daily = applyDaily(signal, radar, spent, price, atr)
   const flipped = freshChochFlip(side, signal)
-  if (side === 'LONG' && dailyBlocksLong(daily, price, flipped)) return null
-  if (side === 'SHORT' && dailyBlocksShort(daily, price, flipped)) return null
+  if (junkLongVsSpentDaily(side, daily, spent, price, flipped)) {
+    return { ...blank, ready: true, hard: 'daily_against', atr }
+  }
+  if (side === 'LONG' && dailyBlocksLong(daily, price, flipped)) {
+    return { ...blank, ready: true, hard: 'daily_against', atr }
+  }
+  if (side === 'SHORT' && dailyBlocksShort(daily, price, flipped)) {
+    return { ...blank, ready: true, hard: 'daily_against', atr }
+  }
 
   const fuel = resolveFuel(side, price, atr, signal, liq, spent, whaleMap, mm)
-  if (!fuel) return null
+  if (!fuel) {
+    return { ...blank, ready: true, hard: 'fuel_gone', atr }
+  }
 
   const target = pickStreamTarget(
     side,
@@ -857,27 +1073,61 @@ function evaluateSide(
     spent,
     daily,
     ticker,
-    fuel
+    fuel,
+    { stickyPx: sticky?.targetPx, loose: Boolean(sticky) }
   )
-  if (!target) return null
+  const floorTarget =
+    target ??
+    pickStreamTarget(
+      side,
+      price,
+      atr,
+      signal,
+      radar,
+      liq,
+      spent,
+      daily,
+      ticker,
+      fuel,
+      { stickyPx: sticky?.targetPx, loose: true }
+    )
+  if (!floorTarget) {
+    const hard: HardKill | null =
+      sticky && targetClearlySwept(side, price, sticky.targetPx) ? 'target_swept' : null
+    return { ...blank, ready: true, hard, fuelPx: fuel.price, atr }
+  }
+  if (targetClearlySwept(side, price, floorTarget.price)) {
+    return { ...blank, ready: true, hard: 'target_swept', fuelPx: fuel.price, atr }
+  }
 
+  const softChop = isChopOnly(signal, radar) && !flipped
+  const softThin = radar?.liquidityGrade === 'D' && !signal?.hasActiveSetup
+  const softEqual = equalBothSides(liq, price, atr) && !flipped
   const fuelClose =
     Math.abs(fuel.price - price) <= Math.max(atr * 0.9, price * 0.004) ||
     inZoneLabel(fuel)
   const inZone = inZoneLabel(fuel)
   const settingUp = isSettingUp(side, signal, radar, fuelClose)
-  const stretch = stretchTowardTarget(side, price, atr, fuel, target, signal, radar)
-  if (stretch.drop) return null
-
-  let shelf: HuntShelf
-  if (stretch.stream) {
-    shelf = 'STREAM'
-  } else if (fuelClose || inZone) {
-    shelf = 'READY'
-    if (sessionIsDead(signal) && !inZone) shelf = 'WAIT'
-    if (crowdedSameSide(side, signal, liq)) shelf = 'WAIT'
-  } else {
-    shelf = 'WAIT'
+  const useTarget = target ?? floorTarget
+  const stretch = stretchTowardTarget(
+    side,
+    price,
+    atr,
+    fuel,
+    useTarget,
+    signal,
+    radar,
+    Boolean(sticky)
+  )
+  if (stretch.drop && !sticky) {
+    return {
+      ...blank,
+      ready: true,
+      hard: targetClearlySwept(side, price, useTarget.price) ? 'target_swept' : null,
+      fuelPx: fuel.price,
+      targetPx: useTarget.price,
+      atr,
+    }
   }
 
   const whaleAcc = inferWhaleAccumulation(whaleState) ?? (
@@ -890,35 +1140,117 @@ function evaluateSide(
     signal,
     radar,
     fuel,
-    target,
+    target: useTarget,
     daily,
     settingUp,
     whaleSide: whaleAcc?.side ?? null,
   })
-  if (score < minScoreOf(shelf)) return null
 
-  const destName = humanizeStoryTarget(target.label, side)
-  const doNotChase = shelf === 'STREAM'
+  const qualityShelf = pickShelf(stretch.stream, fuelClose, inZone, signal, liq, side, false)
+  const qualityOk =
+    Boolean(target) &&
+    !stretch.drop &&
+    !softChop &&
+    !softThin &&
+    !softEqual &&
+    score >= minScoreOf(qualityShelf)
+
+  const quality = qualityOk
+    ? makeCard(
+        side,
+        internal,
+        signal,
+        radar,
+        ticker,
+        qualityShelf,
+        fuel,
+        target ?? useTarget,
+        score,
+        settingUp,
+        price
+      )
+    : null
+
+  const floorShelf = pickShelf(stretch.stream, fuelClose, inZone, signal, liq, side, true)
+  const floor =
+    !quality && !softChop && !softThin
+      ? makeCard(
+          side,
+          internal,
+          signal,
+          radar,
+          ticker,
+          floorShelf,
+          fuel,
+          useTarget,
+          score,
+          settingUp,
+          price
+        )
+      : null
+
   return {
-    symbol: signal?.symbol ?? toFlatSymbol(internal),
-    internalSymbol: internal,
-    displayName: signal?.displayName ?? radar?.displayName ?? internal,
-    ticker: toBaseTicker(internal),
-    side,
+    ready: true,
+    hard: null,
+    quality,
+    floor,
+    targetPx: useTarget.price,
+    fuelPx: fuel.price,
+    atr,
+  }
+}
+
+function refreshStickyCard(
+  prev: DualHuntCard,
+  next: DualHuntCard | null,
+  price: number,
+  ticker: LiveTicker | undefined
+): DualHuntCard {
+  if (!next) {
+    return {
+      ...prev,
+      price: price > 0 ? price : prev.price,
+      priceChange24h: ticker?.priceChange24h ?? prev.priceChange24h,
+    }
+  }
+  let shelf = next.shelf
+  if (prev.shelf === 'READY' && (next.shelf === 'WAIT' || next.shelf === 'STREAM')) {
+    shelf = next.shelf
+  } else if (prev.shelf === 'WAIT' && next.shelf === 'STREAM') {
+    shelf = 'STREAM'
+  } else if (next.shelf === 'READY' || next.shelf === prev.shelf) {
+    shelf = next.shelf
+  } else {
+    shelf = prev.shelf
+  }
+  return {
+    ...next,
     shelf,
     shelfLabel: SHELF_RU[shelf],
-    reason: whyNow(side, shelf, fuel, target, signal),
-    streamTo: destName,
-    fuelWhere: fuelKindRu(fuel, side),
-    doNotChase,
-    targetQuality: target.quality,
-    distanceLabel: `≈${target.distPct.toFixed(1)}%`,
-    score,
-    probability: probabilityOf(signal, radar, score),
-    settingUp,
-    price,
-    priceChange24h: signal?.priceChange24h ?? radar?.change24h ?? ticker?.priceChange24h ?? 0,
+    doNotChase: shelf === 'STREAM',
   }
+}
+
+function rankStable(
+  a: DualHuntCard,
+  b: DualHuntCard,
+  prevOrder: Map<string, number>
+): number {
+  if (SHELF_ORDER[a.shelf] !== SHELF_ORDER[b.shelf]) {
+    return SHELF_ORDER[a.shelf] - SHELF_ORDER[b.shelf]
+  }
+  const ia = prevOrder.get(a.internalSymbol)
+  const ib = prevOrder.get(b.internalSymbol)
+  if (ia != null && ib != null && ia !== ib) return ia - ib
+  if (ia != null && ib == null) return -1
+  if (ia == null && ib != null) return 1
+  if (a.targetQuality !== b.targetQuality) {
+    return a.targetQuality === 'хорошо' ? -1 : 1
+  }
+  if (a.internalSymbol !== b.internalSymbol) {
+    return a.internalSymbol.localeCompare(b.internalSymbol)
+  }
+  return b.score - a.score
 }
 
 /**
@@ -926,6 +1258,8 @@ function evaluateSide(
  * target above; short only with the inverse. Same scanner universe.
  */
 export function buildDualHunt(input: DualHuntInput): DualHuntResult {
+  const now = input.now ?? Date.now()
+  const sticky = input.sticky
   const radarByKey = new Map<string, Radar141Row>()
   for (const row of input.radarRows) {
     radarByKey.set(row.internalSymbol, row)
@@ -934,8 +1268,15 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
   }
 
   const seen = new Set<string>()
-  const longs: DualHuntCard[] = []
-  const shorts: DualHuntCard[] = []
+  const qualityLongs: DualHuntCard[] = []
+  const qualityShorts: DualHuntCard[] = []
+  const floorLongs: DualHuntCard[] = []
+  const floorShorts: DualHuntCard[] = []
+  const stickyKeep: DualHuntCard[] = []
+  const hardDead = new Set<string>()
+  const renewed = new Set<string>()
+  let judged = 0
+  let universe = 0
 
   const consider = (signal: CoinSignal | null, radarHint?: Radar141Row) => {
     const radar =
@@ -946,6 +1287,7 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
     const key = signal?.internalSymbol ?? radar?.internalSymbol
     if (!key || seen.has(key)) return
     seen.add(key)
+    universe += 1
 
     const liq = input.liquidityMaps?.[key]
     const whale = input.whaleWatcher?.[key] ?? null
@@ -955,8 +1297,10 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
       input.sequenceHits?.[key] ??
       (signal ? input.sequenceHits?.[signal.symbol] : undefined)
     const walls = input.orderBookMetrics?.[key]
+    const held = sticky?.get(key) ?? null
+    const price = signal?.price ?? radar?.price ?? ticker?.price ?? held?.card.price ?? 0
 
-    const longCard = evaluateSide(
+    const longJ = evaluateSide(
       'LONG',
       signal,
       radar,
@@ -965,9 +1309,10 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
       mm,
       ticker,
       sequence,
-      walls
+      walls,
+      held?.side === 'LONG' ? held : null
     )
-    const shortCard = evaluateSide(
+    const shortJ = evaluateSide(
       'SHORT',
       signal,
       radar,
@@ -976,12 +1321,61 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
       mm,
       ticker,
       sequence,
-      walls
+      walls,
+      held?.side === 'SHORT' ? held : null
     )
+    if (longJ.ready || shortJ.ready) judged += 1
 
-    const keep = pickAgreedSide(signal, radar, longCard, shortCard)
-    if (keep === 'LONG' && longCard) longs.push(longCard)
-    else if (keep === 'SHORT' && shortCard) shorts.push(shortCard)
+    let keep: HuntSide | null = null
+    if (held) {
+      const mine = held.side === 'LONG' ? longJ : shortJ
+      if (!mine.hard) keep = held.side
+      else {
+        hardDead.add(key)
+        const other = held.side === 'LONG' ? shortJ : longJ
+        if (other.quality) keep = held.side === 'LONG' ? 'SHORT' : 'LONG'
+      }
+    } else {
+      keep = pickAgreedSide(signal, radar, longJ.quality, shortJ.quality)
+      if (!keep) {
+        keep = pickAgreedSide(signal, radar, longJ.floor, shortJ.floor)
+      }
+    }
+
+    const pick = keep === 'SHORT' ? shortJ : keep === 'LONG' ? longJ : null
+    if (!pick || !keep) {
+      if (held && now - held.lastOkAt < HUNT_STICKY_TTL_MS && !hardDead.has(key)) {
+        stickyKeep.push(refreshStickyCard(held.card, null, price, ticker))
+      }
+      return
+    }
+
+    if (pick.quality) {
+      const card = held
+        ? refreshStickyCard(held.card, pick.quality, price, ticker)
+        : pick.quality
+      renewed.add(key)
+      if (keep === 'LONG') qualityLongs.push(card)
+      else qualityShorts.push(card)
+      return
+    }
+
+    if (held && pick.floor && !pick.hard) {
+      renewed.add(key)
+      stickyKeep.push(refreshStickyCard(held.card, pick.floor, price, ticker))
+      return
+    }
+
+    if (held && !pick.hard && now - held.lastOkAt < HUNT_STICKY_TTL_MS) {
+      stickyKeep.push(refreshStickyCard(held.card, null, price, ticker))
+      return
+    }
+
+    if (pick.floor) {
+      renewed.add(key)
+      if (keep === 'LONG') floorLongs.push(pick.floor)
+      else floorShorts.push(pick.floor)
+    }
   }
 
   for (const raw of input.signals) {
@@ -991,28 +1385,68 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
     consider(null, row)
   }
 
-  const rank = (a: DualHuntCard, b: DualHuntCard) => {
-    if (SHELF_ORDER[a.shelf] !== SHELF_ORDER[b.shelf]) {
-      return SHELF_ORDER[a.shelf] - SHELF_ORDER[b.shelf]
-    }
-    if (a.targetQuality !== b.targetQuality) {
-      return a.targetQuality === 'хорошо' ? -1 : 1
-    }
-    if (a.settingUp !== b.settingUp) return a.settingUp ? -1 : 1
-    if (b.score !== a.score) return b.score - a.score
-    return b.probability - a.probability
+  const prevOrder = new Map<string, number>()
+  if (sticky) {
+    for (const [k, e] of sticky) prevOrder.set(k, e.order)
   }
 
-  longs.sort(rank)
-  shorts.sort(rank)
+  const incumbents = new Set(prevOrder.keys())
+  const takeSticky = (side: HuntSide) =>
+    stickyKeep.filter((c) => c.side === side)
 
-  const longCounts = countShelves(longs)
-  const shortCounts = countShelves(shorts)
+  let longs = [...qualityLongs, ...takeSticky('LONG')]
+  let shorts = [...qualityShorts, ...takeSticky('SHORT')]
+
+  const dataFull = universe >= MIN_UNIVERSE_FOR_FLOOR && judged >= Math.min(8, universe)
+  if (dataFull && longs.length + shorts.length < MIN_BOARD_CARDS) {
+    const have = new Set([...longs, ...shorts].map((c) => c.internalSymbol))
+    const fill = [...floorLongs, ...floorShorts]
+      .filter((c) => !have.has(c.internalSymbol))
+      .sort((a, b) => rankStable(a, b, prevOrder))
+    for (const c of fill) {
+      if (longs.length + shorts.length >= MIN_BOARD_CARDS) break
+      if (c.side === 'LONG') longs.push(c)
+      else shorts.push(c)
+      have.add(c.internalSymbol)
+    }
+  }
+
+  longs.sort((a, b) => rankStable(a, b, prevOrder))
+  shorts.sort((a, b) => rankStable(a, b, prevOrder))
+  longs = capLane(longs, incumbents)
+  shorts = capLane(shorts, incumbents)
+
+  if (sticky) {
+    const live = [...longs, ...shorts]
+    const liveKeys = new Set(live.map((c) => c.internalSymbol))
+    for (const [k, e] of [...sticky.entries()]) {
+      if (hardDead.has(k)) {
+        sticky.delete(k)
+        continue
+      }
+      if (!liveKeys.has(k) && now - e.lastOkAt >= HUNT_STICKY_TTL_MS) {
+        sticky.delete(k)
+      }
+    }
+    live.forEach((card, i) => {
+      const prev = sticky.get(card.internalSymbol)
+      sticky.set(card.internalSymbol, {
+        card,
+        side: card.side,
+        targetPx: card.targetPx,
+        fuelPx: card.fuelPx,
+        atr: prev?.atr && prev.atr > 0 ? prev.atr : estimateAtr(card.price, radarByKey.get(card.internalSymbol)),
+        mountedAt: prev?.mountedAt ?? now,
+        lastOkAt: renewed.has(card.internalSymbol) ? now : prev?.lastOkAt ?? now,
+        order: prev?.order ?? 1000 + i,
+      })
+    })
+  }
 
   return {
-    longs: capLane(longs),
-    shorts: capLane(shorts),
-    longCounts,
-    shortCounts,
+    longs,
+    shorts,
+    longCounts: countShelves(longs),
+    shortCounts: countShelves(shorts),
   }
 }

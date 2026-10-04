@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Star } from 'lucide-react'
 import { toRadarLabel } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
@@ -6,6 +6,7 @@ import { useRadarFavoriteToggle } from '../../hooks/useRadarFavoriteToggle'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import {
   buildDualHunt,
+  createHuntSticky,
   type DualHuntCard,
   type HuntShelf,
   type HuntShelfCounts,
@@ -55,7 +56,7 @@ function HuntRow({
   const label = toRadarLabel(card.internalSymbol)
   const showStar = card.shelf === 'READY'
   return (
-    <div className="flex items-start gap-2 border-b border-white/[0.06] px-3 py-2.5">
+    <div className="flex min-h-[4.75rem] items-start gap-2 border-b border-white/[0.06] px-3 py-2.5">
       {showStar ? (
         <button
           type="button"
@@ -277,6 +278,13 @@ const DualHuntBoard = () => {
   const twoCols = useTwoColumns()
   const [lane, setLane] = useState<Lane>('long')
   const [shelf, setShelf] = useState<ShelfFilter>('ALL')
+  const [tick, setTick] = useState(0)
+  const stickyRef = useRef(createHuntSticky())
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const favSet = useMemo(() => new Set(favorites), [favorites])
 
@@ -292,6 +300,8 @@ const DualHuntBoard = () => {
         liveTickets,
         orderBookMetrics,
         sequenceHits,
+        sticky: stickyRef.current,
+        now: Date.now(),
       }),
     [
       signals,
@@ -303,6 +313,7 @@ const DualHuntBoard = () => {
       liveTickets,
       orderBookMetrics,
       sequenceHits,
+      tick,
     ]
   )
 
@@ -384,7 +395,7 @@ const DualHuntBoard = () => {
         {radarMeta.error ? ` · ${radarMeta.error}` : ''}
       </p>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 [scrollbar-gutter:stable]">
         <div className={twoCols ? 'grid grid-cols-2 gap-3' : ''}>
           {showLong && (
             <HuntLane
