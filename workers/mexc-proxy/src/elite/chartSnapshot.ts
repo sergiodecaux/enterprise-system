@@ -18,6 +18,7 @@ export interface SnapshotScene {
   zoneHigh: number
   magnetPrice?: number
   magnetLabel?: string
+  marks?: Array<{ price: number; label: string }>
   caption: string
 }
 
@@ -60,6 +61,7 @@ const FONT: Record<string, number[]> = {
   L: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
   N: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
   O: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+  P: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
   R: [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
   S: [0x0e, 0x11, 0x10, 0x0e, 0x01, 0x11, 0x0e],
   T: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
@@ -284,6 +286,46 @@ function fmtShort(n: number): string {
   return n.toPrecision(3)
 }
 
+function pickUrgentMarks(
+  c15: Candle[],
+  c1d: Candle[],
+  price: number
+): Array<{ price: number; label: string }> {
+  const out: Array<{ price: number; label: string }> = []
+  const prev = c1d.length >= 2 ? c1d[c1d.length - 2] : null
+  const atr =
+    c15.length >= 6
+      ? c15.slice(-6).reduce((s, c) => s + (c[2] - c[3]), 0) / 6
+      : price * 0.004
+  const near = Math.max(atr * 4.5, price * 0.012)
+  if (prev) {
+    const pdh = prev[2]
+    const pdl = prev[3]
+    const usedHigh = c15.some((c) => c[2] >= pdh) || price >= pdh
+    const usedLow = c15.some((c) => c[3] <= pdl) || price <= pdl
+    if (!usedHigh && Math.abs(pdh - price) <= near) out.push({ price: pdh, label: 'PDH' })
+    if (!usedLow && Math.abs(pdl - price) <= near) out.push({ price: pdl, label: 'PDL' })
+  }
+  const highs: Array<[number, number]> = []
+  const lows: Array<[number, number]> = []
+  for (let i = 2; i < c15.length - 2; i++) {
+    const h = c15[i]![2]
+    const l = c15[i]![3]
+    if (h > c15[i - 1]![2] && h > c15[i - 2]![2] && h > c15[i + 1]![2] && h > c15[i + 2]![2]) {
+      highs.push([i, h])
+    }
+    if (l < c15[i - 1]![3] && l < c15[i - 2]![3] && l < c15[i + 1]![3] && l < c15[i + 2]![3]) {
+      lows.push([i, l])
+    }
+  }
+  const lastH = highs[highs.length - 1]
+  const lastL = lows[lows.length - 1]
+  const last = c15[c15.length - 1]
+  if (last && lastH && last[4] > lastH[1]) out.push({ price: lastH[1], label: 'BOS' })
+  else if (last && lastL && last[4] < lastL[1]) out.push({ price: lastL[1], label: 'BOS' })
+  return out.slice(0, 3)
+}
+
 function yOf(price: number, min: number, max: number): number {
   const span = Math.max(max - min, 1e-12)
   return PAD_T + ((max - price) / span) * (H - PAD_T - PAD_B)
@@ -308,6 +350,10 @@ export async function renderSetupChartPng(
   if (scene.magnetPrice) {
     min = Math.min(min, scene.magnetPrice)
     max = Math.max(max, scene.magnetPrice)
+  }
+  for (const m of scene.marks ?? []) {
+    min = Math.min(min, m.price)
+    max = Math.max(max, m.price)
   }
   const pad = (max - min) * 0.08 || 1
   min -= pad
@@ -367,6 +413,16 @@ export async function renderSetupChartPng(
     c.text(PAD_L + 4, my - 9, label, MAGNET)
   }
 
+  for (const m of scene.marks ?? []) {
+    if (!(m.price > 0)) continue
+    if (scene.magnetPrice && Math.abs(m.price - scene.magnetPrice) / Math.max(m.price, 1e-8) < 0.001) {
+      continue
+    }
+    const my = yOf(m.price, min, max)
+    c.line(PAD_L, my, W - PAD_R, my, MUTED)
+    c.text(PAD_L + 4, my - 9, m.label.slice(0, 8).toUpperCase(), MUTED)
+  }
+
   c.text(8, H - 14, fmtShort(max), MUTED)
   c.text(8, H - 24, fmtShort(min), MUTED)
   return encodePng(c.px, W, H)
@@ -420,6 +476,13 @@ export async function inferEliteScene(
         (used === 'LONG' ? price * 1.018 : price * 0.982)
   const magnet =
     used === 'LONG' ? map.nearestBSL : map.nearestSSL
+  const prevDay = c1d.length >= 2 ? c1d[c1d.length - 2] : null
+  const dailyMagnet =
+    used === 'LONG' && prevDay && price < prevDay[2]
+      ? { price: prevDay[2], label: 'PDH' }
+      : used === 'SHORT' && prevDay && price > prevDay[3]
+        ? { price: prevDay[3], label: 'PDL' }
+        : null
   return {
     symbol,
     side: used,
@@ -427,8 +490,9 @@ export async function inferEliteScene(
     target,
     zoneLow: hint?.zoneLow ?? zone?.zoneLow ?? entry * 0.994,
     zoneHigh: hint?.zoneHigh ?? zone?.zoneHigh ?? entry * 1.006,
-    magnetPrice: hint?.magnetPrice ?? magnet?.price,
-    magnetLabel: hint?.magnetLabel ?? 'MAGNET',
+    magnetPrice: hint?.magnetPrice ?? dailyMagnet?.price ?? magnet?.price,
+    magnetLabel: hint?.magnetLabel ?? dailyMagnet?.label ?? 'MAGNET',
+    marks: hint?.marks ?? pickUrgentMarks(c15, c1d, price),
     caption: hint?.caption ?? '',
   }
 }

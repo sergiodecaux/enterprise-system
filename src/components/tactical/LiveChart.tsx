@@ -92,6 +92,8 @@ import { pickActionZones } from '../../engine/smc/entryZones'
 import { calculateAtr } from '../../engine/smc'
 import { buildChartStory, leadStoryScenario } from '../../engine/smc/chartStory'
 import type { StoryScenarioId } from '../../engine/smc/chartStory'
+import { readIctStructure, selectIctOverlayMarks } from '../../engine/smc/ictStructure'
+import IctMarksOverlay from './IctMarksOverlay'
 import {
   analyzeZoneTap,
   hitZoneAt,
@@ -1708,6 +1710,19 @@ const LiveChart = ({
     [candles, currentPrice]
   )
 
+  const ictRead = useMemo(
+    () =>
+      readIctStructure({
+        candles,
+        candles1d:
+          candles1d.length >= 8 ? candles1d : timeframe === '1d' ? candles : candles1d,
+        candles1w: candles1w.length >= 3 ? candles1w : undefined,
+        barSeconds: timeframeBarSeconds(timeframe),
+        price: currentPrice,
+      }),
+    [candles, candles1d, candles1w, timeframe, currentPrice]
+  )
+
   const chartStory = useMemo(
     () =>
       buildChartStory({
@@ -1730,6 +1745,7 @@ const LiveChart = ({
         walls: orderBookMetrics?.walls ?? null,
         liqHeatmap: liqModel,
         mmIntent: mmSnap,
+        ict: ictRead,
       }),
     [
       candidateZones,
@@ -1752,6 +1768,29 @@ const LiveChart = ({
       orderBookMetrics?.walls,
       liqModel,
       mmSnap,
+      ictRead,
+    ]
+  )
+
+  const ictMarks = useMemo(
+    () =>
+      selectIctOverlayMarks(ictRead, {
+        clean: cleanMode || onlyStrong,
+        price: currentPrice,
+        atr: chartAtr,
+        fuelPrice: chartStory.fuel?.price,
+        targetPrice: chartStory.future?.targetPrice,
+        spent: chartStory.spent,
+      }),
+    [
+      ictRead,
+      cleanMode,
+      onlyStrong,
+      currentPrice,
+      chartAtr,
+      chartStory.fuel?.price,
+      chartStory.future?.targetPrice,
+      chartStory.spent,
     ]
   )
 
@@ -3299,6 +3338,14 @@ const LiveChart = ({
             quiet={chartExpanded}
             onlyStrong={cleanMode || onlyStrong}
             thinLabels={chartExpanded}
+          />
+        )}
+        {chartReady > 0 && ictMarks.length > 0 && (
+          <IctMarksOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            marks={ictMarks}
           />
         )}
         {chartReady > 0 &&

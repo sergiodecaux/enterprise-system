@@ -23,6 +23,11 @@ import { readCloseQuality } from './mmTrapThesis'
 import type { StructureEvent, StructureRead } from './structureRead'
 import type { ZoneReaction, ZoneReactionBoard } from './zoneReaction'
 import { reactionForZone } from './zoneReaction'
+import {
+  chochFlipOf,
+  readIctStructure,
+  type IctStructure,
+} from './ictStructure'
 
 export type StoryNowKind = 'IN_ZONE' | 'APPROACHING' | 'BOUNCE' | 'OUTSIDE' | 'LOST'
 
@@ -72,7 +77,7 @@ export interface FuelWaypoint {
   price: number
   label: string
   where: 'below' | 'above'
-  kind: 'SSL' | 'BSL' | 'WHALE' | 'MM' | 'SQUEEZE' | 'SWING'
+  kind: 'SSL' | 'BSL' | 'WHALE' | 'MM' | 'SQUEEZE' | 'SWING' | 'FVG' | 'SESSION'
 }
 
 export interface StoryScenario {
@@ -149,6 +154,7 @@ export interface ChartStory {
   dailyFrame: DailyFrame | null
   fuel: FuelWaypoint | null
   tfName: StoryTfName
+  ict: IctStructure | null
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -318,12 +324,16 @@ function unusedDailyMagnet(
   spent: SpentLiquidity | null,
   side: 'LONG' | 'SHORT' | null,
   price: number,
-  atr: number
+  atr: number,
+  ict?: IctStructure | null
 ): { price: number; label: string } | null {
   const d1 = structure?.d1 ?? null
   const w1 = structure?.w1 ?? null
+  const sess = ict?.sessions
   if (side === 'LONG') {
     const cands: Array<{ price: number; label: string }> = []
+    if (sess?.pdh && !sess.pdhUsed) cands.push({ price: sess.pdh, label: 'PDH' })
+    if (sess?.pwh && !sess.pwhUsed) cands.push({ price: sess.pwh, label: 'PWH' })
     if (d1?.nextBsl) cands.push({ price: d1.nextBsl, label: 'BSL дня' })
     if (d1?.dealingHigh) cands.push({ price: d1.dealingHigh, label: 'хай дня' })
     if (d1?.lastSwingHigh?.price) {
@@ -339,6 +349,8 @@ function unusedDailyMagnet(
   }
   if (side === 'SHORT') {
     const cands: Array<{ price: number; label: string }> = []
+    if (sess?.pdl && !sess.pdlUsed) cands.push({ price: sess.pdl, label: 'PDL' })
+    if (sess?.pwl && !sess.pwlUsed) cands.push({ price: sess.pwl, label: 'PWL' })
     if (d1?.nextSsl) cands.push({ price: d1.nextSsl, label: 'SSL дня' })
     if (d1?.dealingLow) cands.push({ price: d1.dealingLow, label: 'лой дня' })
     if (d1?.lastSwingLow?.price) {
@@ -361,6 +373,7 @@ export function readDailyFrame(opts: {
   spent?: SpentLiquidity | null
   price: number
   atr: number
+  ict?: IctStructure | null
 }): DailyFrame {
   const { structure, signal, spent, price, atr } = opts
   const d1 = structure?.d1 ?? null
@@ -376,7 +389,14 @@ export function readDailyFrame(opts: {
   const side = fromSignal ?? fromD1 ?? fromBias
   const bias: DailyFrame['bias'] =
     side === 'LONG' ? 'BULLISH' : side === 'SHORT' ? 'BEARISH' : 'NEUTRAL'
-  const mag = unusedDailyMagnet(structure ?? null, spent ?? null, side, price, atr)
+  const mag = unusedDailyMagnet(
+    structure ?? null,
+    spent ?? null,
+    side,
+    price,
+    atr,
+    opts.ict ?? null
+  )
   const rangeLow = d1 && d1.dealingLow > 0 ? d1.dealingLow : null
   const rangeHigh = d1 && d1.dealingHigh > 0 ? d1.dealingHigh : null
   const magnet = mag?.price && mag.price > 0 ? mag.price : null
@@ -435,6 +455,7 @@ export function pickFuelWaypoint(opts: {
   mm?: MmIntentSnapshot | null
   signal?: CoinSignal | null
   primary?: LiquidityZone | null
+  ict?: IctStructure | null
 }): FuelWaypoint | null {
   const { price, atr, side, structure, spent, liquidityMap, whale, mm, signal, primary } =
     opts
@@ -475,6 +496,28 @@ export function pickFuelWaypoint(opts: {
     const where: FuelWaypoint['where'] =
       structure.fuel.price < price ? 'below' : 'above'
     add(structure.fuel.price, structure.fuel.label || 'топливо', 'SWING', where, 100)
+  }
+  const ict = opts.ict ?? null
+  if (ict) {
+    for (const g of ict.fvgs) {
+      if (g.filled) continue
+      const mid = (g.top + g.bottom) / 2
+      const where: FuelWaypoint['where'] = mid < price ? 'below' : 'above'
+      const pullback =
+        (side === 'LONG' && g.side === 'BULLISH' && where === 'below') ||
+        (side === 'SHORT' && g.side === 'BEARISH' && where === 'above')
+      const pathMagnet =
+        (side === 'LONG' && where === 'above') || (side === 'SHORT' && where === 'below')
+      if (pullback) add(mid, 'FVG', 'FVG', where, 104)
+      else if (pathMagnet) add(mid, 'FVG', 'FVG', where, 78)
+    }
+    const sess = ict.sessions
+    if (side === 'LONG' && sess.pdl && !sess.pdlUsed) {
+      add(sess.pdl, 'PDL', 'SESSION', 'below', 82)
+    }
+    if (side === 'SHORT' && sess.pdh && !sess.pdhUsed) {
+      add(sess.pdh, 'PDH', 'SESSION', 'above', 82)
+    }
   }
   if (whale?.nearestBelow && !skipSsl) {
     add(whale.nearestBelow.price, whale.nearestBelow.shortLabel || 'киты снизу', 'WHALE', 'below', 92)
@@ -929,6 +972,7 @@ function targetFrom(opts: {
   daily?: DailyFrame | null
   mm?: MmIntentSnapshot | null
   whale?: WhaleSitMap | null
+  ict?: IctStructure | null
 }): { price: number; label: string } | null {
   const {
     setup,
@@ -1000,6 +1044,13 @@ function targetFrom(opts: {
     add(opts.daily?.magnet, opts.daily?.magnetLabel || 'магнит дня', 90 + ringBoost(ring, 'd1'))
     add(mm?.hunt.macroTarget, mm?.hunt.macroLabel || 'макро MM', 82)
     if (whale?.nearestAbove) add(whale.nearestAbove.price, 'киты сверху', 74)
+    const sess = opts.ict?.sessions
+    if (sess?.pdh && !sess.pdhUsed) add(sess.pdh, 'PDH', 93 + ringBoost(ring, 'd1'))
+    if (sess?.pwh && !sess.pwhUsed) add(sess.pwh, 'PWH', 76 + ringBoost(ring, 'w1'))
+    for (const g of opts.ict?.fvgs ?? []) {
+      if (g.filled || g.side !== 'BEARISH') continue
+      add((g.top + g.bottom) / 2, 'FVG', 72)
+    }
   } else {
     add(structure?.h1?.nextSsl, 'SSL часа', 84 + ringBoost(ring, 'h1'))
     add(structure?.h1?.lastSwingLow?.price, 'лой 1ч', 78 + ringBoost(ring, 'h1'))
@@ -1013,6 +1064,13 @@ function targetFrom(opts: {
     add(opts.daily?.magnet, opts.daily?.magnetLabel || 'магнит дня', 90 + ringBoost(ring, 'd1'))
     add(mm?.hunt.macroTarget, mm?.hunt.macroLabel || 'макро MM', 82)
     if (whale?.nearestBelow) add(whale.nearestBelow.price, 'киты снизу', 74)
+    const sess = opts.ict?.sessions
+    if (sess?.pdl && !sess.pdlUsed) add(sess.pdl, 'PDL', 93 + ringBoost(ring, 'd1'))
+    if (sess?.pwl && !sess.pwlUsed) add(sess.pwl, 'PWL', 76 + ringBoost(ring, 'w1'))
+    for (const g of opts.ict?.fvgs ?? []) {
+      if (g.filled || g.side !== 'BULLISH') continue
+      add((g.top + g.bottom) / 2, 'FVG', 72)
+    }
   }
 
   if (opposite) {
@@ -1680,6 +1738,7 @@ export function detectSpentLiquidity(opts: {
   liquidityMap?: LiquidityMap | null
   sequence?: SequenceHit | null
   primary?: LiquidityZone | null
+  ict?: IctStructure | null
 }): SpentLiquidity {
   const { candles, price, atr, structure, signal, liquidityMap, sequence, primary } =
     opts
@@ -1692,6 +1751,7 @@ export function detectSpentLiquidity(opts: {
   let ssl: SpentPool | null = null
   let bsl: SpentPool | null = null
 
+  const ict = opts.ict ?? null
   const sslLevels = uniqueLevels([
     structure?.trap?.swept?.kind === 'SSL' ? structure.trap.swept.price : null,
     structure?.h1?.lastSweep?.side === 'DOWN' ? structure.h1.lastSweep.price : null,
@@ -1701,6 +1761,13 @@ export function detectSpentLiquidity(opts: {
     primary?.bottom,
     ...(liquidityMap?.equalLows.map((l) => l.price) ?? []),
     signal?.raid?.type === 'BULL_SWEEP' ? signal.raid.sweptLevel : null,
+    ict?.sessions.pdlUsed ? ict.sessions.pdl : null,
+    ict?.sessions.pwlUsed ? ict.sessions.pwl : null,
+    ...(ict?.fvgs.filter((g) => g.filled && g.side === 'BULLISH').map((g) => (g.top + g.bottom) / 2) ??
+      []),
+    ...(ict?.orderBlocks
+      .filter((o) => o.mitigated && o.side === 'BULLISH')
+      .map((o) => (o.top + o.bottom) / 2) ?? []),
   ])
   const bslLevels = uniqueLevels([
     structure?.trap?.swept?.kind === 'BSL' ? structure.trap.swept.price : null,
@@ -1711,6 +1778,13 @@ export function detectSpentLiquidity(opts: {
     primary?.top,
     ...(liquidityMap?.equalHighs.map((l) => l.price) ?? []),
     signal?.raid?.type === 'BEAR_SWEEP' ? signal.raid.sweptLevel : null,
+    ict?.sessions.pdhUsed ? ict.sessions.pdh : null,
+    ict?.sessions.pwhUsed ? ict.sessions.pwh : null,
+    ...(ict?.fvgs.filter((g) => g.filled && g.side === 'BEARISH').map((g) => (g.top + g.bottom) / 2) ??
+      []),
+    ...(ict?.orderBlocks
+      .filter((o) => o.mitigated && o.side === 'BEARISH')
+      .map((o) => (o.top + o.bottom) / 2) ?? []),
   ])
 
   const choch = structure?.h1?.lastChoch ?? structure?.h4?.lastChoch ?? null
@@ -2221,6 +2295,7 @@ function scoreFourScenarios(opts: {
   whale?: WhaleSitMap | null
   unusedBsl?: boolean
   unusedSsl?: boolean
+  choch?: { against: boolean; aligned: boolean; recent: boolean }
 }): { hold: number; sweep: number; brk: number; chop: number } {
   const { odds, kind, tape, bos, trapPhase, side, spent } = opts
   let hold = odds.pct * 0.72
@@ -2279,6 +2354,16 @@ function scoreFourScenarios(opts: {
   else if (bos.aligned) hold += 4
   else if (bos.against && bos.held) brk += 8
   else if (bos.against) brk += 4
+
+  const choch = opts.choch
+  if (choch?.recent && choch.against) {
+    brk += 14
+    hold -= 8
+    sweep -= 4
+  } else if (choch?.recent && choch.aligned) {
+    hold += 8
+    brk -= 4
+  }
 
   const huntSslSpent = Boolean(spent?.ssl) && side === 'LONG'
   const huntBslSpent = Boolean(spent?.bsl) && side === 'SHORT'
@@ -2582,6 +2667,7 @@ export function buildChartStory(opts: {
   walls?: OrderBookWall[] | null
   liqHeatmap?: LiqHeatmapModel | null
   mmIntent?: MmIntentSnapshot | null
+  ict?: IctStructure | null
 }): ChartStory {
   const price = opts.price
   const atr = opts.atr && opts.atr > 0 ? opts.atr : Math.max(price * 0.004, 1e-8)
@@ -2626,6 +2712,16 @@ export function buildChartStory(opts: {
   const fromGoing = goingToSide(rx?.going)
   const draftSide =
     fromSetup ?? fromGoing ?? fromStruct ?? sideOfZone(rawPrimary) ?? (livePrice > 0 ? 'LONG' : null)
+  const ict =
+    opts.ict !== undefined
+      ? opts.ict
+      : candles.length >= 16
+        ? readIctStructure({
+            candles,
+            barSeconds,
+            price: livePrice,
+          })
+        : null
   const spent = detectSpentLiquidity({
     candles,
     price: livePrice,
@@ -2635,6 +2731,7 @@ export function buildChartStory(opts: {
     liquidityMap: opts.liquidityMap ?? null,
     sequence: opts.sequence ?? null,
     primary: rawPrimary,
+    ict,
   })
   const mmSnap = opts.mmIntent ?? opts.signal?.mmIntent ?? null
   const whaleSit = buildWhaleSitMap({
@@ -2651,6 +2748,7 @@ export function buildChartStory(opts: {
     spent,
     price: livePrice,
     atr,
+    ict,
   })
   const tfName = tfNameOf(barSeconds)
   const ring = tfRingOf(barSeconds)
@@ -2689,6 +2787,7 @@ export function buildChartStory(opts: {
     mm: mmSnap,
     signal: opts.signal ?? null,
     primary,
+    ict,
   })
 
   const magnet = opts.structure?.magnet ?? null
@@ -2735,6 +2834,7 @@ export function buildChartStory(opts: {
           daily: dailyFrame,
           mm: mmSnap,
           whale: whaleSit,
+          ict,
         })
       : null
 
@@ -2777,6 +2877,7 @@ export function buildChartStory(opts: {
     const sweep = sweepPriceOf(primary, holdSide, opts.structure ?? null)
     const tape = readLastTape(candles, primary, holdSide, atr)
     const bos = bosAligned(opts.structure ?? null, holdSide)
+    const choch = chochFlipOf(ict, holdSide, candles.length ? candles.length - 1 : 0)
     const four = scoredOdds
       ? scoreFourScenarios({
           odds: scoredOdds,
@@ -2792,6 +2893,7 @@ export function buildChartStory(opts: {
           whale: whaleSit,
           unusedBsl,
           unusedSsl,
+          choch,
         })
       : { hold: 40, sweep: 22, brk: 22, chop: 16 }
     const huntSpent = sweepIsSpent(holdSide, spent)
@@ -3052,6 +3154,7 @@ export function buildChartStory(opts: {
     dailyFrame,
     fuel: fuelWay,
     tfName,
+    ict,
   }
 }
 
