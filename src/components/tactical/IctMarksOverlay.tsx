@@ -1,6 +1,6 @@
 /**
  * Thin ICT marks — last BOS/CHoCH, one FVG, PDH/PDL, one strong/weak pair.
- * Forecast arrows stay primary; this layer must stay quiet.
+ * Forecast arrows stay primary; this layer must stay quiet but readable.
  */
 
 import { useEffect, useRef } from 'react'
@@ -12,13 +12,14 @@ interface Props {
   series: ISeriesApi<'Candlestick'> | null
   containerRef: React.RefObject<HTMLDivElement>
   marks: IctOverlayMark[]
+  lastPrice?: number
 }
 
 function clamp(n: number, a: number, b: number): number {
   return Math.max(a, Math.min(b, n))
 }
 
-const IctMarksOverlay = ({ chart, series, containerRef, marks }: Props) => {
+const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -51,11 +52,13 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks }: Props) => {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, w, h)
 
-        const yOf = (price: number): number | null => {
+        const yOf = (price: number): number => {
           const y = series.priceToCoordinate(price)
-          if (y == null) return null
-          const n = Number(y)
-          return Number.isFinite(n) ? n : null
+          if (y != null) {
+            const n = Number(y)
+            if (Number.isFinite(n)) return n
+          }
+          return lastPrice > 0 && price >= lastPrice ? 16 : h - 18
         }
         const xOf = (timeSec: number): number | null => {
           const x = chart.timeScale().timeToCoordinate(timeSec as never)
@@ -66,10 +69,10 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks }: Props) => {
 
         const usedY: number[] = []
         const placeLabelY = (raw: number): number => {
-          let y = clamp(raw, 12, h - 10)
-          for (let i = 0; i < 5; i++) {
-            if (!usedY.some((u) => Math.abs(u - y) < 12)) break
-            y = clamp(y + 12, 12, h - 10)
+          let y = clamp(raw, 16, h - 14)
+          for (let i = 0; i < 6; i++) {
+            if (!usedY.some((u) => Math.abs(u - y) < 16)) break
+            y = clamp(y + 16, 16, h - 14)
           }
           usedY.push(y)
           return y
@@ -77,8 +80,7 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks }: Props) => {
 
         for (const m of marks) {
           const y = yOf(m.price)
-          if (y == null) continue
-          const yClamped = clamp(y, 4, h - 4)
+          const yClamped = clamp(y, 6, h - 6)
           const xStart =
             m.timeSec != null
               ? clamp(xOf(m.timeSec) ?? w * 0.18, 8, w - 40)
@@ -87,52 +89,55 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks }: Props) => {
           if (m.style === 'box' && m.top != null && m.bottom != null) {
             const yTop = yOf(m.top)
             const yBot = yOf(m.bottom)
-            if (yTop != null && yBot != null) {
-              const top = Math.min(yTop, yBot)
-              const bot = Math.max(yTop, yBot)
-              ctx.fillStyle = m.color.replace(/[\d.]+\)$/, '0.12)')
-              ctx.fillRect(xStart, top, Math.max(28, w - 16 - xStart), Math.max(3, bot - top))
-              ctx.strokeStyle = m.color
-              ctx.globalAlpha = 0.45
-              ctx.lineWidth = 1
-              ctx.setLineDash([3, 3])
-              ctx.strokeRect(xStart, top, Math.max(28, w - 16 - xStart), Math.max(3, bot - top))
-              ctx.setLineDash([])
-              ctx.globalAlpha = 1
-            }
-          } else if (m.style === 'label') {
+            const top = Math.min(yTop, yBot)
+            const bot = Math.max(yTop, yBot)
+            ctx.fillStyle = m.color.replace(/[\d.]+\)$/, '0.16)')
+            ctx.fillRect(xStart, top, Math.max(28, w - 16 - xStart), Math.max(4, bot - top))
             ctx.strokeStyle = m.color
             ctx.globalAlpha = 0.7
-            ctx.lineWidth = 1
+            ctx.lineWidth = 1.6
             ctx.setLineDash([4, 3])
+            ctx.strokeRect(xStart, top, Math.max(28, w - 16 - xStart), Math.max(4, bot - top))
+            ctx.setLineDash([])
+            ctx.globalAlpha = 1
+          } else if (m.style === 'label') {
+            ctx.strokeStyle = m.color
+            ctx.globalAlpha = 0.88
+            ctx.lineWidth = 1.8
+            ctx.setLineDash([5, 3])
             ctx.beginPath()
             ctx.moveTo(xStart, yClamped)
-            ctx.lineTo(w - 10, yClamped)
+            ctx.lineTo(w - 8, yClamped)
             ctx.stroke()
             ctx.setLineDash([])
             ctx.globalAlpha = 1
           } else {
             ctx.strokeStyle = m.color
-            ctx.globalAlpha = 0.55
-            ctx.lineWidth = 1
-            ctx.setLineDash(m.kind === 'PDH' || m.kind === 'PDL' ? [6, 4] : [3, 4])
+            ctx.globalAlpha = 0.8
+            ctx.lineWidth = 1.6
+            ctx.setLineDash(m.kind === 'PDH' || m.kind === 'PDL' ? [7, 4] : [4, 4])
             ctx.beginPath()
-            ctx.moveTo(12, yClamped)
-            ctx.lineTo(w - 10, yClamped)
+            ctx.moveTo(10, yClamped)
+            ctx.lineTo(w - 8, yClamped)
             ctx.stroke()
             ctx.setLineDash([])
             ctx.globalAlpha = 1
           }
 
           const text = m.label
-          ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace'
+          ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace'
           const tw = ctx.measureText(text).width
-          const ly = placeLabelY(m.style === 'box' ? yClamped - 8 : yClamped - 3)
-          const lx = clamp(w - tw - 14, 6, w - tw - 6)
-          ctx.fillStyle = 'rgba(8,10,14,0.72)'
-          ctx.fillRect(lx - 2, ly - 8, tw + 4, 11)
+          const ly = placeLabelY(m.style === 'box' ? yClamped - 10 : yClamped - 2)
+          const lx = clamp(w - tw - 18, 6, w - tw - 8)
+          ctx.fillStyle = 'rgba(8,10,14,0.9)'
+          ctx.fillRect(lx - 4, ly - 11, tw + 8, 16)
+          ctx.strokeStyle = m.color
+          ctx.globalAlpha = 0.55
+          ctx.lineWidth = 1
+          ctx.strokeRect(lx - 4, ly - 11, tw + 8, 16)
+          ctx.globalAlpha = 1
           ctx.fillStyle = m.color
-          ctx.fillText(text, lx, ly)
+          ctx.fillText(text, lx, ly + 1)
         }
       } catch {
         /* overlay must never kill the chart */
@@ -151,7 +156,7 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks }: Props) => {
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, marks])
+  }, [chart, series, containerRef, marks, lastPrice])
 
   if (!marks.length) return null
 

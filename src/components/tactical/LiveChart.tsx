@@ -13,7 +13,7 @@ import {
   type AutoscaleInfo,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, Volume2, VolumeX, Flame } from 'lucide-react'
+import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, MessageCircle, Volume2, VolumeX, Flame } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import type { AdvisorChartInput } from '../../engine/advisor'
@@ -94,6 +94,7 @@ import { buildChartStory, leadStoryScenario } from '../../engine/smc/chartStory'
 import type { StoryScenarioId } from '../../engine/smc/chartStory'
 import { readIctStructure, selectIctOverlayMarks } from '../../engine/smc/ictStructure'
 import IctMarksOverlay from './IctMarksOverlay'
+import ChartCommentsOverlay from './ChartCommentsOverlay'
 import {
   analyzeZoneTap,
   hitZoneAt,
@@ -291,6 +292,9 @@ const LiveChart = ({
   )
   const [showDirection, setShowDirection] = useState(false)
   const [showHints, setShowHints] = useState(false)
+  const [showComments, setShowComments] = useState(() =>
+    readLsFlag('enterprise_chart_comments', true)
+  )
   const [showLiqMap, setShowLiqMap] = useState(() =>
     readLsFlag('enterprise_liq_layer', true)
   )
@@ -2856,6 +2860,29 @@ const LiveChart = ({
           <button
             type="button"
             onClick={() => {
+              setShowComments((v) => {
+                const next = !v
+                writeLsFlag('enterprise_chart_comments', next)
+                return next
+              })
+              haptic.impact()
+            }}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
+              showComments
+                ? 'border-sky-400/50 bg-sky-500/20 text-sky-100'
+                : 'border-white/10 bg-hull-light/40 text-holo/55 hover:text-holo'
+            }`}
+            title="Комментарии на графике: что происходит"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />
+            <span>Коммент</span>
+            <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
+              {showComments ? 'ON' : 'OFF'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               setShowHints((v) => !v)
               haptic.impact()
             }}
@@ -3346,6 +3373,17 @@ const LiveChart = ({
             series={candleRef.current}
             containerRef={containerRef}
             marks={ictMarks}
+            lastPrice={currentPrice}
+          />
+        )}
+        {chartReady > 0 && showComments && chartStory.comments.length > 0 && (
+          <ChartCommentsOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            comments={chartStory.comments}
+            lastPrice={currentPrice}
+            compactPins={chartExpanded}
           />
         )}
         {chartReady > 0 &&

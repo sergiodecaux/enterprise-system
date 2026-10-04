@@ -155,6 +155,19 @@ export interface ChartStory {
   fuel: FuelWaypoint | null
   tfName: StoryTfName
   ict: IctStructure | null
+  comments: ChartComment[]
+}
+
+export type ChartCommentKind = 'NOW' | 'FUEL' | 'DAILY' | 'EVENT' | 'ENTRY'
+
+export interface ChartComment {
+  id: string
+  kind: ChartCommentKind
+  title: string
+  text: string
+  price: number
+  timeSec?: number
+  side: 'LONG' | 'SHORT' | 'NEUTRAL'
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -796,6 +809,197 @@ function nowLineOf(
     oddsPct != null && Number.isFinite(oddsPct) ? ` ${Math.round(oddsPct)}%` : ''
   if (dir) return `${k} · ${dir}${pct}`
   return k
+}
+
+function commentSide(side: 'LONG' | 'SHORT' | null | undefined): ChartComment['side'] {
+  return side === 'LONG' || side === 'SHORT' ? side : 'NEUTRAL'
+}
+
+function nowCommentText(kind: StoryNowKind, side: 'LONG' | 'SHORT' | null, nowLine: string): string {
+  if (nowLine.includes('сняты') || nowLine.includes('сняли')) {
+    return `Сейчас ${nowLine}.`
+  }
+  const dir = side === 'LONG' ? ' — смотрят лонг' : side === 'SHORT' ? ' — смотрят шорт' : ''
+  if (kind === 'IN_ZONE') return `Сейчас в зоне${dir}.`
+  if (kind === 'APPROACHING') return `Сейчас подходят к зоне${dir}.`
+  if (kind === 'BOUNCE') return `Сейчас зона держит${dir || ''}.`
+  if (kind === 'LOST') return 'Сейчас зону потеряли.'
+  return dir ? `Сейчас вне зоны${dir}.` : 'Сейчас вне зоны, ждут топливо.'
+}
+
+function fuelCommentText(fuel: FuelWaypoint): string {
+  const dir = fuel.where === 'below' ? 'снизу' : 'сверху'
+  if (fuel.kind === 'FVG') return `Топливо ${dir} — незакрытый FVG, оттуда могут пойти.`
+  if (fuel.kind === 'SESSION') {
+    return `Топливо ${dir} — ${fuel.label}, ещё не снимали.`
+  }
+  if (fuel.kind === 'SSL') return 'Топливо снизу — лои, туда могут сходить.'
+  if (fuel.kind === 'BSL') return 'Топливо сверху — хаи, туда могут сходить.'
+  if (fuel.kind === 'WHALE') return `Топливо ${dir} — ${fuel.label}.`
+  if (fuel.kind === 'MM') return `Топливо ${dir} — охота MM.`
+  return `Топливо ${dir} — ${fuel.label}.`
+}
+
+function dailyCommentText(daily: DailyFrame): string {
+  if (daily.bias === 'BULLISH') {
+    return daily.magnetLabel
+      ? `Дневка бычья — тянет к ${daily.magnetLabel}.`
+      : 'Дневка бычья, магнит сверху.'
+  }
+  if (daily.bias === 'BEARISH') {
+    return daily.magnetLabel
+      ? `Дневка медвежья — тянет к ${daily.magnetLabel}.`
+      : 'Дневка медвежья, магнит снизу.'
+  }
+  return daily.line || 'Дневка без ясного тона.'
+}
+
+function eventComment(
+  story: Pick<ChartStory, 'ict' | 'spent' | 'primary' | 'side'>
+): { text: string; price: number; timeSec?: number } | null {
+  const spent = story.spent
+  if (spent.ssl) {
+    return {
+      text: spent.ssl.reclaimed ? 'Последнее: сняли лои и закрепились.' : 'Последнее: сняли лои.',
+      price: spent.ssl.price,
+    }
+  }
+  if (spent.bsl) {
+    return {
+      text: spent.bsl.reclaimed ? 'Последнее: сняли хаи и закрепились.' : 'Последнее: сняли хаи.',
+      price: spent.bsl.price,
+    }
+  }
+  const brk = story.ict?.lastSwingBreak ?? story.ict?.lastInternalBreak
+  if (brk) {
+    const dir = brk.side === 'UP' ? 'вверх' : 'вниз'
+    const text =
+      brk.kind === 'CHOCH'
+        ? `Последнее: смена структуры (CHoCH ${dir}).`
+        : `Последнее: пробой структуры (BOS ${dir}).`
+    return { text, price: brk.price, timeSec: brk.timeSec }
+  }
+  if (story.primary) {
+    return {
+      text: 'Последнее: работают от зоны.',
+      price: (story.primary.top + story.primary.bottom) / 2,
+    }
+  }
+  return null
+}
+
+/** 3–6 short RU comment pins — what is happening, not a number dump. */
+export function buildChartComments(opts: {
+  story: Pick<
+    ChartStory,
+    'nowKind' | 'nowLine' | 'side' | 'fuel' | 'dailyFrame' | 'spent' | 'ict' | 'primary'
+  >
+  price: number
+  lastTimeSec?: number
+  setup?: ConditionalSetup | null
+}): ChartComment[] {
+  const { story, setup } = opts
+  const price = opts.price > 0 ? opts.price : story.primary?.top ?? 0
+  const side = commentSide(story.side)
+  const out: ChartComment[] = []
+
+  if (price > 0) {
+    out.push({
+      id: 'now',
+      kind: 'NOW',
+      title: 'Сейчас',
+      text: nowCommentText(story.nowKind, story.side, story.nowLine),
+      price,
+      timeSec: opts.lastTimeSec,
+      side,
+    })
+  }
+
+  const ev = eventComment(story)
+  if (ev && ev.price > 0) {
+    out.push({
+      id: 'event',
+      kind: 'EVENT',
+      title: 'Событие',
+      text: ev.text,
+      price: ev.price,
+      timeSec: ev.timeSec,
+      side,
+    })
+  } else if (price > 0) {
+    out.push({
+      id: 'event',
+      kind: 'EVENT',
+      title: 'Событие',
+      text: 'Последнее: явной смены структуры ещё нет.',
+      price,
+      timeSec: opts.lastTimeSec,
+      side,
+    })
+  }
+
+  if (story.fuel && story.fuel.price > 0) {
+    out.push({
+      id: 'fuel',
+      kind: 'FUEL',
+      title: 'Топливо',
+      text: fuelCommentText(story.fuel),
+      price: story.fuel.price,
+      side,
+    })
+  }
+
+  if (story.dailyFrame) {
+    out.push({
+      id: 'daily',
+      kind: 'DAILY',
+      title: 'Дневка',
+      text: dailyCommentText(story.dailyFrame),
+      price: story.dailyFrame.magnet && story.dailyFrame.magnet > 0
+        ? story.dailyFrame.magnet
+        : price,
+      side: commentSide(story.dailyFrame.side ?? story.side),
+    })
+  }
+
+  const ready =
+    setup &&
+    (setup.status === 'READY' || setup.status === 'ARMED' || setup.status === 'HYPOTHESIS')
+  if (ready && setup) {
+    const px = setup.limitEntry > 0 ? setup.limitEntry : (setup.entryZone.top + setup.entryZone.bottom) / 2
+    if (px > 0) {
+      out.push({
+        id: 'entry',
+        kind: 'ENTRY',
+        title: setup.side === 'SHORT' ? 'ВХОД шорт' : 'ВХОД лонг',
+        text:
+          setup.side === 'SHORT'
+            ? `ВХОД шорт от ${fmtStoryTargetPx(px)} — не догонять.`
+            : `ВХОД лонг от ${fmtStoryTargetPx(px)} — не догонять.`,
+        price: px,
+        side: setup.side,
+      })
+    }
+  } else if (
+    story.side &&
+    story.primary &&
+    (story.nowKind === 'IN_ZONE' || story.nowKind === 'BOUNCE')
+  ) {
+    const mid = (story.primary.top + story.primary.bottom) / 2
+    out.push({
+      id: 'entry',
+      kind: 'ENTRY',
+      title: story.side === 'SHORT' ? 'ВХОД шорт' : 'ВХОД лонг',
+      text:
+        story.side === 'SHORT'
+          ? 'ВХОД шорт в зоне — не догонять.'
+          : 'ВХОД лонг в зоне — не догонять.',
+      price: mid > 0 ? mid : price,
+      side: story.side,
+    })
+  }
+
+  return out.slice(0, 6)
 }
 
 function widenBand(z: LiquidityZone, price: number, atr: number): LiquidityZone {
@@ -3121,7 +3325,10 @@ export function buildChartStory(opts: {
   }
 
   const legend = legendOf(primary, secondary)
-  return {
+  const lastTimeSec = candles.length
+    ? Math.floor(candles[candles.length - 1]![0] / 1000)
+    : undefined
+  const draft: Omit<ChartStory, 'comments'> = {
     primary,
     secondary,
     displayZones,
@@ -3155,6 +3362,15 @@ export function buildChartStory(opts: {
     fuel: fuelWay,
     tfName,
     ict,
+  }
+  return {
+    ...draft,
+    comments: buildChartComments({
+      story: draft,
+      price: livePrice || price,
+      lastTimeSec,
+      setup: opts.setup ?? null,
+    }),
   }
 }
 

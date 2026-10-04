@@ -598,7 +598,11 @@ export function selectIctOverlayMarks(
     spent?: { ssl?: { price: number } | null; bsl?: { price: number } | null } | null
   }
 ): IctOverlayMark[] {
-  const { clean, price, atr } = opts
+  const { clean, atr } = opts
+  const price =
+    opts.price > 0
+      ? opts.price
+      : ict.sessions.pdh ?? ict.sessions.pdl ?? ict.dealingHigh ?? ict.dealingLow ?? 0
   if (!(price > 0)) return []
   const spentSkip = (p: number) => {
     const ssl = opts.spent?.ssl?.price
@@ -610,15 +614,18 @@ export function selectIctOverlayMarks(
   }
 
   const marks: IctOverlayMark[] = []
-  const push = (m: IctOverlayMark) => {
+  const pushAlways = (m: IctOverlayMark) => {
     if (!(m.price > 0) || !Number.isFinite(m.price)) return
-    if (spentSkip(m.price)) return
     marks.push(m)
   }
+  const push = (m: IctOverlayMark) => {
+    if (spentSkip(m.price)) return
+    pushAlways(m)
+  }
 
-  const brk = ict.lastSwingBreak
+  const brk = ict.lastSwingBreak ?? ict.lastInternalBreak
   if (brk) {
-    push({
+    pushAlways({
       id: `brk_${brk.kind}_${brk.index}`,
       kind: brk.kind,
       label: brk.kind === 'CHOCH' ? 'CHoCH' : 'BOS',
@@ -628,6 +635,24 @@ export function selectIctOverlayMarks(
       style: 'label',
       priority: 100,
     })
+  } else {
+    const pivots = [ict.weakHigh, ict.strongHigh, ict.weakLow, ict.strongLow].filter(
+      (p): p is IctPivot => Boolean(p)
+    )
+    pivots.sort((a, b) => b.index - a.index)
+    const pivot = pivots[0]
+    if (pivot) {
+      pushAlways({
+        id: `swing_${pivot.kind}_${pivot.index}`,
+        kind: pivot.kind === 'HIGH' ? 'WEAK_HIGH' : 'WEAK_LOW',
+        label: pivot.kind === 'HIGH' ? 'хай' : 'лой',
+        price: pivot.price,
+        timeSec: pivot.timeSec,
+        color: pivot.kind === 'HIGH' ? ROSE : TEAL,
+        style: 'label',
+        priority: 98,
+      })
+    }
   }
 
   const liveFvg = ict.fvgs.filter((g) => !g.filled)
@@ -639,7 +664,12 @@ export function selectIctOverlayMarks(
     if (opts.targetPrice && between(price, m, opts.targetPrice)) return true
     return false
   })
-  const fvgPick = clean ? fuelish.slice(0, 1) : [...fuelish, ...liveFvg.filter((g) => !fuelish.includes(g))].slice(0, 2)
+  const nearestLive = [...liveFvg].sort(
+    (a, b) => Math.abs(midOf(a.top, a.bottom) - price) - Math.abs(midOf(b.top, b.bottom) - price)
+  )
+  const fvgPick = clean
+    ? (fuelish[0] ? [fuelish[0]] : nearestLive.slice(0, 1))
+    : [...fuelish, ...liveFvg.filter((g) => !fuelish.includes(g))].slice(0, 2)
   for (const g of fvgPick) {
     push({
       id: `fvg_${g.index}`,
@@ -656,31 +686,29 @@ export function selectIctOverlayMarks(
   }
 
   const sess = ict.sessions
-  const dailyNear = clean ? 4.5 : 6
-  if (sess.pdh && !sess.pdhUsed && nearPrice(price, sess.pdh, atr, dailyNear)) {
-    push({
-      id: 'pdh',
-      kind: 'PDH',
-      label: 'PDH',
-      price: sess.pdh,
-      color: ROSE,
-      style: 'line',
-      priority: 92,
-    })
-  }
-  if (sess.pdl && !sess.pdlUsed && nearPrice(price, sess.pdl, atr, dailyNear)) {
-    push({
-      id: 'pdl',
-      kind: 'PDL',
-      label: 'PDL',
-      price: sess.pdl,
-      color: TEAL,
+  const dailyLevels: Array<{ kind: 'PDH' | 'PDL'; price: number; used: boolean }> = []
+  if (sess.pdh) dailyLevels.push({ kind: 'PDH', price: sess.pdh, used: sess.pdhUsed })
+  if (sess.pdl) dailyLevels.push({ kind: 'PDL', price: sess.pdl, used: sess.pdlUsed })
+  const unusedDaily = dailyLevels.filter((d) => !d.used)
+  const dailyPick = unusedDaily.length
+    ? unusedDaily
+    : dailyLevels
+        .slice()
+        .sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price))
+        .slice(0, 1)
+  for (const d of dailyPick) {
+    pushAlways({
+      id: d.kind.toLowerCase(),
+      kind: d.kind,
+      label: d.kind,
+      price: d.price,
+      color: d.kind === 'PDH' ? ROSE : TEAL,
       style: 'line',
       priority: 92,
     })
   }
 
-  const weekNear = clean ? 2.2 : 4
+  const weekNear = clean ? 5 : 7
   if (sess.pwh && !sess.pwhUsed && nearPrice(price, sess.pwh, atr, weekNear)) {
     push({
       id: 'pwh',
@@ -704,7 +732,7 @@ export function selectIctOverlayMarks(
     })
   }
 
-  const swingNear = clean ? 5.5 : 8
+  const swingNear = clean ? 10 : 12
   if (ict.strongHigh && nearPrice(price, ict.strongHigh.price, atr, swingNear)) {
     push({
       id: 'strong_high',
