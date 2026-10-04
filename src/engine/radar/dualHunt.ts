@@ -12,7 +12,6 @@ import type {
 } from '../types'
 import {
   detectSpentLiquidity,
-  fmtStoryTargetPx,
   humanizeStoryTarget,
   pickFuelWaypoint,
   readDailyFrame,
@@ -23,9 +22,17 @@ import {
 } from '../smc/chartStory'
 import { buildWhaleSitMap, inferWhaleAccumulation } from '../orderbook/whaleSitLevels'
 import { isSniperQuality } from '../sniperMode'
+import { evaluateSessionQuality } from '../sessions/sessionQuality'
 
 export type HuntSide = 'LONG' | 'SHORT'
+export type HuntShelf = 'WAIT' | 'READY' | 'STREAM'
 export type TargetQuality = 'хорошо' | 'средне'
+
+export const SHELF_RU: Record<HuntShelf, string> = {
+  WAIT: 'Ждут топливо',
+  READY: 'Можно',
+  STREAM: 'Стримит',
+}
 
 export interface DualHuntCard {
   symbol: string
@@ -33,10 +40,13 @@ export interface DualHuntCard {
   displayName: string
   ticker: string
   side: HuntSide
+  shelf: HuntShelf
+  shelfLabel: string
   /** Почему сейчас — одна строка, без дампа цифр */
   reason: string
   streamTo: string
   fuelWhere: string
+  doNotChase: boolean
   targetQuality: TargetQuality
   distanceLabel: string
   score: number
@@ -44,6 +54,12 @@ export interface DualHuntCard {
   settingUp: boolean
   price: number
   priceChange24h: number
+}
+
+export interface HuntShelfCounts {
+  ready: number
+  wait: number
+  stream: number
 }
 
 export interface DualHuntInput {
@@ -61,11 +77,19 @@ export interface DualHuntInput {
 export interface DualHuntResult {
   longs: DualHuntCard[]
   shorts: DualHuntCard[]
+  longCounts: HuntShelfCounts
+  shortCounts: HuntShelfCounts
 }
 
 const LIST_CAP = 6
-const MIN_SCORE = 38
-const TIE_BAND = 10
+const MIN_SCORE_READY = 38
+const MIN_SCORE_WAIT = 32
+const MIN_SCORE_STREAM = 34
+const SHELF_ORDER: Record<HuntShelf, number> = {
+  READY: 0,
+  WAIT: 1,
+  STREAM: 2,
+}
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n))
@@ -143,6 +167,204 @@ function isExtended(side: HuntSide, signal: CoinSignal | null, radar: Radar141Ro
   if (radar?.trigger === 'IN_GAP' || radar?.trigger === 'EXIT_141') return true
   if (radar?.testKind === 'EXHAUSTED') return true
   return false
+}
+
+function lastStructureSide(signal: CoinSignal | null): HuntSide | null {
+  if (!signal) return null
+  if (signal.mss?.detected) {
+    if (signal.mss.direction === 'BULLISH') return 'LONG'
+    if (signal.mss.direction === 'BEARISH') return 'SHORT'
+  }
+  if (signal.ltfChoCH?.detected) return 'LONG'
+  return null
+}
+
+function dailySideOf(
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined
+): HuntSide | null {
+  if (signal?.dailyBias === 'BULLISH') return 'LONG'
+  if (signal?.dailyBias === 'BEARISH') return 'SHORT'
+  if (radar?.htfBias === 'LONG' || radar?.htfBias === 'SHORT') return radar.htfBias
+  return null
+}
+
+/** One coin, one side: daily + last CHoCH/MSS. Never both. */
+function pickAgreedSide(
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined,
+  longCard: DualHuntCard | null,
+  shortCard: DualHuntCard | null
+): HuntSide | null {
+  if (longCard && !shortCard) return 'LONG'
+  if (shortCard && !longCard) return 'SHORT'
+  if (!longCard || !shortCard) return null
+
+  const dailySide = dailySideOf(signal, radar)
+  const struct = lastStructureSide(signal)
+  if (dailySide && struct && dailySide === struct) return dailySide
+  if (struct && freshChochFlip(struct, signal)) return struct
+  if (dailySide) return dailySide
+  if (struct) return struct
+  return longCard.score >= shortCard.score ? 'LONG' : 'SHORT'
+}
+
+function invalidationHit(side: HuntSide, price: number, signal: CoinSignal | null): boolean {
+  const surg = signal?.surgicalEntry
+  if (surg && surg.side === side && surg.status === 'INVALIDATED') return true
+  const inv =
+    surg && surg.side === side && surg.invalidation && surg.invalidation > 0
+      ? surg.invalidation
+      : signal?.invalidationPrice && signal.invalidationPrice > 0
+        ? signal.invalidationPrice
+        : signal?.sl && signal.sl > 0 && signal.direction === side
+          ? signal.sl
+          : null
+  if (inv == null) return false
+  return side === 'LONG' ? price <= inv : price >= inv
+}
+
+function zoneBrokenAgainst(
+  side: HuntSide,
+  price: number,
+  atr: number,
+  signal: CoinSignal | null
+): boolean {
+  const pad = Math.max(atr * 0.25, price * 0.001)
+  const surg = signal?.surgicalEntry
+  if (surg && surg.side === side && surg.status === 'MISSED') return true
+  if (surg && surg.side === side && surg.zoneTop != null && surg.zoneBottom != null) {
+    if (side === 'LONG' && price < surg.zoneBottom - pad) return true
+    if (side === 'SHORT' && price > surg.zoneTop + pad) return true
+  }
+  const ote = signal?.ote
+  if (ote && (ote.direction ?? side) === side) {
+    if (!ote.isActive) {
+      if (side === 'LONG' && price < ote.zoneBottom - pad) return true
+      if (side === 'SHORT' && price > ote.zoneTop + pad) return true
+    }
+  }
+  return false
+}
+
+function equalBothSides(
+  liq: LiquidityMap | undefined,
+  price: number,
+  atr: number
+): boolean {
+  const eh = liq?.nearestBSL
+  const el = liq?.nearestSSL
+  if (!eh?.isActive || !el?.isActive) return false
+  const dH = Math.abs(eh.price - price)
+  const dL = Math.abs(el.price - price)
+  const band = Math.max(atr * 1.8, price * 0.008)
+  if (dH > band || dL > band) return false
+  const hi = Math.max(dH, dL)
+  if (!(hi > 0)) return false
+  return Math.min(dH, dL) / hi >= 0.65
+}
+
+function sessionIsDead(signal: CoinSignal | null): boolean {
+  const q = signal?.sessionQuality
+  if (q) return q.avoid || q.session === 'DEAD' || q.session === 'ASIA'
+  return evaluateSessionQuality().avoid
+}
+
+function inZoneLabel(fuel: FuelWaypoint): boolean {
+  return (
+    fuel.label.includes('в зоне') ||
+    fuel.label.includes('дисконт') ||
+    fuel.label.includes('премиум')
+  )
+}
+
+function crowdedSameSide(
+  side: HuntSide,
+  signal: CoinSignal | null,
+  liq: LiquidityMap | undefined
+): boolean {
+  if (!liq) return false
+  const sq = signal?.memePulse?.squeeze
+  const chg = signal?.priceChange24h ?? 0
+  if (side === 'LONG') {
+    const crowded =
+      (sq?.fundingPct != null && sq.fundingPct > 0.03) ||
+      (chg >= 10 && !sq?.setup)
+    return crowded && !liq.nearestBSL?.isActive
+  }
+  const crowded =
+    (sq?.fundingPct != null && sq.fundingPct < -0.03 && !sq?.inProgress) || chg <= -10
+  return crowded && !liq.nearestSSL?.isActive
+}
+
+function stretchTowardTarget(
+  side: HuntSide,
+  price: number,
+  atr: number,
+  fuel: FuelWaypoint,
+  target: StreamTarget,
+  signal: CoinSignal | null,
+  radar: Radar141Row | undefined
+): { stream: boolean; drop: boolean } {
+  const remaining = Math.abs(target.price - price)
+  const span = Math.abs(target.price - fuel.price)
+  const done = span > 0 ? 1 - remaining / span : 0
+  const atrLeft = atr > 0 ? remaining / atr : 99
+  if (done >= 0.88 || atrLeft < 0.35) return { stream: true, drop: true }
+  if (sameLevel(price, target.price, atr, price)) return { stream: false, drop: true }
+  if (side === 'LONG' && price >= target.price) return { stream: false, drop: true }
+  if (side === 'SHORT' && price <= target.price) return { stream: false, drop: true }
+
+  const leftFuel =
+    side === 'LONG'
+      ? price > fuel.price + Math.max(atr * 0.55, price * 0.002)
+      : price < fuel.price - Math.max(atr * 0.55, price * 0.002)
+  const squeezeOn = Boolean(
+    signal?.memePulse?.squeeze?.inProgress &&
+      (side === 'LONG' || signal?.memePulse?.squeeze?.shortBlocked)
+  )
+  const stretched = isExtended(side, signal, radar)
+  const stream =
+    done >= 0.55 ||
+    atrLeft < 0.85 ||
+    stretched ||
+    squeezeOn ||
+    (leftFuel && done >= 0.32)
+  return { stream, drop: false }
+}
+
+function minScoreOf(shelf: HuntShelf): number {
+  if (shelf === 'READY') return MIN_SCORE_READY
+  if (shelf === 'WAIT') return MIN_SCORE_WAIT
+  return MIN_SCORE_STREAM
+}
+
+function emptyCounts(): HuntShelfCounts {
+  return { ready: 0, wait: 0, stream: 0 }
+}
+
+export function countShelves(cards: DualHuntCard[]): HuntShelfCounts {
+  const out = emptyCounts()
+  for (const c of cards) {
+    if (c.shelf === 'READY') out.ready += 1
+    else if (c.shelf === 'WAIT') out.wait += 1
+    else out.stream += 1
+  }
+  return out
+}
+
+function capLane(cards: DualHuntCard[]): DualHuntCard[] {
+  const ready = cards.filter((c) => c.shelf === 'READY')
+  const wait = cards.filter((c) => c.shelf === 'WAIT')
+  const stream = cards.filter((c) => c.shelf === 'STREAM')
+  const out: DualHuntCard[] = []
+  for (const pack of [ready, wait, stream]) {
+    for (const c of pack) {
+      if (out.length >= LIST_CAP) return out
+      out.push(c)
+    }
+  }
+  return out
 }
 
 function isSettingUp(
@@ -473,27 +695,44 @@ function dailyBlocksShort(
 
 function whyNow(
   side: HuntSide,
+  shelf: HuntShelf,
   fuel: FuelWaypoint,
   target: StreamTarget,
   signal: CoinSignal | null
 ): string {
   const dest = humanizeStoryTarget(target.label, side)
+  if (shelf === 'STREAM') {
+    return side === 'LONG'
+      ? `уже идут на ${dest} — не догонять`
+      : `уже сыплются к ${dest} — не догонять`
+  }
+  if (shelf === 'WAIT') {
+    const surg = signal?.surgicalEntry
+    if (surg && surg.side === side && surg.status === 'WAITING_SWEEP') {
+      return side === 'LONG'
+        ? `ждут свип снизу → потом на ${dest}`
+        : `ждут свип сверху → потом на ${dest}`
+    }
+    return side === 'LONG'
+      ? `ждут топливо снизу → потом на ${dest}`
+      : `ждут топливо сверху → потом на ${dest}`
+  }
   const surg = signal?.surgicalEntry
   if (surg && surg.side === side && surg.status === 'WAITING_SWEEP') {
     return side === 'LONG' ? `ждут свип снизу → на ${dest}` : `ждут свип сверху → на ${dest}`
   }
   if (fuel.kind === 'WHALE') {
-    return side === 'LONG' ? `киты на бидах → стрим на ${dest}` : `киты на асках → стрим на ${dest}`
+    return side === 'LONG' ? `киты на бидах → на ${dest}` : `киты на асках → на ${dest}`
   }
-  if (fuel.label.includes('в зоне') || fuel.label.includes('дисконт') || fuel.label.includes('премиум')) {
+  if (inZoneLabel(fuel)) {
     return side === 'LONG' ? `сидят в спросе → на ${dest}` : `сидят в предложении → на ${dest}`
   }
   if (signal?.mss?.detected && (signal.mss.direction === 'BULLISH') === (side === 'LONG')) {
     return side === 'LONG' ? `CHoCH вверх, цель ${dest}` : `CHoCH вниз, цель ${dest}`
   }
   return side === 'LONG'
-    ? `берут топливо снизу → на ${dest}`
-    : `берут топливо сверху → на ${dest}`
+    ? `топливо рядом → на ${dest}`
+    : `топливо рядом → на ${dest}`
 }
 
 function huntScore(opts: {
@@ -571,6 +810,9 @@ function evaluateSide(
   if (isChopOnly(signal, radar) && !freshChochFlip(side, signal)) return null
 
   const atr = estimateAtr(price, radar)
+  if (invalidationHit(side, price, signal)) return null
+  if (zoneBrokenAgainst(side, price, atr, signal)) return null
+  if (equalBothSides(liq, price, atr) && !freshChochFlip(side, signal)) return null
   const spent = detectSpentLiquidity({
     candles: [],
     price,
@@ -621,11 +863,22 @@ function evaluateSide(
 
   const fuelClose =
     Math.abs(fuel.price - price) <= Math.max(atr * 0.9, price * 0.004) ||
-    fuel.label.includes('в зоне') ||
-    fuel.label.includes('дисконт') ||
-    fuel.label.includes('премиум')
+    inZoneLabel(fuel)
+  const inZone = inZoneLabel(fuel)
   const settingUp = isSettingUp(side, signal, radar, fuelClose)
-  if (isExtended(side, signal, radar) && !settingUp) return null
+  const stretch = stretchTowardTarget(side, price, atr, fuel, target, signal, radar)
+  if (stretch.drop) return null
+
+  let shelf: HuntShelf
+  if (stretch.stream) {
+    shelf = 'STREAM'
+  } else if (fuelClose || inZone) {
+    shelf = 'READY'
+    if (sessionIsDead(signal) && !inZone) shelf = 'WAIT'
+    if (crowdedSameSide(side, signal, liq)) shelf = 'WAIT'
+  } else {
+    shelf = 'WAIT'
+  }
 
   const whaleAcc = inferWhaleAccumulation(whaleState) ?? (
     whaleMap.accumulation
@@ -642,18 +895,22 @@ function evaluateSide(
     settingUp,
     whaleSide: whaleAcc?.side ?? null,
   })
-  if (score < MIN_SCORE) return null
+  if (score < minScoreOf(shelf)) return null
 
   const destName = humanizeStoryTarget(target.label, side)
+  const doNotChase = shelf === 'STREAM'
   return {
     symbol: signal?.symbol ?? toFlatSymbol(internal),
     internalSymbol: internal,
     displayName: signal?.displayName ?? radar?.displayName ?? internal,
     ticker: toBaseTicker(internal),
     side,
-    reason: whyNow(side, fuel, target, signal),
-    streamTo: `${destName} ≈ ${fmtStoryTargetPx(target.price)}`,
+    shelf,
+    shelfLabel: SHELF_RU[shelf],
+    reason: whyNow(side, shelf, fuel, target, signal),
+    streamTo: destName,
     fuelWhere: fuelKindRu(fuel, side),
+    doNotChase,
     targetQuality: target.quality,
     distanceLabel: `≈${target.distPct.toFixed(1)}%`,
     score,
@@ -722,15 +979,9 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
       walls
     )
 
-    if (longCard && shortCard) {
-      const gap = longCard.score - shortCard.score
-      if (Math.abs(gap) < TIE_BAND) return
-      if (gap > 0) longs.push(longCard)
-      else shorts.push(shortCard)
-      return
-    }
-    if (longCard) longs.push(longCard)
-    else if (shortCard) shorts.push(shortCard)
+    const keep = pickAgreedSide(signal, radar, longCard, shortCard)
+    if (keep === 'LONG' && longCard) longs.push(longCard)
+    else if (keep === 'SHORT' && shortCard) shorts.push(shortCard)
   }
 
   for (const raw of input.signals) {
@@ -741,6 +992,9 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
   }
 
   const rank = (a: DualHuntCard, b: DualHuntCard) => {
+    if (SHELF_ORDER[a.shelf] !== SHELF_ORDER[b.shelf]) {
+      return SHELF_ORDER[a.shelf] - SHELF_ORDER[b.shelf]
+    }
     if (a.targetQuality !== b.targetQuality) {
       return a.targetQuality === 'хорошо' ? -1 : 1
     }
@@ -752,8 +1006,13 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
   longs.sort(rank)
   shorts.sort(rank)
 
+  const longCounts = countShelves(longs)
+  const shortCounts = countShelves(shorts)
+
   return {
-    longs: longs.slice(0, LIST_CAP),
-    shorts: shorts.slice(0, LIST_CAP),
+    longs: capLane(longs),
+    shorts: capLane(shorts),
+    longCounts,
+    shortCounts,
   }
 }

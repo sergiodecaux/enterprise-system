@@ -4,11 +4,17 @@ import { toRadarLabel } from '../../api/mexc'
 import { useAppStore } from '../../store/useAppStore'
 import { useRadarFavoriteToggle } from '../../hooks/useRadarFavoriteToggle'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
-import { buildDualHunt, type DualHuntCard, type HuntSide } from '../../engine/radar/dualHunt'
+import {
+  buildDualHunt,
+  type DualHuntCard,
+  type HuntShelf,
+  type HuntShelfCounts,
+  type HuntSide,
+} from '../../engine/radar/dualHunt'
 import { AltMacroStrip } from '../market/AltMacroStrip'
-import WinRateBar from './WinRateBar'
 
-type Lane = 'long' | 'short' | 'all'
+type Lane = 'long' | 'short'
+type ShelfFilter = HuntShelf | 'ALL'
 
 function useTwoColumns(): boolean {
   const [wide, setWide] = useState(() =>
@@ -26,6 +32,12 @@ function useTwoColumns(): boolean {
   return wide
 }
 
+function shelfBadgeClass(shelf: HuntShelf): string {
+  if (shelf === 'READY') return 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
+  if (shelf === 'WAIT') return 'border-amber-400/35 bg-amber-500/12 text-amber-100'
+  return 'border-rose-400/40 bg-rose-500/12 text-rose-200'
+}
+
 function HuntRow({
   card,
   rank,
@@ -41,42 +53,47 @@ function HuntRow({
 }) {
   const long = card.side === 'LONG'
   const label = toRadarLabel(card.internalSymbol)
+  const showStar = card.shelf === 'READY'
   return (
     <div className="flex items-start gap-2 border-b border-white/[0.06] px-3 py-2.5">
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          onFav()
-        }}
-        className={`mt-0.5 shrink-0 rounded-md p-1 ${
-          favorite ? 'text-amber-300' : 'text-white/25 hover:text-white/60'
-        }`}
-        title={favorite ? 'Убрать из избранного' : 'В избранное'}
-      >
-        <Star className="h-4 w-4" fill={favorite ? 'currentColor' : 'none'} />
-      </button>
+      {showStar ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onFav()
+          }}
+          className={`mt-0.5 shrink-0 rounded-md p-1 ${
+            favorite ? 'text-amber-300' : 'text-white/25 hover:text-white/60'
+          }`}
+          title={favorite ? 'Убрать из избранного' : 'В избранное'}
+        >
+          <Star className="h-3.5 w-3.5" fill={favorite ? 'currentColor' : 'none'} />
+        </button>
+      ) : (
+        <span className="mt-0.5 w-6 shrink-0" />
+      )}
       <button
         type="button"
         onClick={onOpen}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <span className="mt-0.5 w-5 shrink-0 font-mono text-[10px] text-white/30">
+        <span className="mt-0.5 w-4 shrink-0 font-mono text-[10px] text-white/30">
           {rank}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-1">
+          <div className="flex flex-wrap items-baseline gap-1">
             <span className="whitespace-nowrap font-mono text-[13px] font-bold tracking-wide text-white">
               {label.title}
             </span>
             <span className="shrink-0 font-mono text-[10px] text-white/35">
               {label.hint}
             </span>
-            {card.settingUp && (
-              <span className="shrink-0 font-mono text-[9px] uppercase text-amber-200/80">
-                набор
-              </span>
-            )}
+            <span
+              className={`shrink-0 rounded border px-1 py-px font-mono text-[9px] uppercase ${shelfBadgeClass(card.shelf)}`}
+            >
+              {card.shelfLabel}
+            </span>
           </div>
           <p className="mt-0.5 truncate font-mono text-[10px] text-white/55">
             {card.reason}
@@ -85,8 +102,11 @@ function HuntRow({
             стрим: {card.streamTo}
           </p>
           <p className="mt-0.5 truncate font-mono text-[10px] text-white/35">
-            топливо: {card.fuelWhere} · {card.targetQuality} {card.distanceLabel}
+            топливо: {card.fuelWhere}
           </p>
+          {card.doNotChase && (
+            <p className="mt-0.5 font-mono text-[10px] text-rose-200/80">не догонять</p>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <div
@@ -98,26 +118,48 @@ function HuntRow({
           >
             {long ? 'лонг' : 'шорт'}
           </div>
-          <div
-            className={`mt-1 font-mono text-[9px] ${
-              card.targetQuality === 'хорошо' ? 'text-emerald-200/80' : 'text-white/40'
-            }`}
-          >
-            {card.targetQuality}
-          </div>
-          <div className="mt-1 flex items-center justify-end gap-1">
-            <WinRateBar value={card.probability} compact label="Score" />
-          </div>
         </div>
       </button>
     </div>
   )
 }
 
+function emptyHuntText(counts: HuntShelfCounts, filter: ShelfFilter): string {
+  if (filter === 'READY') {
+    const extra = [
+      counts.wait > 0 ? `ждут топливо ${counts.wait}` : null,
+      counts.stream > 0 ? 'стримят — не догонять' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    return extra ? `нет живых «можно» · ${extra}` : 'нет живых «можно»'
+  }
+  if (filter === 'WAIT') {
+    return counts.wait === 0
+      ? counts.ready === 0
+        ? 'нет живых «можно»'
+        : 'ждут топливо 0'
+      : `ждут топливо ${counts.wait}`
+  }
+  if (filter === 'STREAM') {
+    return counts.stream === 0 ? 'стримят — не догонять' : `стримят ${counts.stream} — не догонять`
+  }
+  if (counts.ready + counts.wait + counts.stream === 0) {
+    return 'нет живых «можно»'
+  }
+  const bits = [
+    counts.ready === 0 ? 'нет живых «можно»' : null,
+    counts.wait > 0 ? `ждут топливо ${counts.wait}` : null,
+    counts.stream > 0 ? 'стримят — не догонять' : null,
+  ].filter(Boolean)
+  return bits.join(' · ') || 'нет живых «можно»'
+}
+
 function HuntLane({
   side,
   cards,
-  empty,
+  counts,
+  filter,
   scanning,
   favSet,
   onOpen,
@@ -125,13 +167,31 @@ function HuntLane({
 }: {
   side: HuntSide
   cards: DualHuntCard[]
-  empty: string
+  counts: HuntShelfCounts
+  filter: ShelfFilter
   scanning: boolean
   favSet: Set<string>
   onOpen: (card: DualHuntCard) => void
   onFav: (internal: string) => void
 }) {
   const long = side === 'LONG'
+  const [streamOpen, setStreamOpen] = useState(false)
+  const ready = cards.filter((c) => c.shelf === 'READY')
+  const wait = cards.filter((c) => c.shelf === 'WAIT')
+  const stream = cards.filter((c) => c.shelf === 'STREAM')
+
+  const shown =
+    filter === 'READY'
+      ? ready
+      : filter === 'WAIT'
+        ? wait
+        : filter === 'STREAM'
+          ? stream
+          : [...ready, ...wait]
+
+  const hideStreamFold = filter !== 'ALL' || stream.length === 0
+  const streamRows = hideStreamFold || !streamOpen ? [] : stream
+
   return (
     <section
       className={`overflow-hidden rounded-xl border ${
@@ -147,30 +207,51 @@ function HuntLane({
             : 'border-rose-400/15 text-rose-200'
         }`}
       >
-        {long ? 'Лонг — цель сверху' : 'Шорт — цель снизу'}
+        {long ? 'Лонг' : 'Шорт'}
         <span
           className={`ml-2 font-normal ${
             long ? 'text-emerald-200/50' : 'text-rose-200/50'
           }`}
         >
-          {cards.length}
+          {counts.ready} можно · {counts.wait} ждут
         </span>
       </header>
-      {cards.length === 0 ? (
+      {shown.length === 0 && hideStreamFold ? (
         <p className="px-4 py-8 text-center font-mono text-xs text-white/35">
-          {scanning ? 'Сканирую сетапы…' : empty}
+          {scanning ? 'Сканирую сетапы…' : emptyHuntText(counts, filter)}
         </p>
       ) : (
-        cards.map((card, i) => (
-          <HuntRow
-            key={card.internalSymbol}
-            card={card}
-            rank={i + 1}
-            favorite={favSet.has(card.internalSymbol)}
-            onOpen={() => onOpen(card)}
-            onFav={() => onFav(card.internalSymbol)}
-          />
-        ))
+        <>
+          {shown.map((card, i) => (
+            <HuntRow
+              key={card.internalSymbol}
+              card={card}
+              rank={i + 1}
+              favorite={favSet.has(card.internalSymbol)}
+              onOpen={() => onOpen(card)}
+              onFav={() => onFav(card.internalSymbol)}
+            />
+          ))}
+          {!hideStreamFold && (
+            <button
+              type="button"
+              onClick={() => setStreamOpen((v) => !v)}
+              className="w-full border-t border-white/[0.06] px-3 py-2 text-left font-mono text-[10px] text-rose-200/70"
+            >
+              {streamOpen ? '▾' : '▸'} стримят {stream.length} — не догонять
+            </button>
+          )}
+          {streamRows.map((card, i) => (
+            <HuntRow
+              key={card.internalSymbol}
+              card={card}
+              rank={shown.length + i + 1}
+              favorite={favSet.has(card.internalSymbol)}
+              onOpen={() => onOpen(card)}
+              onFav={() => onFav(card.internalSymbol)}
+            />
+          ))}
+        </>
       )}
     </section>
   )
@@ -194,7 +275,8 @@ const DualHuntBoard = () => {
   const setDrawerOpen = useAppStore((s) => s.setDrawerOpen)
   const workerCtx = useWorkerMarketContext()
   const twoCols = useTwoColumns()
-  const [lane, setLane] = useState<Lane>('all')
+  const [lane, setLane] = useState<Lane>('long')
+  const [shelf, setShelf] = useState<ShelfFilter>('ALL')
 
   const favSet = useMemo(() => new Set(favorites), [favorites])
 
@@ -231,9 +313,11 @@ const DualHuntBoard = () => {
     setDrawerOpen(true)
   }
 
-  const showLong = twoCols || lane === 'long' || lane === 'all'
-  const showShort = twoCols || lane === 'short' || lane === 'all'
-  const stacked = !twoCols && lane === 'all'
+  const showLong = twoCols || lane === 'long'
+  const showShort = twoCols || lane === 'short'
+  const readyN = hunt.longCounts.ready + hunt.shortCounts.ready
+  const waitN = hunt.longCounts.wait + hunt.shortCounts.wait
+  const streamN = hunt.longCounts.stream + hunt.shortCounts.stream
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -245,11 +329,10 @@ const DualHuntBoard = () => {
         <div className="flex gap-1 px-4 pb-2">
           {(
             [
-              ['long', 'Лонг'],
-              ['short', 'Шорт'],
-              ['all', 'Все'],
+              ['long', 'Лонг', hunt.longs.length],
+              ['short', 'Шорт', hunt.shorts.length],
             ] as const
-          ).map(([id, label]) => (
+          ).map(([id, label, n]) => (
             <button
               key={id}
               type="button"
@@ -258,47 +341,57 @@ const DualHuntBoard = () => {
                 lane === id
                   ? id === 'short'
                     ? 'bg-rose-500/20 text-rose-200'
-                    : id === 'long'
-                      ? 'bg-emerald-500/20 text-emerald-200'
-                      : 'bg-white/15 text-white'
+                    : 'bg-emerald-500/20 text-emerald-200'
                   : 'bg-white/5 text-white/40'
               }`}
             >
               {label}
-              <span className="ml-1 font-normal opacity-60">
-                {id === 'long'
-                  ? hunt.longs.length
-                  : id === 'short'
-                    ? hunt.shorts.length
-                    : hunt.longs.length + hunt.shorts.length}
-              </span>
+              <span className="ml-1 font-normal opacity-60">{n}</span>
             </button>
           ))}
         </div>
       )}
 
+      <div className="flex gap-1 px-4 pb-2">
+        {          (
+            [
+              ['READY', 'Можно', readyN],
+              ['WAIT', 'Ждут', waitN],
+              ['STREAM', 'Стримит', streamN],
+              ['ALL', 'Все', readyN + waitN + streamN],
+            ] as const
+          ).map(([id, label, n]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setShelf(id)}
+            className={`flex-1 rounded-md px-1.5 py-1.5 font-mono text-[10px] font-bold uppercase ${
+              shelf === id ? 'bg-white/15 text-white' : 'bg-white/5 text-white/40'
+            }`}
+          >
+            {label}
+            <span className="ml-1 font-normal opacity-60">{n}</span>
+          </button>
+        ))}
+      </div>
+
       <p className="px-4 pb-1 font-mono text-[10px] text-white/35">
         {scanning
           ? radarMeta.progress || 'охота за сетапами…'
-          : `лонг ${hunt.longs.length} · шорт ${hunt.shorts.length} · топливо + цель`}
+          : readyN === 0
+            ? `нет живых «можно» · ждут топливо ${waitN}${streamN > 0 ? ' · стримят — не догонять' : ''}`
+            : `можно ${readyN} · ждут ${waitN} · стримят ${streamN}`}
         {radarMeta.error ? ` · ${radarMeta.error}` : ''}
       </p>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        <div
-          className={
-            twoCols
-              ? 'grid grid-cols-2 gap-3'
-              : stacked
-                ? 'flex flex-col gap-3'
-                : ''
-          }
-        >
+        <div className={twoCols ? 'grid grid-cols-2 gap-3' : ''}>
           {showLong && (
             <HuntLane
               side="LONG"
               cards={hunt.longs}
-              empty="Нет лонгов с живой целью сверху."
+              counts={hunt.longCounts}
+              filter={shelf}
               scanning={scanning}
               favSet={favSet}
               onOpen={openCard}
@@ -309,7 +402,8 @@ const DualHuntBoard = () => {
             <HuntLane
               side="SHORT"
               cards={hunt.shorts}
-              empty="Нет шортов с живой целью снизу."
+              counts={hunt.shortCounts}
+              filter={shelf}
               scanning={scanning}
               favSet={favSet}
               onOpen={openCard}
