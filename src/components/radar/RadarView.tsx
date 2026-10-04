@@ -6,8 +6,9 @@ import CoinRow from './CoinRow'
 import CoinSearch from './CoinSearch'
 import FearGreedGauge from '../news/FearGreedGauge'
 import Radar141Board from './Radar141Board'
+import DualHuntBoard from './DualHuntBoard'
 
-type RadarMode = 'setups' | 'scan' | 'map' | 'watch' | 'fav'
+type RadarMode = 'setups' | 'scan' | '141' | 'map' | 'watch' | 'fav'
 
 const RadarView = () => {
   const { t } = useTranslation()
@@ -104,7 +105,8 @@ const RadarView = () => {
       <div className="flex gap-1 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {(
           [
-            ['scan', '141 скан'],
+            ['scan', 'Охота'],
+            ['141', '141 скан'],
             ['map', 'Сильные / слабые'],
             ['fav', 'Избранное'],
             ['watch', 'Watch 141'],
@@ -126,7 +128,9 @@ const RadarView = () => {
         ))}
       </div>
 
-      {mode !== 'setups' ? (
+      {mode === 'scan' ? (
+        <DualHuntBoard />
+      ) : mode !== 'setups' ? (
         <Radar141Board
           mode={
             mode === 'map'
