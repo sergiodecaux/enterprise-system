@@ -1720,6 +1720,10 @@ const LiveChart = ({
         barSeconds: timeframeBarSeconds(timeframe),
         onlyStrong: cleanMode || onlyStrong,
         candles,
+        signal,
+        liquidityMap: eqLiquidityMap,
+        sequence:
+          sequenceHit && sequenceHit.expiresAt > Date.now() ? sequenceHit : null,
       }),
     [
       candidateZones,
@@ -1735,6 +1739,9 @@ const LiveChart = ({
       onlyStrong,
       cleanMode,
       candles,
+      signal,
+      eqLiquidityMap,
+      sequenceHit,
     ]
   )
 

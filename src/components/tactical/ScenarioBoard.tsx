@@ -101,6 +101,7 @@ export const ScenarioBoard = ({
       <ul className="flex flex-col gap-0.5">
         {rows.map((sc) => {
           const on = sc.id === activeId
+          const spent = Boolean(sc.spent)
           return (
             <li key={sc.id}>
               <button
@@ -108,7 +109,9 @@ export const ScenarioBoard = ({
                 onClick={() => onSelect(sc.id)}
                 className={`flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left font-mono leading-tight ${
                   on
-                    ? 'bg-white/[0.08] ring-1 ring-white/20'
+                    ? spent
+                      ? 'bg-white/[0.04] ring-1 ring-white/10'
+                      : 'bg-white/[0.08] ring-1 ring-white/20'
                     : 'hover:bg-white/[0.04]'
                 }`}
                 title={`${sc.title}. ${sc.condition}`}
@@ -116,35 +119,44 @@ export const ScenarioBoard = ({
                 <span
                   className="h-[7px] w-[7px] shrink-0 rounded-full"
                   style={{
-                    background: storyPathColor(sc.id, sc.side),
-                    opacity: on ? 1 : 0.45,
-                    boxShadow: on
-                      ? `0 0 6px ${storyPathColor(sc.id, sc.side)}`
-                      : 'none',
+                    background: spent ? '#6b7280' : storyPathColor(sc.id, sc.side),
+                    opacity: spent ? 0.45 : on ? 1 : 0.45,
+                    boxShadow:
+                      on && !spent
+                        ? `0 0 6px ${storyPathColor(sc.id, sc.side)}`
+                        : 'none',
                   }}
                 />
                 <span
                   className={`w-8 shrink-0 text-right font-bold tabular-nums ${
                     dense ? 'text-[11px]' : 'text-[10px]'
-                  } ${pctTone(sc.pct)}`}
+                  } ${spent ? 'text-white/35' : pctTone(sc.pct)}`}
                 >
                   {Math.round(sc.pct)}%
                 </span>
                 <span
                   className={`w-[2.6rem] shrink-0 font-bold uppercase ${
                     dense ? 'text-[10px]' : 'text-[9px]'
-                  } ${dirTone(sc.side)}`}
+                  } ${spent ? 'text-white/35' : dirTone(sc.side)}`}
                 >
                   {sc.dirLabel}
                 </span>
                 <span
                   className={`min-w-0 flex-1 truncate ${
                     dense ? 'text-[11px]' : 'text-[10px]'
-                  } ${on ? 'text-white/90' : 'text-white/65'}`}
+                  } ${
+                    spent
+                      ? 'text-white/40'
+                      : on
+                        ? 'text-white/90'
+                        : 'text-white/65'
+                  }`}
                 >
-                  {sc.condition}
+                  {spent
+                    ? `${sc.spentNote || 'уже сняли'} · ${sc.condition}`
+                    : sc.condition}
                 </span>
-                {sc.toPrice != null && sc.toPrice > 0 && (
+                {!spent && sc.toPrice != null && sc.toPrice > 0 && (
                   <span
                     className={`shrink-0 tabular-nums ${
                       dense ? 'text-[10px]' : 'text-[9px]'

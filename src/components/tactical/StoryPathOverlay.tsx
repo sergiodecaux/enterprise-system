@@ -146,6 +146,43 @@ function hexAlpha(color: string, a: number): string {
   return color
 }
 
+function drawSpentMark(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y: number,
+  plotRight: number,
+  note: string,
+  compact: boolean
+) {
+  const x1 = Math.min(plotRight - 8, x0 + (compact ? 52 : 72))
+  ctx.save()
+  ctx.strokeStyle = 'rgba(107,114,128,0.7)'
+  ctx.lineWidth = 1.2
+  ctx.setLineDash([4, 4])
+  ctx.beginPath()
+  ctx.moveTo(x0, y)
+  ctx.lineTo(x1, y)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.font = `700 ${compact ? 10 : 11}px ui-monospace, SFMono-Regular, Menlo, monospace`
+  const padX = 5
+  const padY = 3
+  const tw = ctx.measureText(note).width
+  const bw = tw + padX * 2
+  const bh = (compact ? 10 : 11) + padY * 2
+  const lx = Math.min(x0 + 8, plotRight - bw - 4)
+  const ly = y - bh - 6
+  roundRect(ctx, lx, ly, bw, bh, 4)
+  ctx.fillStyle = 'rgba(17,19,24,0.88)'
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(107,114,128,0.85)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+  ctx.fillStyle = 'rgba(209,213,219,0.9)'
+  ctx.fillText(note, lx + padX, ly + bh - padY - 1)
+  ctx.restore()
+}
+
 const StoryPathOverlay = ({
   chart,
   series,
@@ -298,9 +335,26 @@ const StoryPathOverlay = ({
         }
 
         const drawOne = (sc: StoryScenario, on: boolean) => {
+          if (sc.spent) {
+            if (!on) return
+            const y =
+              sc.spentPrice != null && sc.spentPrice > 0
+                ? yToward(sc.spentPrice)
+                : yToward(lastPrice)
+            if (y == null) return
+            drawSpentMark(
+              ctx,
+              x0,
+              y,
+              plotRight,
+              sc.spentNote || 'уже сняли',
+              compact
+            )
+            return
+          }
           const src: PathPoint[] =
             sc.path && sc.path.length >= 2 ? sc.path : on ? future.path : []
-          let pts = mapPath(src)
+          const pts = mapPath(src)
           if (pts.length < 2) return
           const color = storyPathColor(sc.id, sc.side)
           const dashed = sc.id === 'break' || sc.id === 'chop'
@@ -328,7 +382,7 @@ const StoryPathOverlay = ({
               sc.tipLabel ||
               future.tipLabel ||
               (sc.toPrice && sc.toPrice > 0 ? storyTipLabel(sc.toPrice) : '')
-            if (tip && b) {
+            if (tip && b && tip !== 'уже сняли') {
               drawTipLabel(ctx, b.x, b.y, tip, color, plotRight, h, compact)
             }
           }

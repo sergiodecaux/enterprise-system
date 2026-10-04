@@ -8,9 +8,11 @@
 import type { OhlcvCandle } from '../../api/mexc'
 import type { LiquidityZone } from '../indicators/types'
 import type { PathPoint } from '../prediction/types'
+import type { SequenceHit } from '../sequence/types'
 import type { ConditionalSetup } from '../setups'
+import type { CoinSignal, LiquidityMap } from '../types'
 import { readCloseQuality } from './mmTrapThesis'
-import type { StructureRead } from './structureRead'
+import type { StructureEvent, StructureRead } from './structureRead'
 import type { ZoneReaction, ZoneReactionBoard } from './zoneReaction'
 import { reactionForZone } from './zoneReaction'
 
@@ -58,6 +60,26 @@ export interface StoryScenario {
   toLabel: string
   /** Arrow-tip caption, e.g. «цель 84500 · разворот» */
   tipLabel: string
+  /** Hunt already printed — keep the row, hide the arrow into the same pool */
+  spent?: boolean
+  spentNote?: string
+  spentPrice?: number | null
+}
+
+export type SpentKind = 'SSL' | 'BSL'
+
+export interface SpentPool {
+  kind: SpentKind
+  price: number
+  barsAgo: number
+  reclaimed: boolean
+  chochAfter: boolean
+  via: string[]
+}
+
+export interface SpentLiquidity {
+  ssl: SpentPool | null
+  bsl: SpentPool | null
 }
 
 export interface StoryLegendItem {
@@ -93,10 +115,21 @@ export interface ChartStory {
   arrows: StoryArrow[]
   scenarios: StoryScenario[]
   legend: StoryLegendItem[]
+  spent: SpentLiquidity
 }
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n))
+}
+
+function sameLevel(a: number, b: number, atr: number, price: number): boolean {
+  if (!(a > 0) || !(b > 0)) return false
+  const tol = Math.max(atr * 0.35, price * 0.0015, Math.abs(a) * 0.0008)
+  return Math.abs(a - b) <= tol
+}
+
+function emptySpent(): SpentLiquidity {
+  return { ssl: null, bsl: null }
 }
 
 function overlapRatio(a: LiquidityZone, b: LiquidityZone): number {
@@ -147,7 +180,9 @@ export function storyTipLabel(price: number): string {
 
 export function leadStoryScenario(rows: StoryScenario[]): StoryScenario | null {
   if (!rows.length) return null
-  return rows.reduce((a, b) => (b.pct > a.pct ? b : a))
+  const live = rows.filter((r) => !r.spent)
+  const pool = live.length ? live : rows
+  return pool.reduce((a, b) => (b.pct > a.pct ? b : a))
 }
 
 export function storyPathColor(
@@ -402,8 +437,19 @@ function nowKindOf(
 function nowLineOf(
   kind: StoryNowKind,
   side: 'LONG' | 'SHORT' | null,
-  oddsPct: number | null
+  oddsPct: number | null,
+  spent?: SpentLiquidity | null
 ): string {
+  if (spent?.ssl?.reclaimed && side === 'LONG') {
+    const pct =
+      oddsPct != null && Number.isFinite(oddsPct) ? ` ${Math.round(oddsPct)}%` : ''
+    return `лои сняты · лонг к BSL${pct}`
+  }
+  if (spent?.bsl?.reclaimed && side === 'SHORT') {
+    const pct =
+      oddsPct != null && Number.isFinite(oddsPct) ? ` ${Math.round(oddsPct)}%` : ''
+    return `хаи сняты · шорт к SSL${pct}`
+  }
   const k =
     kind === 'IN_ZONE'
       ? 'в зоне'
@@ -590,8 +636,9 @@ function targetFrom(opts: {
   price: number
   atr: number
   horizon: number
+  spent?: SpentLiquidity | null
 }): { price: number; label: string } | null {
-  const { setup, rx, structure, primary, opposite, side, price, atr, horizon } = opts
+  const { setup, rx, structure, primary, opposite, side, price, atr, horizon, spent } = opts
   if (!side || !(price > 0)) return null
   const zoneClear =
     primary != null
@@ -606,11 +653,14 @@ function targetFrom(opts: {
     primary ? Math.abs(primary.top - primary.bottom) * 0.28 : 0,
     price * 0.001
   )
+  const skip =
+    side === 'LONG' ? spent?.bsl?.price ?? null : spent?.ssl?.price ?? null
 
   const raw: MagCand[] = []
   const add = (p: number | null | undefined, label: string, weight: number) => {
     if (p == null || !alignedBeyond(side, from, p, minMove)) return
     if (inPrimaryZone(primary, p)) return
+    if (skip != null && sameLevel(p, skip, atr, price)) return
     raw.push({ price: p, label, weight })
   }
 
@@ -689,8 +739,9 @@ function failTargetFrom(opts: {
   price: number
   atr: number
   horizon: number
+  spent?: SpentLiquidity | null
 }): { price: number; label: string } | null {
-  const { rx, structure, primary, opposite, side, price, atr, horizon } = opts
+  const { rx, structure, primary, opposite, side, price, atr, horizon, spent } = opts
   const fail: 'LONG' | 'SHORT' = side === 'LONG' ? 'SHORT' : 'LONG'
   const zoneClear =
     side === 'LONG'
@@ -703,10 +754,13 @@ function failTargetFrom(opts: {
     Math.abs(primary.top - primary.bottom) * 0.28,
     price * 0.001
   )
+  const skip =
+    fail === 'SHORT' ? spent?.ssl?.price ?? null : spent?.bsl?.price ?? null
   const raw: MagCand[] = []
   const add = (p: number | null | undefined, label: string, weight: number) => {
     if (p == null || !alignedBeyond(fail, from, p, minMove)) return
     if (inPrimaryZone(primary, p)) return
+    if (skip != null && sameLevel(p, skip, atr, price)) return
     raw.push({ price: p, label, weight })
   }
 
@@ -1204,6 +1258,386 @@ function bosAligned(
   return { aligned, against: ev.side !== want, held: ev.held, kind }
 }
 
+function mergeSpent(
+  cur: SpentPool | null,
+  next: {
+    kind: SpentKind
+    price: number
+    barsAgo: number
+    reclaimed: boolean
+    chochAfter: boolean
+    via: string
+  }
+): SpentPool {
+  if (!cur) {
+    return {
+      kind: next.kind,
+      price: next.price,
+      barsAgo: next.barsAgo,
+      reclaimed: next.reclaimed,
+      chochAfter: next.chochAfter,
+      via: [next.via],
+    }
+  }
+  const via = cur.via.includes(next.via) ? cur.via : [...cur.via, next.via]
+  const newer = next.barsAgo <= cur.barsAgo
+  return {
+    kind: cur.kind,
+    price: newer && next.price > 0 ? next.price : cur.price,
+    barsAgo: Math.min(cur.barsAgo, next.barsAgo),
+    reclaimed: cur.reclaimed || next.reclaimed,
+    chochAfter: cur.chochAfter || next.chochAfter,
+    via,
+  }
+}
+
+function uniqueLevels(xs: Array<number | null | undefined>): number[] {
+  const out: number[] = []
+  for (const p of xs) {
+    if (p == null || !(p > 0) || !Number.isFinite(p)) continue
+    if (out.some((q) => Math.abs(q - p) / Math.max(q, p) < 0.0008)) continue
+    out.push(p)
+  }
+  return out
+}
+
+/**
+ * Liquidity that already printed: raid / last swing sweep / wick-through
+ * then close back / CHoCH after the hunt. Used to kill stale hunt paths.
+ */
+export function detectSpentLiquidity(opts: {
+  candles: OhlcvCandle[]
+  price: number
+  atr: number
+  structure?: StructureRead | null
+  signal?: CoinSignal | null
+  liquidityMap?: LiquidityMap | null
+  sequence?: SequenceHit | null
+  primary?: LiquidityZone | null
+}): SpentLiquidity {
+  const { candles, price, atr, structure, signal, liquidityMap, sequence, primary } =
+    opts
+  const last = candles[candles.length - 1]
+  const live = price > 0 ? price : last?.[4] ?? 0
+  if (!(live > 0)) return emptySpent()
+
+  const pad = Math.max(atr * 0.08, live * 0.00025)
+  const look = Math.min(10, candles.length)
+  let ssl: SpentPool | null = null
+  let bsl: SpentPool | null = null
+
+  const sslLevels = uniqueLevels([
+    structure?.trap?.swept?.kind === 'SSL' ? structure.trap.swept.price : null,
+    structure?.h1?.lastSweep?.side === 'DOWN' ? structure.h1.lastSweep.price : null,
+    structure?.h4?.lastSweep?.side === 'DOWN' ? structure.h4.lastSweep.price : null,
+    structure?.h1?.lastSwingLow?.price,
+    structure?.h4?.lastSwingLow?.price,
+    primary?.bottom,
+    ...(liquidityMap?.equalLows.map((l) => l.price) ?? []),
+    signal?.raid?.type === 'BULL_SWEEP' ? signal.raid.sweptLevel : null,
+  ])
+  const bslLevels = uniqueLevels([
+    structure?.trap?.swept?.kind === 'BSL' ? structure.trap.swept.price : null,
+    structure?.h1?.lastSweep?.side === 'UP' ? structure.h1.lastSweep.price : null,
+    structure?.h4?.lastSweep?.side === 'UP' ? structure.h4.lastSweep.price : null,
+    structure?.h1?.lastSwingHigh?.price,
+    structure?.h4?.lastSwingHigh?.price,
+    primary?.top,
+    ...(liquidityMap?.equalHighs.map((l) => l.price) ?? []),
+    signal?.raid?.type === 'BEAR_SWEEP' ? signal.raid.sweptLevel : null,
+  ])
+
+  const choch = structure?.h1?.lastChoch ?? structure?.h4?.lastChoch ?? null
+  const mssUp = Boolean(signal?.mss?.detected && signal.mss.direction === 'BULLISH')
+  const mssDn = Boolean(signal?.mss?.detected && signal.mss.direction === 'BEARISH')
+  const ltfUp = Boolean(signal?.ltfChoCH?.detected)
+
+  const chochAfterSsl = (sweepIndex: number | null): boolean => {
+    if (mssUp || ltfUp) return true
+    if (choch?.side === 'UP' && (sweepIndex == null || choch.index >= sweepIndex)) {
+      return true
+    }
+    return false
+  }
+  const chochAfterBsl = (sweepIndex: number | null): boolean => {
+    if (mssDn) return true
+    if (choch?.side === 'DOWN' && (sweepIndex == null || choch.index >= sweepIndex)) {
+      return true
+    }
+    return false
+  }
+
+  const nearBand = Math.max(atr * 4.2, live * 0.02)
+  const sslHunt = sslLevels.filter((p) => Math.abs(p - live) <= nearBand)
+  const bslHunt = bslLevels.filter((p) => Math.abs(p - live) <= nearBand)
+
+  if (look >= 2) {
+    for (let i = candles.length - 1; i >= candles.length - look; i--) {
+      const c = candles[i]
+      if (!c) continue
+      const barsAgo = candles.length - 1 - i
+      const close = c[4]
+      for (const level of sslHunt) {
+        if (c[3] < level - pad && close > level) {
+          ssl = mergeSpent(ssl, {
+            kind: 'SSL',
+            price: level,
+            barsAgo,
+            reclaimed: true,
+            chochAfter: chochAfterSsl(i),
+            via: 'candles',
+          })
+        } else if (c[3] < level - pad && close <= level && barsAgo <= 3) {
+          ssl = mergeSpent(ssl, {
+            kind: 'SSL',
+            price: level,
+            barsAgo,
+            reclaimed: live > level,
+            chochAfter: chochAfterSsl(i),
+            via: 'candles',
+          })
+        }
+      }
+      for (const level of bslHunt) {
+        if (c[2] > level + pad && close < level) {
+          bsl = mergeSpent(bsl, {
+            kind: 'BSL',
+            price: level,
+            barsAgo,
+            reclaimed: true,
+            chochAfter: chochAfterBsl(i),
+            via: 'candles',
+          })
+        } else if (c[2] > level + pad && close >= level && barsAgo <= 3) {
+          bsl = mergeSpent(bsl, {
+            kind: 'BSL',
+            price: level,
+            barsAgo,
+            reclaimed: live < level,
+            chochAfter: chochAfterBsl(i),
+            via: 'candles',
+          })
+        }
+      }
+    }
+  }
+
+  const raid = signal?.raid
+  if (raid && raid.type !== 'NONE' && raid.sweptLevel != null && raid.sweptLevel > 0) {
+    const fresh = raid.isFresh || raid.candlesAgo <= 8
+    if (fresh && raid.type === 'BULL_SWEEP') {
+      ssl = mergeSpent(ssl, {
+        kind: 'SSL',
+        price: raid.sweptLevel,
+        barsAgo: raid.candlesAgo,
+        reclaimed: last != null ? last[4] > raid.sweptLevel : live > raid.sweptLevel,
+        chochAfter: chochAfterSsl(null),
+        via: 'raid',
+      })
+    }
+    if (fresh && raid.type === 'BEAR_SWEEP') {
+      bsl = mergeSpent(bsl, {
+        kind: 'BSL',
+        price: raid.sweptLevel,
+        barsAgo: raid.candlesAgo,
+        reclaimed: last != null ? last[4] < raid.sweptLevel : live < raid.sweptLevel,
+        chochAfter: chochAfterBsl(null),
+        via: 'raid',
+      })
+    }
+  }
+
+  const takeSweep = (ev: StructureEvent | null, via: string) => {
+    if (!ev || ev.kind !== 'SWEEP' || !(ev.price > 0)) return
+    const barsAgo = Math.max(0, candles.length - 1 - ev.index)
+    if (barsAgo > 12) return
+    const rec =
+      ev.side === 'DOWN'
+        ? (last != null && last[4] > ev.price) ||
+          (structure?.h1?.lastReclaim?.side === 'UP' &&
+            structure.h1.lastReclaim.held) ||
+          (structure?.h4?.lastReclaim?.side === 'UP' &&
+            structure.h4.lastReclaim.held)
+        : (last != null && last[4] < ev.price) ||
+          (structure?.h1?.lastReclaim?.side === 'DOWN' &&
+            structure.h1.lastReclaim.held) ||
+          (structure?.h4?.lastReclaim?.side === 'DOWN' &&
+            structure.h4.lastReclaim.held)
+    if (ev.side === 'DOWN') {
+      ssl = mergeSpent(ssl, {
+        kind: 'SSL',
+        price: ev.price,
+        barsAgo,
+        reclaimed: Boolean(rec),
+        chochAfter: chochAfterSsl(ev.index),
+        via,
+      })
+    } else {
+      bsl = mergeSpent(bsl, {
+        kind: 'BSL',
+        price: ev.price,
+        barsAgo,
+        reclaimed: Boolean(rec),
+        chochAfter: chochAfterBsl(ev.index),
+        via,
+      })
+    }
+  }
+  takeSweep(structure?.h1?.lastSweep ?? null, 'sweep')
+  takeSweep(structure?.h4?.lastSweep ?? null, 'sweep')
+
+  const trap = structure?.trap
+  if (trap?.swept && trap.swept.price > 0 && trap.swept.barsAgo <= 12) {
+    const rec =
+      trap.phase === 'TRADE_READY' ||
+      (trap.swept.kind === 'SSL'
+        ? last != null && last[4] > trap.swept.price && live > trap.swept.price
+        : last != null && last[4] < trap.swept.price && live < trap.swept.price)
+    if (trap.swept.kind === 'SSL') {
+      ssl = mergeSpent(ssl, {
+        kind: 'SSL',
+        price: trap.swept.price,
+        barsAgo: trap.swept.barsAgo,
+        reclaimed: rec,
+        chochAfter: chochAfterSsl(null),
+        via: 'trap',
+      })
+    } else {
+      bsl = mergeSpent(bsl, {
+        kind: 'BSL',
+        price: trap.swept.price,
+        barsAgo: trap.swept.barsAgo,
+        reclaimed: rec,
+        chochAfter: chochAfterBsl(null),
+        via: 'trap',
+      })
+    }
+  }
+
+  if (liquidityMap) {
+    for (const lvl of liquidityMap.equalLows) {
+      if (lvl.isActive || !(lvl.price > 0) || lvl.distancePct > 1.6) continue
+      if (!ssl && !sslHunt.some((p) => sameLevel(p, lvl.price, atr, live))) continue
+      ssl = mergeSpent(ssl, {
+        kind: 'SSL',
+        price: lvl.price,
+        barsAgo: 2,
+        reclaimed: live > lvl.price && (last == null || last[4] > lvl.price),
+        chochAfter: chochAfterSsl(null),
+        via: 'map',
+      })
+    }
+    for (const lvl of liquidityMap.equalHighs) {
+      if (lvl.isActive || !(lvl.price > 0) || lvl.distancePct > 1.6) continue
+      if (!bsl && !bslHunt.some((p) => sameLevel(p, lvl.price, atr, live))) continue
+      bsl = mergeSpent(bsl, {
+        kind: 'BSL',
+        price: lvl.price,
+        barsAgo: 2,
+        reclaimed: live < lvl.price && (last == null || last[4] < lvl.price),
+        chochAfter: chochAfterBsl(null),
+        via: 'map',
+      })
+    }
+  }
+
+  const surg = signal?.surgicalEntry
+  if (
+    surg &&
+    surg.sweepPrice != null &&
+    surg.sweepPrice > 0 &&
+    (surg.status === 'READY' || surg.status === 'WAITING_CONFIRM')
+  ) {
+    if (surg.side === 'LONG') {
+      ssl = mergeSpent(ssl, {
+        kind: 'SSL',
+        price: surg.sweepPrice,
+        barsAgo: surg.status === 'READY' ? 1 : 2,
+        reclaimed: surg.status === 'READY',
+        chochAfter: chochAfterSsl(null) || surg.status === 'READY',
+        via: 'surgical',
+      })
+    } else if (surg.side === 'SHORT') {
+      bsl = mergeSpent(bsl, {
+        kind: 'BSL',
+        price: surg.sweepPrice,
+        barsAgo: surg.status === 'READY' ? 1 : 2,
+        reclaimed: surg.status === 'READY',
+        chochAfter: chochAfterBsl(null) || surg.status === 'READY',
+        via: 'surgical',
+      })
+    }
+  }
+
+  const ote = signal?.ote
+  if (ote?.isActive && ote.direction === 'LONG' && ssl) {
+    ssl = mergeSpent(ssl, {
+      kind: 'SSL',
+      price: ssl.price,
+      barsAgo: ssl.barsAgo,
+      reclaimed: ssl.reclaimed || ote.priceInZone,
+      chochAfter: true,
+      via: 'ote',
+    })
+  }
+  if (ote?.isActive && ote.direction === 'SHORT' && bsl) {
+    bsl = mergeSpent(bsl, {
+      kind: 'BSL',
+      price: bsl.price,
+      barsAgo: bsl.barsAgo,
+      reclaimed: bsl.reclaimed || ote.priceInZone,
+      chochAfter: true,
+      via: 'ote',
+    })
+  }
+
+  const seqLive =
+    sequence && sequence.expiresAt > Date.now() && sequence.allowedInRegime
+      ? sequence
+      : null
+  if (seqLive && ssl && seqLive.side === 'LONG') {
+    ssl = mergeSpent(ssl, {
+      kind: 'SSL',
+      price: ssl.price,
+      barsAgo: ssl.barsAgo,
+      reclaimed: true,
+      chochAfter: true,
+      via: 'sequence',
+    })
+  }
+  if (seqLive && bsl && seqLive.side === 'SHORT') {
+    bsl = mergeSpent(bsl, {
+      kind: 'BSL',
+      price: bsl.price,
+      barsAgo: bsl.barsAgo,
+      reclaimed: true,
+      chochAfter: true,
+      via: 'sequence',
+    })
+  }
+
+  return { ssl, bsl }
+}
+
+function workingSideFromSpent(
+  current: 'LONG' | 'SHORT' | null,
+  spent: SpentLiquidity,
+  tape: LastTape,
+  setupSide: 'LONG' | 'SHORT' | null
+): 'LONG' | 'SHORT' | null {
+  const sslGo = Boolean(spent.ssl?.reclaimed)
+  const bslGo = Boolean(spent.bsl?.reclaimed)
+  if (sslGo && bslGo) {
+    if (tape.displacement === 'UP') return 'LONG'
+    if (tape.displacement === 'DOWN') return 'SHORT'
+    return spent.ssl!.barsAgo <= spent.bsl!.barsAgo ? 'LONG' : 'SHORT'
+  }
+  if (sslGo) return 'LONG'
+  if (bslGo) return 'SHORT'
+  if (setupSide) return setupSide
+  return current
+}
+
 function scoreLiveOdds(opts: {
   primary: LiquidityZone
   rx: ZoneReaction | null
@@ -1213,8 +1647,9 @@ function scoreLiveOdds(opts: {
   atr: number
   side: 'LONG' | 'SHORT'
   kind: StoryNowKind
+  spent?: SpentLiquidity | null
 }): StoryOdds {
-  const { primary, rx, structure, candles, price, atr, side, kind } = opts
+  const { primary, rx, structure, candles, price, atr, side, kind, spent } = opts
   const dist = edgeDist(primary, price)
   const scale = Math.max(atr * 2.4, (primary.top - primary.bottom) * 1.8, price * 0.008)
   const proximity = clamp(1 - dist / scale, 0, 1)
@@ -1285,6 +1720,10 @@ function scoreLiveOdds(opts: {
   if (structure?.trap?.phase === 'TRADE_READY' && structure.trap.tradeSide === side) {
     tapeAdj += 6
   }
+  if (spent?.ssl?.reclaimed && side === 'LONG') tapeAdj += 8
+  if (spent?.bsl?.reclaimed && side === 'SHORT') tapeAdj += 8
+  if (spent?.bsl?.reclaimed && side === 'LONG') tapeAdj -= 10
+  if (spent?.ssl?.reclaimed && side === 'SHORT') tapeAdj -= 10
 
   /* Closer to the zone → last candles dominate the printed %. */
   const w = 0.18 + proximity * 0.82
@@ -1297,6 +1736,10 @@ function scoreLiveOdds(opts: {
 
   let fact = 'ждём реакцию'
   if (lost) fact = 'закрылись сквозь зону'
+  else if (spent?.ssl?.reclaimed && side === 'LONG') fact = 'лои сняты — закреп, ищем BSL'
+  else if (spent?.bsl?.reclaimed && side === 'SHORT') fact = 'хаи сняты — закреп, ищем SSL'
+  else if (spent?.ssl && !spent.ssl.reclaimed) fact = 'лои сняли, закреп нет'
+  else if (spent?.bsl && !spent.bsl.reclaimed) fact = 'хаи сняли, закреп нет'
   else if (accepted && tape.displacement !== 'NONE') fact = 'закреп + импульс'
   else if (accepted) fact = 'закреп / принятие'
   else if (tape.rejected) fact = 'отбой фитилём'
@@ -1311,20 +1754,29 @@ function scoreLiveOdds(opts: {
   return { pct, failPct, proximity, fact, lost }
 }
 
-function roundFour(hold: number, sweep: number, brk: number, chop: number): {
+function roundFour(
+  hold: number,
+  sweep: number,
+  brk: number,
+  chop: number,
+  spentSweep = false
+): {
   hold: number
   sweep: number
   brk: number
   chop: number
 } {
-  const raw = [hold, sweep, brk, chop].map((n) => Math.max(4, n))
+  const floors = [4, spentSweep ? 0 : 4, 4, 4]
+  const raw = [hold, sweep, brk, chop].map((n, i) => Math.max(floors[i]!, n))
+  if (spentSweep) raw[1] = Math.min(raw[1]!, 6)
   const sum = raw.reduce((a, b) => a + b, 0) || 1
   const rounded = raw.map((n) => Math.round((n / sum) * 100))
   let drift = 100 - rounded.reduce((a, b) => a + b, 0)
   let idx = 0
-  for (let i = 1; i < 4; i++) if (rounded[i] > rounded[idx]) idx = i
-  rounded[idx] += drift
-  return { hold: rounded[0], sweep: rounded[1], brk: rounded[2], chop: rounded[3] }
+  for (let i = 1; i < 4; i++) if ((rounded[i] ?? 0) > (rounded[idx] ?? 0)) idx = i
+  if (spentSweep && idx === 1) idx = rounded[0]! >= (rounded[2] ?? 0) ? 0 : 2
+  rounded[idx] = (rounded[idx] ?? 0) + drift
+  return { hold: rounded[0]!, sweep: rounded[1]!, brk: rounded[2]!, chop: rounded[3]! }
 }
 
 function scoreFourScenarios(opts: {
@@ -1334,8 +1786,9 @@ function scoreFourScenarios(opts: {
   bos: { aligned: boolean; against: boolean; held: boolean; kind: string }
   trapPhase: string | null
   side: 'LONG' | 'SHORT'
+  spent?: SpentLiquidity | null
 }): { hold: number; sweep: number; brk: number; chop: number } {
-  const { odds, kind, tape, bos, trapPhase, side } = opts
+  const { odds, kind, tape, bos, trapPhase, side, spent } = opts
   let hold = odds.pct * 0.72
   let brk = odds.failPct * 0.72
   let sweep = 14
@@ -1393,24 +1846,63 @@ function scoreFourScenarios(opts: {
   else if (bos.against && bos.held) brk += 8
   else if (bos.against) brk += 4
 
+  const huntSslSpent = Boolean(spent?.ssl) && side === 'LONG'
+  const huntBslSpent = Boolean(spent?.bsl) && side === 'SHORT'
+  const huntSpent = huntSslSpent || huntBslSpent
+
   if (trapPhase === 'TRADE_READY') {
-    sweep += 6
+    if (!huntSpent) sweep += 6
     hold += 5
   } else if (trapPhase === 'HUNTING' || trapPhase === 'SWEPT') {
-    sweep += 10
+    if (!huntSpent) sweep += 10
+    else hold += 6
   } else if (trapPhase === 'TRAP') {
-    sweep += 8
+    if (!huntSpent) sweep += 8
     brk += 4
+  }
+
+  if (spent?.ssl) {
+    if (side === 'LONG') {
+      sweep = Math.min(sweep, 6)
+      if (spent.ssl.reclaimed) {
+        hold += 16
+        brk -= 8
+        chop -= 2
+      } else {
+        brk += 4
+      }
+    } else if (spent.ssl.reclaimed) {
+      brk += 10
+      hold = Math.min(hold, 18)
+    }
+  }
+  if (spent?.bsl) {
+    if (side === 'SHORT') {
+      sweep = Math.min(sweep, 6)
+      if (spent.bsl.reclaimed) {
+        hold += 16
+        brk -= 8
+        chop -= 2
+      } else {
+        brk += 4
+      }
+    } else if (spent.bsl.reclaimed) {
+      brk += 16
+      hold = Math.min(hold, 16)
+      sweep = Math.min(sweep, 8)
+    } else {
+      hold -= 8
+    }
   }
 
   if (odds.lost) {
     brk += 22
     hold = Math.min(hold, 14)
     chop = Math.min(chop, 12)
-    sweep += 2
+    if (!huntSpent) sweep += 2
   }
 
-  return roundFour(hold, sweep, brk, chop)
+  return roundFour(hold, sweep, brk, chop, huntSpent)
 }
 
 function legendOf(
@@ -1450,7 +1942,12 @@ export function padStoryScenarios(
   side: 'LONG' | 'SHORT' | null,
   price: number,
   barSeconds: number,
-  extra?: { candles?: OhlcvCandle[]; atr?: number; primary?: LiquidityZone | null }
+  extra?: {
+    candles?: OhlcvCandle[]
+    atr?: number
+    primary?: LiquidityZone | null
+    spent?: SpentLiquidity | null
+  }
 ): StoryScenario[] {
   const s: 'LONG' | 'SHORT' = side === 'SHORT' ? 'SHORT' : 'LONG'
   const fail: 'LONG' | 'SHORT' = s === 'LONG' ? 'SHORT' : 'LONG'
@@ -1484,7 +1981,7 @@ export function padStoryScenarios(
       pct: 40,
       side: s,
       dirLabel: dirWord(s),
-      condition: holdCondition(s),
+      condition: holdCondition(s, extra?.spent),
       title: holdArrowCaption(s, holdDest),
       path: holdPathOf({
         price: now,
@@ -1503,31 +2000,37 @@ export function padStoryScenarios(
     },
     {
       id: 'sweep',
-      pct: 22,
+      pct: sweepIsSpent(s, extra?.spent) ? 4 : 22,
       side: s,
       dirLabel: dirWord(s),
-      condition: sweepCondition(s),
-      title: 'свип → разворот',
-      path: sweepPathOf({
-        price: now,
-        primary: band,
-        target: holdT,
-        side: s,
-        barSeconds,
-        atr,
-        sweepPrice: sweepPx,
-        rhythm,
-      }),
-      toPrice: holdTo,
-      toLabel: holdDest,
-      tipLabel: storyTipLabel(holdTo),
+      condition: sweepCondition(s, extra?.spent),
+      title: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : 'свип → разворот',
+      spent: sweepIsSpent(s, extra?.spent),
+      spentNote: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : undefined,
+      spentPrice:
+        s === 'LONG' ? extra?.spent?.ssl?.price ?? null : extra?.spent?.bsl?.price ?? null,
+      path: sweepIsSpent(s, extra?.spent)
+        ? []
+        : sweepPathOf({
+            price: now,
+            primary: band,
+            target: holdT,
+            side: s,
+            barSeconds,
+            atr,
+            sweepPrice: sweepPx,
+            rhythm,
+          }),
+      toPrice: sweepIsSpent(s, extra?.spent) ? null : holdTo,
+      toLabel: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : holdDest,
+      tipLabel: sweepIsSpent(s, extra?.spent) ? 'уже сняли' : storyTipLabel(holdTo),
     },
     {
       id: 'break',
       pct: 22,
       side: fail,
       dirLabel: dirWord(fail),
-      condition: breakCondition(s),
+      condition: breakCondition(s, extra?.spent),
       title: `слом → ${breakDest}`,
       path: breakPathOf({
         price: now,
@@ -1566,18 +2069,30 @@ export function padStoryScenarios(
   return stubs.map((stub) => byId.get(stub.id) ?? stub)
 }
 
-function holdCondition(side: 'LONG' | 'SHORT'): string {
+function holdCondition(side: 'LONG' | 'SHORT', spent?: SpentLiquidity | null): string {
+  if (side === 'LONG' && spent?.ssl?.reclaimed) return 'лои сняты — ищем лонг к BSL'
+  if (side === 'SHORT' && spent?.bsl?.reclaimed) return 'хаи сняты — ищем шорт к SSL'
+  if (side === 'LONG' && spent?.bsl?.reclaimed) return 'хаи сняты — не сжимать в те же EQH'
   return side === 'LONG' ? 'если закрепятся над зоной' : 'если закрепятся под зоной'
 }
 
-function sweepCondition(side: 'LONG' | 'SHORT'): string {
+function sweepCondition(side: 'LONG' | 'SHORT', spent?: SpentLiquidity | null): string {
+  if (side === 'LONG' && spent?.ssl) return 'лои уже сняты'
+  if (side === 'SHORT' && spent?.bsl) return 'хаи уже сняты'
   return side === 'LONG'
     ? 'если снимут лои и закроются обратно'
     : 'если снимут хаи и закроются обратно'
 }
 
-function breakCondition(side: 'LONG' | 'SHORT'): string {
+function breakCondition(side: 'LONG' | 'SHORT', spent?: SpentLiquidity | null): string {
+  if (side === 'LONG' && spent?.ssl?.reclaimed) return 'если потеряют закреп над лоями'
+  if (side === 'SHORT' && spent?.bsl?.reclaimed) return 'если потеряют закреп под хаями'
+  if (side === 'LONG' && spent?.bsl?.reclaimed) return 'хаи сняты — продолжение шорта вниз'
   return side === 'LONG' ? 'если закроют ниже зоны' : 'если закроют выше зоны'
+}
+
+function sweepIsSpent(side: 'LONG' | 'SHORT', spent?: SpentLiquidity | null): boolean {
+  return Boolean((side === 'LONG' && spent?.ssl) || (side === 'SHORT' && spent?.bsl))
 }
 
 export function buildChartStory(opts: {
@@ -1592,6 +2107,9 @@ export function buildChartStory(opts: {
   barSeconds?: number
   onlyStrong?: boolean
   candles?: OhlcvCandle[]
+  signal?: CoinSignal | null
+  liquidityMap?: LiquidityMap | null
+  sequence?: SequenceHit | null
 }): ChartStory {
   const price = opts.price
   const atr = opts.atr && opts.atr > 0 ? opts.atr : Math.max(price * 0.004, 1e-8)
@@ -1634,8 +2152,30 @@ export function buildChartStory(opts: {
   const rx = rawPrimary ? reactionForZone(board, rawPrimary) : board?.active ?? null
 
   const fromGoing = goingToSide(rx?.going)
-  const holdSide =
+  const draftSide =
     fromSetup ?? fromGoing ?? fromStruct ?? sideOfZone(rawPrimary) ?? (livePrice > 0 ? 'LONG' : null)
+  const spent = detectSpentLiquidity({
+    candles,
+    price: livePrice,
+    atr,
+    structure: opts.structure ?? null,
+    signal: opts.signal ?? null,
+    liquidityMap: opts.liquidityMap ?? null,
+    sequence: opts.sequence ?? null,
+    primary: rawPrimary,
+  })
+  const tapePeek =
+    rawPrimary && draftSide
+      ? readLastTape(candles, rawPrimary, draftSide, atr)
+      : {
+          overlapping: false,
+          displacement: 'NONE' as const,
+          upCloses: 0,
+          downCloses: 0,
+          heldCloses: 0,
+          rejected: false,
+        }
+  const holdSide = workingSideFromSpent(draftSide, spent, tapePeek, fromSetup)
   const primary = rawPrimary ? tagRole(rawPrimary, 'PRIMARY', holdSide) : null
   const nowKind = nowKindOf(primary, rx, livePrice || price, atr, holdSide)
 
@@ -1658,10 +2198,11 @@ export function buildChartStory(opts: {
           atr,
           side: holdSide,
           kind: nowKind,
+          spent,
         })
       : null
 
-  const nowLine = nowLineOf(nowKind, holdSide, scoredOdds?.pct ?? null)
+  const nowLine = nowLineOf(nowKind, holdSide, scoredOdds?.pct ?? null, spent)
   const hz = tfHorizon(barSeconds, atr, livePrice || price)
   const rhythm = readCoinRhythm(candles, atr)
 
@@ -1677,6 +2218,7 @@ export function buildChartStory(opts: {
           price: livePrice,
           atr,
           horizon: hz.dist,
+          spent,
         })
       : null
 
@@ -1691,6 +2233,7 @@ export function buildChartStory(opts: {
           price: livePrice,
           atr,
           horizon: hz.dist,
+          spent,
         })
       : null
 
@@ -1725,8 +2268,12 @@ export function buildChartStory(opts: {
           bos,
           trapPhase: opts.structure?.trap?.phase ?? null,
           side: holdSide,
+          spent,
         })
       : { hold: 40, sweep: 22, brk: 22, chop: 16 }
+    const huntSpent = sweepIsSpent(holdSide, spent)
+    const spentHuntPx =
+      holdSide === 'LONG' ? spent.ssl?.price ?? null : spent.bsl?.price ?? null
 
     const holdDest = {
       price: clipToHorizon(
@@ -1777,16 +2324,18 @@ export function buildChartStory(opts: {
       fuel: fuelPx,
       rhythm,
     })
-    const sweepPath = sweepPathOf({
-      price: livePrice,
-      primary,
-      target: holdDest,
-      side: holdSide,
-      barSeconds,
-      atr,
-      sweepPrice: sweep,
-      rhythm,
-    })
+    const sweepPath = huntSpent
+      ? []
+      : sweepPathOf({
+          price: livePrice,
+          primary,
+          target: holdDest,
+          side: holdSide,
+          barSeconds,
+          atr,
+          sweepPrice: sweep,
+          rhythm,
+        })
     const lostPath = breakPathOf({
       price: livePrice,
       primary,
@@ -1815,7 +2364,7 @@ export function buildChartStory(opts: {
         pct: four.hold,
         side: holdSide,
         dirLabel: dirWord(holdSide),
-        condition: holdCondition(holdSide),
+        condition: holdCondition(holdSide, spent),
         title: holdArrowCaption(holdSide, holdDest.label),
         path: holdPath,
         toPrice: holdDest.price,
@@ -1827,19 +2376,24 @@ export function buildChartStory(opts: {
         pct: four.sweep,
         side: holdSide,
         dirLabel: dirWord(holdSide),
-        condition: sweepCondition(holdSide),
-        title: `свип → ${humanizeStoryTarget(holdDest.label, holdSide)}`,
+        condition: sweepCondition(holdSide, spent),
+        title: huntSpent
+          ? 'уже сняли'
+          : `свип → ${humanizeStoryTarget(holdDest.label, holdSide)}`,
         path: sweepPath,
-        toPrice: holdDest.price,
-        toLabel: holdDest.label,
-        tipLabel: storyTipLabel(holdDest.price),
+        toPrice: huntSpent ? null : holdDest.price,
+        toLabel: huntSpent ? 'уже сняли' : holdDest.label,
+        tipLabel: huntSpent ? 'уже сняли' : storyTipLabel(holdDest.price),
+        spent: huntSpent,
+        spentNote: huntSpent ? 'уже сняли' : undefined,
+        spentPrice: spentHuntPx,
       },
       {
         id: 'break',
         pct: four.brk,
         side: failSide ?? (holdSide === 'LONG' ? 'SHORT' : 'LONG'),
         dirLabel: dirWord(failSide ?? 'RANGE'),
-        condition: breakCondition(holdSide),
+        condition: breakCondition(holdSide, spent),
         title: `слом → ${breakDest.label}`,
         path: lostPath,
         toPrice: breakDest.price,
@@ -1864,6 +2418,7 @@ export function buildChartStory(opts: {
       candles,
       atr,
       primary,
+      spent,
     })
     const lead = leadStoryScenario(packed) ?? packed[0]
     const leadPath = lead?.path?.length ? lead.path : holdPath
@@ -1930,6 +2485,7 @@ export function buildChartStory(opts: {
       candles,
       atr,
       primary,
+      spent,
     }),
     legend: legend.length
       ? legend
@@ -1941,6 +2497,7 @@ export function buildChartStory(opts: {
             take: holdSide,
           },
         ],
+    spent,
   }
 }
 
