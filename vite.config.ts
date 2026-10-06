@@ -163,6 +163,12 @@ export default defineConfig({
         secure: true,
         rewrite: (path) => path.replace(/^\/mexc-spot/, ''),
       },
+      '/binance-fapi': {
+        target: 'https://fapi.binance.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/binance-fapi/, ''),
+      },
       '/news/panic': {
         target: 'https://cryptopanic.com',
         changeOrigin: true,

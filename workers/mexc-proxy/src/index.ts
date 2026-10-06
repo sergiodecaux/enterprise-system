@@ -462,6 +462,9 @@ export default {
       // Spot REST — must be BEFORE /mexc (prefix overlap)
       targetBase = 'https://api.mexc.com'
       targetPath = path.replace('/mexc-spot', '') || '/'
+    } else if (path.startsWith('/binance-fapi')) {
+      targetBase = 'https://fapi.binance.com'
+      targetPath = path.replace('/binance-fapi', '') || '/'
     } else if (path.startsWith('/mexc')) {
       targetBase = MEXC_ORIGIN
       targetPath = path.replace('/mexc', '') || '/'

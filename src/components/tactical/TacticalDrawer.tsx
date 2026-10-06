@@ -39,6 +39,7 @@ import { useBuyerAggression } from '../../hooks/useBuyerAggression'
 import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
 import { buildMarketBrief } from '../../engine/brief'
 import MarketBriefPanel from './MarketBriefPanel'
+import { ContextPanel, useInstrumentMarketContext } from '../market/ContextPanel'
 import CollapsibleSection from '../ui/CollapsibleSection'
 import CoinAnalysisUpgradePanel from './CoinAnalysisUpgradePanel'
 import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
@@ -440,6 +441,11 @@ const TacticalDrawer = () => {
   const mmIntent: MmIntentSnapshot | null = signal
     ? signal.mmIntent ?? mmIntentStore[signal.internalSymbol] ?? null
     : null
+  const instrumentContext = useInstrumentMarketContext(
+    signal?.internalSymbol ?? null,
+    mmIntent,
+    signal?.price ?? 0
+  )
   const surgicalPlan: SurgicalEntrySnapshot | null =
     signal?.surgicalEntry ?? null
   const watchedForCoin = signal
@@ -768,6 +774,11 @@ const TacticalDrawer = () => {
                 : 'contents'
             }
           >
+          {signal && (
+            <div className={isDesktop ? '' : 'px-4 pt-3'}>
+              <ContextPanel ctx={instrumentContext} />
+            </div>
+          )}
           {!isDesktop && (
             <>
               <button

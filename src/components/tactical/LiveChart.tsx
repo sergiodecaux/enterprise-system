@@ -24,6 +24,8 @@ import {
   type MexcTimeframe,
   type OhlcvCandle,
 } from '../../api/mexc'
+import { fetchCrowdContext } from '../../api/binance/crowd'
+import { buildFullMarketContext } from '../../engine/context'
 import type { CoinSignal } from '../../engine/types'
 import type { LiquidityZone } from '../../engine/indicators/types'
 import { logger } from '../../utils/logger'
@@ -74,6 +76,7 @@ import ZoneAdvisorCard from './ZoneAdvisorCard'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
 import ProbableTradesPanel from './ProbableTradesPanel'
 import SignalNowPanel from './SignalNowPanel'
+import { ContextPanel } from '../market/ContextPanel'
 import { buildGlobalFibonacci, type GlobalFibonacciMap } from '../../engine/zones/globalFibonacci'
 import {
   composeStructureRead,
@@ -1464,7 +1467,7 @@ const LiveChart = ({
     structureRead,
   ])
 
-  const handleFindLiveSignal = useCallback(() => {
+  const handleFindLiveSignal = useCallback(async () => {
     if (!(currentPrice > 0) || candles.length < 20) {
       showAlert('Нужны свечи и цена — подождите загрузку графика')
       return
@@ -1473,6 +1476,13 @@ const LiveChart = ({
     setTradesMode(false)
 
     const tradeStyle = horizonToStyle(forecastHorizon)
+    const crowd = await fetchCrowdContext(symbol)
+    const marketContext = buildFullMarketContext({
+      candles1d,
+      price: currentPrice,
+      mm: mmSnap,
+      crowd,
+    })
     const result = findLiveSignal({
       candles,
       candles1d,
@@ -1488,6 +1498,8 @@ const LiveChart = ({
       fearGreed: fearGreedValue,
       tradeStyle,
       sequence: sequenceHit,
+      marketContext,
+      crowd,
     })
 
     toolsSymbolRef.current = symbol
@@ -3636,7 +3648,13 @@ const LiveChart = ({
       )}
 
       {signalMode && liveSignal && (
-        <SignalNowPanel
+        <>
+          {liveSignal.marketContext && (
+            <div className="px-3 pt-2">
+              <ContextPanel ctx={liveSignal.marketContext} />
+            </div>
+          )}
+          <SignalNowPanel
           result={liveSignal}
           selectedId={selectedSetupId}
           watchingIds={watchingIds}
@@ -3651,6 +3669,7 @@ const LiveChart = ({
             haptic.impact()
           }}
         />
+        </>
       )}
 
       {zonesMode && (

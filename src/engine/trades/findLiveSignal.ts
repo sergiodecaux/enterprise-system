@@ -26,6 +26,11 @@ import {
 import type { SequenceHit } from '../sequence'
 import { setupFitsRegime } from '../sequence'
 import type { MarketRegime } from '../regime/marketRegime'
+import {
+  buildFullMarketContext,
+  type CrowdContext,
+  type FullMarketContext,
+} from '../context'
 
 export type LiveSignalPhase =
   | 'IN_ZONE'
@@ -78,6 +83,8 @@ export interface LiveSignalResult {
   liveMarket: LiveMarketRead | null
   /** Remizov process limit (wall absorption exhaustion, …) */
   sequence: SequenceHit | null
+  /** Session, calendar, crowd and whale weights used to rank scenarios. */
+  marketContext: FullMarketContext | null
 }
 
 function distPct(price: number, level: number): number {
@@ -273,7 +280,45 @@ function hardSkipResult(
     smcLines: [],
     liveMarket: null,
     sequence: null,
+    marketContext: null,
   }
+}
+
+function applyContextWeights(
+  list: LiveScenario[],
+  ctx: FullMarketContext
+): LiveScenario[] {
+  const t = ctx.thresholds
+  const crowdedLong =
+    ctx.crowd.known &&
+    ctx.crowd.longShortRatio > 2 &&
+    ctx.crowd.fundingTrend === 'RISING'
+  const crowdedShort =
+    ctx.crowd.known &&
+    ctx.crowd.longShortRatio > 0 &&
+    ctx.crowd.longShortRatio < 0.5 &&
+    ctx.crowd.fundingTrend === 'FALLING'
+  return list.map((s) => {
+    const reversal = s.kind === 'REVERSAL' || s.kind === 'ZONE_TEST_BOUNCE'
+    const continuation =
+      s.kind === 'CONTINUATION' ||
+      s.kind === 'MM_HUNT' ||
+      s.kind === 'SEQUENCE_LIMIT' ||
+      s.kind === 'ZONE_BREAK'
+    let delta = 0
+    if (reversal) delta += t.reversalBias
+    if (continuation) delta += t.continuationBias
+    if (t.requiredConfirmation === 'HARD' && continuation) delta -= 8
+    if (crowdedLong && s.side === 'LONG' && continuation) delta -= 10
+    if (crowdedLong && s.side === 'SHORT' && reversal) delta += 6
+    if (crowdedShort && s.side === 'SHORT' && continuation) delta -= 10
+    if (crowdedShort && s.side === 'LONG' && reversal) delta += 6
+    if (delta === 0) return s
+    return {
+      ...s,
+      winPct: Math.max(5, Math.min(92, Math.round(s.winPct + delta))),
+    }
+  })
 }
 
 function scenarioFromSetup(
@@ -313,14 +358,26 @@ export function findLiveSignal(input: {
   tradeStyle?: SetupTradeStyle
   /** Live Remizov sequence hit from FrameBus */
   sequence?: SequenceHit | null
+  /** Prebuilt context. When omitted, session/HTF/whales are built here. */
+  marketContext?: FullMarketContext | null
+  crowd?: CrowdContext | null
 }): LiveSignalResult {
-  const card = input.signal?.scoreCard
-  if (card && isHardSkip(card)) {
-    return hardSkipResult(input, card)
-  }
-
   const price = input.price
   const mm = input.mmIntent ?? input.signal?.mmIntent ?? null
+  const marketContext =
+    input.marketContext ??
+    buildFullMarketContext({
+      candles1d: input.candles1d,
+      price,
+      mm,
+      crowd: input.crowd ?? null,
+    })
+
+  const card = input.signal?.scoreCard
+  if (card && isHardSkip(card)) {
+    return { ...hardSkipResult(input, card), marketContext }
+  }
+
   const regime: MarketRegime =
     input.signal?.marketRegime ?? 'RANGING'
   const seq =
@@ -520,8 +577,9 @@ export function findLiveSignal(input: {
     scenarios.push(scoreSkipScenario(sc, false))
   }
 
+  const ranked = applyContextWeights(scenarios, marketContext)
   const seen = new Set<string>()
-  const uniq = scenarios.filter((s) => {
+  const uniq = ranked.filter((s) => {
     const k = `${s.kind}:${s.side}:${s.title}`
     if (seen.has(k)) return false
     seen.add(k)
@@ -627,6 +685,7 @@ export function findLiveSignal(input: {
     liquidityMap: base.liquidityMap,
     driveNarrative: narrative,
     smcLines: [
+      ...marketContext.notes.slice(0, 3),
       ...(seq
         ? [
             `SEQ ${seq.kind}: ${seq.side} ~${seq.confidence}%${
@@ -639,5 +698,6 @@ export function findLiveSignal(input: {
     ].slice(0, 10),
     liveMarket,
     sequence: seq,
+    marketContext,
   }
 }

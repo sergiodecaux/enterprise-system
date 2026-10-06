@@ -257,6 +257,8 @@ export function buildDirectedSignal(input: {
   btcDomDelta24h?: number | null
   altRegime?: AltRegime | null
   altBias?: AltBias | null
+  marketContext?: import('../context').FullMarketContext | null
+  crowd?: import('../context').CrowdContext | null
 }): DirectedSignalResult {
   const live = findLiveSignal({
     candles: input.candles,
@@ -272,6 +274,8 @@ export function buildDirectedSignal(input: {
     bookImbalance: input.bookImbalance,
     fearGreed: input.fearGreed,
     tradeStyle: input.tradeStyle ?? 'INTRADAY',
+    marketContext: input.marketContext,
+    crowd: input.crowd,
   })
 
   const side = input.side

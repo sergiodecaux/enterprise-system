@@ -50,8 +50,11 @@ import {
 } from '../../engine/analysis'
 import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { AltMacroStrip } from '../market/AltMacroStrip'
+import { ContextPanel } from '../market/ContextPanel'
 import { loadJournal, SETUP_LABELS } from '../../engine/journal'
 import { isSniperFireNew, sniperFireKey } from '../../engine/sniper/fire'
+import { fetchCrowdContext } from '../../api/binance/crowd'
+import { buildFullMarketContext } from '../../engine/context'
 import { directionLabel } from '../../i18n/displayMaps'
 
 const BTC = 'BTC/USDT:USDT'
@@ -306,6 +309,13 @@ const SignalsView = () => {
               ? c15m
               : c1h
 
+      const crowd = await fetchCrowdContext(symbol)
+      const rankContext = buildFullMarketContext({
+        candles1d: coin1d,
+        price,
+        mm: mmIntentMap[symbol] ?? styledSignal.mmIntent ?? null,
+        crowd,
+      })
       const directed = buildDirectedSignal({
         side,
         candles: pathCandles,
@@ -335,6 +345,8 @@ const SignalsView = () => {
         dailyBias: dailyBias.bias,
         btcTrend,
         tradeStyle: style,
+        marketContext: rankContext,
+        crowd,
       })
 
       // Ensure setup carries horizon for bot watch / Lab
@@ -769,6 +781,10 @@ const SignalsView = () => {
               {result.primary.summary}
             </p>
           </div>
+
+          {result.live.marketContext && (
+            <ContextPanel ctx={result.live.marketContext} />
+          )}
 
           {/* Catch zone */}
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.05] p-3">
