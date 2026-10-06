@@ -229,6 +229,16 @@ export interface ScoreCardSnapshot {
   maxScore: number
   percent: number
   grade: 'A+' | 'A' | 'B' | 'SKIP'
+  /** Grade before a hard block rewrote it to SKIP. */
+  baseGrade?: 'A+' | 'A' | 'B' | 'SKIP'
+  /** NONE = tradable grade, SOFT = low score, HARD = blocked. */
+  skipKind?: 'NONE' | 'SOFT' | 'HARD'
+  hardBlockers?: (
+    | 'RR_TOO_LOW'
+    | 'VOLATILE_CHOP'
+    | 'DATA_POOR'
+    | 'MIN_DATA_QUALITY'
+  )[]
   ready: boolean
   missingFactors: string[]
   factors: {

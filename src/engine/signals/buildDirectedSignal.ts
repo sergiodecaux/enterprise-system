@@ -275,14 +275,30 @@ export function buildDirectedSignal(input: {
   })
 
   const side = input.side
-  const sideScenarios = live.scenarios.filter((s) => s.side === side)
+  const sideScenarios = live.scenarios.filter(
+    (s) => s.side === side || s.side === 'FLAT'
+  )
   const setups = live.trades.filter((t) => t.side === side)
 
-  let primary =
-    sideScenarios.find((s) => s.kind === 'SEQUENCE_LIMIT') ??
-    sideScenarios.find((s) => s.kind === 'ZONE_TEST_BOUNCE') ??
-    sideScenarios[0] ??
+  const card = input.signal?.scoreCard
+  const scoreSkipped =
+    card?.skipKind === 'HARD' ||
+    card?.skipKind === 'SOFT' ||
+    card?.grade === 'SKIP'
+
+  const waitPrimary =
+    sideScenarios.find((s) => s.id === 'sc_wait_score_skip') ??
+    sideScenarios.find((s) => s.id === 'sc_regime_chop') ??
+    sideScenarios.find((s) => s.id === 'sc_empty') ??
+    sideScenarios.find((s) => s.kind === 'WAIT') ??
     null
+
+  let primary = scoreSkipped
+    ? waitPrimary
+    : (sideScenarios.find((s) => s.kind === 'SEQUENCE_LIMIT') ??
+      sideScenarios.find((s) => s.kind === 'ZONE_TEST_BOUNCE') ??
+      sideScenarios[0] ??
+      null)
 
   if (!primary) {
     primary = {
@@ -367,11 +383,16 @@ export function buildDirectedSignal(input: {
     : modelPct
 
   const doubts: string[] = []
+  if (card?.skipKind === 'HARD') {
+    doubts.push('ScoreCard HARD SKIP — сигналы заблокированы')
+    for (const blocker of (card.hardBlockers ?? []).slice(0, 2)) {
+      doubts.push(blocker)
+    }
+  } else if (card?.skipKind === 'SOFT' || card?.grade === 'SKIP') {
+    doubts.push('ScoreCard SKIP — ждать подтверждений от зоны')
+  }
   const missing = input.signal?.scoreCard?.missingFactors ?? []
   for (const m of missing.slice(0, 4)) doubts.push(m)
-  if (input.signal?.scoreCard?.grade === 'SKIP') {
-    doubts.push('ScoreCard SKIP — вход только от зоны')
-  }
   if (histPolicy?.action === 'block' || histPolicy?.action === 'demote') {
     doubts.push(histPolicy.reason)
   }

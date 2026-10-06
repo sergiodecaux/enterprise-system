@@ -191,6 +191,91 @@ function buildDriveNarrative(
   return { narrative, lines: lines.slice(0, 8) }
 }
 
+function isHardSkip(sc: CoinSignal['scoreCard']): boolean {
+  return sc?.skipKind === 'HARD'
+}
+
+function isSoftSkip(sc: CoinSignal['scoreCard']): boolean {
+  if (!sc || sc.skipKind === 'HARD') return false
+  if (sc.skipKind === 'SOFT') return true
+  return sc.grade === 'SKIP' && sc.skipKind == null
+}
+
+function scoreSkipSummary(sc: NonNullable<CoinSignal['scoreCard']>): string {
+  const missing = (sc.missingFactors ?? []).slice(0, 3).filter(Boolean)
+  return missing.length ? `Не хватает: ${missing.join(', ')}` : 'Не хватает факторов'
+}
+
+function scoreSkipScenario(
+  sc: NonNullable<CoinSignal['scoreCard']>,
+  hard: boolean
+): LiveScenario {
+  return {
+    id: 'sc_wait_score_skip',
+    kind: 'WAIT',
+    side: 'FLAT',
+    title: hard ? 'Ждать · ScoreCard блок' : 'Ждать · ScoreCard SKIP',
+    winPct: 35,
+    summary: scoreSkipSummary(sc),
+    steps: [
+      'Не входить маркет в середину',
+      'Дождаться теста зоны + стакан/поглощение',
+      'Или пробой с объёмом и закреплением',
+    ],
+  }
+}
+
+/** Scorecard WAIT, then chop WAIT, then empty. Not by winPct. */
+function pickPriorityWait(list: LiveScenario[]): LiveScenario | null {
+  return (
+    list.find((s) => s.id === 'sc_wait_score_skip') ??
+    list.find((s) => s.id === 'sc_regime_chop') ??
+    list.find((s) => s.id === 'sc_empty') ??
+    null
+  )
+}
+
+function hardSkipResult(
+  input: {
+    symbol: string
+    liquidityMap?: LiquidityMap | null
+  },
+  sc: NonNullable<CoinSignal['scoreCard']>
+): LiveSignalResult {
+  const primary = scoreSkipScenario(sc, true)
+  const map = input.liquidityMap
+  return {
+    phase: 'CHOP',
+    phaseLabel: primary.title,
+    primary,
+    scenarios: [primary],
+    bestSetup: null,
+    trades: [],
+    zones: [],
+    chartZones: [],
+    globalView: {
+      bias: 'NEUTRAL',
+      summary: primary.summary,
+      factors: [],
+    },
+    magnet: null,
+    liquidityMap: map ?? {
+      symbol: input.symbol,
+      timeframe: '',
+      equalHighs: [],
+      equalLows: [],
+      nearestBSL: null,
+      nearestSSL: null,
+      liquidityBoost: 0,
+      computedAt: 0,
+    },
+    driveNarrative: primary.summary,
+    smcLines: [],
+    liveMarket: null,
+    sequence: null,
+  }
+}
+
 function scenarioFromSetup(
   s: ConditionalSetup,
   kind: LiveScenarioKind,
@@ -229,6 +314,11 @@ export function findLiveSignal(input: {
   /** Live Remizov sequence hit from FrameBus */
   sequence?: SequenceHit | null
 }): LiveSignalResult {
+  const card = input.signal?.scoreCard
+  if (card && isHardSkip(card)) {
+    return hardSkipResult(input, card)
+  }
+
   const price = input.price
   const mm = input.mmIntent ?? input.signal?.mmIntent ?? null
   const regime: MarketRegime =
@@ -426,20 +516,8 @@ export function findLiveSignal(input: {
   }
 
   const sc = input.signal?.scoreCard
-  if (sc && sc.grade === 'SKIP') {
-    scenarios.push({
-      id: 'sc_wait',
-      kind: 'WAIT',
-      side: 'FLAT',
-      title: 'Ждать · ScoreCard SKIP',
-      winPct: 35,
-      summary: `Не хватает: ${(sc.missingFactors ?? []).slice(0, 3).join(', ') || 'факторов'}`,
-      steps: [
-        'Не входить маркет в середину',
-        'Дождаться теста зоны + стакан/поглощение',
-        'Или пробой с объёмом и закреплением',
-      ],
-    })
+  if (sc && isSoftSkip(sc)) {
+    scenarios.push(scoreSkipScenario(sc, false))
   }
 
   const seen = new Set<string>()
@@ -451,9 +529,19 @@ export function findLiveSignal(input: {
   })
   uniq.sort((a, b) => b.winPct - a.winPct)
 
-  let primary = uniq.find((s) => s.id === 'sc_htf_bounce') ?? uniq[0]
+  const softSkip = isSoftSkip(input.signal?.scoreCard)
+  const listed = softSkip
+    ? uniq.filter(
+        (s) =>
+          s.kind === 'WAIT' ||
+          s.kind === 'ZONE_TEST_BOUNCE' ||
+          s.kind === 'ZONE_BREAK'
+      )
+    : uniq
+
+  let primary = listed.find((s) => s.id === 'sc_htf_bounce') ?? listed[0]
   // Prefer fuel sequences (trap / release / spot-led) when allowed
-  const seqSc = uniq.find((s) => s.kind === 'SEQUENCE_LIMIT')
+  const seqSc = listed.find((s) => s.kind === 'SEQUENCE_LIMIT')
   const fuelKind =
     seq?.kind === 'TRAPPED_TRADERS' ||
     seq?.kind === 'WALL_RELEASE' ||
@@ -482,7 +570,7 @@ export function findLiveSignal(input: {
     liveMarket.reaction === 'BOUNCE_NO_HOLD' ||
     liveMarket.reaction === 'BREAKING'
   ) {
-    const wait = uniq.find((s) => s.kind === 'WAIT')
+    const wait = listed.find((s) => s.kind === 'WAIT')
     if (wait && wait.winPct + 5 >= primary.winPct - 10) {
       primary = {
         ...wait,
@@ -490,13 +578,24 @@ export function findLiveSignal(input: {
       }
     }
   } else if (phase === 'IN_ZONE' || phase === 'APPROACHING') {
-    const zoneSc = uniq.find(
+    const zoneSc = listed.find(
       (s) => s.kind === 'ZONE_TEST_BOUNCE' || s.kind === 'ZONE_BREAK'
     )
     if (zoneSc && zoneSc.winPct >= primary.winPct - 8) primary = zoneSc
   } else if (phase === 'HUNTING') {
-    const hunt = uniq.find((s) => s.kind === 'MM_HUNT')
+    const hunt = listed.find((s) => s.kind === 'MM_HUNT')
     if (hunt && hunt.winPct >= primary.winPct - 6) primary = hunt
+  }
+
+  if (softSkip) {
+    const cardNow = input.signal?.scoreCard
+    const preferred =
+      pickPriorityWait(listed) ??
+      (cardNow ? scoreSkipScenario(cardNow, false) : null)
+    if (preferred) {
+      primary = preferred
+      if (!listed.some((s) => s.id === preferred.id)) listed.unshift(preferred)
+    }
   }
 
   const bestSetup =
@@ -518,7 +617,7 @@ export function findLiveSignal(input: {
     phase,
     phaseLabel: phaseLabelLive,
     primary,
-    scenarios: uniq.slice(0, 6),
+    scenarios: listed.slice(0, 6),
     bestSetup,
     trades: trades.slice(0, 8),
     zones: base.zones,

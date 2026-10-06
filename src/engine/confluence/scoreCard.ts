@@ -20,6 +20,12 @@ import {
 } from '../confidence/dataQuality'
 
 export type ScoreGrade = 'A+' | 'A' | 'B' | 'SKIP'
+export type ScoreSkipKind = 'NONE' | 'SOFT' | 'HARD'
+export type ScoreHardBlocker =
+  | 'RR_TOO_LOW'
+  | 'VOLATILE_CHOP'
+  | 'DATA_POOR'
+  | 'MIN_DATA_QUALITY'
 
 export interface ScoreFactor {
   score: number
@@ -48,6 +54,10 @@ export interface ScoreCard {
   maxScore: number
   percent: number
   grade: ScoreGrade
+  /** Grade before hardBlockers rewrote it to SKIP. */
+  baseGrade: ScoreGrade
+  skipKind: ScoreSkipKind
+  hardBlockers: ScoreHardBlocker[]
   ready: boolean
   missingFactors: string[]
   dataQuality?: DataQualityReport
@@ -147,6 +157,9 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
       maxScore: 12,
       percent: 0,
       grade: 'SKIP',
+      baseGrade: 'SKIP',
+      skipKind: 'HARD',
+      hardBlockers: ['MIN_DATA_QUALITY'],
       ready: false,
       missingFactors: [
         qualityCheck.reason ?? 'Data quality fail',
@@ -426,20 +439,26 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
   const percent = Math.round((totalScore / maxScore) * 100)
   const t = THRESHOLDS[style]
 
-  let grade: ScoreGrade
-  if (totalScore >= t.A_plus) grade = 'A+'
-  else if (totalScore >= t.A) grade = 'A'
-  else if (totalScore >= t.B) grade = 'B'
-  else grade = 'SKIP'
+  let baseGrade: ScoreGrade
+  if (totalScore >= t.A_plus) baseGrade = 'A+'
+  else if (totalScore >= t.A) baseGrade = 'A'
+  else if (totalScore >= t.B) baseGrade = 'B'
+  else baseGrade = 'SKIP'
 
-  const hardBlocked =
-    factors.rrQuality.score === 0 ||
-    (style === 'SCALP' && input.regime === 'VOLATILE_CHOP') ||
-    dataQuality.overall === 'POOR'
+  const hardBlockers: ScoreHardBlocker[] = []
+  if (factors.rrQuality.score === 0) hardBlockers.push('RR_TOO_LOW')
+  if (style === 'SCALP' && input.regime === 'VOLATILE_CHOP') {
+    hardBlockers.push('VOLATILE_CHOP')
+  }
+  if (dataQuality.overall === 'POOR') hardBlockers.push('DATA_POOR')
 
-  if (hardBlocked) grade = 'SKIP'
+  let grade: ScoreGrade = baseGrade
+  if (hardBlockers.length > 0) grade = 'SKIP'
 
-  const ready = (grade === 'A+' || grade === 'A') && !hardBlocked
+  const skipKind: ScoreSkipKind =
+    hardBlockers.length > 0 ? 'HARD' : grade === 'SKIP' ? 'SOFT' : 'NONE'
+
+  const ready = (grade === 'A+' || grade === 'A') && skipKind !== 'HARD'
 
   const missingFactors = [
     ...Object.entries(factors)
@@ -465,6 +484,9 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
     maxScore,
     percent,
     grade,
+    baseGrade,
+    skipKind,
+    hardBlockers,
     ready,
     missingFactors,
     dataQuality,
