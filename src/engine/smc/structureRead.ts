@@ -485,7 +485,9 @@ export function readTfStructure(
 
 export function readFib141Reaction(
   candles: OhlcvCandle[],
-  fib: GlobalFibonacciMap | null
+  fib: GlobalFibonacciMap | null,
+  /** ATR(14) of the series that built the zone, not the touch series. */
+  zoneAtr?: number
 ): Fib141Reaction | null {
   if (!fib?.zone141) return null
   const z = fib.zone141
@@ -493,7 +495,7 @@ export function readFib141Reaction(
   const bottom = Math.min(z.top, z.bottom)
   const last = candles[candles.length - 1]
   const close = last?.[4] ?? 0
-  const atr = atrApprox(candles)
+  const atr = zoneAtr != null ? zoneAtr : atrApprox(candles)
   const pad = Math.max((top - bottom) * 0.15, atr * 0.25, close * 0.002)
   const near =
     close <= top + pad * 2 && close >= bottom - pad * 2
@@ -959,6 +961,8 @@ export function composeStructureRead(input: {
   newsScore?: number
   btcRs?: number | null
   isBtc?: boolean
+  /** ATR(14) on the candles that built `fib`. */
+  zoneAtr?: number
 }): StructureRead {
   const h1src = closedSlice(input.candles1h, 3_600_000)
   const h4src = closedSlice(input.candles4h, 14_400_000)
@@ -982,7 +986,7 @@ export function composeStructureRead(input: {
   })
   const price = cascadePrice(cascade, input.price)
   const fibSrc = h1src.length ? h1src : h4src.length ? h4src : d1src
-  const fib141 = readFib141Reaction(fibSrc, input.fib ?? null)
+  const fib141 = readFib141Reaction(fibSrc, input.fib ?? null, input.zoneAtr)
 
   const actionStack = scoreTf(h4) * 0.58 + scoreTf(h1) * 0.42
   const globalStack = scoreTf(w1) * 0.55 + scoreTf(d1) * 0.45

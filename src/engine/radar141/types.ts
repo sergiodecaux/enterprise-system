@@ -2,6 +2,9 @@ export type TriggerState =
   | 'APPROACH_141'
   | 'INSIDE_141'
   | 'EXIT_141'
+  | 'EXIT_HOLD'
+  | 'EXIT_FAIL'
+  | 'FAR_141'
   | 'IN_GAP'
 
 export type RsLabel = 'STRONG' | 'WEAK' | 'NEUTRAL'

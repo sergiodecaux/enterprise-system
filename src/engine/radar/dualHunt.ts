@@ -199,7 +199,14 @@ function isExtended(side: HuntSide, signal: CoinSignal | null, radar: Radar141Ro
     if (side === 'LONG' && rsi >= 74) return true
     if (side === 'SHORT' && rsi <= 26) return true
   }
-  if (radar?.trigger === 'IN_GAP' || radar?.trigger === 'EXIT_141') return true
+  if (
+    radar?.trigger === 'IN_GAP' ||
+    radar?.trigger === 'EXIT_141' ||
+    radar?.trigger === 'EXIT_HOLD' ||
+    radar?.trigger === 'EXIT_FAIL'
+  ) {
+    return true
+  }
   if (radar?.testKind === 'EXHAUSTED') return true
   return false
 }
@@ -1382,6 +1389,7 @@ export function buildDualHunt(input: DualHuntInput): DualHuntResult {
     consider(overlaySignal(raw, input.mmIntent, input.surgicalEntries))
   }
   for (const row of input.radarRows) {
+    if (row.trigger === 'FAR_141') continue
     consider(null, row)
   }
 

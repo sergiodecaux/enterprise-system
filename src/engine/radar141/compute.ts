@@ -50,19 +50,30 @@ function triggerOf(
   reaction: ReturnType<typeof readFib141Reaction>,
   in141: boolean,
   distAbs: number | null,
-  inGap: boolean
+  inGap: boolean,
+  hasZone: boolean
 ): { trigger: TriggerState; label: string } {
+  if (!hasZone) {
+    return { trigger: 'FAR_141', label: 'нет зоны 141' }
+  }
   if (in141 || reaction?.state === 'INSIDE') {
     return { trigger: 'INSIDE_141', label: 'внутри 141' }
   }
   if (reaction?.state === 'BREAK') {
-    return { trigger: 'EXIT_141', label: 'прошила 141–161' }
+    return { trigger: 'EXIT_FAIL', label: 'зона пробита' }
   }
   if (reaction?.state === 'BOUNCE' || reaction?.state === 'RECLAIM') {
-    return { trigger: 'EXIT_141', label: 'реакция от 141–161' }
+    return { trigger: 'EXIT_HOLD', label: 'зона удержала' }
   }
   if (inGap) {
     return { trigger: 'IN_GAP', label: 'влетела в gap' }
+  }
+  const untouched =
+    (reaction == null || reaction.state === 'NONE') &&
+    (reaction?.touches ?? 0) === 0 &&
+    (distAbs == null || distAbs > 0.8)
+  if (untouched) {
+    return { trigger: 'FAR_141', label: 'далеко от 141' }
   }
   if (
     reaction?.state === 'APPROACHING' ||
@@ -70,7 +81,7 @@ function triggerOf(
   ) {
     return { trigger: 'APPROACH_141', label: 'подходит к 141' }
   }
-  return { trigger: 'APPROACH_141', label: 'подходит к 141' }
+  return { trigger: 'FAR_141', label: 'далеко от 141' }
 }
 
 function testKind(
@@ -159,7 +170,9 @@ export function buildRadar141Row(input: {
   const fib4h = buildGlobalFibonacci(candles4h, price)
   const fib1d = buildGlobalFibonacci(candles1d, price)
   const fib = fib4h ?? fib1d
-  const reaction = readFib141Reaction(candles1h, fib)
+  const zoneSeries = fib4h ? candles4h : candles1d
+  const zoneAtr = calculateAtr(zoneSeries, 14) ?? 0
+  const reaction = readFib141Reaction(candles1h, fib, zoneAtr)
 
   const p141 = fib?.price141 ?? null
   const zone = fib?.zone141
@@ -209,7 +222,8 @@ export function buildRadar141Row(input: {
     reaction,
     in141,
     dist141Pct != null ? Math.abs(dist141Pct) : null,
-    inGap
+    inGap,
+    Boolean(zone)
   )
 
   const rs1d = calculateBtcDivergence(btc1h, candles1h, 24)

@@ -83,6 +83,7 @@ import {
   findCongestionZones,
   markersForChart,
   readTfStructure,
+  readFib141Reaction,
   type StructureRead,
   type StructureTf,
 } from '../../engine/smc/structureRead'
@@ -97,6 +98,7 @@ import { buildChartStory, leadStoryScenario } from '../../engine/smc/chartStory'
 import type { StoryScenarioId } from '../../engine/smc/chartStory'
 import { readIctStructure, selectIctOverlayMarks } from '../../engine/smc/ictStructure'
 import IctMarksOverlay from './IctMarksOverlay'
+import Fib141ZoneOverlay from './Fib141ZoneOverlay'
 import ChartCommentsOverlay from './ChartCommentsOverlay'
 import {
   analyzeZoneTap,
@@ -336,6 +338,13 @@ const LiveChart = ({
   const [onlyStrong, setOnlyStrong] = useState(() => {
     try {
       return localStorage.getItem('enterprise_only_strong') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const [showFib141, setShowFib141] = useState(() => {
+    try {
+      return localStorage.getItem('enterprise_show_fib141') !== '0'
     } catch {
       return true
     }
@@ -635,6 +644,35 @@ const LiveChart = ({
     return maps
   }, [candles, candles1h, candles4h, candles1d, timeframe, currentPrice])
 
+  const fib141View = useMemo(() => {
+    const tf = fibMaps[timeframe]
+      ? timeframe
+      : fibMaps['4h']
+        ? '4h'
+        : fibMaps['1d']
+          ? '1d'
+          : fibMaps['1h']
+            ? '1h'
+            : null
+    if (!tf) return null
+    const map = fibMaps[tf]
+    const zone = map?.zone141
+    if (!map || !zone) return null
+    const zoneCandles =
+      tf === '1d' ? candles1d : tf === '1h' ? candles1h : tf === '4h' ? candles4h : candles
+    const series = zoneCandles.length >= 20 ? zoneCandles : candles
+    const zoneAtr = calculateAtr(series, 14) ?? 0
+    const reaction = readFib141Reaction(series, map, zoneAtr)
+    return {
+      top: Math.max(zone.top, zone.bottom),
+      bottom: Math.min(zone.top, zone.bottom),
+      bias: zone.bias,
+      price141: map.price141,
+      price161: map.price161,
+      state: reaction?.state ?? 'NONE',
+    }
+  }, [fibMaps, timeframe, candles, candles1h, candles4h, candles1d])
+
   const toggleFibTf = useCallback((tf: string) => {
     setFibTfs((prev) => {
       const next = new Set(prev)
@@ -710,6 +748,7 @@ const LiveChart = ({
         candles15m: src15m.length >= 12 ? src15m : undefined,
         candlesTape: src15m.length >= 8 ? src15m : candles.length >= 8 ? candles : undefined,
         fib,
+        zoneAtr: calculateAtr(fibSrc, 14) ?? 0,
         liq,
         mmDrive: mmSnap?.drive ?? null,
         mmStopHunt: mmHunt?.microIsStopHunt,
@@ -3072,6 +3111,29 @@ const LiveChart = ({
           >
             только сильная
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowFib141((v) => {
+                const next = !v
+                try {
+                  localStorage.setItem('enterprise_show_fib141', next ? '1' : '0')
+                } catch {
+                  /* ignore */
+                }
+                return next
+              })
+              haptic.impact()
+            }}
+            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+              showFib141
+                ? 'border border-amber-400/40 bg-amber-500/15 text-amber-200'
+                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            }`}
+            title="Зона Fibonacci 141–161"
+          >
+            141
+          </button>
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
             {FIB_TF_BUTTONS.map((b) => (
               <button
@@ -3377,6 +3439,14 @@ const LiveChart = ({
             quiet={chartExpanded}
             onlyStrong={cleanMode || onlyStrong}
             thinLabels={chartExpanded}
+          />
+        )}
+        {chartReady > 0 && showFib141 && fib141View && (
+          <Fib141ZoneOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            zone={fib141View}
           />
         )}
         {chartReady > 0 && ictMarks.length > 0 && (

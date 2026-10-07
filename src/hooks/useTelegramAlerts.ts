@@ -108,7 +108,13 @@ export function useTelegramAlerts() {
     for (const row of radar141Rows) {
       let kind: 'touch' | 'exit' | 'bounce' | null = null
       if (row.trigger === 'INSIDE_141') kind = 'touch'
-      else if (row.trigger === 'EXIT_141') kind = 'exit'
+      else if (
+        row.trigger === 'EXIT_141' ||
+        row.trigger === 'EXIT_FAIL' ||
+        row.trigger === 'EXIT_HOLD'
+      ) {
+        kind = row.trigger === 'EXIT_HOLD' ? 'bounce' : 'exit'
+      }
       else if (row.trigger === 'IN_GAP' && row.gapPct >= 1.2) kind = 'bounce'
       if (!kind) continue
       const key = `${row.internalSymbol}:${kind}:${row.trigger}`

@@ -11,7 +11,16 @@ import {
   sortByExpectedTravel,
   splitStrongWeak,
   type Radar141Row,
+  type TriggerState,
 } from '../../engine/radar141'
+
+function triggerClass(trigger: TriggerState): string {
+  if (trigger === 'EXIT_HOLD') return 'text-emerald-300'
+  if (trigger === 'EXIT_FAIL' || trigger === 'EXIT_141') return 'text-white/35'
+  if (trigger === 'FAR_141') return 'text-white/30'
+  if (trigger === 'INSIDE_141') return 'text-amber-200'
+  return 'text-white/45'
+}
 
 function fmtPx(p: number): string {
   if (p >= 1000) return p.toFixed(1)
@@ -108,7 +117,7 @@ function RadarRow({
           </span>
           <div className="min-w-0 flex-1">
             <CoinName row={row} />
-            <div className="mt-0.5 font-mono text-[10px] text-white/45">
+            <div className={`mt-0.5 font-mono text-[10px] ${triggerClass(row.trigger)}`}>
               {row.triggerLabel}
               {' · '}gap {row.gapPct.toFixed(1)}%
               {row.preferredSide

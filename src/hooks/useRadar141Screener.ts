@@ -154,7 +154,10 @@ export function useRadar141Screener(enabled = true) {
               recordFalse141Exit(internal)
             }
             if (
-              (prev === 'EXIT_141' || prev === 'INSIDE_141') &&
+              (prev === 'EXIT_141' ||
+                prev === 'EXIT_HOLD' ||
+                prev === 'EXIT_FAIL' ||
+                prev === 'INSIDE_141') &&
               row.trigger === 'IN_GAP' &&
               lastPx != null &&
               lastPx > 0
