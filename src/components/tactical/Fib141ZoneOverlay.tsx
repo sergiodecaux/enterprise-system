@@ -1,11 +1,20 @@
 /**
  * 141–161 bands on the price scale. Sweep (reversal) and continuation
  * can be drawn together, with different colors and tags.
+ * Band geometry is unchanged; caption Y goes through the shared label layout.
  */
 
 import { useEffect, useRef } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type { Fib141State } from '../../engine/smc/structureRead'
+import {
+  LABEL_PRIORITY,
+  labelAnchor,
+  publishLabels,
+  useChartLabels,
+  watchLayer,
+  type LabelRequest,
+} from './chartLabels/LabelLayoutManager'
 
 export interface FibZoneLayer {
   kind: 'sweep' | 'cont'
@@ -24,6 +33,14 @@ interface Props {
   zones: FibZoneLayer[]
 }
 
+interface FibCaption {
+  id: string
+  text: string
+  y: number
+  color: string
+  xShift: number
+}
+
 function fmtPx(p: number): string {
   if (p >= 1000) return p.toFixed(1)
   if (p >= 1) return p.toFixed(2)
@@ -35,7 +52,9 @@ function paintZone(
   series: ISeriesApi<'Candlestick'>,
   zone: FibZoneLayer,
   w: number,
-  h: number
+  h: number,
+  captions: FibCaption[],
+  requests: LabelRequest[],
 ) {
   const yOf = (price: number): number | null => {
     const y = series.priceToCoordinate(price)
@@ -88,18 +107,19 @@ function paintZone(
 
   const tag = cont ? 'CONT' : 'SWEEP'
   const xShift = cont ? 118 : 8
-
-  const label = (text: string, y: number) => {
-    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
-    const tw = ctx.measureText(text).width
-    const x = Math.max(6, w - tw - xShift)
+  const push = (id: string, text: string, y: number) => {
     const ly = Math.max(12, Math.min(h - 6, y))
-    ctx.fillStyle = 'rgba(8,10,14,0.88)'
-    ctx.fillRect(x - 3, ly - 10, tw + 6, 14)
-    ctx.fillStyle = stroke
-    ctx.fillText(text, x, ly)
+    captions.push({ id, text, y: ly, color: stroke, xShift })
+    requests.push({
+      id,
+      priceY: ly,
+      text,
+      priority: LABEL_PRIORITY.fib,
+      sourceLayer: 'fib',
+      height: 14,
+    })
   }
-  const mark = (price: number | null, text: string) => {
+  const mark = (price: number | null, id: string, text: string) => {
     if (price == null) return
     const y = yOf(price)
     if (y == null) return
@@ -113,19 +133,35 @@ function paintZone(
     ctx.stroke()
     ctx.setLineDash([])
     ctx.globalAlpha = 1
-    label(text, y)
+    push(id, text, y)
   }
 
-  mark(zone.price141, `${tag} 141 ${fmtPx(zone.price141 ?? 0)}`)
-  mark(zone.price161, `${tag} 161 ${fmtPx(zone.price161 ?? 0)}`)
-  label(`${tag} ${fmtPx(zone.top)}`, top)
-  label(fmtPx(zone.bottom), bot)
-  if (hold) label(`${tag} HOLD`, (top + bot) / 2)
-  if (fail) label(`${tag} BREAK`, (top + bot) / 2)
+  mark(zone.price141, `${zone.kind}:141`, `${tag} 141 ${fmtPx(zone.price141 ?? 0)}`)
+  mark(zone.price161, `${zone.kind}:161`, `${tag} 161 ${fmtPx(zone.price161 ?? 0)}`)
+  push(`${zone.kind}:top`, `${tag} ${fmtPx(zone.top)}`, top)
+  push(`${zone.kind}:bottom`, fmtPx(zone.bottom), bot)
+  if (hold) push(`${zone.kind}:state`, `${tag} HOLD`, (top + bot) / 2)
+  if (fail) push(`${zone.kind}:state`, `${tag} BREAK`, (top + bot) / 2)
+}
+
+function drawCaption(
+  ctx: CanvasRenderingContext2D,
+  caption: FibCaption,
+  y: number,
+  w: number,
+) {
+  ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+  const tw = ctx.measureText(caption.text).width
+  const x = Math.max(6, w - tw - caption.xShift)
+  ctx.fillStyle = 'rgba(8,10,14,0.88)'
+  ctx.fillRect(x - 3, y - 10, tw + 6, 14)
+  ctx.fillStyle = caption.color
+  ctx.fillText(caption.text, x, y)
 }
 
 const Fib141ZoneOverlay = ({ chart, series, containerRef, zones }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const layout = useChartLabels()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -136,10 +172,13 @@ const Fib141ZoneOverlay = ({ chart, series, containerRef, zones }: Props) => {
     }
     if (!canvas || !chart || !series || !box || zones.length === 0) {
       clear()
+      layout.clear('fib')
       return
     }
 
-    const redraw = () => {
+    let fromListener = false
+
+    const paint = () => {
       try {
         const host = containerRef.current
         if (!host) return
@@ -159,25 +198,48 @@ const Fib141ZoneOverlay = ({ chart, series, containerRef, zones }: Props) => {
         if (!ctx) return
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, w, h)
-        for (const zone of zones) paintZone(ctx, series, zone, w, h)
+
+        const captions: FibCaption[] = []
+        const requests: LabelRequest[] = []
+        for (const zone of zones) {
+          paintZone(ctx, series, zone, w, h, captions, requests)
+        }
+        const placed = publishLabels(layout, 'fib', fromListener, requests)
+        for (const caption of captions) {
+          const y = labelAnchor(placed, caption.id, caption.y)
+          if (y == null) continue
+          drawCaption(ctx, caption, y, w)
+        }
       } catch {
         /* overlay must never kill the chart */
       }
     }
 
-    redraw()
-    chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
-    const ro = new ResizeObserver(() => redraw())
+    const onLayout = () => {
+      fromListener = true
+      try {
+        paint()
+      } finally {
+        fromListener = false
+      }
+    }
+
+    paint()
+    const unsub = watchLayer(layout, 'fib', onLayout)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(paint)
+    const ro = new ResizeObserver(() => paint())
     ro.observe(box)
     return () => {
+      unsub()
+      layout.clear('fib')
       try {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(paint)
       } catch {
         /* ignore */
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, zones])
+  }, [chart, series, containerRef, zones, layout])
 
   if (zones.length === 0) return null
 

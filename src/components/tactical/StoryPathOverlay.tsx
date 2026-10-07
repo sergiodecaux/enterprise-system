@@ -12,6 +12,14 @@ import type {
 } from '../../engine/smc/chartStory'
 import { leadStoryScenario, storyPathColor, storyTipLabel } from '../../engine/smc/chartStory'
 import type { PathPoint } from '../../engine/prediction/types'
+import {
+  LABEL_PRIORITY,
+  labelAnchor,
+  publishLabels,
+  useChartLabels,
+  watchLayer,
+  type LabelRequest,
+} from './chartLabels/LabelLayoutManager'
 
 interface Props {
   chart: IChartApi | null
@@ -180,12 +188,11 @@ function hexAlpha(color: string, a: number): string {
   return color
 }
 
-function drawSpentMark(
+function drawSpentLine(
   ctx: CanvasRenderingContext2D,
   x0: number,
   y: number,
   plotRight: number,
-  note: string,
   compact: boolean
 ) {
   const x1 = Math.min(plotRight - 8, x0 + (compact ? 52 : 72))
@@ -198,6 +205,18 @@ function drawSpentMark(
   ctx.lineTo(x1, y)
   ctx.stroke()
   ctx.setLineDash([])
+  ctx.restore()
+}
+
+function drawSpentNote(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y: number,
+  plotRight: number,
+  note: string,
+  compact: boolean
+) {
+  ctx.save()
   ctx.font = `700 ${compact ? 10 : 11}px ui-monospace, SFMono-Regular, Menlo, monospace`
   const padX = 5
   const padY = 3
@@ -229,6 +248,7 @@ const StoryPathOverlay = ({
   activeId = null,
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const layout = useChartLabels()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -236,8 +256,11 @@ const StoryPathOverlay = ({
     if (!canvas || !chart || !series || !box || !lastCandleTs || !future) {
       const ctx = canvas?.getContext('2d')
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height)
+      layout.clear('story')
       return
     }
+
+    let fromListener = false
 
     const redraw = () => {
       try {
@@ -281,7 +304,10 @@ const StoryPathOverlay = ({
           xStart != null && Number.isFinite(Number(xStart))
             ? Number(xStart)
             : w * 0.72
-        if (x0 >= plotRight - 12) return
+        if (x0 >= plotRight - 12) {
+          if (!fromListener) layout.clear('story')
+          return
+        }
 
         const bar = Math.max(1, barSeconds)
         let barPx = 7
@@ -380,14 +406,16 @@ const StoryPathOverlay = ({
                 ? yToward(sc.spentPrice)
                 : yToward(lastPrice)
             if (y == null) return
-            drawSpentMark(
-              ctx,
-              x0,
+            drawSpentLine(ctx, x0, y, plotRight, compact)
+            const note = sc.spentNote || 'уже сняли'
+            captions.push({
+              id: `story:${sc.id}:spent`,
+              kind: 'spent',
+              text: note,
+              x: x0,
               y,
-              plotRight,
-              sc.spentNote || 'уже сняли',
-              compact
-            )
+              color: 'rgba(107,114,128,0.85)',
+            })
             return
           }
           const src: PathPoint[] =
@@ -421,23 +449,37 @@ const StoryPathOverlay = ({
               future.tipLabel ||
               (sc.toPrice && sc.toPrice > 0 ? storyTipLabel(sc.toPrice) : '')
             if (tip && b && tip !== 'уже сняли') {
-              drawTipLabel(ctx, b.x, b.y, tip, color, plotRight, h, compact)
+              captions.push({
+                id: `story:${sc.id}:tip`,
+                kind: 'tip',
+                text: tip,
+                x: b.x,
+                y: b.y,
+                color,
+              })
             }
             const marked = pts.find((p) => p.label === 'топливо')
             if (marked && marked !== b) {
-              drawWaypointLabel(
-                ctx,
-                marked.x,
-                marked.y,
-                'топливо',
+              captions.push({
+                id: `story:${sc.id}:fuel`,
+                kind: 'way',
+                text: 'топливо',
+                x: marked.x,
+                y: marked.y,
                 color,
-                plotRight,
-                h,
-                compact
-              )
+              })
             }
           }
         }
+
+        const captions: Array<{
+          id: string
+          kind: 'tip' | 'way' | 'spent'
+          text: string
+          x: number
+          y: number
+          color: string
+        }> = []
 
         const order = [...rows].sort((a, b) => {
           const ao = active && a.id === active.id ? 1 : 0
@@ -446,6 +488,27 @@ const StoryPathOverlay = ({
         })
         for (const sc of order) {
           drawOne(sc, Boolean(active && sc.id === active.id))
+        }
+
+        const requests: LabelRequest[] = captions.map((c) => ({
+          id: c.id,
+          priceY: c.y,
+          text: c.text,
+          priority: LABEL_PRIORITY.story,
+          sourceLayer: 'story',
+          height: c.kind === 'tip' ? 22 : 18,
+        }))
+        const placed = publishLabels(layout, 'story', fromListener, requests)
+        for (const c of captions) {
+          const y = labelAnchor(placed, c.id, c.y)
+          if (y == null) continue
+          if (c.kind === 'tip') {
+            drawTipLabel(ctx, c.x, y, c.text, c.color, plotRight, h, compact)
+          } else if (c.kind === 'way') {
+            drawWaypointLabel(ctx, c.x, y, c.text, c.color, plotRight, h, compact)
+          } else {
+            drawSpentNote(ctx, c.x, y, plotRight, c.text, compact)
+          }
         }
       } catch {
         /* overlay must never kill the chart */
@@ -465,11 +528,23 @@ const StoryPathOverlay = ({
       /* ignore */
     }
 
+    const onLayout = () => {
+      fromListener = true
+      try {
+        redraw()
+      } finally {
+        fromListener = false
+      }
+    }
+
     redraw()
+    const unsub = watchLayer(layout, 'story', onLayout)
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
     const ro = new ResizeObserver(() => redraw())
     ro.observe(box)
     return () => {
+      unsub()
+      layout.clear('story')
       try {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
       } catch {
@@ -487,6 +562,7 @@ const StoryPathOverlay = ({
     lastPrice,
     scenarios,
     activeId,
+    layout,
   ])
 
   if (!future) return null

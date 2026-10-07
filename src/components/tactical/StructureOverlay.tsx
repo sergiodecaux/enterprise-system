@@ -7,6 +7,14 @@ import { useEffect, useRef } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type { StructureRead } from '../../engine/smc/structureRead'
 import type { PathPoint } from '../../engine/prediction/types'
+import {
+  LABEL_PRIORITY,
+  labelAnchor,
+  publishLabels,
+  useChartLabels,
+  watchLayer,
+  type LabelRequest,
+} from './chartLabels/LabelLayoutManager'
 
 interface Props {
   chart: IChartApi | null
@@ -79,6 +87,7 @@ const StructureOverlay = ({
   showPath,
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const layout = useChartLabels()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -91,8 +100,11 @@ const StructureOverlay = ({
     if (!canvas || !chart || !series || !box || !lastCandleTs || !list.length) {
       const ctx = canvas?.getContext('2d')
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height)
+      layout.clear('structure-path')
       return
     }
+
+    let fromListener = false
 
     const redraw = () => {
       try {
@@ -131,6 +143,18 @@ const StructureOverlay = ({
           const n = Number(y)
           return Number.isFinite(n) ? n : null
         }
+
+        const requests: LabelRequest[] = []
+        const pending: Array<{
+          id: string
+          text: string
+          lx: number
+          ly: number
+          color: string
+          font: string
+          rectTop: number
+          rectH: number
+        }> = []
 
         for (let i = list.length - 1; i >= 0; i--) {
           const sc = list[i]
@@ -171,10 +195,25 @@ const StructureOverlay = ({
               const tw = ctx.measureText(short).width
               const lx = clamp(p.x - tw / 2, 4, w - tw - 4)
               const ly = clamp(p.y + (p.y > h / 2 ? -10 : 14), 12, h - 8)
-              ctx.fillStyle = 'rgba(8,10,14,0.78)'
-              ctx.fillRect(lx - 2, ly - 8, tw + 4, 11)
-              ctx.fillStyle = sc.color
-              ctx.fillText(short, lx, ly)
+              const id = `struct:${sc.id}:pt:${k}`
+              pending.push({
+                id,
+                text: short,
+                lx,
+                ly,
+                color: sc.color,
+                font: '9px ui-monospace, SFMono-Regular, Menlo, monospace',
+                rectTop: 8,
+                rectH: 11,
+              })
+              requests.push({
+                id,
+                priceY: ly,
+                text: short,
+                priority: LABEL_PRIORITY.swing,
+                sourceLayer: 'structure-path',
+                height: 14,
+              })
             }
           }
 
@@ -183,21 +222,60 @@ const StructureOverlay = ({
           const tw = ctx.measureText(tag).width
           const lx = clamp(b.x - tw - 4, 4, w - tw - 6)
           const ly = clamp(b.y + (lead ? (b.y > h / 2 ? 16 : -14) : i * 11), 12, h - 8)
+          const tagId = `struct:${sc.id}:tag`
+          pending.push({
+            id: tagId,
+            text: tag,
+            lx,
+            ly,
+            color: sc.color,
+            font: 'bold 10px ui-monospace, SFMono-Regular, Menlo, monospace',
+            rectTop: 9,
+            rectH: 13,
+          })
+          requests.push({
+            id: tagId,
+            priceY: ly,
+            text: tag,
+            priority: LABEL_PRIORITY.swing,
+            sourceLayer: 'structure-path',
+            height: 14,
+          })
+        }
+
+        const placed = publishLabels(layout, 'structure-path', fromListener, requests)
+        for (const item of pending) {
+          const ly = labelAnchor(placed, item.id, item.ly)
+          if (ly == null) continue
+          ctx.font = item.font
+          const tw = ctx.measureText(item.text).width
           ctx.fillStyle = 'rgba(8,10,14,0.8)'
-          ctx.fillRect(lx - 3, ly - 9, tw + 6, 13)
-          ctx.fillStyle = sc.color
-          ctx.fillText(tag, lx, ly)
+          ctx.fillRect(item.lx - 3, ly - item.rectTop, tw + 6, item.rectH)
+          ctx.fillStyle = item.color
+          ctx.fillText(item.text, item.lx, ly)
         }
       } catch {
         /* overlay must never kill the chart */
       }
     }
 
+    const onLayout = () => {
+      fromListener = true
+      try {
+        redraw()
+      } finally {
+        fromListener = false
+      }
+    }
+
     redraw()
+    const unsub = watchLayer(layout, 'structure-path', onLayout)
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
     const ro = new ResizeObserver(() => redraw())
     ro.observe(box)
     return () => {
+      unsub()
+      layout.clear('structure-path')
       try {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
       } catch {
@@ -205,7 +283,7 @@ const StructureOverlay = ({
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, read, lastCandleTs, showPath])
+  }, [chart, series, containerRef, read, lastCandleTs, showPath, layout])
 
   if (!showPath) return null
 

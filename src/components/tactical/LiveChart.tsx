@@ -99,6 +99,7 @@ import type { StoryScenarioId } from '../../engine/smc/chartStory'
 import { readIctStructure, selectIctOverlayMarks } from '../../engine/smc/ictStructure'
 import IctMarksOverlay from './IctMarksOverlay'
 import Fib141ZoneOverlay, { type FibZoneLayer } from './Fib141ZoneOverlay'
+import { ChartLabelsProvider, ReserveNowPrice } from './chartLabels/LabelLayoutManager'
 import {
   buildContinuationExtension,
   readContinuationReaction,
@@ -3414,10 +3415,16 @@ const LiveChart = ({
           </div>
         )}
         <div className="relative min-h-0 flex-1 overflow-hidden">
+        <ChartLabelsProvider containerRef={containerRef}>
         <div
           ref={containerRef}
           className="h-full w-full"
           style={{ touchAction: 'none' }}
+        />
+        <ReserveNowPrice
+          chart={chartInstance}
+          series={candleRef.current}
+          price={currentPrice}
         />
         {(lwcData.length > 0 || (!chartExpanded && chartStory.nowLine)) && (
           <div
@@ -3716,6 +3723,7 @@ const LiveChart = ({
             containerRef={containerRef}
           />
         )}
+        </ChartLabelsProvider>
         </div>
       </div>
       <WhaleSitStrip sit={whaleSit} />

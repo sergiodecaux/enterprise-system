@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type { EntryCluster, LiqHeatmapModel } from '../../engine/derivatives/liqHeatmap'
+import {
+  LABEL_PRIORITY,
+  labelAnchor,
+  publishLabels,
+  useChartLabels,
+  watchLayer,
+  type LabelRequest,
+} from './chartLabels/LabelLayoutManager'
 
 interface Props {
   chart: IChartApi | null
@@ -53,6 +61,7 @@ const LiqHeatmapOverlay = ({
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const labelsRef = useRef<HTMLDivElement>(null)
+  const layout = useChartLabels()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -64,8 +73,11 @@ const LiqHeatmapOverlay = ({
         ctx?.clearRect(0, 0, canvas.width, canvas.height)
       }
       if (labels) labels.innerHTML = ''
+      layout.clear('liq')
       return
     }
+
+    let fromListener = false
 
     const redraw = () => {
       try {
@@ -225,50 +237,55 @@ const LiqHeatmapOverlay = ({
 
       if (labels) {
         labels.innerHTML = ''
+        const requests: LabelRequest[] = []
+        const pills: Array<{ id: string; x: number; y: number; isLong: boolean; price: number }> = []
         if (!edgeOnly) {
-          const usedY: number[] = []
-          const place = (raw: number) => {
-            let y = Math.max(16, Math.min(h - 18, raw))
-            for (let i = 0; i < 5; i++) {
-              if (!usedY.some((u) => Math.abs(u - y) < 22)) break
-              y = Math.min(h - 18, y + 22)
-            }
-            usedY.push(y)
-            return y
-          }
-          const addPill = (cluster: EntryCluster, x: number) => {
+          const queue = (cluster: EntryCluster, x: number) => {
             const yCoord = yOf(cluster.price)
             if (yCoord == null) return
-            const y = place(yCoord)
-            const isLong = cluster.side === 'LONG'
-            const color = isLong ? '#34d399' : '#fb7185'
-            const bg = isLong ? 'rgba(6, 40, 28, 0.88)' : 'rgba(48, 12, 22, 0.88)'
-            const pill = document.createElement('div')
-            pill.style.cssText = [
-              'position:absolute',
-              `left:${x}px`,
-              `top:${y - 11}px`,
-              'z-index:2',
-              'display:flex',
-              'align-items:center',
-              'gap:5px',
-              'padding:2px 7px',
-              'border-radius:999px',
-              `border:1px solid ${color}99`,
-              `background:${bg}`,
-              'backdrop-filter:blur(8px)',
-              'box-shadow:0 2px 10px rgba(0,0,0,0.35)',
-              'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
-              'white-space:nowrap',
-              'pointer-events:none',
-            ].join(';')
-            pill.innerHTML = `<span style="width:6px;height:6px;border-radius:99px;background:${color};box-shadow:0 0 6px ${color}"></span>
-            <span style="font-size:9px;font-weight:700;letter-spacing:0.06em;color:${color}">${isLong ? 'ЛОНГ' : 'ШОРТ'}</span>
-            <span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.9)">${fmtPx(cluster.price)}</span>`
-            labels.appendChild(pill)
+            const id = `liq:${cluster.side}:${cluster.price}`
+            requests.push({
+              id,
+              priceY: yCoord,
+              text: `${cluster.side === 'LONG' ? 'ЛОНГ' : 'ШОРТ'} ${fmtPx(cluster.price)}`,
+              priority: LABEL_PRIORITY.liq,
+              sourceLayer: 'liq',
+              height: 22,
+            })
+            pills.push({ id, x, y: yCoord, isLong: cluster.side === 'LONG', price: cluster.price })
           }
-          for (const c of model.longClusters) addPill(c, 8)
-          for (const c of model.shortClusters) addPill(c, Math.max(8, leftW + 6))
+          for (const c of model.longClusters) queue(c, 8)
+          for (const c of model.shortClusters) queue(c, Math.max(8, leftW + 6))
+        }
+        const placed = publishLabels(layout, 'liq', fromListener, requests)
+        for (const pill of pills) {
+          const y = labelAnchor(placed, pill.id, pill.y)
+          if (y == null) continue
+          const color = pill.isLong ? '#34d399' : '#fb7185'
+          const bg = pill.isLong ? 'rgba(6, 40, 28, 0.88)' : 'rgba(48, 12, 22, 0.88)'
+          const node = document.createElement('div')
+          node.style.cssText = [
+            'position:absolute',
+            `left:${pill.x}px`,
+            `top:${y - 11}px`,
+            'z-index:2',
+            'display:flex',
+            'align-items:center',
+            'gap:5px',
+            'padding:2px 7px',
+            'border-radius:999px',
+            `border:1px solid ${color}99`,
+            `background:${bg}`,
+            'backdrop-filter:blur(8px)',
+            'box-shadow:0 2px 10px rgba(0,0,0,0.35)',
+            'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
+            'white-space:nowrap',
+            'pointer-events:none',
+          ].join(';')
+          node.innerHTML = `<span style="width:6px;height:6px;border-radius:99px;background:${color};box-shadow:0 0 6px ${color}"></span>
+            <span style="font-size:9px;font-weight:700;letter-spacing:0.06em;color:${color}">${pill.isLong ? 'ЛОНГ' : 'ШОРТ'}</span>
+            <span style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.9)">${fmtPx(pill.price)}</span>`
+          labels.appendChild(node)
         }
       }
       ctx.globalAlpha = 1
@@ -277,13 +294,25 @@ const LiqHeatmapOverlay = ({
       }
     }
 
+    const onLayout = () => {
+      fromListener = true
+      try {
+        redraw()
+      } finally {
+        fromListener = false
+      }
+    }
+
     redraw()
+    const unsub = watchLayer(layout, 'liq', onLayout)
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
     chart.subscribeCrosshairMove(redraw)
     const ro = new ResizeObserver(() => redraw())
     ro.observe(box)
 
     return () => {
+      unsub()
+      layout.clear('liq')
       try {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
         chart.unsubscribeCrosshairMove(redraw)
@@ -292,7 +321,7 @@ const LiqHeatmapOverlay = ({
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, model, visible, opacity, edgeOnly])
+  }, [chart, series, containerRef, model, visible, opacity, edgeOnly, layout])
 
   if (!visible) return null
 

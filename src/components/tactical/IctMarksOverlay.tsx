@@ -1,11 +1,19 @@
 /**
  * Thin ICT marks — last BOS/CHoCH, one FVG, PDH/PDL, one strong/weak pair.
- * Forecast arrows stay primary; this layer must stay quiet but readable.
+ * Lines stay on the price. Text Y comes from the shared label layout.
  */
 
 import { useEffect, useRef } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
-import type { IctOverlayMark } from '../../engine/smc/ictStructure'
+import type { IctOverlayKind, IctOverlayMark } from '../../engine/smc/ictStructure'
+import {
+  LABEL_PRIORITY,
+  labelAnchor,
+  publishLabels,
+  useChartLabels,
+  watchLayer,
+  type LabelRequest,
+} from './chartLabels/LabelLayoutManager'
 
 interface Props {
   chart: IChartApi | null
@@ -19,8 +27,32 @@ function clamp(n: number, a: number, b: number): number {
   return Math.max(a, Math.min(b, n))
 }
 
+function layoutPriority(kind: IctOverlayKind): number {
+  switch (kind) {
+    case 'BOS':
+    case 'CHOCH':
+      return LABEL_PRIORITY.structure
+    case 'PDH':
+    case 'PDL':
+    case 'PWH':
+    case 'PWL':
+    case 'DO':
+    case 'WO':
+      return LABEL_PRIORITY.daily
+    case 'FVG':
+    case 'OB':
+      return LABEL_PRIORITY.zone
+    case 'EQH':
+    case 'EQL':
+      return LABEL_PRIORITY.whale
+    default:
+      return LABEL_PRIORITY.zone
+  }
+}
+
 const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const layout = useChartLabels()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -28,10 +60,13 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
     if (!canvas || !chart || !series || !box || !marks.length) {
       const ctx = canvas?.getContext('2d')
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height)
+      layout.clear('ict')
       return
     }
 
-    const redraw = () => {
+    let fromListener = false
+
+    const paint = () => {
       try {
         const host = containerRef.current
         if (!host) return
@@ -67,16 +102,8 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
           return Number.isFinite(n) ? n : null
         }
 
-        const usedY: number[] = []
-        const placeLabelY = (raw: number): number => {
-          let y = clamp(raw, 16, h - 14)
-          for (let i = 0; i < 6; i++) {
-            if (!usedY.some((u) => Math.abs(u - y) < 16)) break
-            y = clamp(y + 16, 16, h - 14)
-          }
-          usedY.push(y)
-          return y
-        }
+        const requests: LabelRequest[] = []
+        const rows: { mark: IctOverlayMark; ly: number }[] = []
 
         for (const m of marks) {
           const y = yOf(m.price)
@@ -124,19 +151,35 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
             ctx.globalAlpha = 1
           }
 
-          const text = m.label
-          ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace'
+          const ly = clamp(m.style === 'box' ? yClamped - 10 : yClamped - 2, 16, h - 14)
+          rows.push({ mark: m, ly })
+          requests.push({
+            id: m.id,
+            priceY: ly,
+            text: m.label,
+            priority: layoutPriority(m.kind),
+            sourceLayer: 'ict',
+            height: 16,
+          })
+        }
+
+        const placed = publishLabels(layout, 'ict', fromListener, requests)
+
+        ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace'
+        for (const row of rows) {
+          const ly = labelAnchor(placed, row.mark.id, row.ly)
+          if (ly == null) continue
+          const text = row.mark.label
           const tw = ctx.measureText(text).width
-          const ly = placeLabelY(m.style === 'box' ? yClamped - 10 : yClamped - 2)
           const lx = clamp(w - tw - 18, 6, w - tw - 8)
           ctx.fillStyle = 'rgba(8,10,14,0.9)'
           ctx.fillRect(lx - 4, ly - 11, tw + 8, 16)
-          ctx.strokeStyle = m.color
+          ctx.strokeStyle = row.mark.color
           ctx.globalAlpha = 0.55
           ctx.lineWidth = 1
           ctx.strokeRect(lx - 4, ly - 11, tw + 8, 16)
           ctx.globalAlpha = 1
-          ctx.fillStyle = m.color
+          ctx.fillStyle = row.mark.color
           ctx.fillText(text, lx, ly + 1)
         }
       } catch {
@@ -144,19 +187,31 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
       }
     }
 
-    redraw()
-    chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
-    const ro = new ResizeObserver(() => redraw())
+    const onLayout = () => {
+      fromListener = true
+      try {
+        paint()
+      } finally {
+        fromListener = false
+      }
+    }
+
+    paint()
+    const unsub = watchLayer(layout, 'ict', onLayout)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(paint)
+    const ro = new ResizeObserver(() => paint())
     ro.observe(box)
     return () => {
+      unsub()
+      layout.clear('ict')
       try {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(paint)
       } catch {
         /* ignore */
       }
       ro.disconnect()
     }
-  }, [chart, series, containerRef, marks, lastPrice])
+  }, [chart, series, containerRef, marks, lastPrice, layout])
 
   if (!marks.length) return null
 

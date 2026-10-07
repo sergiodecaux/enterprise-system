@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react'
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts'
 import type { LiquidityZone } from '../../engine/indicators/types'
+import {
+  LABEL_PRIORITY,
+  labelAnchor,
+  publishLabels,
+  useChartLabels,
+  watchLayer,
+  type LabelRequest,
+} from './chartLabels/LabelLayoutManager'
 
 interface Props {
   chart: IChartApi | null
@@ -20,7 +28,6 @@ interface Props {
 }
 
 type Rgba = { r: number; g: number; b: number }
-type Box = { x: number; y: number; w: number; h: number }
 
 function storyHue(zone: LiquidityZone): Rgba | null {
   if (zone.storyRole === 'PRIMARY') {
@@ -271,48 +278,6 @@ function isActionZone(zone: LiquidityZone): boolean {
   )
 }
 
-function overlaps(a: Box, b: Box): boolean {
-  return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y)
-}
-
-function placeBox(
-  used: Box[],
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  plotRight: number,
-  containerHeight: number
-): Box {
-  let px = Math.max(10, Math.min(x, plotRight - w - 10))
-  let py = Math.max(2, y)
-  for (let i = 0; i < 12; i++) {
-    const b = { x: px, y: py, w, h }
-    if (
-      !used.some((u) => overlaps(u, b)) &&
-      py >= 2 &&
-      py + h <= containerHeight - 2 &&
-      px >= 10 &&
-      px + w <= plotRight - 6
-    ) {
-      used.push(b)
-      return b
-    }
-    py += h + 3
-    if (py + h > containerHeight - 2) {
-      py = Math.max(2, y - (i + 1) * (h + 3))
-    }
-  }
-  const fallback = {
-    x: Math.max(10, Math.min(px, plotRight - w - 10)),
-    y: Math.max(2, Math.min(y, containerHeight - h - 2)),
-    w,
-    h,
-  }
-  used.push(fallback)
-  return fallback
-}
-
 const ChartOverlay = ({
   chart,
   series,
@@ -326,19 +291,27 @@ const ChartOverlay = ({
   thinLabels = false,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
+  const layout = useChartLabels()
 
   useEffect(() => {
-    if (!chart || !series || !overlayRef.current || !containerRef.current) return
+    if (!chart || !series || !overlayRef.current || !containerRef.current) {
+      layout.clear('chart-zones')
+      return
+    }
 
     const overlay = overlayRef.current
     const timeScale = chart.timeScale()
+    let fromListener = false
 
     const redraw = () => {
       try {
       overlay.innerHTML = ''
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
-      if (containerWidth < 80 || containerHeight < 40) return
+      if (containerWidth < 80 || containerHeight < 40) {
+        if (!fromListener) layout.clear('chart-zones')
+        return
+      }
       let priceScaleW = 56
       try {
         const w = chart.priceScale('right').width()
@@ -348,7 +321,21 @@ const ChartOverlay = ({
       }
       const plotRight = Math.max(80, containerWidth - priceScaleW)
       const compact = containerWidth < 560
-      const used: Box[] = []
+      const requests: LabelRequest[] = []
+      const edgeJobs: Array<{
+        parent: HTMLDivElement
+        id: string
+        text: string
+        zoneTop: number
+        fallbackY: number
+        css: string
+      }> = []
+      const pillJobs: Array<{
+        id: string
+        text: string
+        fallbackY: number
+        css: string
+      }> = []
 
       const visibleZones = [...zones]
         .sort((a, b) => {
@@ -466,21 +453,25 @@ const ChartOverlay = ({
         `
 
         const bandH = Math.max(height, minH)
+        const edgeCss = edgeLabelStyle(hue, dimmed, highlighted, compact)
+        const queueEdge = (suffix: string, text: string, y: number) => {
+          const id = `zone:${zone.id}:${suffix}`
+          edgeJobs.push({ parent: div, id, text, zoneTop: yPos, fallbackY: y, css: edgeCss })
+          requests.push({
+            id,
+            priceY: y,
+            text,
+            priority: LABEL_PRIORITY.zone,
+            sourceLayer: 'chart-zones',
+            height: 16,
+          })
+        }
         if (!thinLabels && !quiet && !vis.outlineOnly) {
           if (bandH >= 26) {
-            const topLbl = document.createElement('div')
-            topLbl.textContent = fmtPx(Math.max(zone.top, zone.bottom))
-            topLbl.style.cssText = `${edgeLabelStyle(hue, dimmed, highlighted, compact)} top: 1px;`
-            div.appendChild(topLbl)
-            const botLbl = document.createElement('div')
-            botLbl.textContent = fmtPx(Math.min(zone.top, zone.bottom))
-            botLbl.style.cssText = `${edgeLabelStyle(hue, dimmed, highlighted, compact)} bottom: 1px;`
-            div.appendChild(botLbl)
+            queueEdge('top', fmtPx(Math.max(zone.top, zone.bottom)), yPos + 1)
+            queueEdge('bot', fmtPx(Math.min(zone.top, zone.bottom)), yPos + bandH - 16)
           } else {
-            const midLbl = document.createElement('div')
-            midLbl.textContent = rangeCaption(zone)
-            midLbl.style.cssText = `${edgeLabelStyle(hue, dimmed, highlighted, compact)} top: 50%; transform: translateY(-50%);`
-            div.appendChild(midLbl)
+            queueEdge('mid', rangeCaption(zone), yPos + bandH / 2 - 7)
           }
         }
 
@@ -535,30 +526,30 @@ const ChartOverlay = ({
         const preferAbove =
           cap.height < (twoLine ? 36 : 26) && cap.yPos >= pillH + 4
         const preferInside = cap.height >= pillH + 6
-        const rawX = visLeft + 6
+        const rawX = Math.max(10, Math.min(visLeft + 6, plotRight - pillW - 10))
         const rawY = preferAbove
           ? cap.yPos - pillH - 2
           : preferInside
             ? cap.yPos + Math.max(3, (cap.height - pillH) * 0.12)
             : cap.yPos + 3
-        const box = placeBox(
-          used,
-          rawX,
-          rawY,
-          pillW,
-          pillH,
-          plotRight,
-          containerHeight
-        )
-        box.x = Math.max(10, box.x)
-        const pill = document.createElement('div')
-        pill.textContent = text
-        pill.style.cssText = `
+        const id = `zone:${cap.zone.id}:pill`
+        requests.push({
+          id,
+          priceY: rawY,
+          text,
+          priority: LABEL_PRIORITY.zone,
+          sourceLayer: 'chart-zones',
+          height: pillH,
+        })
+        pillJobs.push({
+          id,
+          text,
+          fallbackY: rawY,
+          css: `
           position: absolute;
-          left: ${box.x}px;
-          top: ${box.y}px;
+          left: ${rawX}px;
           width: ${pillW}px;
-          max-width: ${Math.max(80, plotRight - box.x - 10)}px;
+          max-width: ${Math.max(80, plotRight - rawX - 10)}px;
           padding: ${thinLabels ? '1px 5px' : isPrimary ? '2px 7px' : '1px 5px'};
           border-radius: 4px;
           font-size: ${fontPx}px;
@@ -578,7 +569,25 @@ const ChartOverlay = ({
           text-shadow: 0 1px 2px rgba(0,0,0,0.85);
           opacity: 1;
           pointer-events: none;
-        `
+        `,
+        })
+      }
+
+      const placed = publishLabels(layout, 'chart-zones', fromListener, requests)
+      for (const job of edgeJobs) {
+        const y = labelAnchor(placed, job.id, job.fallbackY)
+        if (y == null) continue
+        const el = document.createElement('div')
+        el.textContent = job.text
+        el.style.cssText = `${job.css} top: ${y - job.zoneTop}px;`
+        job.parent.appendChild(el)
+      }
+      for (const job of pillJobs) {
+        const y = labelAnchor(placed, job.id, job.fallbackY)
+        if (y == null) continue
+        const pill = document.createElement('div')
+        pill.textContent = job.text
+        pill.style.cssText = `${job.css} top: ${y}px;`
         overlay.appendChild(pill)
       }
       } catch {
@@ -586,8 +595,18 @@ const ChartOverlay = ({
       }
     }
 
+    const onLayout = () => {
+      fromListener = true
+      try {
+        redraw()
+      } finally {
+        fromListener = false
+      }
+    }
+
     redraw()
 
+    const unsub = watchLayer(layout, 'chart-zones', onLayout)
     const onVisible = () => redraw()
     timeScale.subscribeVisibleLogicalRangeChange(onVisible)
     chart.subscribeCrosshairMove(onVisible)
@@ -596,6 +615,8 @@ const ChartOverlay = ({
     ro.observe(containerRef.current)
 
     return () => {
+      unsub()
+      layout.clear('chart-zones')
       timeScale.unsubscribeVisibleLogicalRangeChange(onVisible)
       chart.unsubscribeCrosshairMove(onVisible)
       ro.disconnect()
@@ -612,6 +633,7 @@ const ChartOverlay = ({
     quiet,
     onlyStrong,
     thinLabels,
+    layout,
   ])
 
   return (
