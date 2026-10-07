@@ -7,6 +7,14 @@ export type TriggerState =
   | 'FAR_141'
   | 'IN_GAP'
 
+/** Continuation 141. Independent of the reversal TriggerState. */
+export type ContTriggerState =
+  | 'APPROACH_CONT141'
+  | 'INSIDE_CONT141'
+  | 'EXIT_CONT141_HOLD'
+  | 'EXIT_CONT141_FAIL'
+  | 'NO_SIGNAL_CONT141'
+
 export type RsLabel = 'STRONG' | 'WEAK' | 'NEUTRAL'
 export type LiquidityGrade = 'A' | 'B' | 'C' | 'D'
 export type VolRegime = 'OK' | 'THIN' | 'CHOP'
@@ -72,6 +80,8 @@ export interface Radar141Row {
   volRegime: VolRegime
   trigger: TriggerState
   triggerLabel: string
+  contTrigger: ContTriggerState
+  contTriggerLabel: string
   rsBtc1d: number
   rsBtc4h: number
   rsMarket: number

@@ -8,6 +8,7 @@ export type {
   RsLabel,
   TestKind,
   TriggerState,
+  ContTriggerState,
   VolRegime,
 } from './types'
 export { DEFAULT_RADAR141_FILTERS } from './types'

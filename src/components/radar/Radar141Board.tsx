@@ -12,6 +12,7 @@ import {
   splitStrongWeak,
   type Radar141Row,
   type TriggerState,
+  type ContTriggerState,
 } from '../../engine/radar141'
 
 function triggerClass(trigger: TriggerState): string {
@@ -20,6 +21,14 @@ function triggerClass(trigger: TriggerState): string {
   if (trigger === 'FAR_141') return 'text-white/30'
   if (trigger === 'INSIDE_141') return 'text-amber-200'
   return 'text-white/45'
+}
+
+function contClass(trigger: ContTriggerState): string {
+  if (trigger === 'EXIT_CONT141_HOLD') return 'text-violet-200'
+  if (trigger === 'EXIT_CONT141_FAIL') return 'text-white/35'
+  if (trigger === 'INSIDE_CONT141') return 'text-sky-200'
+  if (trigger === 'APPROACH_CONT141') return 'text-sky-300/80'
+  return 'text-white/30'
 }
 
 function fmtPx(p: number): string {
@@ -126,6 +135,9 @@ function RadarRow({
                   : ' · шорт'
                 : ''}
               {row.newsRisk ? ' · риск' : ''}
+            </div>
+            <div className={`mt-0.5 font-mono text-[10px] ${contClass(row.contTrigger)}`}>
+              {row.contTriggerLabel}
             </div>
           </div>
           <div className="shrink-0 text-right">

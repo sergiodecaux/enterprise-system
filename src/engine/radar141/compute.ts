@@ -4,6 +4,10 @@ import { calculateBtcDivergence } from '../smc'
 import { detectMarketRegime } from '../regime/marketRegime'
 import { buildGlobalFibonacci } from '../zones/globalFibonacci'
 import { readFib141Reaction } from '../smc/structureRead'
+import {
+  buildContinuationExtension,
+  readContinuationReaction,
+} from '../smc/continuationExtension'
 import { emptyStats, readCoinStats } from './stats'
 import type {
   GapCard,
@@ -12,6 +16,7 @@ import type {
   RsLabel,
   TestKind,
   TriggerState,
+  ContTriggerState,
   VolRegime,
 } from './types'
 
@@ -82,6 +87,40 @@ function triggerOf(
     return { trigger: 'APPROACH_141', label: 'подходит к 141' }
   }
   return { trigger: 'FAR_141', label: 'далеко от 141' }
+}
+
+function contTriggerOf(
+  reaction: ReturnType<typeof readContinuationReaction>,
+  inZone: boolean,
+  distAbs: number | null,
+  hasZone: boolean
+): { trigger: ContTriggerState; label: string } {
+  if (!hasZone) {
+    return { trigger: 'NO_SIGNAL_CONT141', label: 'C: нет зоны' }
+  }
+  if (inZone || reaction?.state === 'INSIDE') {
+    return { trigger: 'INSIDE_CONT141', label: 'C: внутри' }
+  }
+  if (reaction?.state === 'BREAK') {
+    return { trigger: 'EXIT_CONT141_FAIL', label: 'C: пробита' }
+  }
+  if (reaction?.state === 'BOUNCE' || reaction?.state === 'RECLAIM') {
+    return { trigger: 'EXIT_CONT141_HOLD', label: 'C: удержала' }
+  }
+  const untouched =
+    (reaction == null || reaction.state === 'NONE') &&
+    (reaction?.touches ?? 0) === 0 &&
+    (distAbs == null || distAbs > 0.8)
+  if (untouched) {
+    return { trigger: 'NO_SIGNAL_CONT141', label: 'C: далеко' }
+  }
+  if (
+    reaction?.state === 'APPROACHING' ||
+    (distAbs != null && distAbs <= 0.8)
+  ) {
+    return { trigger: 'APPROACH_CONT141', label: 'C: подходит' }
+  }
+  return { trigger: 'NO_SIGNAL_CONT141', label: 'C: далеко' }
 }
 
 function testKind(
@@ -173,6 +212,30 @@ export function buildRadar141Row(input: {
   const zoneSeries = fib4h ? candles4h : candles1d
   const zoneAtr = calculateAtr(zoneSeries, 14) ?? 0
   const reaction = readFib141Reaction(candles1h, fib, zoneAtr)
+
+  const cont4h = candles4h.length >= 25 ? buildContinuationExtension(candles4h, '4h') : null
+  const cont1d =
+    cont4h == null && candles1d.length >= 25
+      ? buildContinuationExtension(candles1d, '1d')
+      : null
+  const cont = cont4h ?? cont1d
+  const contSeries = cont4h ? candles4h : candles1d
+  const contAtr = calculateAtr(contSeries, 14) ?? 0
+  const contReaction = readContinuationReaction(candles1h, cont, contAtr)
+  const contTop = cont?.top ?? null
+  const contBot = cont?.bottom ?? null
+  const contIn =
+    contTop != null && contBot != null && price <= contTop && price >= contBot
+  const contDist =
+    cont?.level141 != null && cont.level141 > 0
+      ? Math.abs((price - cont.level141) / cont.level141) * 100
+      : null
+  const { trigger: contTrigger, label: contTriggerLabel } = contTriggerOf(
+    contReaction,
+    contIn,
+    contDist,
+    Boolean(cont)
+  )
 
   const p141 = fib?.price141 ?? null
   const zone = fib?.zone141
@@ -392,6 +455,8 @@ export function buildRadar141Row(input: {
     volRegime,
     trigger,
     triggerLabel,
+    contTrigger,
+    contTriggerLabel,
     rsBtc1d: rs1d.relativeStrength,
     rsBtc4h: rs4h.relativeStrength,
     rsMarket,
