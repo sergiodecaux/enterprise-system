@@ -1,4 +1,5 @@
 import type { WorkerMarketContext } from '../../api/marketContext'
+import type { AdvisorMode } from '../../api/advisor'
 import type { MarketBrief, TfNarrative } from '../brief/marketBrief'
 import type { JournalAnalytics } from '../journal/types'
 import type { Radar141Row } from '../radar141/types'
@@ -47,6 +48,8 @@ export interface AdvisorSnapshotInput {
   watches?: WatchedSetup[]
   /** Token budget for the whole JSON (default 3000) */
   maxTokens?: number
+  /** Wider hunt list and no single-coin desk for market-wide search. */
+  mode?: AdvisorMode
 }
 
 const RADAR_ROWS = 8
@@ -351,6 +354,7 @@ export function buildAdvisorSnapshot(input: AdvisorSnapshotInput): AdvisorSnapsh
 
   const lastScan = input.radarRows.reduce((m, r) => Math.max(m, r.updatedAt || 0), 0)
 
+  const opportunities = input.mode === 'opportunities'
   const snapshot: AdvisorSnapshot = compact({
     t: new Date(input.now).toISOString().slice(0, 16) + 'Z',
     focusTradeId: input.focusTradeId ?? undefined,
@@ -366,14 +370,19 @@ export function buildAdvisorSnapshot(input: AdvisorSnapshotInput): AdvisorSnapsh
       signals: input.signals,
       radarRows: input.radarRows,
       watches: input.watches,
+      readyCap: opportunities ? 12 : undefined,
+      nearCap: opportunities ? 5 : undefined,
     }),
     trades: buildTrades(input),
     journal: buildJournal(input.journal),
   })
 
   const trimmed: string[] = []
+  const steps = opportunities
+    ? TRIM_STEPS.filter(([label]) => label !== 'hunt.near' && label !== 'hunt.ready→4')
+    : TRIM_STEPS
   let json = JSON.stringify(snapshot)
-  for (const [label, apply] of TRIM_STEPS) {
+  for (const [label, apply] of steps) {
     if (estimateTokens(json) <= budget) break
     apply(snapshot)
     trimmed.push(label)

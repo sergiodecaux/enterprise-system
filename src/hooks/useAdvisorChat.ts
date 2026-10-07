@@ -49,6 +49,7 @@ const SNAPSHOT_BUDGET: Record<AdvisorMode, number> = {
   market: 3000,
   radar: 3000,
   setups: 4500,
+  opportunities: 7000,
 }
 
 const SETUP_HUNT_RE =
@@ -109,12 +110,14 @@ export function buildCurrentSnapshot(
   }
   const readChart = symbol ? advisor.chartBySymbol[symbol] : undefined
   const deep = mode === 'coin' || mode === 'trade' || mode === 'chat'
+  const marketWide = mode === 'opportunities'
   return buildAdvisorSnapshot({
     maxTokens: SNAPSHOT_BUDGET[mode],
-    chart: deep && readChart ? readChart() : null,
-    desk: deep ? buildDesk(symbol) : null,
+    mode,
+    chart: !marketWide && deep && readChart ? readChart() : null,
+    desk: !marketWide && deep ? buildDesk(symbol) : null,
     now: Date.now(),
-    focusSymbol: symbol,
+    focusSymbol: marketWide ? null : symbol,
     focusTradeId: tradeId,
     signals: app.signals,
     marketContext: app.marketContext,
@@ -123,8 +126,8 @@ export function buildCurrentSnapshot(
     activeTrades: app.activeTrades,
     watches: app.watchedSetups,
     journal,
-    structure: symbol ? advisor.structureBySymbol[symbol] ?? null : null,
-    brief: symbol ? advisor.briefBySymbol[symbol] ?? null : null,
+    structure: marketWide || !symbol ? null : advisor.structureBySymbol[symbol] ?? null,
+    brief: marketWide || !symbol ? null : advisor.briefBySymbol[symbol] ?? null,
   })
 }
 

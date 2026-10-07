@@ -7,6 +7,7 @@ import { useAdvisorStore } from '../../store/useAdvisorStore'
 const Header = () => {
   const [alertsOpen, setAlertsOpen] = useState(false)
   const openAdvisor = useAdvisorStore((s) => s.setOpen)
+  const askAdvisor = useAdvisorStore((s) => s.ask)
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-14 border-b border-hull-border bg-hull/95 backdrop-blur-sm">
@@ -26,7 +27,20 @@ const Header = () => {
 
         <StatusIndicator />
 
-        <div className="flex w-16 items-center justify-end gap-0.5">
+        <div className="flex items-center justify-end gap-0.5">
+          <button
+            type="button"
+            onClick={() =>
+              askAdvisor({
+                mode: 'opportunities',
+                text: 'Найди лучшие сделки прямо сейчас по всему рынку',
+              })
+            }
+            className="rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber-200/90 transition-colors hover:bg-hull-light/50 hover:text-amber-100"
+            title="Найти сделки по всему рынку"
+          >
+            Найти сделки
+          </button>
           <button
             type="button"
             onClick={() => openAdvisor(true)}

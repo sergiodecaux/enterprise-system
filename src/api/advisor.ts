@@ -6,7 +6,7 @@
  * gates free Workers AI quota); a token saved in settings overrides it.
  */
 
-export type AdvisorMode = 'chat' | 'market' | 'radar' | 'coin' | 'trade' | 'setups'
+export type AdvisorMode = 'chat' | 'market' | 'radar' | 'coin' | 'trade' | 'setups' | 'opportunities'
 
 export interface AdvisorChatMessage {
   role: 'user' | 'assistant'

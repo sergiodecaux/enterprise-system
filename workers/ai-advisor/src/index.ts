@@ -66,7 +66,9 @@ async function openFirstAvailable(
   mode: AdvisorMode
 ): Promise<ProviderStream | ProviderError> {
   const base = intVar(env.MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
-  const maxTokens = mode === 'coin' ? Math.max(base, COIN_MIN_OUTPUT_TOKENS) : base
+  const maxTokens = mode === 'coin' || mode === 'opportunities'
+    ? Math.max(base, COIN_MIN_OUTPUT_TOKENS)
+    : base
   let lastError = new ProviderError('unknown', 'No providers configured')
   for (const provider of chain) {
     try {

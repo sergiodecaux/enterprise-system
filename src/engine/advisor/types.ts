@@ -299,6 +299,12 @@ export interface AdvisorHuntRow {
   tp2?: number
   rr?: number | null
   zone?: [number, number]
+  /** True when sl, tp1, or rr is missing. */
+  incomplete?: boolean
+  /** |tp1 − px| / px × 100, one decimal. */
+  expectedMovePct?: number
+  /** Which 141 zone lifted the rank. Reversal wins if both fired. */
+  zoneType?: 'reversal' | 'continuation'
   grade?: string
   ready?: boolean
   missing?: string[]
