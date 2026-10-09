@@ -240,11 +240,14 @@ export function readCloseCascade(input: {
     regime = 'COUNTERTREND'
   } else if (globalSide || actionSide) {
     const trend = globalSide ?? actionSide
-    const ltfAgainst =
+    const h1Against =
       (h1Sign !== 0 && trend === 'LONG' && h1Sign < 0) ||
-      (h1Sign !== 0 && trend === 'SHORT' && h1Sign > 0) ||
-      (m15Sign !== 0 && trend === 'LONG' && m15Sign < 0) ||
-      (m15Sign !== 0 && trend === 'SHORT' && m15Sign > 0)
+      (h1Sign !== 0 && trend === 'SHORT' && h1Sign > 0)
+    const m15DisplacementAgainst =
+      Math.abs(m15s) >= 0.72 &&
+      ((m15Sign !== 0 && trend === 'LONG' && m15Sign < 0) ||
+        (m15Sign !== 0 && trend === 'SHORT' && m15Sign > 0))
+    const ltfAgainst = h1Against || m15DisplacementAgainst
     const h4With =
       !h4Sign ||
       (trend === 'LONG' && h4Sign > 0) ||

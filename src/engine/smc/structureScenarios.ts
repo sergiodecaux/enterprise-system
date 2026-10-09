@@ -13,6 +13,7 @@ import type { Fib141Reaction, TfStructure, IntraPlan } from './structureRead'
 import { deriveAltMacro } from '../analysis/altMacro'
 import type { AltBias, AltRegime } from '../../api/marketContext'
 import { readAuction, type AuctionRange } from './auction'
+import type { DeskBook } from '../analysis/deskBook'
 import type { CloseCascade } from './closeCascade'
 import { closedSlice } from './closeCascade'
 
@@ -319,6 +320,7 @@ type ScenarioCtx = {
   newsScore: number
   btcRs: number | null
   isBtc: boolean
+  desk: DeskBook | null
   cascade: CloseCascade | null
   fuel: { price: number; label: string } | null
 }
@@ -334,9 +336,9 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
 
   const cas = ctx.cascade
   if (cas) {
-    t += cas.execution * 8.4 * dir
-    t += cas.global * 6.6 * dir
-    t += cas.intraday * 3.2 * dir
+    const commodity = ctx.desk === 'COMMODITY'
+    t += cas.execution * (commodity ? 2.2 : 4.2) * dir
+    t += cas.global * (commodity ? 9 : 7.2) * dir
     const trend = cas.globalSide ?? cas.actionSide
     const withTrend =
       (trend === 'LONG' && s.side === 'LONG') || (trend === 'SHORT' && s.side === 'SHORT')
@@ -438,7 +440,12 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
   if (ctx.drive === 'UP') t += dir * 3
   if (ctx.drive === 'DOWN') t -= dir * 3
 
-  if (ctx.mmStopHunt) {
+  if (ctx.desk === 'COMMODITY') {
+    if (s.kind === 'HUNT_REVERSE' || s.kind === 'TAKE_STOPS' || s.kind === 'BLEED_FLUSH') t -= 6
+    if (s.kind === 'HTF_CONTINUE' || s.kind === 'RANGE_HOLD' || s.kind === 'PULLBACK_FUEL') t += 3
+  }
+
+  if (ctx.mmStopHunt && ctx.desk !== 'COMMODITY') {
     if (s.kind === 'HUNT_REVERSE' || s.kind === 'SNAP_BACK' || s.kind === 'FAILED_RANGE_BREAK') {
       t += 4
     }
@@ -458,7 +465,7 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
     if (s.kind === 'HTF_CONTINUE' || s.kind === 'IMPULSE') t += 2
   }
 
-  if (!ctx.isBtc) {
+  if (ctx.desk === 'ALT' && !ctx.isBtc) {
     if (ctx.altBias === 'LONG') t += dir * 3.4
     if (ctx.altBias === 'SHORT') t -= dir * 3.4
     if (ctx.altRegime === 'ALT_ON') t += dir * 2.2
@@ -476,11 +483,11 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
       if (ctx.btcRs >= 2) t += dir * 2
       if (ctx.btcRs <= -2) t -= dir * 2
     }
-  } else if (ctx.btcDominance != null && ctx.btcDominance >= 54) {
+  } else if (ctx.desk === 'BTC' && ctx.btcDominance != null && ctx.btcDominance >= 54) {
     t += dir * 1.3
   }
 
-  const fg = ctx.fearGreed
+  const fg = ctx.desk === 'COMMODITY' ? null : ctx.fearGreed
   if (fg != null) {
     if (s.side === 'LONG' && fg <= 25) t += 2.2
     if (s.side === 'LONG' && fg >= 75) t -= 2.4
@@ -617,24 +624,17 @@ function keepStory(pts: PathPoint[]): PathPoint[] {
 
 function spreadProbs(weights: number[]): number[] {
   if (!weights.length) return []
-  if (weights.length === 1) return [100]
-  const pow = weights.map((w) => Math.pow(Math.max(0.5, w), 1.9))
-  const sum = pow.reduce((a, b) => a + b, 0) || 1
-  const pcts = pow.map((p) => (p / sum) * 100)
-  if (pcts[0] < 54) {
-    const bump = 54 - pcts[0]
-    const rest = pcts.slice(1).reduce((a, b) => a + b, 0) || 1
-    pcts[0] = 54
-    for (let i = 1; i < pcts.length; i++) pcts[i] -= bump * (pcts[i] / rest)
-  }
-  if (pcts.length >= 2 && pcts[0] - pcts[1] < 16) {
-    const gap = (16 - (pcts[0] - pcts[1])) / 2
-    pcts[0] += gap
-    pcts[1] -= gap
-  }
-  const rounded = pcts.map((p) => Math.max(8, Math.round(p)))
+  const safe = weights.map((w) => Math.max(0.5, w))
+  if (safe.length === 1) return [Math.min(64, Math.max(36, Math.round(safe[0])))]
+  const sum = safe.reduce((a, b) => a + b, 0) || 1
+  const rounded = safe.map((w) => Math.max(8, Math.round((w / sum) * 100)))
   const drift = rounded.reduce((a, b) => a + b, 0) - 100
-  rounded[0] = Math.max(8, rounded[0] - drift)
+  rounded[0] = Math.max(8, Math.min(72, (rounded[0] ?? 8) - drift))
+  const rest = rounded.reduce((a, b) => a + b, 0) - 100
+  if (rounded.length > 1 && rest !== 0) {
+    const last = rounded.length - 1
+    rounded[last] = Math.max(8, (rounded[last] ?? 8) - rest)
+  }
   return rounded
 }
 
@@ -693,11 +693,23 @@ export function buildStructureScenarios(input: {
   newsScore?: number
   btcRs?: number | null
   isBtc?: boolean
+  desk?: DeskBook | null
+  /** When the cascade has no entry, do not invent a lead scenario. */
+  tradable?: boolean
+  situationLine?: string | null
   cascade?: CloseCascade | null
   fuel?: { price: number; label: string } | null
   intra?: IntraPlan | null
   tapeBarMs?: number
 }): StructureScenarioBoard {
+  if (input.tradable === false) {
+    return {
+      now: input.situationLine || 'Каскад собран, входа на 15м нет.',
+      leadId: 'A',
+      leadTitle: 'Ждём ситуацию',
+      scenarios: [],
+    }
+  }
   const price = input.price
   const tapeRaw =
     input.candlesTape && input.candlesTape.length >= 8
@@ -765,6 +777,7 @@ export function buildStructureScenarios(input: {
     newsScore: input.newsScore ?? 0,
     btcRs: input.btcRs ?? null,
     isBtc: Boolean(input.isBtc),
+    desk: input.desk ?? (input.isBtc ? 'BTC' : null),
     cascade: input.cascade ?? null,
     fuel: input.fuel ?? null,
   }

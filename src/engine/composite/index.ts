@@ -396,6 +396,27 @@ function buildTacticalAdvice(
         `Следить за угасанием давления — выход при смене на ${memeSignal.spreadPressure.pressure === 'BUYERS' ? 'продавцов' : 'покупателей'}`
       )
     }
+  } else if (assetType === 'COMMODITY') {
+    advice.primary =
+      signal.hasActiveSetup && signal.score >= 7
+        ? `Сырьё ${signal.direction === 'LONG' ? 'ЛОНГ' : 'ШОРТ'} только после закрепа 15м в ноге недели и дня`
+        : 'Сырьё: ждём, пока неделя и день совпадут и 15м примет уровень'
+
+    advice.reasoning.push('Золото, серебро и нефть читаются по принятию стоимости')
+    advice.reasoning.push('Фитиль без закрытия за уровнем сценарий не создаёт')
+    advice.reasoning.push('4ч против недели и дня — это откат, не новая сделка')
+    if (sessionDNA) advice.reasoning.push(`Сессия: ${sessionDNA.keyInsight}`)
+
+    advice.optimal.entry = 'После закрытия 15м в сторону недели и дня'
+    advice.optimal.stop = 'За принятым уровнем, от дневного ATR'
+    advice.optimal.targets = 'Хай или лой дня и недели, которые цена ещё не прошла'
+    advice.optimal.timeframe = 'Сессия Лондон / Нью-Йорк'
+
+    advice.warnings.push('Не переносить на сырьё охоту за стопами и BTC.D')
+    advice.warnings.push('Серебро шире золота. Нефть после новости не фейдится одним фитилём')
+    if (marketPhase === 'RANGING') {
+      advice.warnings.push('День внутри недели без выхода — сделки нет')
+    }
   } else if (assetType === 'ALT') {
     if (signal.hasActiveSetup && signal.score >= 7) {
       const entry = signal.ltfChoCH?.surgicalEntryDetected
@@ -506,6 +527,17 @@ function getExpectedMoveRange(
         return '2-5% за 15-30 минут'
       default:
         return '1-3% за 30-60 минут'
+    }
+  }
+
+  if (assetType === 'COMMODITY') {
+    switch (volatilityLevel) {
+      case 'HIGH':
+        return '1.2–3% за лондонскую или нью-йоркскую сессию'
+      case 'MEDIUM':
+        return '0.6–1.5% за сессию'
+      default:
+        return '0.3–0.8% за сессию, пока день не вышел из диапазона'
     }
   }
 

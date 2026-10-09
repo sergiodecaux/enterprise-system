@@ -4,7 +4,7 @@
 
 import type { CoinSignal } from '../types'
 import type { AssetType } from '../composite/assetClassifier'
-import { classifyAsset } from '../composite/assetClassifier'
+import { classifyAsset, getAssetBase } from '../composite/assetClassifier'
 import { classifySmcSetup, SETUP_LABELS } from '../journal/classify'
 
 export interface PlaybookInfo {
@@ -27,6 +27,25 @@ export function buildPlaybook(signal: CoinSignal): PlaybookInfo {
   const { setupType, setupTag } = classifySmcSetup(signal)
   const style = signal.tradeStyle ?? null
 
+  if (assetType === 'COMMODITY') {
+    return {
+      assetType,
+      setupLabel: SETUP_LABELS[setupType],
+      setupTag,
+      tradeStyle: style,
+      headline: 'Сырьё · принятие стоимости, не охота за фитилём',
+      focus: [
+        'Неделя и день задают край',
+        '4ч — место в ноге, 15м — закреп',
+        'Стоп от ATR дня, не от 1% за зону',
+      ],
+      avoid: [
+        'Читать фитиль как снятие ликвидности',
+        'Тащить на золото, серебро и нефть логику BTC.D',
+      ],
+    }
+  }
+
   if (assetType === 'MEME') {
     return {
       assetType,
@@ -46,21 +65,41 @@ export function buildPlaybook(signal: CoinSignal): PlaybookInfo {
     }
   }
 
+  const base = getAssetBase(signal.internalSymbol)
+  if (base === 'BTC' || base === 'XBT') {
+    return {
+      assetType,
+      setupLabel: SETUP_LABELS[setupType],
+      setupTag,
+      tradeStyle: style,
+      headline: 'Биткоин · неделя называет пул, 15м подтверждает возврат',
+      focus: [
+        'Неделя и день задают сторону и неснятый пул',
+        '4ч — место в ноге, 15м — закреп или возврат после снятия',
+        'Открытый интерес подтверждает охоту, не заменяет уровень',
+      ],
+      avoid: [
+        'Переворачивать день одной 15м',
+        'Лонг в премиуме ноги без возврата в дисконт',
+      ],
+    }
+  }
+
   if (assetType === 'BLUE_CHIP') {
     return {
       assetType,
       setupLabel: SETUP_LABELS[setupType],
       setupTag,
       tradeStyle: style,
-      headline: 'Blue-chip · сессии, F&G, HTF зоны',
+      headline: 'Крупная крипта · сторона биткоина, потом свой пул',
       focus: [
-        'Daily / 4H структура и OTE',
-        'Сессия (London/NY) + F&G',
-        'BTC.D при смежных альтах в портфеле',
+        'Неделя и день задают сторону, 4ч — место в ноге',
+        '15м входит только закрепом или возвратом после снятия',
+        'Середина диапазона не вход. BTC.D — топливо, не уровень',
       ],
       avoid: [
-        'Скальп против сильного HTF',
-        'Вход без зоны на новостном шуме',
+        'Лонг против медвежьего дня биткоина',
+        'Читать фитиль как готовый сетап',
       ],
     }
   }
@@ -70,15 +109,15 @@ export function buildPlaybook(signal: CoinSignal): PlaybookInfo {
     setupLabel: SETUP_LABELS[setupType],
     setupTag,
     tradeStyle: style,
-    headline: 'Alt playbook · зоны + RS vs BTC',
+    headline: 'Альт · свой каскад только если биткоин его пускает',
     focus: [
-      'SSL/BSL / Fib реакция',
-      'RS vs BTC (не лонг слабого альта)',
-      'BTC.D ≥55% → резать размер LONG',
+      'Сначала сторона биткоина, потом свой неснятый пул',
+      'Вход из дисконта или премиума ноги, не из середины',
+      'BTC.D и TOTAL3 говорят, есть ли топливо, и не заменяют уровень',
     ],
     avoid: [
-      'Лонг при медвежьем BTC без дивергенции',
-      'Игнор invalidation 1H',
+      'Лонг слабого альта при медвежьем дне биткоина',
+      'Переворот направления по 15м против недели и дня',
     ],
   }
 }

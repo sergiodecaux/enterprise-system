@@ -9,6 +9,7 @@ export const assetTypeLabel: Record<AssetType, string> = {
   MEME: 'МЕМ',
   ALT: 'АЛЬТ',
   BLUE_CHIP: 'БЛЮ-ЧИП',
+  COMMODITY: 'СЫРЬЁ',
 }
 
 export const marketPhaseLabel: Record<MarketPhase, string> = {

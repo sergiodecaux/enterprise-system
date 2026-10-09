@@ -816,6 +816,14 @@ const LiveChart = ({
         newsScore,
         btcRs,
         isBtc: isBtcPair,
+        symbol: flatSymbol,
+        walls: orderBookMetrics?.walls ?? null,
+        buyerPct:
+          signal?.buyerAggression && signal.buyerAggression.buyToSellRatio > 0
+            ? (signal.buyerAggression.buyToSellRatio /
+                (1 + signal.buyerAggression.buyToSellRatio)) *
+              100
+            : null,
       })
       structureStickyRef.current = { key: structureAnchor, read: next }
       return next
@@ -852,6 +860,9 @@ const LiveChart = ({
     newsScore,
     btcRs,
     isBtcPair,
+    flatSymbol,
+    orderBookMetrics?.walls,
+    signal?.buyerAggression?.buyToSellRatio,
   ])
 
   const setAdvisorStructure = useAdvisorStore((s) => s.setStructure)

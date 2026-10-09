@@ -1146,11 +1146,12 @@ function clipToHorizon(
   candidate: number | null | undefined,
   side: 'LONG' | 'SHORT',
   horizon: number,
-  atr: number
+  atr: number,
+  floorFrac = 0.28
 ): number {
   const dir = side === 'LONG' ? 1 : -1
   const cap = from + dir * horizon
-  const minMove = Math.max(atr * 0.4, horizon * 0.28)
+  const minMove = Math.max(atr * 0.25, horizon * floorFrac)
   const floor = from + dir * minMove
   const lo = Math.min(floor, cap)
   const hi = Math.max(floor, cap)
@@ -1621,6 +1622,435 @@ function impulseThenRetrace(
   const peak = now + dir * first
   const dip = peak - dir * Math.abs(peak - now) * rhythm.retraceFrac
   return { peak, dip }
+}
+
+type PriceActKind = 'HOLD' | 'BREAK' | 'PIN'
+
+interface PriceAct {
+  kind: PriceActKind
+  side: 'LONG' | 'SHORT' | null
+  /** Level price is holding or the level it just crossed. */
+  level: number
+  /** Other edge when price is stuck in a tight range. */
+  far: number
+  label: string
+}
+
+function readPriceAct(
+  candles: OhlcvCandle[],
+  structure: StructureRead | null,
+  price: number,
+  atr: number
+): PriceAct | null {
+  if (!structure || candles.length < 4 || !(price > 0)) return null
+  const pad = Math.max(atr * 0.35, price * 0.0012)
+  const recent = candles.slice(-6)
+  const last = recent[recent.length - 1]
+  const prev = recent[recent.length - 2]
+  if (!last || !prev) return null
+
+  const levels: Array<{ price: number; held: boolean }> = []
+  const pushEv = (ev: StructureEvent | null | undefined) => {
+    if (ev?.held && ev.price > 0) levels.push({ price: ev.price, held: true })
+  }
+  for (const tf of [structure.h4, structure.h1, structure.d1]) {
+    if (!tf) continue
+    pushEv(tf.lastReclaim)
+    pushEv(tf.lastBos)
+    pushEv(tf.lastChoch)
+    if (tf.dealingHigh > 0) levels.push({ price: tf.dealingHigh, held: false })
+    if (tf.dealingLow > 0) levels.push({ price: tf.dealingLow, held: false })
+  }
+
+  const closesBeyond = (level: number, up: boolean) =>
+    recent
+      .slice(-4)
+      .filter((c) => (up ? c[4] > level : c[4] < level)).length
+
+  const held = levels
+    .filter((l) => l.held)
+    .sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price))
+  const near = Math.max(atr * 2.2, price * 0.008)
+  for (const lv of held) {
+    if (Math.abs(price - lv.price) > near) continue
+    const up = price >= lv.price
+    if (closesBeyond(lv.price, up) >= 2) {
+      return {
+        kind: 'HOLD',
+        side: up ? 'LONG' : 'SHORT',
+        level: lv.price,
+        far: lv.price,
+        label: up
+          ? `крепится над ${fmtPx(lv.price)}`
+          : `крепится под ${fmtPx(lv.price)}`,
+      }
+    }
+  }
+
+  const crossTol = Math.max(atr * 1.4, price * 0.006)
+  const ordered = [...levels].sort(
+    (a, b) => Math.abs(a.price - price) - Math.abs(b.price - price)
+  )
+  for (const lv of ordered) {
+    if (Math.abs(last[4] - lv.price) > crossTol) continue
+    const prevUp = prev[4] >= lv.price
+    const nowUp = last[4] >= lv.price
+    if (prevUp === nowUp) continue
+    if (closesBeyond(lv.price, nowUp) >= 2) continue
+    return {
+      kind: 'BREAK',
+      side: nowUp ? 'LONG' : 'SHORT',
+      level: lv.price,
+      far: lv.price,
+      label: nowUp
+        ? `ломает вверх ${fmtPx(lv.price)}`
+        : `ломает вниз ${fmtPx(lv.price)}`,
+    }
+  }
+
+  const prior = recent.slice(0, -1)
+  const priorHi = Math.max(...prior.map((c) => c[2]))
+  const priorLo = Math.min(...prior.map((c) => c[3]))
+  if (priorHi > 0 && prev[4] <= priorHi && last[4] > priorHi) {
+    return {
+      kind: 'BREAK',
+      side: 'LONG',
+      level: priorHi,
+      far: priorHi,
+      label: `ломает вверх ${fmtPx(priorHi)}`,
+    }
+  }
+  if (priorLo > 0 && prev[4] >= priorLo && last[4] < priorLo) {
+    return {
+      kind: 'BREAK',
+      side: 'SHORT',
+      level: priorLo,
+      far: priorLo,
+      label: `ломает вниз ${fmtPx(priorLo)}`,
+    }
+  }
+
+  const shelf = recent.slice(-4)
+  const swingLo = Math.min(...shelf.map((c) => c[3]))
+  const swingHi = Math.max(...shelf.map((c) => c[2]))
+  const span = swingHi - swingLo
+  if (span > 0) {
+    const pos = (price - swingLo) / span
+    const last3 = recent.slice(-3)
+    const risingLows = last3.every(
+      (c, i) => i === 0 || c[3] >= last3[i - 1]![3] - span * 0.08
+    )
+    const fallingHighs = last3.every(
+      (c, i) => i === 0 || c[2] <= last3[i - 1]![2] + span * 0.08
+    )
+    if (pos >= 0.62 && risingLows) {
+      return {
+        kind: 'HOLD',
+        side: 'LONG',
+        level: swingLo,
+        far: swingLo,
+        label: `крепится над ${fmtPx(swingLo)}`,
+      }
+    }
+    if (pos <= 0.38 && fallingHighs) {
+      return {
+        kind: 'HOLD',
+        side: 'SHORT',
+        level: swingHi,
+        far: swingHi,
+        label: `крепится под ${fmtPx(swingHi)}`,
+      }
+    }
+  }
+
+  const hi = Math.max(...recent.map((c) => c[2]))
+  const lo = Math.min(...recent.map((c) => c[3]))
+  const ranges = recent.map((c) => c[2] - c[3]).filter((r) => r > 0)
+  const midBar = ranges.length ? median(ranges) : atr
+  if (hi > lo && hi - lo <= Math.max(midBar * 2.6, pad * 2)) {
+    const edge = Math.abs(price - hi) <= Math.abs(price - lo) ? hi : lo
+    return {
+      kind: 'PIN',
+      side: null,
+      level: edge,
+      far: edge === hi ? lo : hi,
+      label: `крепится в ${fmtPx(lo)}–${fmtPx(hi)}`,
+    }
+  }
+  return null
+}
+
+function actDestination(
+  act: PriceAct,
+  price: number,
+  reach: number,
+  structure: StructureRead | null
+): number {
+  if (act.kind === 'PIN') return act.far
+  const dir: 1 | -1 = act.side === 'SHORT' ? -1 : 1
+  let dest = price + dir * Math.max(reach, 0)
+  const pool =
+    dir > 0
+      ? structure?.h4?.nextBsl ?? structure?.h1?.nextBsl ?? null
+      : structure?.h4?.nextSsl ?? structure?.h1?.nextSsl ?? null
+  if (pool != null && pool > 0 && (dir > 0 ? pool > price : pool < price)) {
+    dest = dir > 0 ? Math.min(dest, pool) : Math.max(dest, pool)
+  }
+  if (act.kind === 'HOLD') {
+    dest = dir > 0 ? Math.max(dest, act.level) : Math.min(dest, act.level)
+  }
+  return dest
+}
+
+function pathFromAct(
+  act: PriceAct,
+  price: number,
+  reach: number,
+  barSeconds: number,
+  bars: number,
+  structure: StructureRead | null
+): PathPoint[] {
+  const bar = Math.max(1, barSeconds)
+  const end = bar * Math.max(3, bars)
+  const now: PathPoint = { timeOffsetSeconds: 0, price, label: 'сейчас', isKeyLevel: true }
+  if (act.kind === 'PIN') {
+    return [
+      now,
+      {
+        timeOffsetSeconds: Math.round(end * 0.45),
+        price: act.far,
+        label: 'край',
+        isKeyLevel: true,
+      },
+      {
+        timeOffsetSeconds: end,
+        price: act.level,
+        label: act.label,
+        isKeyLevel: true,
+      },
+    ]
+  }
+  const dir: 1 | -1 = act.side === 'SHORT' ? -1 : 1
+  const dest = actDestination(act, price, reach, structure)
+  const away = Math.abs(price - act.level)
+  const pts: PathPoint[] = [now]
+  const retest =
+    act.kind === 'HOLD' &&
+    away > Math.max(reach * 0.12, Math.abs(dest - price) * 0.08) &&
+    (dir > 0 ? price > act.level : price < act.level)
+  if (retest) {
+    pts.push({
+      timeOffsetSeconds: Math.round(end * 0.28),
+      price: act.level,
+      label: `крепление ${fmtPx(act.level)}`,
+      isKeyLevel: true,
+    })
+  }
+  if (Math.abs(dest - price) > Math.max(Math.abs(price) * 0.0004, 1e-8)) {
+    pts.push({
+      timeOffsetSeconds: end,
+      price: dest,
+      label: act.label,
+      isKeyLevel: true,
+    })
+  } else if (!retest) {
+    pts.push({
+      timeOffsetSeconds: Math.round(end * 0.4),
+      price: act.level,
+      label: act.label,
+      isKeyLevel: true,
+    })
+  }
+  return pts
+}
+
+function failFromAct(
+  act: PriceAct,
+  price: number,
+  atr: number,
+  barSeconds: number,
+  bars: number
+): PathPoint[] {
+  const bar = Math.max(1, barSeconds)
+  const end = bar * Math.max(3, bars)
+  if (act.kind === 'PIN') {
+    return [
+      { timeOffsetSeconds: 0, price, label: 'сейчас' },
+      { timeOffsetSeconds: end, price: act.far, label: 'край', isKeyLevel: true },
+    ]
+  }
+  const dir: 1 | -1 = act.side === 'SHORT' ? -1 : 1
+  const step = Math.max(atr * 0.55, Math.abs(price - act.level) * 0.45)
+  const lost = act.level - dir * step
+  return [
+    { timeOffsetSeconds: 0, price, label: 'сейчас' },
+    {
+      timeOffsetSeconds: Math.round(end * 0.4),
+      price: act.level,
+      label: `отдал ${fmtPx(act.level)}`,
+      isKeyLevel: true,
+    },
+    {
+      timeOffsetSeconds: end,
+      price: lost,
+      label: 'слом крепления',
+      isKeyLevel: true,
+    },
+  ]
+}
+
+function writeActRow(
+  row: StoryScenario | undefined,
+  path: PathPoint[],
+  title: string,
+  side?: StoryScenario['side']
+): void {
+  if (!row || path.length < 2) return
+  const tip = path[path.length - 1]!
+  row.path = path
+  row.toPrice = tip.price
+  row.toLabel = title
+  row.tipLabel = title
+  row.title = title
+  if (side) {
+    row.side = side
+    row.dirLabel = dirWord(side)
+  }
+}
+
+function pinExitPath(
+  act: PriceAct,
+  price: number,
+  side: 'LONG' | 'SHORT',
+  reach: number,
+  barSeconds: number,
+  bars: number,
+  structure: StructureRead | null
+): PathPoint[] {
+  const hi = Math.max(act.level, act.far)
+  const lo = Math.min(act.level, act.far)
+  const edge = side === 'LONG' ? hi : lo
+  const dir: 1 | -1 = side === 'LONG' ? 1 : -1
+  const bar = Math.max(1, barSeconds)
+  const end = bar * Math.max(3, bars)
+  let dest = edge + dir * Math.max(reach, Math.abs(hi - lo) * 0.35)
+  const pool =
+    dir > 0
+      ? structure?.h4?.nextBsl ?? structure?.h1?.nextBsl ?? null
+      : structure?.h4?.nextSsl ?? structure?.h1?.nextSsl ?? null
+  if (pool != null && pool > 0 && (dir > 0 ? pool > edge : pool < edge)) {
+    dest = dir > 0 ? Math.min(dest, pool) : Math.max(dest, pool)
+  }
+  const title = side === 'LONG' ? `выход вверх ${fmtPx(edge)}` : `выход вниз ${fmtPx(edge)}`
+  return [
+    { timeOffsetSeconds: 0, price, label: 'сейчас', isKeyLevel: true },
+    {
+      timeOffsetSeconds: Math.round(end * 0.35),
+      price: edge,
+      label: `край ${fmtPx(edge)}`,
+      isKeyLevel: true,
+    },
+    { timeOffsetSeconds: end, price: dest, label: title, isKeyLevel: true },
+  ]
+}
+
+function levelPoke(
+  act: PriceAct,
+  price: number,
+  atr: number,
+  barSeconds: number,
+  bars: number,
+  through: boolean
+): PathPoint[] {
+  const outward: 1 | -1 =
+    act.kind === 'PIN'
+      ? act.level >= act.far
+        ? 1
+        : -1
+      : price >= act.level
+        ? -1
+        : 1
+  const bar = Math.max(1, barSeconds)
+  const end = bar * Math.max(3, bars)
+  const step = Math.max(atr * 0.35, Math.abs(price) * 0.0008)
+  const probe = through ? act.level + outward * step : act.level
+  return [
+    { timeOffsetSeconds: 0, price, label: 'сейчас', isKeyLevel: true },
+    {
+      timeOffsetSeconds: Math.round(end * 0.45),
+      price: probe,
+      label: through ? `снятие ${fmtPx(act.level)}` : `уровень ${fmtPx(act.level)}`,
+      isKeyLevel: true,
+    },
+    {
+      timeOffsetSeconds: end,
+      price,
+      label: through ? 'вернулась' : 'пила у уровня',
+      isKeyLevel: true,
+    },
+  ]
+}
+
+/** Rewrite every drawn line so it starts from the level price is holding or breaking. */
+function paintLiveAct(
+  rows: StoryScenario[],
+  act: PriceAct,
+  price: number,
+  reach: number,
+  atr: number,
+  barSeconds: number,
+  bars: number,
+  structure: StructureRead | null
+): void {
+  const hold = rows.find((r) => r.id === 'hold')
+  const brk = rows.find((r) => r.id === 'break')
+  const sweep = rows.find((r) => r.id === 'sweep')
+  const chop = rows.find((r) => r.id === 'chop')
+  const rest = (skip: StoryScenario | undefined) =>
+    Math.max(0, ...rows.filter((r) => r !== skip).map((r) => r.pct))
+
+  if (act.kind === 'PIN') {
+    const boxed = pathFromAct(act, price, reach, barSeconds, bars, structure)
+    writeActRow(chop, boxed, act.label, 'RANGE')
+    if (chop) chop.pct = rest(chop) + 1
+    const longExit = pinExitPath(act, price, 'LONG', reach, barSeconds, bars, structure)
+    const shortExit = pinExitPath(act, price, 'SHORT', reach, barSeconds, bars, structure)
+    if (hold?.side === 'SHORT') {
+      writeActRow(hold, shortExit, shortExit[shortExit.length - 1]!.label ?? act.label, 'SHORT')
+      writeActRow(brk, longExit, longExit[longExit.length - 1]!.label ?? act.label, 'LONG')
+    } else {
+      writeActRow(hold, longExit, longExit[longExit.length - 1]!.label ?? act.label, 'LONG')
+      writeActRow(brk, shortExit, shortExit[shortExit.length - 1]!.label ?? act.label, 'SHORT')
+    }
+    if (sweep && !sweep.spent) {
+      writeActRow(sweep, levelPoke(act, price, atr, barSeconds, bars, true), `снятие ${fmtPx(act.level)}`)
+    }
+    return
+  }
+
+  const main = pathFromAct(act, price, reach, barSeconds, bars, structure)
+  const fail = failFromAct(act, price, atr, barSeconds, bars)
+  const live = act.side === 'SHORT' ? 'SHORT' : 'LONG'
+  const failSide: 'LONG' | 'SHORT' = live === 'LONG' ? 'SHORT' : 'LONG'
+  const failTitle = `отдал ${fmtPx(act.level)}`
+  const lead = hold?.side === live ? hold : brk?.side === live ? brk : hold
+  const other = lead === hold ? brk : hold
+  writeActRow(lead, main, act.label, live)
+  writeActRow(other, fail, failTitle, failSide)
+  if (lead) {
+    lead.condition =
+      act.kind === 'HOLD' ? `если держат ${fmtPx(act.level)}` : `если закрылись за ${fmtPx(act.level)}`
+    lead.pct = rest(lead) + 1
+  }
+  if (other) other.condition = `если отдают ${fmtPx(act.level)}`
+  if (sweep && !sweep.spent) {
+    writeActRow(sweep, levelPoke(act, price, atr, barSeconds, bars, true), `снятие ${fmtPx(act.level)}`)
+    sweep.condition = `если снимут ${fmtPx(act.level)} и вернут`
+  }
+  if (chop) {
+    writeActRow(chop, levelPoke(act, price, atr, barSeconds, bars, false), `пила у ${fmtPx(act.level)}`, 'RANGE')
+    chop.condition = `если останемся у ${fmtPx(act.level)}`
+  }
 }
 
 function holdPathOf(opts: {
@@ -3018,8 +3448,22 @@ export function buildChartStory(opts: {
       : null
 
   const nowLine = nowLineOf(nowKind, holdSide, scoredOdds?.pct ?? null, spent)
-  const hz = tfHorizon(barSeconds, atr, livePrice || price)
-  const rhythm = readCoinRhythm(candles, atr)
+  const baseHz = tfHorizon(barSeconds, atr, livePrice || price)
+  const walk = opts.structure?.walk
+  const measured = walk != null && walk.samples >= 4 && walk.remaining > 0
+  const hz = measured
+    ? {
+        ...baseHz,
+        dist: walk.remaining,
+        bars: Math.max(3, Math.round(walk.remainingSec / Math.max(barSeconds, 1))),
+      }
+    : baseHz
+  const floorFrac = measured ? 0.12 : 0.28
+  const rhythmBase = readCoinRhythm(candles, atr)
+  const rhythm =
+    measured && walk
+      ? { ...rhythmBase, noiseAtr: 0, retraceFrac: walk.retraceFrac }
+      : rhythmBase
 
   const holdTgt =
     primary && holdSide
@@ -3076,8 +3520,11 @@ export function buildChartStory(opts: {
   const arrows: StoryArrow[] = []
   const scenarios: StoryScenario[] = []
   let future: ChartStoryFuture | null = null
+  let actNote: string | null = null
 
-  if (primary && holdSide && livePrice > 0) {
+  const standAside = opts.structure?.situation != null && !opts.structure.situation.tradable
+
+  if (primary && holdSide && livePrice > 0 && !standAside) {
     const sweep = sweepPriceOf(primary, holdSide, opts.structure ?? null)
     const tape = readLastTape(candles, primary, holdSide, atr)
     const bos = bosAligned(opts.structure ?? null, holdSide)
@@ -3115,7 +3562,8 @@ export function buildChartStory(opts: {
               : Math.min(primary.bottom, livePrice) - hz.dist),
           holdSide,
           hz.dist,
-          atr
+          atr,
+          floorFrac
         ),
         holdSide,
         dailyFrame,
@@ -3133,7 +3581,8 @@ export function buildChartStory(opts: {
             : Math.max(primary.top, livePrice) + hz.dist),
         failSide ?? (holdSide === 'LONG' ? 'SHORT' : 'LONG'),
         hz.dist,
-        atr
+        atr,
+        floorFrac
       ),
       label: failTgtRu?.label ?? (holdSide === 'LONG' ? 'стопы снизу' : 'ликвидность сверху'),
     }
@@ -3274,6 +3723,20 @@ export function buildChartStory(opts: {
       fuelWay,
       daily: dailyFrame,
     })
+    const act = readPriceAct(candles, opts.structure ?? null, livePrice, atr)
+    if (act) {
+      paintLiveAct(
+        packed,
+        act,
+        livePrice,
+        hz.dist,
+        atr,
+        barSeconds,
+        hz.bars,
+        opts.structure ?? null
+      )
+      actNote = act.label
+    }
     const lead = leadStoryScenario(packed) ?? packed[0]
     const leadPath = lead?.path?.length ? lead.path : holdPath
     const leadTarget = lead?.toPrice ?? holdDest.price
@@ -3287,20 +3750,22 @@ export function buildChartStory(opts: {
       ...sweepPath.map((p) => p.price),
       ...lostPath.map((p) => p.price),
       ...rangePath.map((p) => p.price),
+      ...packed.flatMap((s) => (s.path ?? []).map((p) => p.price)),
     ].filter((p) => p > 0 && Number.isFinite(p))
     prices.push(primary.top, primary.bottom)
     const boxLow = Math.min(...prices)
     const boxHigh = Math.max(...prices)
     const futureSide: 'LONG' | 'SHORT' =
       lead && lead.side !== 'RANGE' ? lead.side : holdSide
+    const failRow = packed.find((s) => s.id === 'break')
     future = {
       path: leadPath,
-      failPath: lostPath,
+      failPath: failRow?.path ?? lostPath,
       targetPrice: leadTarget,
       targetLabel: leadLabel,
       tipLabel: lead?.tipLabel ?? storyTipLabel(leadTarget, tfName),
-      failTargetPrice: breakDest.price,
-      failTargetLabel: breakDest.label,
+      failTargetPrice: act && failRow?.toPrice ? failRow.toPrice : breakDest.price,
+      failTargetLabel: act && failRow?.toLabel ? failRow.toLabel : breakDest.label,
       boxLow,
       boxHigh,
       bars: hz.bars,
@@ -3310,17 +3775,17 @@ export function buildChartStory(opts: {
     arrows.push({
       id: 'hold',
       kind: 'PRIMARY',
-      side: holdSide,
-      fromPrice,
-      toPrice: holdDest.price,
-      toLabel: holdDest.label,
+      side: future?.side ?? holdSide,
+      fromPrice: act ? livePrice : fromPrice,
+      toPrice: future?.targetPrice ?? holdDest.price,
+      toLabel: future?.targetLabel ?? holdDest.label,
       zoneTop: primary.top,
       zoneBottom: primary.bottom,
       zoneStartSec: zStart,
       zoneEndSec: zEnd,
       oddsPct: four.hold,
-      label: holdArrowCaption(holdSide, holdDest.label),
-      sweepPrice: sweep,
+      label: act?.label ?? holdArrowCaption(holdSide, holdDest.label),
+      sweepPrice: act ? null : sweep,
     })
   }
 
@@ -3332,13 +3797,19 @@ export function buildChartStory(opts: {
     primary,
     secondary,
     displayZones,
-    nowKind,
-    nowLine,
-    side: holdSide,
-    future,
-    odds: scoredOdds,
-    arrows,
-    scenarios: padStoryScenarios(scenarios, holdSide, livePrice || price, barSeconds, {
+    nowKind: standAside ? 'OUTSIDE' : nowKind,
+    nowLine: standAside
+      ? (opts.structure?.situation.line ?? nowLine)
+      : actNote
+        ? `${nowLine} · ${actNote}`
+        : nowLine,
+    side: standAside ? null : holdSide,
+    future: standAside ? null : future,
+    odds: standAside ? null : scoredOdds,
+    arrows: standAside ? [] : arrows,
+    scenarios: standAside
+      ? []
+      : padStoryScenarios(scenarios, holdSide, livePrice || price, barSeconds, {
       candles,
       atr,
       primary,

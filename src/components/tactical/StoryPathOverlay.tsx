@@ -458,12 +458,12 @@ const StoryPathOverlay = ({
                 color,
               })
             }
-            const marked = pts.find((p) => p.label === 'топливо')
-            if (marked && marked !== b) {
+            for (const marked of pts) {
+              if (!marked.key || !marked.label || marked === b || marked.label === 'сейчас') continue
               captions.push({
-                id: `story:${sc.id}:fuel`,
+                id: `story:${sc.id}:way:${marked.label}`,
                 kind: 'way',
-                text: 'топливо',
+                text: marked.label,
                 x: marked.x,
                 y: marked.y,
                 color,

@@ -4,7 +4,7 @@ import type { SpreadPressureResult } from '../meme'
 import { isMemeTicker } from '../meme/memeFilter'
 import { isCommoditySymbol, type MexcTicker } from '../../api/mexc'
 
-export type AssetType = 'BLUE_CHIP' | 'ALT' | 'MEME'
+export type AssetType = 'BLUE_CHIP' | 'ALT' | 'MEME' | 'COMMODITY'
 export type MarketPhase =
   | 'ACCUMULATION'
   | 'DISTRIBUTION'
@@ -54,7 +54,7 @@ export function classifyAsset(
   const base = getAssetBase(internalSymbol)
 
   if (isCommoditySymbol(internalSymbol)) {
-    return 'ALT'
+    return 'COMMODITY'
   }
 
   if (options?.hasMemePulse) {
@@ -157,6 +157,11 @@ export function detectVolatilityLevel(
   assetType?: AssetType
 ): VolatilityLevel {
   const change24hAbs = Math.abs(priceChange24h)
+  if (assetType === 'COMMODITY') {
+    if (change24hAbs > 3.5) return 'HIGH'
+    if (change24hAbs > 1.4) return 'MEDIUM'
+    return 'LOW'
+  }
   const isMeme = assetType === 'MEME' || change24hAbs > 15
 
   if (isMeme) {

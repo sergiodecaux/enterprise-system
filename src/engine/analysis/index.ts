@@ -33,3 +33,14 @@ export {
   type IdeaLife,
 } from './ideaStatus'
 export { buildPlaybook, type PlaybookInfo } from './playbook'
+export {
+  readSituation,
+  resolveDeskBook,
+  commodityKindOf,
+  htfSideOf,
+  type DeskBook,
+  type SituationRead,
+  type CommodityKind,
+} from './deskBook'
+export { readFlow, oiCaseOf, type FlowRead, type FlowVerdict, type OiCase } from './flowGate'
+export { measureSessionWalk, type SessionWalk } from './sessionWalk'

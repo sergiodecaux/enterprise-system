@@ -24,6 +24,11 @@ import {
   buildZoneReactionBoard,
   type ZoneReactionBoard,
 } from './zoneReaction'
+import { readSituation, type SituationRead } from '../analysis/deskBook'
+import { readFlow, type FlowRead } from '../analysis/flowGate'
+import { measureSessionWalk, type SessionWalk } from '../analysis/sessionWalk'
+import { getOiSnapshot } from '../sequence/oiTracker'
+import type { OrderBookWall } from '../types'
 
 export type StructureTf = '1h' | '4h' | '1d' | '1w'
 export type StructureTrend = 'BULLISH' | 'BEARISH' | 'RANGING'
@@ -126,6 +131,10 @@ export interface StructureRead {
   intra: IntraPlan | null
   /** S/R rectangles + hold/break/закреп reaction */
   zones: ZoneReactionBoard | null
+  /** One live read: week/day side, 4H location, 15m trigger. */
+  situation: SituationRead
+  walk: SessionWalk | null
+  flow: FlowRead | null
 }
 
 export interface CongestionZone {
@@ -137,10 +146,10 @@ export interface CongestionZone {
 }
 
 const TF_WEIGHT: Record<StructureTf, number> = {
-  '1h': 0.32,
-  '4h': 0.38,
-  '1d': 0.18,
-  '1w': 0.12,
+  '1w': 0.36,
+  '1d': 0.32,
+  '4h': 0.22,
+  '1h': 0.1,
 }
 
 function atrApprox(candles: OhlcvCandle[], period = 14): number {
@@ -160,10 +169,30 @@ function atrApprox(candles: OhlcvCandle[], period = 14): number {
   return n > 0 ? sum / n : 0
 }
 
-function pivotRadius(tf: StructureTf): number {
-  if (tf === '1h') return 2
-  if (tf === '4h') return 2
-  return 1
+/** External swings. A 2-bar fractal is noise and is only a fallback. */
+function structureSwings(candles: OhlcvCandle[], tf: StructureTf): StructureSwing[] {
+  const primary = tf === '1h' ? 4 : tf === '4h' ? 3 : 2
+  const count = (list: StructureSwing[]) => ({
+    h: list.filter((s) => s.kind === 'HIGH').length,
+    l: list.filter((s) => s.kind === 'LOW').length,
+  })
+  let swings = findSwings(candles, primary)
+  const n = count(swings)
+  if (n.h < 2 || n.l < 2) {
+    const looser = findSwings(candles, Math.max(2, primary - 2))
+    const n2 = count(looser)
+    if (n2.h + n2.l > n.h + n.l) swings = looser
+  }
+  return swings
+}
+
+function nextUntapped(levels: StructureSwing[], close: number, above: boolean): number | null {
+  for (let i = levels.length - 1; i >= 0; i--) {
+    const p = levels[i]?.price
+    if (p == null) continue
+    if (above ? p > close : p < close) return p
+  }
+  return null
 }
 
 export function findSwings(
@@ -299,11 +328,14 @@ function heldAfter(
   const end = Math.min(candles.length - 1, fromIdx + 3)
   if (end <= fromIdx) return false
   let holds = 0
+  let seen = 0
   for (let i = fromIdx + 1; i <= end; i++) {
+    seen++
     const c = candles[i][4]
     if (side === 'UP' ? c >= level : c <= level) holds++
   }
-  return holds >= 1
+  if (seen < 2) return false
+  return holds >= 2
 }
 
 /**
@@ -319,7 +351,7 @@ export function readTfStructure(
 ): TfStructure | null {
   if (candles.length < 16) return null
   const atr = atrApprox(candles)
-  const swings = findSwings(candles, pivotRadius(tf))
+  const swings = structureSwings(candles, tf)
   const highs = swings.filter((s) => s.kind === 'HIGH')
   const lows = swings.filter((s) => s.kind === 'LOW')
   const lastHigh = lastOf(swings, 'HIGH')
@@ -346,6 +378,9 @@ export function readTfStructure(
       const wicked = wickBeyond(c, sw.price, breakSide) && !closedBeyond
 
       if (wicked && !closedBeyond) {
+        const pen = breakSide === 'UP' ? c[2] - sw.price : sw.price - c[3]
+        const minPen = Math.max(atr * 0.15, sw.price * 0.0006)
+        if (pen < minPen) continue
         lastSweep = {
           kind: 'SWEEP',
           side: breakSide,
@@ -364,15 +399,26 @@ export function readTfStructure(
       if (!closedBeyond) continue
 
       const held = heldAfter(candles, absIdx, sw.price, breakSide)
+      if (!held) continue
       const against =
         (liveTrend === 'BULLISH' && breakSide === 'DOWN') ||
         (liveTrend === 'BEARISH' && breakSide === 'UP')
       const withTrend =
         (liveTrend === 'BULLISH' && breakSide === 'UP') ||
-        (liveTrend === 'BEARISH' && breakSide === 'DOWN') ||
-        liveTrend === 'RANGING'
+        (liveTrend === 'BEARISH' && breakSide === 'DOWN')
 
-      if (against) {
+      if (liveTrend === 'RANGING') {
+        lastChoch = {
+          kind: 'CHOCH',
+          side: breakSide,
+          price: sw.price,
+          timeSec: t,
+          index: absIdx,
+          label: `выход ${tf} ${breakSide === 'UP' ? '↑' : '↓'}`,
+          held,
+        }
+        liveTrend = breakSide === 'UP' ? 'BULLISH' : 'BEARISH'
+      } else if (against) {
         lastChoch = {
           kind: 'CHOCH',
           side: breakSide,
@@ -409,6 +455,7 @@ export function readTfStructure(
       const c = candles[i]
       if (!closeBeyond(c[4], level, recaptureSide, atr)) continue
       const held = heldAfter(candles, i, level, recaptureSide)
+      if (!held) continue
       lastReclaim = {
         kind: 'RECLAIM',
         side: recaptureSide,
@@ -422,47 +469,24 @@ export function readTfStructure(
     }
   }
 
-  // Also: BOS then retest that holds = reclaim of broken structure
-  if (!lastReclaim && lastBos && lastBos.held) {
-    const level = lastBos.price
-    for (let i = lastBos.index + 1; i < candles.length; i++) {
-      const c = candles[i]
-      const tagged =
-        lastBos.side === 'UP'
-          ? c[3] <= level * 1.002 && c[4] >= level
-          : c[2] >= level * 0.998 && c[4] <= level
-      if (tagged) {
-        lastReclaim = {
-          kind: 'RECLAIM',
-          side: lastBos.side,
-          price: level,
-          timeSec: Math.floor(c[0] / 1000),
-          index: i,
-          label: `ретест BOS ${tf}`,
-          held: true,
-        }
-        break
-      }
-    }
-  }
-
   const dealingHigh = lastHigh?.price ?? Math.max(...candles.slice(-20).map((c) => c[2]))
   const dealingLow = lastLow?.price ?? Math.min(...candles.slice(-20).map((c) => c[3]))
   const last = candles[candles.length - 1]
   const close = last[4]
-  const mid = (dealingHigh + dealingLow) / 2
-  const inPremium = dealingHigh > dealingLow && close >= mid
-  const inDiscount = dealingHigh > dealingLow && close < mid
+  const span = dealingHigh - dealingLow
+  const pos = span > 0 ? (close - dealingLow) / span : 0.5
+  const inPremium = span > 0 && pos >= 0.62
+  const inDiscount = span > 0 && pos <= 0.38
 
-  const nextBsl = highs.length ? highs[highs.length - 1].price : dealingHigh
-  const nextSsl = lows.length ? lows[lows.length - 1].price : dealingLow
+  const nextBsl = nextUntapped(highs, close, true)
+  const nextSsl = nextUntapped(lows, close, false)
 
   const bits: string[] = []
   if (lastBos) bits.push(lastBos.label + (lastBos.held ? ' держит' : ''))
   if (lastChoch) bits.push(lastChoch.label)
   if (lastReclaim) bits.push(lastReclaim.label)
   else if (lastSweep) bits.push(lastSweep.label)
-  bits.push(inDiscount ? 'дисконт' : inPremium ? 'премиум' : 'середина')
+  bits.push(inDiscount ? 'дисконт' : inPremium ? 'премиум' : 'равновесие')
 
   return {
     tf,
@@ -570,10 +594,11 @@ export function readFib141Reaction(
     const prevHit = i > 0 && look[i - 1][2] >= bottom && look[i - 1][3] <= top
     if (hit && !prevHit) touches++
   }
-  const stopPrice = z.bias === 'LONG' ? bottom * 0.99 : top * 1.01
+  const atrStop = Math.max(atr * 0.8, (top - bottom) * 0.35, close * 0.0015)
+  const stopPrice = z.bias === 'LONG' ? bottom - atrStop : top + atrStop
   const retestWarn =
-    touches >= 2 && (state === 'INSIDE' || state === 'APPROACHING')
-      ? ` · возврат #${touches} — вероятный пробой`
+    touches >= 3 && (state === 'INSIDE' || state === 'APPROACHING')
+      ? ` · заход #${touches} — смотреть принятие, не ставить пробой заранее`
       : ''
 
   const narrative =
@@ -584,7 +609,7 @@ export function readFib141Reaction(
         : state === 'RECLAIM'
           ? `Ложный пробой 141–161 + закреп обратно → ${z.bias}`
           : state === 'INSIDE'
-            ? `Цена в зоне 141–161 — ждём реакцию ${z.bias} (стоп ~1% за зоной)${retestWarn}`
+            ? `Цена в зоне 141–161 — ждём реакцию ${z.bias} (стоп за зоной на ATR)${retestWarn}`
             : state === 'APPROACHING'
               ? `Подход к 141–161 · план ${z.bias}${retestWarn}`
               : '141–161 ещё не торговалась на этой ноге'
@@ -644,12 +669,12 @@ function scoreTf(tf: TfStructure | null): number {
     .filter((x): x is StructureEvent => x != null)
     .sort((a, b) => a.index - b.index)
   const ev = ranked.length ? ranked[ranked.length - 1] : null
-  if (ev) {
-    const w = ev.kind === 'CHOCH' ? 1.15 : ev.held ? 1 : 0.55
+  if (ev?.held) {
+    const w = ev.kind === 'CHOCH' ? 0.85 : 1
     s += ev.side === 'UP' ? w : -w
   }
-  if (tf.lastReclaim) {
-    s += tf.lastReclaim.side === 'UP' ? 0.85 : -0.85
+  if (tf.lastReclaim?.held) {
+    s += tf.lastReclaim.side === 'UP' ? 0.45 : -0.45
   }
   if (tf.trend === 'BULLISH' && tf.inDiscount) s += 0.35
   if (tf.trend === 'BEARISH' && tf.inPremium) s -= 0.35
@@ -669,30 +694,27 @@ function pickMagnet(
   const push = (price: number | null | undefined, label: string, rank: number) => {
     if (price != null && price > 0) cands.push({ price, label, rank })
   }
-  if (trap?.phase !== 'TRADE_READY') {
-    if (side === 'LONG') {
-      push(trap?.crowdShorts, 'шорты / охота', 12)
-      push(trap?.swept?.kind === 'BSL' ? trap.swept.price : null, 'BSL', 11)
-    } else {
-      push(trap?.crowdLongs, 'лонги / охота', 12)
-      push(trap?.swept?.kind === 'SSL' ? trap.swept.price : null, 'SSL', 11)
-    }
-  }
   if (side === 'LONG') {
-    push(h4?.nextBsl, 'сопротивление 4ч', 8)
-    push(d1?.nextBsl, 'хай дня', 7)
-    push(w1?.nextBsl, 'хай недели', 6)
-    push(h1?.nextBsl, 'сопротивление 1ч', 5)
+    push(w1?.nextBsl, 'хай недели', 14)
+    push(d1?.nextBsl, 'хай дня', 13)
+    push(h4?.nextBsl, 'BSL 4ч', 10)
+    push(h1?.nextBsl, 'BSL часа', 6)
     if (fib && fib.bias === 'SHORT' && fib.state !== 'BREAK') {
       push((fib.zoneTop + fib.zoneBottom) / 2, 'зона 141', 4)
     }
+    if (trap?.phase !== 'TRADE_READY') {
+      push(trap?.crowdShorts, 'шорты / охота', 5)
+    }
   } else {
-    push(h4?.nextSsl, 'поддержка 4ч', 8)
-    push(d1?.nextSsl, 'лоу дня', 7)
-    push(w1?.nextSsl, 'лоу недели', 6)
-    push(h1?.nextSsl, 'поддержка 1ч', 5)
+    push(w1?.nextSsl, 'лоу недели', 14)
+    push(d1?.nextSsl, 'лоу дня', 13)
+    push(h4?.nextSsl, 'SSL 4ч', 10)
+    push(h1?.nextSsl, 'SSL часа', 6)
     if (fib && fib.bias === 'LONG' && fib.state !== 'BREAK') {
       push((fib.zoneTop + fib.zoneBottom) / 2, 'зона 141', 4)
+    }
+    if (trap?.phase !== 'TRADE_READY') {
+      push(trap?.crowdLongs, 'лонги / охота', 5)
     }
   }
   cands.sort((a, b) => b.rank - a.rank)
@@ -849,28 +871,7 @@ export function planIntradayMove(input: {
     ((side === 'LONG' && price > broken * 1.001) ||
       (side === 'SHORT' && price < broken * 0.999))
 
-  if (steps.length < 2) {
-    const rawSpan =
-      input.h4 &&
-      Number.isFinite(input.h4.dealingHigh) &&
-      Number.isFinite(input.h4.dealingLow) &&
-      input.h4.dealingHigh > input.h4.dealingLow
-        ? input.h4.dealingHigh - input.h4.dealingLow
-        : input.h1 &&
-            Number.isFinite(input.h1.dealingHigh) &&
-            Number.isFinite(input.h1.dealingLow) &&
-            input.h1.dealingHigh > input.h1.dealingLow
-          ? input.h1.dealingHigh - input.h1.dealingLow
-          : price * 0.012
-    const span = Math.min(price * 0.08, Math.max(price * 0.004, rawSpan)) * (steps.length ? 0.85 : 1.15)
-    const base = steps[0]?.price ?? price
-    steps = [
-      ...(steps[0] ? [steps[0]] : [{ price: price + dir * span * 0.45, label: side === 'LONG' ? 'хай структуры' : 'лой структуры' }]),
-      { price: base + dir * span, label: side === 'LONG' ? 'следующий BSL' : 'следующий SSL' },
-      { price: base + dir * span * 1.7, label: side === 'LONG' ? 'цель дня' : 'цель дня' },
-    ]
-    steps = ladder(price, dir, steps)
-  }
+  if (steps.length < 2) return null
 
   const breakLv = steps[0]
   const nextBreak = steps[1] ?? null
@@ -961,6 +962,13 @@ export function composeStructureRead(input: {
   newsScore?: number
   btcRs?: number | null
   isBtc?: boolean
+  /** Chart symbol. Gold, silver and oil leave the crypto book. */
+  symbol?: string | null
+  walls?: OrderBookWall[] | null
+  /** Tape buyer share 0–100. Omitted when the tape is not loaded. */
+  buyerPct?: number | null
+  tapePricePct?: number | null
+  crowd?: { longShortRatio: number; known: boolean } | null
   /** ATR(14) on the candles that built `fib`. */
   zoneAtr?: number
 }): StructureRead {
@@ -988,38 +996,59 @@ export function composeStructureRead(input: {
   const fibSrc = h1src.length ? h1src : h4src.length ? h4src : d1src
   const fib141 = readFib141Reaction(fibSrc, input.fib ?? null, input.zoneAtr)
 
-  const actionStack = scoreTf(h4) * 0.58 + scoreTf(h1) * 0.42
-  const globalStack = scoreTf(w1) * 0.55 + scoreTf(d1) * 0.45
   const weighted =
-    scoreTf(h1) * TF_WEIGHT['1h'] +
-    scoreTf(h4) * TF_WEIGHT['4h'] +
+    scoreTf(w1) * TF_WEIGHT['1w'] +
     scoreTf(d1) * TF_WEIGHT['1d'] +
-    scoreTf(w1) * TF_WEIGHT['1w']
+    scoreTf(h4) * TF_WEIGHT['4h'] +
+    scoreTf(h1) * TF_WEIGHT['1h']
 
-  let fibTilt = 0
-  if (fib141?.state === 'BOUNCE' || fib141?.state === 'RECLAIM') {
-    fibTilt = fib141.bias === 'LONG' ? 0.55 : -0.55
-  } else if (fib141?.state === 'BREAK') {
-    fibTilt = fib141.bias === 'LONG' ? -0.35 : 0.35
-  } else if (fib141?.state === 'INSIDE' || fib141?.state === 'APPROACHING') {
-    fibTilt = fib141.bias === 'LONG' ? 0.2 : -0.2
+  const m15src = closedSlice(input.candles15m, 900_000)
+  const m15 = m15src.length >= 4 ? m15src : undefined
+  let situation = readSituation({
+    symbol: input.symbol,
+    isBtc: input.isBtc,
+    w1,
+    d1,
+    h4,
+    h1,
+    candles15m: m15,
+    altBias: input.altBias,
+    altRegime: input.altRegime,
+    btcRs: input.btcRs,
+  })
+  const walk = measureSessionWalk({
+    candles15m: m15,
+    candles1h: h1src.length ? h1src : input.candles1h,
+    price,
+  })
+  const oi = input.symbol ? getOiSnapshot(input.symbol) : null
+  const btcOi = input.isBtc ? oi : getOiSnapshot('BTC_USDT') ?? getOiSnapshot('BTC/USDT:USDT')
+  const flow = readFlow({
+    book: situation.book,
+    side: situation.htfSide,
+    trigger: situation.trigger,
+    structural: situation.tradable,
+    candles15m: m15,
+    oi,
+    btcOi,
+    buyerPct: input.buyerPct,
+    tapePricePct: input.tapePricePct,
+    walls: input.walls,
+    price,
+    walk,
+    crowd: input.crowd,
+  })
+  if (situation.tradable && flow.verdict !== 'CONFIRM') {
+    situation = { ...situation, tradable: false, line: flow.clause || situation.line }
+  } else if (situation.tradable && flow.clause) {
+    situation = { ...situation, line: `${situation.line} ${flow.clause}` }
   }
-
-  const net =
-    globalStack * 0.34 +
-    actionStack * 0.66 +
-    fibTilt * 0.2 +
-    cascade.global * 0.12
   const bias: StructureRead['bias'] =
-    cascade.globalSide === 'LONG'
+    situation.htfSide === 'LONG'
       ? 'BULLISH'
-      : cascade.globalSide === 'SHORT'
+      : situation.htfSide === 'SHORT'
         ? 'BEARISH'
-        : net >= 0.28
-          ? 'BULLISH'
-          : net <= -0.28
-            ? 'BEARISH'
-            : 'NEUTRAL'
+        : 'NEUTRAL'
 
   const trap = buildMmTrapThesis({
     price,
@@ -1032,15 +1061,14 @@ export function composeStructureRead(input: {
   })
 
   const hold = structureHoldState(h4 ?? h1, price)
-  const trendSide =
-    cascade.regime === 'COUNTERTREND'
-      ? cascade.globalSide
-      : cascade.actionSide ?? cascade.globalSide ?? hold.side
+  const preferredSide = situation.tradable ? situation.htfSide : null
+  const pathSide = preferredSide
+  const structureHeld = situation.tradable
   const fuel =
-    trendSide != null
+    preferredSide != null
       ? pickFuel({
           price,
-          trend: trendSide,
+          trend: preferredSide,
           h1,
           h4,
           d1,
@@ -1051,10 +1079,10 @@ export function composeStructureRead(input: {
         })
       : null
   const intra =
-    trendSide != null
+    preferredSide != null
       ? planIntradayMove({
           price,
-          side: trendSide,
+          side: preferredSide,
           h1,
           h4,
           d1,
@@ -1065,20 +1093,9 @@ export function composeStructureRead(input: {
           equalLows: input.equalLows,
         })
       : null
-  const tradeReady = trap.phase === 'TRADE_READY' && trap.tradeSide != null
-  const preferredSide =
-    cascade.regime === 'PULLBACK' || cascade.regime === 'TREND'
-      ? trendSide
-      : cascade.regime === 'COUNTERTREND'
-        ? cascade.globalSide
-        : tradeReady
-          ? trap.tradeSide
-          : trendSide
-  const pathSide = preferredSide ?? trap.huntSide ?? hold.side
-  const structureHeld = tradeReady || cascade.regime === 'TREND'
 
-  const factors: string[] = [...trap.factors]
-  if (cascade.line) factors.unshift(cascade.line)
+  const factors: string[] = [situation.line]
+  if (cascade.line) factors.push(cascade.line)
   if (h4) {
     factors.push(
       `4H ${h4.trend === 'RANGING' ? 'флэт' : h4.trend === 'BULLISH' ? 'бычий' : 'медвежий'}`
@@ -1086,7 +1103,7 @@ export function composeStructureRead(input: {
   }
   if (d1) {
     factors.push(
-      `D ${d1.trend === 'RANGING' ? 'флэт' : d1.trend === 'BULLISH' ? 'бычий' : 'медвежий'} · ${d1.inDiscount ? 'дисконт' : 'премиум'}`
+      `D ${d1.trend === 'RANGING' ? 'флэт' : d1.trend === 'BULLISH' ? 'бычий' : 'медвежий'} · ${d1.inDiscount ? 'дисконт' : d1.inPremium ? 'премиум' : 'равновесие'}`
     )
   }
   if (w1) {
@@ -1095,12 +1112,9 @@ export function composeStructureRead(input: {
     )
   }
 
-  const magnet =
-    cascade.regime === 'PULLBACK' && fuel
-      ? fuel
-      : pathSide
-        ? pickMagnet(h1, h4, d1, w1, fib141, pathSide, trap)
-        : fuel
+  const magnet = pathSide
+    ? pickMagnet(h1, h4, d1, w1, fib141, pathSide, trap)
+    : null
 
   const invalidation =
     trap.weaknessLevel ??
@@ -1110,16 +1124,19 @@ export function composeStructureRead(input: {
         ? h4?.lastSwingHigh?.price ?? h1?.lastSwingHigh?.price ?? fuel?.price ?? null
         : null)
 
-  const confidence = tradeReady
-    ? Math.round(
-        Math.min(
-          78,
-          44 +
-            Math.abs(net) * 28 +
-            (h4 && h1 && h4.trend === h1.trend && h1.trend !== 'RANGING' ? 8 : 0)
+  const confidence = situation.tradable
+    ? Math.min(
+        74,
+        Math.max(
+          28,
+          46 +
+            (situation.trigger === 'SWEEP_RETURN' ? 10 : 6) +
+            (h4 && preferredSide === 'LONG' && h4.trend === 'BULLISH' ? 8 : 0) +
+            (h4 && preferredSide === 'SHORT' && h4.trend === 'BEARISH' ? 8 : 0) +
+            flow.confidenceDelta
         )
       )
-    : Math.round(Math.min(46, 22 + Math.abs(net) * 20))
+    : 24
 
   let board: StructureScenarioBoard | null = null
   try {
@@ -1157,11 +1174,13 @@ export function composeStructureRead(input: {
       isBtc: input.isBtc,
       cascade,
       tapeBarMs: 900_000,
+      desk: situation.book,
+      tradable: situation.tradable,
+      situationLine: situation.line,
     })
   } catch {
     board = null
   }
-  const lead = board?.scenarios[0] ?? null
 
   let zoneBoard: ZoneReactionBoard | null = null
   try {
@@ -1182,9 +1201,7 @@ export function composeStructureRead(input: {
         price,
         dealingHigh: (h4 ?? h1)?.dealingHigh,
         dealingLow: (h4 ?? h1)?.dealingLow,
-        structureHeld: Boolean(
-          (h1?.lastReclaim?.held || h4?.lastReclaim?.held) && hold.held
-        ),
+        structureHeld: situation.tradable && hold.held,
         preferredSide,
         magnet,
         equalHighs: input.equalHighs,
@@ -1194,13 +1211,13 @@ export function composeStructureRead(input: {
   } catch {
     zoneBoard = null
   }
-  if (zoneBoard?.line) factors.unshift(zoneBoard.line)
+  if (zoneBoard?.line && situation.tradable) factors.push(zoneBoard.line)
 
-  const summary = board?.now ?? zoneBoard?.line ?? trap.summary
+  const summary = situation.line
 
   const markers: StructureMarker[] = []
   const pushMark = (ev: StructureEvent | null, tf: string) => {
-    if (!ev) return
+    if (!ev?.held) return
     const up = ev.side === 'UP'
     const isBos = ev.kind === 'BOS'
     const isChoch = ev.kind === 'CHOCH'
@@ -1242,9 +1259,7 @@ export function composeStructureRead(input: {
     w1,
     fib141,
     bias,
-    confidence: lead
-      ? Math.min(82, Math.max(18, lead.probability))
-      : confidence,
+    confidence,
     preferredSide,
     structureHeld,
     summary,
@@ -1259,6 +1274,9 @@ export function composeStructureRead(input: {
     fuel,
     intra,
     zones: zoneBoard,
+    situation,
+    walk,
+    flow,
   }
 }
 

@@ -24,13 +24,21 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
     altContext,
   } = analysis
 
-  const assetColors = {
+  const assetColors: Record<
+    CompositeAnalysis['assetType'],
+    { bg: string; border: string; text: string }
+  > = {
     MEME: { bg: 'bg-alert/10', border: 'border-alert/30', text: 'text-alert' },
     ALT: { bg: 'bg-matrix/10', border: 'border-matrix/30', text: 'text-matrix' },
     BLUE_CHIP: {
       bg: 'bg-yellow-400/10',
       border: 'border-yellow-400/30',
       text: 'text-yellow-400',
+    },
+    COMMODITY: {
+      bg: 'bg-amber-200/10',
+      border: 'border-amber-200/30',
+      text: 'text-amber-200',
     },
   }
 
