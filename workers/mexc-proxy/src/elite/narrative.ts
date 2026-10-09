@@ -249,6 +249,9 @@ export function formatHuntUrgent(opts: {
   streamTo: string
   entry: number
   target: number
+  /** Price percent from the limit to the target. */
+  movePct?: number
+  align?: 'WITH' | 'COUNTER'
   doNotChase?: boolean
 }): { title: string; text: string } {
   const ticker = tickerOf(opts.symbol)
@@ -268,18 +271,24 @@ export function formatHuntUrgent(opts: {
       : 'Стримится к стопам снизу.'
   const where =
     entry && target
-      ? `Вход около ${entry}, цель ${target}.`
+      ? `Лимитка ×50 от ${entry} к ${target}${
+          opts.movePct != null && opts.movePct > 0
+            ? ` — около ${opts.movePct.toFixed(1)}% цены`
+            : ''
+        }.`
       : entry
-        ? `Вход около ${entry}.`
+        ? `Лимитка ×50 около ${entry}.`
         : `Можно смотреть ${side} от зоны.`
   return {
-    title: `${ticker} — можно ${side}`,
+    title: `${ticker} — лимитка ${side}`,
     text: [
       opts.reason ? `${opts.reason[0]!.toUpperCase()}${opts.reason.slice(1)}.` : '',
+      opts.align === 'COUNTER'
+        ? 'Против старшего тренда: лимитка только от зоны.'
+        : 'По тренду старших ТФ: лимитка на откате, младший ТФ может быть против.',
       fuel,
       dest,
       `${where} ${chase}`,
-      'Не сигнал.',
     ]
       .filter(Boolean)
       .join(' '),

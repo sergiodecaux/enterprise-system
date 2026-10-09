@@ -109,20 +109,8 @@ test('spent fuel is not re-hunted', () => {
   const v = judgeTacticHunt(
     base({
       ssl: { price: 99.4, isActive: false },
-      zoneLong: null,
-    })
-  )
-  assert.equal(v, null)
-})
-
-test('daily against blocks long', () => {
-  const v = judgeTacticHunt(
-    base({
-      bias1d: 'BEAR',
-      bias4h: 'BEAR',
-      bias1h: 'BEAR',
-      pdl: 96,
       bsl: { price: 103.2, isActive: false },
+      zoneLong: null,
       zoneShort: null,
     })
   )
@@ -181,4 +169,79 @@ test('universe is pinned plus favorites; batch keeps favorites', () => {
   assert.ok(batch.includes('OP_USDT'))
   assert.ok(batch.includes('ETH_USDT'))
   assert.ok(batch.length <= 10)
+})
+
+test('READY needs at least 1% from the limit to the target', () => {
+  const v = judgeTacticHunt(
+    base({
+      pdh: 101.05,
+      high24: 101.05,
+      bsl: { price: 101.05, isActive: true },
+      zoneLong: {
+        ...base().zoneLong!,
+        limitEntry: 100.1,
+        target: 101.05,
+        targetLabel: 'BSL',
+      },
+    })
+  )
+  assert.ok(v)
+  assert.equal(v.shelf, 'WAIT')
+  assert.equal(isTacticReady(v), false)
+  assert.ok(v.movePct < 1)
+})
+
+test('bearish day still allows a long from a touched zone', () => {
+  const v = judgeTacticHunt(
+    base({
+      bias1d: 'BEAR',
+      bias4h: 'BEAR',
+      bias1h: 'BEAR',
+      bias15m: 'BEAR',
+      pdl: 96,
+      bsl: { price: 103.2, isActive: false },
+      zoneShort: null,
+    })
+  )
+  assert.ok(v)
+  assert.equal(v.side, 'LONG')
+  assert.equal(v.align, 'COUNTER')
+  assert.equal(v.shelf, 'READY')
+  assert.equal(isTacticReady(v), true)
+})
+
+test('4h pullback against a bullish day is still a with-trend limit', () => {
+  const v = judgeTacticHunt(
+    base({
+      bias4h: 'BEAR',
+      bias1h: 'BEAR',
+      bias15m: 'BEAR',
+      bias1d: 'BULL',
+    })
+  )
+  assert.ok(v)
+  assert.equal(v.side, 'LONG')
+  assert.equal(v.align, 'WITH')
+  assert.equal(v.shelf, 'READY')
+})
+
+test('counter-trend without a touched zone stays WAIT', () => {
+  const v = judgeTacticHunt(
+    base({
+      bias1d: 'BEAR',
+      bias4h: 'BEAR',
+      bias1h: 'BEAR',
+      bsl: { price: 103.2, isActive: false },
+      zoneShort: null,
+      zoneLong: {
+        ...base().zoneLong!,
+        phase: 'FAR',
+      },
+    })
+  )
+  assert.ok(v)
+  assert.equal(v.side, 'LONG')
+  assert.equal(v.align, 'COUNTER')
+  assert.equal(v.shelf, 'WAIT')
+  assert.equal(isTacticReady(v), false)
 })

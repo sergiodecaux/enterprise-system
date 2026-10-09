@@ -107,7 +107,7 @@ import {
   formatMemePipelineDebug,
   loadMemePipelineDebug,
 } from './memePipelineDebug'
-import { ALT_JEWEL_SETUP } from './eliteAltJewel'
+import { ALT_JEWEL_SETUP, ALT_JEWEL_LEVERAGE, ALT_JEWEL_SL_PCT } from './eliteAltJewel'
 import { loadHotMemeWatchlist } from './hotMemeWatchlist'
 import {
   isKvQuotaHandoffDone,
@@ -2560,6 +2560,31 @@ async function runCronScan(
         )
         return
       }
+      if (v && a.tradePlan.setup === ALT_JEWEL_SETUP && v.movePct >= 1) {
+        const side = a.tradePlan.side
+        const entry = v.entry
+        const tp = v.targetPx
+        const sl =
+          side === 'LONG' ? entry * (1 - ALT_JEWEL_SL_PCT) : entry * (1 + ALT_JEWEL_SL_PCT)
+        a.tradePlan.signalPrice = entry
+        a.tradePlan.entryIdeal = entry
+        a.tradePlan.zoneLow = v.zoneLow
+        a.tradePlan.zoneHigh = v.zoneHigh
+        a.tradePlan.sl = sl
+        a.tradePlan.tp = tp
+        a.tradePlan.target1 = tp
+        a.tradePlan.target3 = tp
+        const ticker = a.tradePlan.symbol.replace('_USDT', '')
+        a.text = [
+          `💎 <b>Ювелир · лимитка ×${ALT_JEWEL_LEVERAGE}</b>`,
+          `${ticker} · ${side}`,
+          `Лимит ${entry} · стоп ${sl.toPrecision(6)}`,
+          `Цель ${tp} · около ${v.movePct.toFixed(1)}% цены`,
+          v.align === 'COUNTER'
+            ? 'Против старшего тренда, от зоны. Не догонять.'
+            : 'По тренду старших ТФ, лимитка на откате. Не догонять.',
+        ].join('\n')
+      }
     }
     // Exclusive meme lane: only Cloudflare Jeweler Burst signals.
     if (a.type === 'MEME') {
@@ -3334,6 +3359,8 @@ async function runCronScan(
           streamTo: v.streamTo,
           entry: v.entry,
           target: v.targetPx,
+          movePct: v.movePct,
+          align: v.align,
         })
         let delivered = false
         for (const chatId of huntChats) {
@@ -4075,7 +4102,7 @@ async function dispatchCommand(
     )
     const welcome =
       channel === 'sniper'
-        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · тактика Mini App: неснятое топливо, цель впереди, вход в зоне.\nОхота «Можно» идёт на воркере даже если приложение закрыто.\nЖдут и Стримит во вход не шлём. Не догонять.\nЗвёзды — 15-мин сводка (макс. 6). Охота смотрит и закреплённые монеты радара.\nСнимок графика — только на вход.\nПрокси: <code>mexc-proxy-f</code>. Мемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/digest · /digest_off · /fav · /hunt · /hunt_off\n/status · /journal · /trades · /stop'
+        ? '🏛 <b>ENTERPRISE ELITE</b> (@Enterpriseelite_bot)\n\nАльты · ювелир: и по тренду, и против него.\nПо тренду — лимитка на откате. Против — только от зоны.\n×50, до цели минимум 1% цены. Не догонять.\nЖдут и Стримит во вход не шлём.\nЗвёзды — 15-мин сводка (макс. 6). Охота смотрит и закреплённые монеты радара.\nСнимок графика — только на вход.\nПрокси: <code>mexc-proxy-f</code>. Мемы — в @Enterprisesystem_bot.\n\nКоманды:\n/scan · /brief · /market · /zone BTC 94000-96000\n/digest · /digest_off · /fav · /hunt · /hunt_off\n/status · /journal · /trades · /stop'
         : '🚀 <b>ENTERPRISE PREDATOR</b> (@Enterprisesystem_bot)\n\nJeweler Burst · PEAK + RANGE · направление по forecast/event/tape/walls · phase+BTC+sync+3-snapshot стакан · quality от 68 · paper-first.\nАльты — в @Enterpriseelite_bot.\n\nКоманды:\n/status · /scan · /journal · /trades\n/test · /ping · /stop\n/meme_on · /meme_off'
     await tgSend(env, chatId, welcome, channel)
     if (channel === 'sniper') {

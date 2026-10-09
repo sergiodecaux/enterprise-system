@@ -2,8 +2,8 @@
  * Compact DualHunt «Можно» gate for the Elite worker.
  * Mirrors src/engine/radar/dualHunt shelves without porting chartStory.
  *
- * READY (fire): unused fuel + unused target ahead + daily not against
- *   + not stretched + in/near zone.
+ * READY (fire): limit with at least 1% to the target.
+ * WITH the day/4h trend on a pullback, or COUNTER only from a touched zone.
  * WAIT / STREAM: never sent as a new entry.
  */
 
@@ -20,6 +20,7 @@ import type { Candle, VaneKv } from '../vane/types'
 
 export type HuntSide = 'LONG' | 'SHORT'
 export type HuntShelf = 'WAIT' | 'READY' | 'STREAM'
+export type HuntAlign = 'WITH' | 'COUNTER'
 
 export const ELITE_HUNT_PINNED = [
   'BTC_USDT',
@@ -38,6 +39,9 @@ export const ELITE_HUNT_PINNED = [
 
 const MIN_SCORE_READY = 38
 const HUNT_BATCH = 8
+/** Price distance from the limit to the target. 50x is the account leverage, not the move. */
+export const JEWEL_LEVERAGE = 50
+export const JEWEL_MIN_MOVE_PCT = 1
 
 export interface TacticHuntInput {
   symbol: string
@@ -48,6 +52,8 @@ export interface TacticHuntInput {
   bias1h: 'BULL' | 'BEAR' | 'FLAT'
   bias4h: 'BULL' | 'BEAR' | 'FLAT'
   bias1d: 'BULL' | 'BEAR' | 'FLAT'
+  /** 15m. Missing means the caller did not load it — do not block. */
+  bias15m?: 'BULL' | 'BEAR' | 'FLAT'
   high24: number | null
   low24: number | null
   ssl: { price: number; isActive: boolean } | null
@@ -76,6 +82,10 @@ export interface TacticHuntVerdict {
   magnetPx: number | null
   magnetLabel: string | null
   score: number
+  /** |target − limit| / limit, in percent. */
+  movePct: number
+  /** WITH = day or 4h agrees. COUNTER = fade from a touched zone. */
+  align: HuntAlign
 }
 
 interface SideDraft {
@@ -92,6 +102,8 @@ interface SideDraft {
   magnetPx: number | null
   magnetLabel: string | null
   score: number
+  movePct: number
+  align: HuntAlign
   inZone: boolean
 }
 
@@ -134,6 +146,25 @@ function dailySideOf(input: TacticHuntInput): HuntSide | null {
   if (input.bias4h === 'BULL') return 'LONG'
   if (input.bias4h === 'BEAR') return 'SHORT'
   return null
+}
+
+/** Day or 4h with the side is trend. Otherwise it is a fade and needs a touched zone. */
+function huntAlign(side: HuntSide, input: TacticHuntInput): HuntAlign {
+  const withUs = side === 'LONG' ? 'BULL' : 'BEAR'
+  if (input.bias1d === withUs || input.bias4h === withUs) return 'WITH'
+  return 'COUNTER'
+}
+
+function movePctOf(entry: number, target: number): number {
+  if (!(entry > 0) || !(target > 0)) return 0
+  return (Math.abs(target - entry) / entry) * 100
+}
+
+/** Limit sits at or behind price, so the order is not a chase. */
+function limitIsResting(side: HuntSide, price: number, entry: number): boolean {
+  if (!(entry > 0) || !(price > 0)) return false
+  if (side === 'LONG') return entry <= price * 1.0015
+  return entry >= price * 0.9985
 }
 
 function humanTarget(label: string, side: HuntSide): string {
@@ -245,17 +276,6 @@ function pickTarget(
   return best ? { price: best.price, label: best.label } : null
 }
 
-function dailyBlocks(side: HuntSide, input: TacticHuntInput): boolean {
-  if (side === 'LONG') {
-    if (input.bias1d !== 'BEAR') return false
-    if (input.pdl != null && input.pdl < input.price) return true
-    return true
-  }
-  if (input.bias1d !== 'BULL') return false
-  if (input.pdh != null && input.pdh > input.price) return true
-  return true
-}
-
 function stretchOf(
   side: HuntSide,
   input: TacticHuntInput,
@@ -329,7 +349,6 @@ function scoreOf(
 }
 
 function draftSide(side: HuntSide, input: TacticHuntInput): SideDraft | null {
-  if (dailyBlocks(side, input)) return null
   const fuel = pickFuel(side, input)
   if (!fuel) return null
   const target = pickTarget(side, input, fuel.price)
@@ -344,14 +363,21 @@ function draftSide(side: HuntSide, input: TacticHuntInput): SideDraft | null {
   const fuelClose =
     Math.abs(fuel.price - input.price) <= Math.max(input.atr * 0.9, input.price * 0.004) ||
     fuel.inZone
-  const shelf = pickShelf(stretch.stream, fuelClose, fuel.inZone, input, side)
+  let shelf = pickShelf(stretch.stream, fuelClose, fuel.inZone, input, side)
   const score = scoreOf(side, input, fuel.inZone, fuelClose)
-  if (shelf === 'READY' && score < MIN_SCORE_READY) {
-    return null
+  const zone = side === 'LONG' ? input.zoneLong : input.zoneShort
+  const entry = zone?.limitEntry ?? fuel.price
+  const movePct = movePctOf(entry, target.price)
+  const align = huntAlign(side, input)
+  if (shelf === 'READY') {
+    const jewel =
+      movePct >= JEWEL_MIN_MOVE_PCT &&
+      limitIsResting(side, input.price, entry) &&
+      (align === 'WITH' || fuel.inZone)
+    if (!jewel || score < MIN_SCORE_READY) shelf = 'WAIT'
   }
 
   const dest = humanTarget(target.label, side)
-  const zone = side === 'LONG' ? input.zoneLong : input.zoneShort
   return {
     side,
     shelf,
@@ -359,13 +385,15 @@ function draftSide(side: HuntSide, input: TacticHuntInput): SideDraft | null {
     fuelWhere: fuel.where,
     targetPx: target.price,
     streamTo: dest,
-    entry: zone?.limitEntry ?? fuel.price,
+    entry,
     zoneLow: zone?.zoneLow ?? fuel.price * 0.994,
     zoneHigh: zone?.zoneHigh ?? fuel.price * 1.006,
     reason: whyNow(side, shelf, fuel.inZone, dest),
     magnetPx: side === 'LONG' ? input.pdh ?? input.bsl?.price ?? null : input.pdl ?? input.ssl?.price ?? null,
     magnetLabel: side === 'LONG' ? (input.pdh ? 'PDH' : 'BSL') : input.pdl ? 'PDL' : 'SSL',
     score,
+    movePct: Number(movePct.toFixed(2)),
+    align,
     inZone: fuel.inZone,
   }
 }
@@ -378,6 +406,14 @@ function pickAgreedSide(
   if (long && !short) return 'LONG'
   if (short && !long) return 'SHORT'
   if (!long || !short) return null
+  const longReady = long.shelf === 'READY'
+  const shortReady = short.shelf === 'READY'
+  if (longReady !== shortReady) return longReady ? 'LONG' : 'SHORT'
+  if (longReady && shortReady) {
+    if (long.inZone !== short.inZone) return long.inZone ? 'LONG' : 'SHORT'
+    if (long.align !== short.align) return long.align === 'WITH' ? 'LONG' : 'SHORT'
+    return long.score >= short.score ? 'LONG' : 'SHORT'
+  }
   const daily = dailySideOf(input)
   if (daily) return daily
   return long.score >= short.score ? 'LONG' : 'SHORT'
@@ -406,6 +442,8 @@ export function judgeTacticHunt(input: TacticHuntInput): TacticHuntVerdict | nul
     magnetPx: draft.magnetPx,
     magnetLabel: draft.magnetLabel,
     score: draft.score,
+    movePct: draft.movePct,
+    align: draft.align,
   }
 }
 
@@ -432,6 +470,7 @@ export function buildHuntInput(opts: {
   candles4h: Candle[]
   candles1d: Candle[]
   candles1h?: Candle[]
+  candles15m?: Candle[]
 }): TacticHuntInput | null {
   const price = opts.price
   if (!(price > 0) || opts.candles4h.length < 20) return null
@@ -456,6 +495,10 @@ export function buildHuntInput(opts: {
     bias1h: opts.candles1h?.length ? biasFromCandles(opts.candles1h) : biasFromCandles(opts.candles4h),
     bias4h: biasFromCandles(opts.candles4h),
     bias1d: biasFromCandles(opts.candles1d),
+    bias15m:
+      opts.candles15m && opts.candles15m.length >= 25
+        ? biasFromCandles(opts.candles15m)
+        : undefined,
     high24: opts.high24 ?? null,
     low24: opts.low24 ?? null,
     ssl: map.nearestSSL
@@ -505,10 +548,11 @@ export async function loadHuntInput(
   ticker: VaneTicker | undefined,
   kv?: VaneKv
 ): Promise<TacticHuntInput | null> {
-  const [c4h, c1d, c1h] = await Promise.all([
+  const [c4h, c1d, c1h, c15] = await Promise.all([
     fetchKlinesCached(kv, symbol, 'Hour4', 90),
     fetchKlinesCached(kv, symbol, 'Day1', 40),
     fetchKlinesCached(kv, symbol, 'Min60', 48),
+    fetchKlinesCached(kv, symbol, 'Min15', 48),
   ])
   const price = Number(ticker?.lastPrice ?? c4h[c4h.length - 1]?.[4] ?? 0)
   return buildHuntInput({
@@ -521,6 +565,7 @@ export async function loadHuntInput(
     candles4h: c4h,
     candles1d: c1d,
     candles1h: c1h,
+    candles15m: c15,
   })
 }
 

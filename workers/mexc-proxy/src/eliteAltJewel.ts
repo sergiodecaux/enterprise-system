@@ -1,9 +1,9 @@
 /**
  * Elite ALT_JEWEL — autonomous top-3 liquid alts (NOT Mini App watches, NOT memes).
  *
- * Target: SHORT + LONG scalps · 40% ROE @ 50x = +0.80% price · SL 0.40% (~2R).
- * LONG only if chg24 > −5% (not dump meat-grinder).
- * Jewelry gate: absorb/CVD + OBI align + 1m with us + impulse started (not tip).
+ * Target: limit entry · at least +1% price @ 50x (about +50% ROE).
+ * Delivery still has to pass the Elite hunt gate: day/4h agree, 1h and 15m
+ * do not oppose, and the limit is resting under that move.
  */
 
 import {
@@ -16,8 +16,8 @@ import { PREFERRED_ALTS } from './vane/universe'
 
 export const ALT_JEWEL_SETUP = 'ALT_JEWEL'
 export const ALT_JEWEL_LEVERAGE = 50
-export const ALT_JEWEL_TARGET_ROE_PCT = 40
-/** 40% / 50x = 0.80% price */
+/** 1% price × 50 = about +50% ROE. Floor, not a 0.8% scalp. */
+export const ALT_JEWEL_TARGET_ROE_PCT = 50
 export const ALT_JEWEL_TP_PCT = ALT_JEWEL_TARGET_ROE_PCT / ALT_JEWEL_LEVERAGE / 100
 export const ALT_JEWEL_SL_PCT = 0.004
 export const ALT_JEWEL_TOP_N = 3
