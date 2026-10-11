@@ -90,7 +90,7 @@ export function evaluateVenueLead(opts: {
       side: 'SHORT',
       reason: `Binance −${Math.abs(move).toFixed(0)}bps · локальная ОПОРА ещё стоит — стену арбитражнут`,
       confidenceMul: 0.72,
-      label: 'Arb ↓ стена',
+      label: 'Binance arb ↓',
     }
   }
 
@@ -101,7 +101,7 @@ export function evaluateVenueLead(opts: {
       side: 'LONG',
       reason: `Binance +${move.toFixed(0)}bps · локальная КРЫША ещё стоит — снимут арбитражем`,
       confidenceMul: 0.72,
-      label: 'Arb ↑ стена',
+      label: 'Binance arb ↑',
     }
   }
 
@@ -112,7 +112,7 @@ export function evaluateVenueLead(opts: {
       side: 'LONG',
       reason: `Binance lead +${move.toFixed(0)}bps · buy ${flow.toFixed(0)}%`,
       confidenceMul: 1.08,
-      label: 'BN ↑',
+      label: 'Binance ↑',
     }
   }
   if (move <= -8 && flow <= 44) {
@@ -121,7 +121,7 @@ export function evaluateVenueLead(opts: {
       side: 'SHORT',
       reason: `Binance lead ${move.toFixed(0)}bps · sell ${(100 - flow).toFixed(0)}%`,
       confidenceMul: 1.08,
-      label: 'BN ↓',
+      label: 'Binance ↓',
     }
   }
 
@@ -132,7 +132,7 @@ export function evaluateVenueLead(opts: {
       side: 'SHORT',
       reason: `Локально дороже Binance на ${basisBps.toFixed(0)}bps + BN вниз`,
       confidenceMul: 0.78,
-      label: 'Basis rich',
+      label: 'Binance basis',
     }
   }
 
@@ -141,7 +141,7 @@ export function evaluateVenueLead(opts: {
     side: null,
     reason: `BN ${move >= 0 ? '+' : ''}${move.toFixed(0)}bps`,
     confidenceMul: 1,
-    label: 'BN ≈',
+    label: 'Binance ≈',
   }
 }
 

@@ -49,6 +49,7 @@ import {
   pushSignalSnapshot,
 } from '../../engine/analysis'
 import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
+import { DescriptiveNote } from '../tactical/DescriptiveNote'
 import { AltMacroStrip } from '../market/AltMacroStrip'
 import { ContextPanel } from '../market/ContextPanel'
 import { loadJournal, SETUP_LABELS } from '../../engine/journal'
@@ -388,7 +389,7 @@ const SignalsView = () => {
 
     if (gate?.items.some((i) => i.id === 'hist_wr' && i.status === 'FAIL')) {
       showAlert(
-        `Hist WR в журнале токсичный — Elite watch заблокирован. Смени сторону/стиль или дождись другой истории.`
+        `Журнал этого сетапа не открывает Elite watch. Смени сторону или стиль.`
       )
       return
     }
@@ -504,7 +505,7 @@ const SignalsView = () => {
       <div className="border-b border-hull-border px-4 py-3">
         <AltMacroStrip ctx={workerCtx} />
         <p className="mt-1.5 text-center font-mono text-[9px] text-holo/35">
-          F&G {workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? '—'}
+          F&G alternative.me {workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? '—'}
           {workerCtx?.newsLabel ? ` · News ${workerCtx.newsLabel}` : ''}
         </p>
       </div>
@@ -559,8 +560,8 @@ const SignalsView = () => {
                       SL {fmtPx(entry.sl)} · TP {fmtPx(entry.tp1)}
                     </div>
                   </div>
-                  <div className="shrink-0 font-mono text-sm font-bold text-holo">
-                    {Math.round(entry.confidenceAtSignal)}%
+                  <div className="max-w-[7.5rem] shrink-0 text-right font-mono text-[9px] leading-snug text-holo/35">
+                    без оценки
                   </div>
                 </button>
               )
@@ -754,23 +755,13 @@ const SignalsView = () => {
                 {toDisplayName(selected.symbol)} · {result.side} ·{' '}
                 {HORIZON_PROFILES[tradeStyle].tag}
               </div>
-            <div className="flex flex-col items-end">
-              <div
-                className={`font-mono text-lg font-bold ${
-                  result.side === 'LONG' ? 'text-matrix' : 'text-alert'
-                }`}
-              >
-                ~{result.winPct}%
-              </div>
-              <div className="font-mono text-[9px] uppercase text-holo/40">
-                Conf
-              </div>
             </div>
-            </div>
-            <p className="mt-1 font-mono text-[10px] text-holo/40">
-              {HORIZON_PROFILES[tradeStyle].label} · Conf (модель ± hist WR), не
-              гарантия
+            <p className="mt-1 font-mono text-[11px] text-holo/70">
+              {HORIZON_PROFILES[tradeStyle].label}
             </p>
+            <div className="mt-2">
+              <DescriptiveNote />
+            </div>
             <p className="mt-2 font-mono text-xs leading-snug text-holo/80">
               {result.primary.title}
               {result.targetMovePct != null

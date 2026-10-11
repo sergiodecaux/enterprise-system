@@ -94,7 +94,7 @@ import {
 import { lastClosedBar } from '../../engine/smc/closeCascade'
 import { pickActionZones } from '../../engine/smc/entryZones'
 import { calculateAtr } from '../../engine/smc'
-import { buildChartStory, leadStoryScenario } from '../../engine/smc/chartStory'
+import { buildChartStory, FORECAST_HORIZON_UI } from '../../engine/smc/chartStory'
 import type { StoryScenarioId } from '../../engine/smc/chartStory'
 import { readIctStructure, selectIctOverlayMarks } from '../../engine/smc/ictStructure'
 import IctMarksOverlay from './IctMarksOverlay'
@@ -361,7 +361,7 @@ const LiveChart = ({
       return true
     }
   })
-  const [storyPathId, setStoryPathId] = useState<StoryScenarioId>('hold')
+  const [storyPathId, setStoryPathId] = useState<StoryScenarioId | null>(null)
   const storyPickedRef = useRef(false)
   const [advisor, setAdvisor] = useState<ZoneAdvisorBrief | null>(null)
   const [advisorBot, setAdvisorBot] = useState<'idle' | 'sent' | 'fail'>('idle')
@@ -1539,7 +1539,7 @@ const LiveChart = ({
       showAlert(
         `Сделки: ${result.trades.length} · ${result.globalView.bias}` +
           (result.trades[0]
-            ? ` · топ ${result.trades[0].side} ~${Math.round(result.trades[0].probability)}%`
+            ? ` · топ ${result.trades[0].side}`
             : '')
       )
     }
@@ -1632,10 +1632,10 @@ const LiveChart = ({
     const lm = result.liveMarket
     const seqNote =
       result.sequence && result.sequence.allowedInRegime
-        ? `\nSEQ ${result.sequence.kind} ~${result.sequence.confidence}%`
+        ? `\nSEQ ${result.sequence.kind}`
         : ''
     showAlert(
-      `Сигнал: ${p.side !== 'FLAT' ? p.side + ' · ' : ''}${p.title} · ~${p.winPct}%\n${
+      `Сигнал: ${p.side !== 'FLAT' ? p.side + ' · ' : ''}${p.title}\n${
         lm?.whatNow ?? result.phaseLabel
       }${seqNote}`
     )
@@ -1915,27 +1915,27 @@ const LiveChart = ({
 
   useEffect(() => {
     storyPickedRef.current = false
+    setStoryPathId(null)
   }, [symbol, timeframe])
-
-  useEffect(() => {
-    if (storyPickedRef.current) return
-    const lead = leadStoryScenario(chartStory.scenarios)
-    if (lead && lead.id !== storyPathId) setStoryPathId(lead.id)
-  }, [chartStory.scenarios, storyPathId])
 
   useEffect(() => {
     const series = candleRef.current
     if (!series) return
-    const sc =
-      chartStory.scenarios.find((s) => s.id === storyPathId) ??
-      leadStoryScenario(chartStory.scenarios)
+    const picked = storyPathId
+      ? chartStory.scenarios.find((s) => s.id === storyPathId) ?? null
+      : null
+    const paths = picked
+      ? [picked]
+      : chartStory.scenarios.filter((s) => s.path.length >= 2)
     const prices: number[] = []
-    const path = sc?.path?.length ? sc.path : chartStory.future?.path
-    if (path) {
-      for (const p of path) if (p.price > 0) prices.push(p.price)
+    for (const sc of paths) {
+      for (const p of sc.path) if (p.price > 0) prices.push(p.price)
+      if (sc.toPrice && sc.toPrice > 0) prices.push(sc.toPrice)
     }
-    if (sc?.toPrice && sc.toPrice > 0) prices.push(sc.toPrice)
-    else if (chartStory.future?.targetPrice) prices.push(chartStory.future.targetPrice)
+    if (!prices.length && chartStory.future?.path) {
+      for (const p of chartStory.future.path) if (p.price > 0) prices.push(p.price)
+    }
+    if (chartStory.future?.targetPrice) prices.push(chartStory.future.targetPrice)
     if (chartStory.primary) {
       prices.push(chartStory.primary.top, chartStory.primary.bottom)
     }
@@ -2259,14 +2259,14 @@ const LiveChart = ({
         const from = Math.max(-2, lwcData.length - vis)
         chartRef.current?.timeScale().setVisibleLogicalRange({
           from,
-          to: lwcData.length + 5,
+          to: lwcData.length + Math.max(storyRightOffset, 26),
         })
         fittedKeyRef.current = key
       }
     } catch {
       /* 0-size host during portal move */
     }
-  }, [lwcData, symbol, timeframe, chartReady])
+  }, [lwcData, symbol, timeframe, chartReady, storyRightOffset])
 
   useEffect(() => {
     if (!candleRef.current || !ticker || !lwcData.length) return
@@ -2658,13 +2658,13 @@ const LiveChart = ({
       const vis = timeframe === '1m' || timeframe === '5m' ? 90 : 70
       chart.timeScale().setVisibleLogicalRange({
         from: Math.max(-2, n - vis),
-        to: n + 5,
+        to: n + Math.max(storyRightOffset, 26),
       })
     } else {
       chart.timeScale().fitContent()
     }
     haptic.impact()
-  }, [haptic, lwcData.length, timeframe])
+  }, [haptic, lwcData.length, timeframe, storyRightOffset])
 
   const resolveChartDoubleTap = useCallback(
     (clientX: number, clientY: number) => {
@@ -2839,19 +2839,19 @@ const LiveChart = ({
         id: 'hold',
         points: advisor.primary.path,
         color: advisor.primary.side === 'LONG' ? '#34d399' : '#fb7185',
-        label: `${advisor.primary.probability}%`,
-        emphasis: true,
+        label: advisor.primary.side === 'LONG' ? 'лонг' : 'шорт',
+        emphasis: false,
       },
       {
         id: 'break',
         points: advisor.alternate.path,
         color: '#94a3b8',
-        label: `${advisor.alternate.probability}%`,
+        label: 'слом',
         emphasis: false,
       },
     ]
   }, [advisor])
-  const showPredictionPaths = showForecast && !pathModeActive
+  const showPredictionPaths = FORECAST_HORIZON_UI && showForecast && !pathModeActive
   const showGhost =
     !!signal?.direction &&
     signal.sl != null &&
@@ -2960,7 +2960,6 @@ const LiveChart = ({
               line={chartStory.nowLine}
               kind={chartStory.nowKind}
               side={chartStory.side}
-              oddsPct={chartStory.odds?.pct ?? null}
               fact={chartStory.odds?.fact ?? null}
               dailyLine={chartStory.dailyFrame?.line ?? null}
               toolbar
@@ -3264,6 +3263,7 @@ const LiveChart = ({
         </div>
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+            {FORECAST_HORIZON_UI && (
             <button
               type="button"
               onClick={() => {
@@ -3302,6 +3302,7 @@ const LiveChart = ({
             >
               {forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon}
             </button>
+            )}
             <button
               type="button"
               disabled={toolsChop || !toolsTrendOk}
@@ -3394,7 +3395,7 @@ const LiveChart = ({
       )}
       {!chartExpanded && !fillParent && !cleanMode && (
       <p className="px-1 font-mono text-[9px] text-white/35">
-        Сильная зона = диапазон входа. Касание — сценарий. Вправо — куда идём.
+        Живое чтение структуры. Четыре пути — варианты хода, не прогноз.
       </p>
       )}
 
@@ -3491,7 +3492,6 @@ const LiveChart = ({
                 line={chartStory.nowLine}
                 kind={chartStory.nowKind}
                 side={chartStory.side}
-                oddsPct={chartStory.odds?.pct ?? null}
                 fact={chartStory.odds?.fact ?? null}
                 dailyLine={chartStory.dailyFrame?.line ?? null}
                 dense={denseUi}
@@ -3563,8 +3563,7 @@ const LiveChart = ({
         {chartReady > 0 &&
           lastCandleTs > 0 &&
           chartStory.future &&
-          !advisor &&
-          !showForecast && (
+          !advisor && (
           <StoryPathOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3634,10 +3633,10 @@ const LiveChart = ({
               ? 'border-emerald-400/40 bg-emerald-950/80 text-emerald-200'
               : 'border-white/15 bg-black/65 text-white/55 hover:text-white/85'
           }`}
-          title="Ликвидность: толпа L/S и уровни китов"
+          title="Оценка скоплений по объёму. Не книга Binance и не открытый интерес MEXC."
         >
           <Flame className="h-3.5 w-3.5" />
-          {cleanMode ? 'ликв' : 'L/S'}
+          ликв
           <span
             className={`rounded px-1 py-px text-[8px] ${
               showLiqMap ? 'bg-emerald-400/20' : 'bg-white/10'

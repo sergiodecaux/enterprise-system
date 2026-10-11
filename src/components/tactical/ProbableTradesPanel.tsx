@@ -125,14 +125,6 @@ const ProbableTradesPanel = ({
                       {s.title}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="font-mono text-sm font-bold text-sky-200">
-                      {Math.round(s.probability)}%
-                    </div>
-                    <div className="font-mono text-[8px] uppercase text-holo/30">
-                      P(win)
-                    </div>
-                  </div>
                 </div>
 
                 {ladder && (
@@ -142,26 +134,17 @@ const ProbableTradesPanel = ({
                       <div className="font-mono text-[10px] text-holo">
                         {fmt(ladder.r1)}
                       </div>
-                      <div className="font-mono text-[8px] text-sky-300/70">
-                        ~{ladder.pReach1}%
-                      </div>
                     </div>
                     <div className="text-center">
                       <div className="font-mono text-[8px] text-holo/30">2R</div>
                       <div className="font-mono text-[10px] text-matrix/90">
                         {fmt(ladder.r2)}
                       </div>
-                      <div className="font-mono text-[8px] text-sky-300/70">
-                        ~{ladder.pReach2}%
-                      </div>
                     </div>
                     <div className="text-center">
                       <div className="font-mono text-[8px] text-holo/30">3R</div>
                       <div className="font-mono text-[10px] text-amber-200/90">
                         {fmt(ladder.r3)}
-                      </div>
-                      <div className="font-mono text-[8px] text-sky-300/70">
-                        ~{ladder.pReach3}%
                       </div>
                     </div>
                   </div>

@@ -379,7 +379,7 @@ const Radar141Board = ({
               </p>
               <p>
                 пропасть {selected.gap.gapPct.toFixed(1)}% / {selected.gap.gapAtr.toFixed(1)} ATR · помех{' '}
-                {selected.gap.clutter} · пролёт {selected.gap.flyProb}%
+                {selected.gap.clutter}
               </p>
               <p className="text-white/45">{selected.gap.plan.retest}</p>
               <p className="text-rose-300/70">{selected.gap.plan.invalidation}</p>

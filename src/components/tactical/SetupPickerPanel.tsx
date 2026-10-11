@@ -86,13 +86,8 @@ const SetupPickerPanel = ({
                     {s.title}
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="font-mono text-sm font-bold text-holo">
-                    {Math.round(s.probability)}%
-                  </div>
-                  <div className={`font-mono text-[9px] font-bold ${statusColor}`}>
-                    {statusLabel[s.status] ?? s.status}
-                  </div>
+                <div className={`shrink-0 font-mono text-[9px] font-bold ${statusColor}`}>
+                  {statusLabel[s.status] ?? s.status}
                 </div>
               </div>
 

@@ -1,10 +1,11 @@
 /**
- * Live scenario board: which path is leading, and why — not a binary reclaim line.
+ * Live structure board. Regime and levels, without a ranked lead scenario.
  * Default view is one line; full essay only after the user expands.
  */
 
 import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
+import { DescriptiveNote } from './DescriptiveNote'
 import type { StructureRead, TfStructure } from '../../engine/smc/structureRead'
 
 interface Props {
@@ -52,8 +53,7 @@ const StructureHud = ({
 
   if (!read) return null
   const board = read.scenarios
-  const lead = board?.scenarios[0] ?? null
-  const list = !open || compact ? [] : board?.scenarios ?? []
+  const list = !open || compact ? [] : [...(board?.scenarios ?? [])].sort((a, b) => a.title.localeCompare(b.title, 'ru'))
   const story = nowLine?.trim() || null
 
   const nest = read.cascade
@@ -74,10 +74,11 @@ const StructureHud = ({
           ? 'border-rose-400/30 bg-rose-950/30 text-rose-100'
           : 'border-cyan-400/25 bg-slate-950/50 text-cyan-100'
 
-  const oneLine = `${regime}${lead ? ` · ${lead.id} ${lead.probability}%` : ''}`
+  const oneLine = regime
 
   if (!open) {
     return (
+      <>
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -89,6 +90,10 @@ const StructureHud = ({
         </span>
         <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
       </button>
+      <div className="mt-1">
+        <DescriptiveNote />
+      </div>
+      </>
     )
   }
 
@@ -104,13 +109,15 @@ const StructureHud = ({
           >
             <div className="min-w-0 font-mono text-[11px] font-bold uppercase tracking-wide text-white/90">
               {regime}
-              {lead ? ` · ${lead.id} ${lead.title} · ${lead.probability}%` : ''}
             </div>
             <ChevronUp className="h-3.5 w-3.5 shrink-0 opacity-60" />
           </button>
           <p className="mt-0.5 font-mono text-[11px] leading-snug text-white/75">
             {story ?? board?.now ?? read.summary}
           </p>
+          <div className="mt-1.5">
+            <DescriptiveNote />
+          </div>
           {!compact && read.intra?.line && (
             <p className="mt-0.5 font-mono text-[10px] text-cyan-200/80">
               {read.intra.line}
@@ -144,10 +151,7 @@ const StructureHud = ({
                 </p>
               )}
               <p className="mt-0.5 font-mono text-[9px] text-white/45">
-                {read.zones.active.zone.tier === 'STRONG' ? 'сил. зона · ' : ''}
-                удерж {read.zones.active.holdProbability}% · дальше{' '}
-                {read.zones.active.continueProbability}% · слом{' '}
-                {read.zones.active.breakProbability}%
+                {read.zones.active.zone.tier === 'STRONG' ? 'сил. зона' : 'зона'}
                 {read.zones.active.destination
                   ? ` · цель ${read.zones.active.destination.label}`
                   : ''}
@@ -179,7 +183,6 @@ const StructureHud = ({
                   : r.zone.role === 'RESISTANCE'
                     ? 'сопр.'
                     : 'зона'}{' '}
-                {r.holdProbability}%{' '}
                 {r.state === 'HOLDING_ABOVE' || r.state === 'CONSOLIDATING_OVER'
                   ? 'над'
                   : r.state === 'HOLDING_BELOW' || r.state === 'CONSOLIDATING_UNDER'
@@ -196,25 +199,14 @@ const StructureHud = ({
 
       {list.length > 0 && (
         <div className="mt-2 max-h-[24vh] space-y-1.5 overflow-y-auto">
-          {list.map((sc, i) => {
-            const leadRow = i === 0
+          {list.map((sc) => {
             return (
               <div
                 key={sc.id}
-                className={`rounded-lg border px-2 py-1.5 ${
-                  leadRow
-                    ? 'border-white/20 bg-black/35'
-                    : 'border-white/10 bg-black/20'
-                }`}
+                className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5"
               >
                 <div className="flex items-baseline gap-2 font-mono text-[10px]">
-                  <span
-                    className="mt-0.5 h-2 w-2 shrink-0 rounded-full"
-                    style={{ background: sc.color }}
-                  />
-                  <span className="font-bold" style={{ color: sc.color }}>
-                    {sc.id} {sc.probability}%
-                  </span>
+                  <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-white/35" />
                   <span className="text-white/85">{sc.title}</span>
                 </div>
                 <p className="mt-0.5 pl-4 font-mono text-[10px] leading-snug text-white/60">

@@ -58,9 +58,15 @@ export function ContextPanel({ ctx }: { ctx: FullMarketContext }) {
         </p>
       )}
       <p className="mt-1 font-mono text-[11px] text-holo/60">
-        {ctx.crowd.known
-          ? `толпа L/S ${ctx.crowd.longShortRatio.toFixed(2)} ${ctx.crowd.longShortTrend.toLowerCase()} · funding ${(ctx.crowd.fundingRate * 100).toFixed(3)}% · OI ${ctx.crowd.openInterestChangePct >= 0 ? '+' : ''}${ctx.crowd.openInterestChangePct.toFixed(1)}%`
-          : 'толпа: нет публичного ratio'}
+        {ctx.crowd.longShortBook === 'binance'
+          ? `книга Binance L/S ${ctx.crowd.longShortRatio.toFixed(2)} ${ctx.crowd.longShortTrend.toLowerCase()}`
+          : 'книга Binance L/S: ряда нет'}
+        {ctx.crowd.fundingBook
+          ? ` · funding ${ctx.crowd.fundingBook === 'binance' ? 'Binance' : 'MEXC'} ${(ctx.crowd.fundingRate * 100).toFixed(3)}%`
+          : ''}
+        {ctx.crowd.oiBook === 'binance'
+          ? ` · OI Binance ${ctx.crowd.openInterestChangePct >= 0 ? '+' : ''}${ctx.crowd.openInterestChangePct.toFixed(1)}%`
+          : ''}
         {ctx.whales.hunt
           ? ` · киты: охота${ctx.whales.nearCluster ? ' у кластера' : ''}`
           : ctx.whales.drive !== 'NEUTRAL'

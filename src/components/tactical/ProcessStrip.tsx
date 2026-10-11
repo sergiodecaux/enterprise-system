@@ -34,7 +34,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
   const [healthLabel, setHealthLabel] = useState<string>('Спот …')
   const [healthTip, setHealthTip] = useState<string>('')
   const [healthTone, setHealthTone] = useState<string>('text-white/35')
-  const [venueLabel, setVenueLabel] = useState<string>('BN …')
+  const [venueLabel, setVenueLabel] = useState<string>('Binance …')
   const [venueTip, setVenueTip] = useState<string>('')
   const [venueTone, setVenueTone] = useState<string>('text-white/35')
 
@@ -167,9 +167,8 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
             }`}
             title={seqLive.summary}
           >
-            {seqLive.side === 'LONG' ? 'Момент ↑' : 'Момент ↓'} ~
-            {seqLive.confidence}%
-            {!seqLive.allowedInRegime ? ' · не сейчас' : ''}
+            {seqLive.side === 'LONG' ? 'Момент ↑' : 'Момент ↓'}
+            {!seqLive.allowedInRegime ? ' · вне режима' : ''}
           </span>
         ) : (
           <span className="ml-auto font-mono text-[9px] text-white/25">
@@ -204,9 +203,6 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
       {seqLive && (
         <p className="truncate font-mono text-[9px] leading-snug text-white/50">
           {seqLive.title}
-          {seqLive.histWr && seqLive.histWr.decided >= 3
-            ? ` · раньше сработало ${seqLive.histWr.winRate?.toFixed(0) ?? '—'}%`
-            : ''}
         </p>
       )}
     </div>

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import type { CoinSignal } from '../../engine/types'
 import { useAppStore } from '../../store/useAppStore'
 import { useRadarFavoriteToggle } from '../../hooks/useRadarFavoriteToggle'
-import WinRateBar from './WinRateBar'
 import SentimentBadge from './SentimentBadge'
 import { toRadarLabel } from '../../api/mexc'
 
@@ -61,6 +60,16 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
     return 'border-alert/30 bg-alert/10 text-alert'
   }
 
+  const biasWord = (value: string | null | undefined): string | null => {
+    if (value === 'BULLISH') return 'вверх'
+    if (value === 'BEARISH') return 'вниз'
+    if (value === 'RANGING' || value === 'NEUTRAL') return 'пила'
+    return null
+  }
+
+  const h4 = biasWord(signal.htfTrend?.bias4h) ?? 'нет'
+  const day = biasWord(signal.dailyBias) ?? 'нет'
+
   const getSignalText = (): string => {
     if (!signal.direction) {
       return signal.currentRSI === null ? t('signal_waiting') : '—'
@@ -110,6 +119,9 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
             {formatChange(signal.priceChange24h)}
           </span>
         </div>
+        <div className="mt-0.5 font-mono text-[9px] leading-tight text-holo/45">
+          4ч {h4} · день {day}
+        </div>
       </div>
 
       <div
@@ -117,13 +129,6 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
         title={getSignalText()}
       >
         {getSignalText()}
-      </div>
-
-      <div className="flex w-[4.5rem] shrink-0 flex-col items-end justify-center gap-0.5">
-        <WinRateBar value={signal.probabilityPct} compact label="Score" />
-        <span className="font-mono text-[8px] uppercase tracking-wide text-holo/30">
-          Score
-        </span>
       </div>
 
       <ChevronRight className="h-4 w-4 shrink-0 text-holo/20" />

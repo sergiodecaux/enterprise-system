@@ -558,38 +558,6 @@ const JournalStatsPanel = () => {
             </div>
           ))}
 
-          {analytics.byConfidence.some((b) => b.total > 0) && (
-            <div className="rounded-lg border border-hull-border bg-hull/40 p-3">
-              <div className="mb-2 font-mono text-[10px] uppercase text-holo/40">
-                Confidence → реальность
-              </div>
-              <div className="space-y-1.5">
-                {analytics.byConfidence
-                  .filter((b) => b.total > 0)
-                  .map((b) => (
-                    <div
-                      key={b.label}
-                      className="flex items-center justify-between font-mono text-[11px]"
-                    >
-                      <span className="text-holo/50">{b.label}</span>
-                      <span className="text-holo/70">
-                        n={b.total} · WR{' '}
-                        <span
-                          className={
-                            b.winRate >= 55 ? 'text-matrix' : 'text-alert'
-                          }
-                        >
-                          {b.winRate.toFixed(0)}%
-                        </span>
-                        {' · '}
-                        {b.avgR.toFixed(2)}R
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          )}
-
           {analytics.bySource.length > 0 && (
             <div className="rounded-lg border border-hull-border bg-hull/40 p-3">
               <div className="mb-2 font-mono text-[10px] uppercase text-holo/40">
@@ -643,7 +611,6 @@ const JournalStatsPanel = () => {
                   {s.wins}W/{s.losses}L/{s.timeouts}TO
                 </span>
                 <span>E[R] {s.expectancyR.toFixed(2)}</span>
-                <span>conf {s.avgConfidence.toFixed(0)}%</span>
                 <span>MFE {s.avgMfe.toFixed(1)}%</span>
                 <span>MAE {s.avgMae.toFixed(1)}%</span>
                 <span>n={s.total}</span>
@@ -689,8 +656,7 @@ const JournalStatsPanel = () => {
                       </span>
                     </div>
                     <div className="truncate font-mono text-[10px] text-holo/40">
-                      {SETUP_LABELS[e.setupType]} · {e.confidenceAtSignal}% ·{' '}
-                      {e.source}
+                      {SETUP_LABELS[e.setupType]} · {e.source}
                     </div>
                   </div>
                   <div className="text-right">

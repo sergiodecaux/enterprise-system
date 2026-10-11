@@ -147,9 +147,6 @@ const SequenceProcessOverlay = ({
           <span style="font-size:10px;font-weight:700;color:rgba(240,245,250,0.92);">
             ${sequence.side === 'LONG' ? 'вверх ↑' : 'вниз ↓'}
           </span>
-          <span style="font-size:9px;color:rgba(200,210,220,0.55);">
-            ~${sequence.confidence}%
-          </span>
         </div>
         <div style="
           max-width:min(240px,58vw);

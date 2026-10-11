@@ -4,10 +4,11 @@ import type {
   StoryScenarioId,
 } from '../../engine/smc/chartStory'
 import { fmtStoryTargetPx, storyPathColor } from '../../engine/smc/chartStory'
+import { DescriptiveNote } from './DescriptiveNote'
 
 interface BoardProps {
   scenarios: StoryScenario[]
-  activeId: StoryScenarioId
+  activeId: StoryScenarioId | null
   onSelect: (id: StoryScenarioId) => void
   dense?: boolean
   /** Global daily frame — LTF arrows sit inside this magnet. */
@@ -18,12 +19,6 @@ interface LegendProps {
   items: StoryLegendItem[]
   /** «только сильная» still lists what the filled band means */
   onlyStrong?: boolean
-}
-
-function pctTone(n: number): string {
-  if (n >= 40) return 'text-emerald-200'
-  if (n >= 22) return 'text-amber-200'
-  return 'text-white/70'
 }
 
 function dirTone(side: StoryScenario['side']): string {
@@ -101,6 +96,9 @@ export const ScenarioBoard = ({
         dense ? 'px-1.5 py-1' : 'px-2 py-1.5'
       }`}
     >
+      <div className={dense ? 'mb-1' : 'mb-1.5'}>
+        <DescriptiveNote />
+      </div>
       {dailyLine ? (
         <p
           className={`truncate font-mono font-bold text-violet-200/90 ${
@@ -140,13 +138,6 @@ export const ScenarioBoard = ({
                         : 'none',
                   }}
                 />
-                <span
-                  className={`w-8 shrink-0 text-right font-bold tabular-nums ${
-                    dense ? 'text-[11px]' : 'text-[10px]'
-                  } ${spent ? 'text-white/35' : pctTone(sc.pct)}`}
-                >
-                  {Math.round(sc.pct)}%
-                </span>
                 <span
                   className={`w-[2.6rem] shrink-0 font-bold uppercase ${
                     dense ? 'text-[10px]' : 'text-[9px]'

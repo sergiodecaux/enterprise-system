@@ -1,6 +1,6 @@
 /**
- * Four forecast polylines: impulse → retrace → continuation.
- * Selected row is bold; the other three stay thin and faint.
+ * Four descriptive polylines. Until the user picks a row, all four
+ * have the same weight. Color is side and kind, not a confidence rank.
  */
 
 import { useEffect, useRef } from 'react'
@@ -10,7 +10,7 @@ import type {
   StoryScenario,
   StoryScenarioId,
 } from '../../engine/smc/chartStory'
-import { leadStoryScenario, storyPathColor, storyTipLabel } from '../../engine/smc/chartStory'
+import { storyPathColor, storyTipLabel } from '../../engine/smc/chartStory'
 import type { PathPoint } from '../../engine/prediction/types'
 import {
   LABEL_PRIORITY,
@@ -248,6 +248,7 @@ const StoryPathOverlay = ({
   activeId = null,
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const askedRight = useRef(0)
   const layout = useChartLabels()
 
   useEffect(() => {
@@ -293,18 +294,42 @@ const StoryPathOverlay = ({
         }
         const plotRight = Math.max(72, w - priceScaleW - 4)
 
+        const timeScale = chart.timeScale()
         const xStart = (() => {
           try {
-            return chart.timeScale().timeToCoordinate(lastCandleTs as never)
+            return timeScale.timeToCoordinate(lastCandleTs as never)
           } catch {
             return null
           }
         })()
-        const x0 =
+        let x0 =
           xStart != null && Number.isFinite(Number(xStart))
             ? Number(xStart)
-            : w * 0.72
-        if (x0 >= plotRight - 12) {
+            : null
+        const minGap = Math.min(260, Math.max(140, (plotRight - 16) * 0.32))
+        if (x0 != null && x0 < plotRight - 4 && plotRight - x0 < minGap) {
+          try {
+            const logical = timeScale.coordinateToLogical(x0)
+            const vr = timeScale.getVisibleLogicalRange()
+            if (logical != null && vr && vr.to > vr.from) {
+              const leftBars = Math.max(12, logical - vr.from)
+              const fraction = minGap / Math.max(plotRight, 1)
+              const extra = Math.ceil((fraction / Math.max(0.08, 1 - fraction)) * leftBars)
+              const nextTo = Math.round(logical + extra)
+              if (vr.to < nextTo - 1 && askedRight.current !== nextTo) {
+                askedRight.current = nextTo
+                timeScale.setVisibleLogicalRange({ from: vr.from, to: nextTo })
+                return
+              }
+            }
+          } catch {
+            /* draw in the gap that exists */
+          }
+        } else if (x0 != null && plotRight - x0 >= minGap) {
+          askedRight.current = 0
+        }
+        if (x0 == null) x0 = Math.min(w * 0.68, plotRight - minGap)
+        if (x0 >= plotRight - 8) {
           if (!fromListener) layout.clear('story')
           return
         }
@@ -339,14 +364,9 @@ const StoryPathOverlay = ({
           }
         }
 
-        const selected = activeId
+        const active = activeId
           ? scenarios.find((s) => s.id === activeId) ?? null
           : null
-        const active =
-          selected ??
-          leadStoryScenario(scenarios) ??
-          scenarios.find((s) => s.id === 'hold') ??
-          null
 
         const rows =
           scenarios.length >= 4
@@ -398,7 +418,7 @@ const StoryPathOverlay = ({
           return pts
         }
 
-        const drawOne = (sc: StoryScenario, on: boolean) => {
+        const drawOne = (sc: StoryScenario, on: boolean, equal: boolean) => {
           if (sc.spent) {
             if (!on) return
             const y =
@@ -424,10 +444,12 @@ const StoryPathOverlay = ({
           if (pts.length < 2) return
           const color = storyPathColor(sc.id, sc.side)
           const dashed = sc.id === 'break' || sc.id === 'chop'
-          const dash = dashed ? (on ? [7, 5] : [5, 6]) : []
+          const dash = dashed ? (on || equal ? [7, 5] : [5, 6]) : []
           if (on) {
             strokePolyline(ctx, pts, 'rgba(8,10,14,0.88)', compact ? 6.2 : 5.4, dash, 1)
             strokePolyline(ctx, pts, color, compact ? 3.4 : 3.1, dash, 1)
+          } else if (equal) {
+            strokePolyline(ctx, pts, color, compact ? 2.1 : 1.9, dash, 1)
           } else {
             strokePolyline(ctx, pts, hexAlpha(color, 0.42), compact ? 1.45 : 1.25, dash, 1)
           }
@@ -439,8 +461,8 @@ const StoryPathOverlay = ({
               b.x,
               b.y,
               Math.atan2(b.y - a.y, b.x - a.x),
-              on ? color : hexAlpha(color, 0.55),
-              on ? (compact ? 16 : 15) : compact ? 9 : 8
+              on || equal ? color : hexAlpha(color, 0.55),
+              on ? (compact ? 16 : 15) : equal ? (compact ? 12 : 11) : compact ? 9 : 8
             )
           }
           if (on) {
@@ -486,8 +508,9 @@ const StoryPathOverlay = ({
           const bo = active && b.id === active.id ? 1 : 0
           return ao - bo
         })
+        const equal = !active
         for (const sc of order) {
-          drawOne(sc, Boolean(active && sc.id === active.id))
+          drawOne(sc, Boolean(active && sc.id === active.id), equal)
         }
 
         const requests: LabelRequest[] = captions.map((c) => ({
@@ -537,11 +560,11 @@ const StoryPathOverlay = ({
       }
     }
 
-    redraw()
     const unsub = watchLayer(layout, 'story', onLayout)
     chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
     const ro = new ResizeObserver(() => redraw())
     ro.observe(box)
+    redraw()
     return () => {
       unsub()
       layout.clear('story')

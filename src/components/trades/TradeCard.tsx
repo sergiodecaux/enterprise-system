@@ -74,20 +74,6 @@ const TradeCard = ({ trade }: TradeCardProps) => {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-holo/40">Уверенность:</span>
-            <span
-              className={`font-mono text-xs font-bold ${
-                trade.confidenceScore >= 85
-                  ? 'text-matrix'
-                  : trade.confidenceScore >= 70
-                    ? 'text-yellow-400'
-                    : 'text-holo/50'
-              }`}
-            >
-              {trade.confidenceScore}%
-            </span>
-          </div>
         </div>
 
         <div className="text-right">

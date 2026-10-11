@@ -462,11 +462,7 @@ export const useMexcScanner = () => {
         }
       }
 
-      // Sort: active setups first, then by probability
-      results.sort((a, b) => {
-        if (a.hasActiveSetup !== b.hasActiveSetup) return a.hasActiveSetup ? -1 : 1
-        return b.probabilityPct - a.probabilityPct
-      })
+      results.sort((a, b) => a.displayName.localeCompare(b.displayName, 'en'))
 
       updateSignals(results)
       setMarketContext({

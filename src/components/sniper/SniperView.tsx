@@ -61,9 +61,14 @@ const SniperView = () => {
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Crosshair className="h-6 w-6 text-matrix" />
-            <h1 className="font-mono text-2xl font-bold uppercase tracking-tight text-holo">
-              Режим снайпера
-            </h1>
+            <div>
+              <h1 className="font-mono text-2xl font-bold uppercase tracking-tight text-holo">
+                Режим снайпера
+              </h1>
+              <p className="font-mono text-[11px] font-bold uppercase tracking-wide text-amber-100/90">
+                Живое чтение структуры
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 rounded-lg border border-matrix/30 bg-matrix/10 px-3 py-1.5">
@@ -175,8 +180,8 @@ const SniperView = () => {
               </span>
             </div>
             <p className="font-mono text-xs leading-relaxed text-holo/60">
-              ⚡️ SCALP · 🎯 INTRADAY · 🕯 SWING — разные правила Confidence.
-              Цифра — Confidence Score сетапа в моменте, не historical Win Rate.
+              Скальп, интрадей и свинг читают структуру по разным правилам.
+              Значимость продолжения не подтверждена.
               Вход сеткой в OTE-зоне, SL — закон.
             </p>
           </div>

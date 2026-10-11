@@ -150,6 +150,11 @@ export default defineConfig({
   plugins: [react(), newsRssProxy(), telegramCacheBust()],
   base: './',
   server: {
+    // IPv4 loopback so local browsers and headless checks can reach the app.
+    // Without this, some Windows setups bind only ::1 and IPv4 clients fail.
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: false,
     proxy: {
       '/mexc': {
         target: 'https://contract.mexc.com',

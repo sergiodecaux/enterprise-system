@@ -66,7 +66,7 @@ function StyleCard({ plan }: { plan: StyleZonePlan }) {
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="font-mono text-xs font-bold text-holo">{label}</span>
         <span className={`font-mono text-xs font-black ${sideColor}`}>
-          {plan.side === 'WAIT' ? 'WAIT' : plan.side} · {plan.probability}%
+          {plan.side === 'WAIT' ? 'WAIT' : plan.side}
         </span>
       </div>
       <p className="mb-2 font-mono text-[11px] leading-relaxed text-holo/75">

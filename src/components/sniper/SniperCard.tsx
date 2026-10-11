@@ -1,11 +1,10 @@
-import { useState } from 'react'
 import { TrendingUp, TrendingDown, Target, Shield } from 'lucide-react'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { useAppStore } from '../../store/useAppStore'
+import { DescriptiveNote } from '../tactical/DescriptiveNote'
 import { calculateConfidenceScore } from '../../engine/confidence'
 import type { SniperSignal } from '../../engine/sniperMode'
 import { directionLabel } from '../../i18n/displayMaps'
-import ConfidenceScore from '../trades/ConfidenceScore'
 
 interface SniperCardProps {
   signal: SniperSignal
@@ -34,8 +33,6 @@ const SniperCard = ({
     (s) => signal.mmIntent ?? s.mmIntent[signal.internalSymbol] ?? null
   )
 
-  const [showConfidence, setShowConfidence] = useState(false)
-
   const enrichedSignal = {
     ...signal,
     buyerAggression: buyerAggression ?? signal.buyerAggression ?? null,
@@ -60,9 +57,7 @@ const SniperCard = ({
     haptic.impact()
 
     if (!confidence.approved) {
-      showAlert(
-        `❌ Уверенность ${confidence.totalScore}% — слишком низкая для входа!`
-      )
+      showAlert('Вход не открыт: статистика этого сетапа не подтверждена.')
       return
     }
 
@@ -107,9 +102,7 @@ const SniperCard = ({
     })
 
     haptic.success()
-    showAlert(
-      `✅ Сделка открыта!\nУверенность: ${confidence.totalScore}%\n${confidence.recommendation}`
-    )
+    showAlert(`Сделка открыта.\n${signal.direction} ${signal.displayName}`)
   }
 
   const formatPrice = (price: number): string => {
@@ -123,13 +116,6 @@ const SniperCard = ({
   const directionBg = isLong ? 'bg-matrix/10' : 'bg-alert/10'
   const directionBorder = isLong ? 'border-matrix/30' : 'border-alert/30'
   const DirectionIcon = isLong ? TrendingUp : TrendingDown
-
-  const winRateColor =
-    signal.calibratedWinRate >= 80
-      ? 'text-matrix'
-      : signal.calibratedWinRate >= 70
-        ? 'text-yellow-400'
-        : 'text-holo'
 
   const rrColor =
     signal.riskReward >= 8
@@ -234,26 +220,10 @@ const SniperCard = ({
             )}
           </div>
 
-          <div className="flex flex-col items-end gap-1">
-            <div
-              className={`rounded-lg bg-black/30 px-3 py-1.5 font-mono text-xl font-bold ${winRateColor}`}
-            >
-              {signal.calibratedWinRate}%
-            </div>
-            <div className="font-mono text-[10px] uppercase text-holo/40">
-              Conf
-            </div>
-            {signal.histWinRate != null &&
-              (signal.histSampleN ?? 0) >= 3 && (
-                <div className="font-mono text-[9px] text-holo/45">
-                  Hist WR {Math.round(signal.histWinRate)}%
-                  <span className="text-holo/30">
-                    {' '}
-                    n={signal.histSampleN}
-                  </span>
-                </div>
-              )}
-          </div>
+        </div>
+
+        <div className="mb-3">
+          <DescriptiveNote />
         </div>
 
         <div className="mb-3 h-px bg-hull-border/50" />
@@ -333,19 +303,6 @@ const SniperCard = ({
         Открыть сделку
       </button>
 
-      <button
-        type="button"
-        onClick={() => setShowConfidence(!showConfidence)}
-        className="mt-2 w-full font-mono text-xs text-holo/40 underline"
-      >
-        {showConfidence ? 'Скрыть' : 'Показать'} оценку уверенности
-      </button>
-
-      {showConfidence && (
-        <div className="mt-3">
-          <ConfidenceScore result={confidence} />
-        </div>
-      )}
     </div>
   )
 }

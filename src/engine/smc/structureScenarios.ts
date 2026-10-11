@@ -702,14 +702,6 @@ export function buildStructureScenarios(input: {
   intra?: IntraPlan | null
   tapeBarMs?: number
 }): StructureScenarioBoard {
-  if (input.tradable === false) {
-    return {
-      now: input.situationLine || 'Каскад собран, входа на 15м нет.',
-      leadId: 'A',
-      leadTitle: 'Ждём ситуацию',
-      scenarios: [],
-    }
-  }
   const price = input.price
   const tapeRaw =
     input.candlesTape && input.candlesTape.length >= 8
@@ -1511,9 +1503,13 @@ export function buildStructureScenarios(input: {
 
   if (!picked.length) {
     return {
-      now: [input.intra?.line, nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null)].filter(Boolean).join(' '),
+      now: [
+        input.tradable === false ? input.situationLine : null,
+        input.intra?.line,
+        nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null),
+      ].filter(Boolean).join(' '),
       leadId: 'A',
-      leadTitle: 'Ждём закрытие 15м / часа',
+      leadTitle: input.tradable === false ? 'Ждём ситуацию' : 'Ждём закрытие 15м / часа',
       scenarios: [],
     }
   }
@@ -1541,7 +1537,11 @@ export function buildStructureScenarios(input: {
 
   const lead = scenarios[0]
   return {
-    now: [input.intra?.line, nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null)].filter(Boolean).join(' '),
+    now: [
+      input.tradable === false ? input.situationLine : null,
+      input.intra?.line,
+      nowCopy(tape, trap, price, h1, h4, d1, w1, auction, stack, input.cascade ?? null),
+    ].filter(Boolean).join(' '),
     leadId: lead?.id ?? 'A',
     leadTitle: lead?.title ?? 'Ждём факт',
     scenarios,

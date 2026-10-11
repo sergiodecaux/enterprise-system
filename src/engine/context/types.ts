@@ -29,6 +29,10 @@ export interface CrowdContext {
   openInterestChangePct: number
   /** False when public ratio/funding/OI could not be read. */
   known: boolean
+  /** Set only when the ratio came from Binance USDT-M, not from MEXC. */
+  longShortBook?: 'binance' | null
+  fundingBook?: 'binance' | 'mexc' | null
+  oiBook?: 'binance' | null
 }
 
 export interface WhaleContext {

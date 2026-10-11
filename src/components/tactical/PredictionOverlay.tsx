@@ -208,7 +208,7 @@ const PredictionOverlay = ({
       const last = pts[pts.length - 1]
       ctx.font = 'bold 9px monospace'
       ctx.fillStyle = `${dominant.color}cc`
-      ctx.fillText(`A ${dominant.probability}%`, last.x - 28, last.y - 8)
+      ctx.fillText('A', last.x - 28, last.y - 8)
     }
 
     redraw()

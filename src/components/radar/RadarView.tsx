@@ -68,7 +68,7 @@ const RadarView = () => {
   )
 
   const biasLabel = marketContext
-    ? `${translateBias(marketContext.dailyBias)} ${marketContext.dailyConfidence}% · ${translateTrend(marketContext.btcTrend)}`
+    ? `день ${translateBias(marketContext.dailyBias)} · BTC ${translateTrend(marketContext.btcTrend)}`
     : ''
 
   return (
@@ -149,9 +149,6 @@ const RadarView = () => {
           <div className="w-6 text-right">#</div>
           <div className="flex-1">{t('column_asset')}</div>
           <div className="w-[4.5rem] shrink-0">{t('column_signal')}</div>
-          <div className="w-[5.75rem] shrink-0 text-right">
-            {t('column_probability')}
-          </div>
         </div>
       </div>
 

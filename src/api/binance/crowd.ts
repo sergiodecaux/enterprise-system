@@ -58,13 +58,16 @@ export async function fetchCrowdContext(symbol: string): Promise<CrowdContext | 
         longShortRatio: ratio.length ? ratio[ratio.length - 1] : 1,
         longShortTrend:
           ratio.length >= 2 ? trend(ratio[ratio.length - 2], ratio[ratio.length - 1], 0.02) : 'FLAT',
+        longShortBook: ratio.length ? 'binance' : null,
         fundingRate: funds.length ? funds[funds.length - 1] : 0,
         fundingTrend:
           funds.length >= 2
             ? trend(funds[funds.length - 2], funds[funds.length - 1], 0.00001)
             : 'FLAT',
+        fundingBook: funds.length ? 'binance' : null,
         openInterestChangePct:
           prevOi > 0 && curOi > 0 ? ((curOi - prevOi) / prevOi) * 100 : 0,
+        oiBook: ois.length ? 'binance' : null,
         known: true,
       }
     }
@@ -75,9 +78,12 @@ export async function fetchCrowdContext(symbol: string): Promise<CrowdContext | 
   return {
     longShortRatio: 1,
     longShortTrend: 'FLAT',
+    longShortBook: null,
     fundingRate: mexc.fundingRate,
     fundingTrend: 'FLAT',
+    fundingBook: 'mexc',
     openInterestChangePct: 0,
+    oiBook: null,
     known: true,
   }
 }

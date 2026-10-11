@@ -6,7 +6,6 @@ import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { useDesktopLayout } from '../../hooks/useDesktopLayout'
-import ProbabilityGauge from './ProbabilityGauge'
 import LiveChart from './LiveChart'
 import OrderBookPanel from './OrderBookPanel'
 import DataLog from './DataLog'
@@ -340,7 +339,7 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
           MM Intent
         </span>
         <span className={`ml-auto font-mono text-[10px] font-bold ${driveColor}`}>
-          Drive {intent.drive} · {intent.confidence}%
+          Drive {intent.drive}
         </span>
       </div>
       <p className={`mb-2 font-mono text-xs font-medium ${driveColor}`}>
@@ -554,7 +553,6 @@ const TacticalDrawer = () => {
     )
   }
 
-  const probability = signal.probabilityPct
   const direction = signal.direction
   const currentRSI = signal.currentRSI ?? 0
 
@@ -740,7 +738,7 @@ const TacticalDrawer = () => {
                       Найти сигнал
                     </div>
                     <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
-                      Самое вероятное движение сейчас · зоны · SMC
+                      Живое чтение структуры. Не прогноз.
                     </div>
                   </div>
                   <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
@@ -801,7 +799,7 @@ const TacticalDrawer = () => {
                     Найти сигнал
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
-                    Самое вероятное движение сейчас · зоны · SMC
+                    Живое чтение структуры. Не прогноз.
                   </div>
                 </div>
                 <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
@@ -836,7 +834,7 @@ const TacticalDrawer = () => {
           {compositeAnalysis && (
             <CollapsibleSection
               title="Сводка"
-              subtitle={`${compositeAnalysis.marketPhase} · ${compositeAnalysis.overallScore}`}
+              subtitle={compositeAnalysis.marketPhase}
               defaultOpen={isDesktop}
             >
               <CompositeAnalysisPanel analysis={compositeAnalysis} />
@@ -845,7 +843,7 @@ const TacticalDrawer = () => {
 
           <CollapsibleSection
             title="Анализ+"
-            subtitle="Score · Hist WR · gate · playbook"
+            subtitle="структура · журнал · уровни"
             defaultOpen={isDesktop}
           >
             <CoinAnalysisUpgradePanel
@@ -855,10 +853,6 @@ const TacticalDrawer = () => {
               refreshKey={journalVersion}
             />
           </CollapsibleSection>
-
-          <div className="flex justify-center">
-            <ProbabilityGauge value={probability} direction={direction} />
-          </div>
 
           {newsSettings.enabled && newsSettings.showInDrawer && (
             <CollapsibleSection title="Новости">
@@ -899,10 +893,29 @@ const TacticalDrawer = () => {
 
             <div className="bg-hull border border-hull-border rounded-lg p-3">
               <div className="text-xs text-holo/40 font-mono uppercase mb-1">
-                {t('tactical_score')}
+                4ч · день
               </div>
-              <div className="text-lg font-mono font-bold text-holo">
-                {signal.score}/10
+              <div className="font-mono text-[11px] font-medium leading-snug text-holo/70">
+                <div>
+                  4ч{' '}
+                  {signal.htfTrend?.bias4h === 'BULLISH'
+                    ? 'вверх'
+                    : signal.htfTrend?.bias4h === 'BEARISH'
+                      ? 'вниз'
+                      : signal.htfTrend
+                        ? 'пила'
+                        : 'нет'}
+                </div>
+                <div>
+                  день{' '}
+                  {signal.dailyBias === 'BULLISH'
+                    ? 'вверх'
+                    : signal.dailyBias === 'BEARISH'
+                      ? 'вниз'
+                      : signal.dailyBias
+                        ? 'пила'
+                        : 'нет'}
+                </div>
               </div>
             </div>
 
@@ -958,8 +971,7 @@ const TacticalDrawer = () => {
                     ? t('bias_bullish')
                     : signal.dailyBias === 'BEARISH'
                       ? t('bias_bearish')
-                      : t('bias_neutral')}{' '}
-                  {signal.dailyConfidence ?? ''}%
+                      : t('bias_neutral')}
                 </div>
               </div>
             )}

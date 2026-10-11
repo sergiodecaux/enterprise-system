@@ -1001,37 +1001,37 @@ function narrativeOf(r: Omit<ZoneReaction, 'narrative'>): string {
   const closeLead = r.closes?.line ? `${r.closes.line}. ` : ''
   switch (r.state) {
     case 'HOLDING_ABOVE':
-      return `${closeLead}Закреп ${rolePhrase(z.role, 'над')} ${band} держит (${r.holdProbability}%). Идём дальше ${r.continueProbability}%.${holdTo}${next}`
+      return `${closeLead}Закреп ${rolePhrase(z.role, 'над')} ${band} держит.${holdTo}${next}`
     case 'HOLDING_BELOW':
-      return `Закрепились ${rolePhrase(z.role, 'под')} ${band} (${r.holdProbability}%). ${
-        r.going === 'DOWN' ? 'Идём вниз' : r.going === 'UP' ? 'Ещё не вниз — пила' : 'Пока пила'
-      } ${r.continueProbability}%.${holdTo}${next}`
+      return `Закрепились ${rolePhrase(z.role, 'под')} ${band}. ${
+        r.going === 'DOWN' ? 'Ход вниз' : r.going === 'UP' ? 'Ещё не вниз — пила' : 'Пока пила'
+      }.${holdTo}${next}`
     case 'CONSOLIDATING_UNDER':
       return `Проторговка ${rolePhrase(z.role, 'под')} ${band}. ${
         r.going === 'DOWN'
-          ? `Держим закреп снизу, вероятность вниз ${r.continueProbability}%`
+          ? 'Закреп снизу'
           : r.going === 'UP'
-            ? `Пока не вниз — копят под зоной, слом вверх ${r.breakProbability}%`
-            : `Пила под зоной, удерж ${r.holdProbability}%`
+            ? 'Пока не вниз — копят под зоной'
+            : 'Пила под зоной'
       }.${next}`
     case 'CONSOLIDATING_OVER':
       return `Проторговка ${rolePhrase(z.role, 'над')} ${band}. ${
         r.going === 'UP'
-          ? `Закреп сверху держит, вверх ${r.continueProbability}%`
+          ? 'Закреп сверху'
           : r.going === 'DOWN'
-            ? `Слабый закреп, риск слива ${r.breakProbability}%`
-            : `Пила над зоной, удерж ${r.holdProbability}%`
+            ? 'Слабый закреп'
+            : 'Пила над зоной'
       }.${next}`
     case 'RECLAIMED':
-      return `Ложный пробой ${rolePhrase(z.role, 'имя')} ${band} + закреп обратно (${r.holdProbability}%).${holdTo}`
+      return `Ложный пробой ${rolePhrase(z.role, 'имя')} ${band} + закреп обратно.${holdTo}`
     case 'BREAKING':
-      return `Ломаем ${rolePhrase(z.role, 'имя')} ${band} (${r.breakProbability}%).${next}`
+      return `Ломаем ${rolePhrase(z.role, 'имя')} ${band}.${next}`
     case 'BROKEN':
-      return `Зона ${band} сломана. ${r.nextIfBreak ? `Льёмся / летим в ${r.nextIfBreak.label}` : 'Ищем следующую зону'}.`
+      return `Зона ${band} сломана. ${r.nextIfBreak ? `Дальше ${r.nextIfBreak.label}` : 'Ищем следующую зону'}.`
     case 'INSIDE':
-      return `${rolePhrase(z.role, 'внутри')} ${band}: удерж ${r.holdProbability}% · слом ${r.breakProbability}%.${breakBoth}`
+      return `${rolePhrase(z.role, 'внутри')} ${band}.${breakBoth}`
     case 'APPROACHING':
-      return `Подход ${rolePhrase(z.role, 'к')} ${band}. Удерж ${r.holdProbability}%, слом ${r.breakProbability}%.${breakBoth}`
+      return `Подход ${rolePhrase(z.role, 'к')} ${band}.${breakBoth}`
     default:
       return `${rolePhrase(z.role, 'имя')} ${band}`
   }
@@ -1050,23 +1050,23 @@ export function hintForReaction(r: ZoneReaction): string {
   const dest = r.destination ? ` → ${r.destination.label}` : ''
   switch (r.state) {
     case 'HOLDING_ABOVE':
-      return `${role} · закреп над · ${r.holdProbability}%${tf}${dest}`
+      return `${role} · закреп над${tf}${dest}`
     case 'HOLDING_BELOW':
-      return `${role} · закреп под · ${r.holdProbability}%${tf}${dest}`
+      return `${role} · закреп под${tf}${dest}`
     case 'CONSOLIDATING_UNDER':
-      return `${role} · проторг. под · ${r.going === 'DOWN' ? 'вниз' : r.going === 'UP' ? 'вверх?' : 'пила'} ${r.continueProbability}%${tf}${dest}`
+      return `${role} · проторг. под · ${r.going === 'DOWN' ? 'вниз' : r.going === 'UP' ? 'вверх' : 'пила'}${tf}${dest}`
     case 'CONSOLIDATING_OVER':
-      return `${role} · проторг. над · ${r.going === 'UP' ? 'вверх' : r.going === 'DOWN' ? 'вниз?' : 'пила'} ${r.continueProbability}%${tf}${dest}`
+      return `${role} · проторг. над · ${r.going === 'UP' ? 'вверх' : r.going === 'DOWN' ? 'вниз' : 'пила'}${tf}${dest}`
     case 'BREAKING':
-      return `${role} · ломаем · ${r.breakProbability}%${tf}${dest}`
+      return `${role} · ломаем${tf}${dest}`
     case 'BROKEN':
       return `${role} · слом → ${r.destination?.label ?? r.nextIfBreak?.label ?? 'дальше'}${tf}`
     case 'RECLAIMED':
-      return `${role} · ложный + закреп · ${r.holdProbability}%${tf}`
+      return `${role} · ложный + закреп${tf}`
     case 'INSIDE':
-      return `${role} · внутри · удерж ${r.holdProbability}%${tf}`
+      return `${role} · внутри${tf}`
     case 'APPROACHING':
-      return `${role} · подход · удерж ${r.holdProbability}%${tf}`
+      return `${role} · подход${tf}`
     default:
       return role + tf
   }

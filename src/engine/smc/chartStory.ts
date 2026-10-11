@@ -778,21 +778,33 @@ function nowKindOf(
   return 'OUTSIDE'
 }
 
+/**
+ * Release lock, 2026-10-11. The shipped screen is a live structure read.
+ * A probability layer waits on the OI log and the same calibration gates.
+ * It is not shown, and it is not implied.
+ */
+export const STRUCTURE_READ_TITLE = 'Живое чтение структуры'
+
+/** Shown next to every chart scenario until a group survives calibration. */
+export const STORY_DESCRIPTIVE_NOTE =
+  'Разметка описательная. Значимость продолжения не подтверждена.'
+
+/**
+ * A/B/C horizon (PredictionOverlay) is not on the calibration harness.
+ * The button stays off until that contour is checked the same way as the four paths.
+ */
+export const FORECAST_HORIZON_UI = false
+
 function nowLineOf(
   kind: StoryNowKind,
   side: 'LONG' | 'SHORT' | null,
-  oddsPct: number | null,
   spent?: SpentLiquidity | null
 ): string {
   if (spent?.ssl?.reclaimed && side === 'LONG') {
-    const pct =
-      oddsPct != null && Number.isFinite(oddsPct) ? ` ${Math.round(oddsPct)}%` : ''
-    return `лои сняты · лонг к BSL${pct}`
+    return 'лои сняты · лонг к BSL'
   }
   if (spent?.bsl?.reclaimed && side === 'SHORT') {
-    const pct =
-      oddsPct != null && Number.isFinite(oddsPct) ? ` ${Math.round(oddsPct)}%` : ''
-    return `хаи сняты · шорт к SSL${pct}`
+    return 'хаи сняты · шорт к SSL'
   }
   const k =
     kind === 'IN_ZONE'
@@ -805,9 +817,7 @@ function nowLineOf(
             ? 'зона потеряна'
             : 'вне зоны'
   const dir = side === 'LONG' ? 'лонг' : side === 'SHORT' ? 'шорт' : ''
-  const pct =
-    oddsPct != null && Number.isFinite(oddsPct) ? ` ${Math.round(oddsPct)}%` : ''
-  if (dir) return `${k} · ${dir}${pct}`
+  if (dir) return `${k} · ${dir}`
   return k
 }
 
@@ -3364,7 +3374,7 @@ export function buildChartStory(opts: {
         })
       : null
 
-  const nowLine = nowLineOf(nowKind, holdSide, scoredOdds?.pct ?? null, spent)
+  const nowLine = nowLineOf(nowKind, holdSide, spent)
   const baseHz = tfHorizon(barSeconds, atr, livePrice || price)
   const walk = opts.structure?.walk
   const measured = walk != null && walk.samples >= 4 && walk.remaining > 0

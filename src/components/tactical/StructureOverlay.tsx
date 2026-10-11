@@ -217,7 +217,7 @@ const StructureOverlay = ({
             }
           }
 
-          const tag = `${sc.id} ${sc.probability}%`
+          const tag = sc.id
           ctx.font = 'bold 10px ui-monospace, SFMono-Regular, Menlo, monospace'
           const tw = ctx.measureText(tag).width
           const lx = clamp(b.x - tw - 4, 4, w - tw - 6)

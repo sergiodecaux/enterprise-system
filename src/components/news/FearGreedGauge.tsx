@@ -70,6 +70,7 @@ const FearGreedGauge = ({ data }: Props) => {
         <div className="font-mono text-[10px] uppercase text-holo/50">
           Fear & Greed
         </div>
+        <div className="font-mono text-[9px] text-holo/35">индекс alternative.me</div>
         <div
           className="font-mono text-xs font-bold"
           style={{ color: config.color }}

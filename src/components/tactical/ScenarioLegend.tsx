@@ -15,7 +15,6 @@ interface Props {
 
 const ScenarioLegend = ({
   scenarios,
-  dominantId,
   activeScenarios,
   onToggle,
   updatedAt,
@@ -57,7 +56,6 @@ const ScenarioLegend = ({
       <div className="grid grid-cols-3 gap-1.5">
         {scenarios.map((sc) => {
           const isActive = activeScenarios.has(sc.id)
-          const isDominant = sc.id === dominantId
 
           return (
             <button
@@ -79,23 +77,7 @@ const ScenarioLegend = ({
                   style={{ color: sc.color }}
                 >
                   {sc.id}
-                  {isDominant ? ' ★' : ''}
                 </span>
-                <span
-                  className="font-mono text-[11px] font-bold"
-                  style={{ color: sc.color }}
-                >
-                  {sc.probability}%
-                </span>
-              </div>
-              <div className="mb-1.5 h-1 overflow-hidden rounded-full bg-black/40">
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${sc.probability}%`,
-                    backgroundColor: sc.color,
-                  }}
-                />
               </div>
               <div className="line-clamp-2 font-mono text-[9px] leading-tight text-holo/55">
                 {sc.label}

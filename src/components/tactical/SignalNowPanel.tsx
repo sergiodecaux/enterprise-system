@@ -142,20 +142,11 @@ const SignalNowPanel = ({
                 <span className="font-mono text-[8px] font-bold uppercase tracking-wide text-cyan-200/85">
                   2 · Предел процесса
                 </span>
-                <span className="font-mono text-[9px] font-bold text-cyan-300">
-                  ~{seqLive.confidence}%
-                </span>
               </div>
               <p className="mt-0.5 font-mono text-[10px] leading-snug text-holo/75">
                 {seqLive.title}
                 {!seqLive.allowedInRegime ? ' · regime off' : ''}
               </p>
-              {seqLive.histWr && seqLive.histWr.decided >= 3 && (
-                <p className="mt-0.5 font-mono text-[8px] text-holo/40">
-                  Journal WR {seqLive.histWr.winRate?.toFixed(0) ?? '—'}% (n=
-                  {seqLive.histWr.decided})
-                </p>
-              )}
             </div>
           )}
 
@@ -173,11 +164,6 @@ const SignalNowPanel = ({
                 >
                   {primary.side !== 'FLAT' ? `${primary.side} · ` : ''}
                   {primary.title}
-                </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="font-mono text-[16px] font-bold text-amber-100">
-                  {primary.winPct}%
                 </div>
               </div>
             </div>
@@ -235,8 +221,7 @@ const SignalNowPanel = ({
           >
             {liveMarket.nearestBounce.side} от{' '}
             {liveMarket.nearestBounce.zoneLabel} @{' '}
-            {fmtPx(liveMarket.nearestBounce.zoneMid)} · ~
-            {liveMarket.nearestBounce.winPct}%
+            {fmtPx(liveMarket.nearestBounce.zoneMid)}
           </div>
           {liveMarket.nearestBounce.targets.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
@@ -317,11 +302,6 @@ const SignalNowPanel = ({
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-[9px] text-holo/40">
                       {kindTag(sc.kind)}
-                    </span>
-                    <span
-                      className={`font-mono text-[11px] font-bold ${sideColor(sc.side)}`}
-                    >
-                      {sc.winPct}%
                     </span>
                   </div>
                   <div className={`font-mono text-[10px] font-bold ${sideColor(sc.side)}`}>

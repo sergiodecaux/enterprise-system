@@ -1,0 +1,6650 @@
+{
+  "calibratedAt": "2026-10-11T07:52:47.185Z",
+  "universe": "blue-chip-pinned",
+  "minSamples": 30,
+  "minUniqueWeeks": 8,
+  "wideInterval": 0.4,
+  "horizons": [
+    5,
+    20,
+    50
+  ],
+  "holdoutWeeks": 8,
+  "oiHistory": "unavailable",
+  "staleAfterDays": 90,
+  "weekSource": "aggregateWeekly(native Day1), Monday UTC, same function as useMultiTFAnalysis. No Week1 request exists in the app.",
+  "daySource": "native Day1",
+  "axes": [
+    "body",
+    "htfZone"
+  ],
+  "comparisons": 30,
+  "familyAlpha": 0.05,
+  "adjustedZ": 3.143980285047065,
+  "symbols": [
+    "BTC/USDT:USDT",
+    "ETH/USDT:USDT",
+    "SOL/USDT:USDT",
+    "BNB/USDT:USDT",
+    "XRP/USDT:USDT",
+    "AVAX/USDT:USDT",
+    "LINK/USDT:USDT",
+    "SUI/USDT:USDT",
+    "TON/USDT:USDT"
+  ],
+  "fromMs": 1745048875523,
+  "toMs": 1791704875523,
+  "totals": {
+    "eventsLabeled": 4280,
+    "trainEvents": 3414,
+    "holdoutEvents": 866,
+    "groups": 64,
+    "groupsOk": 30,
+    "groupsInsufficient": 34,
+    "groupsWide": 0,
+    "groupsConcentrated": 0,
+    "groupsSignificant": 0,
+    "groupsSurvive": 0
+  },
+  "checks": {
+    "significantVsRandom": "Bonferroni lower bound (family = groups with n >= minSamples, family-wise alpha 0.05) is above 0.5. wilsonLo stays the unadjusted 95% bound.",
+    "avgRR": "avgMfeAtr / avgMaeAtr on the 50-bar horizon",
+    "invalidatedShare": "1 - winRate - undecidedShare",
+    "survives": "train status ok, train significant after Bonferroni, holdout unadjusted Wilson lower bound above 0.5, avgRR > 1, holdout n >= 10, not overfit",
+    "rawEventsPersisted": true
+  },
+  "groups": [
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 373,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 63,
+      "status": "ok",
+      "winRate": 0.41823056300268097,
+      "undecidedShare": 0.02680965147453083,
+      "invalidatedShare": 0.5549597855227881,
+      "avgRR": 0.9223552610830842,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3410579680671988,
+      "avgMfeAtr": 3.947644905354265,
+      "avgMaeAtr": 4.27996139005995,
+      "medianBarsToTarget": 6,
+      "wilsonLo": 0.369253647947663,
+      "wilsonHi": 0.46887462663773316,
+      "wilsonWidth": 0.09962097869007014,
+      "window": {
+        "firstMs": 1745280000000,
+        "lastMs": 1786741200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 74,
+            "firstMs": 1745280000000,
+            "lastMs": 1786658400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 95,
+            "firstMs": 1745668800000,
+            "lastMs": 1786734000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 33,
+            "firstMs": 1776733200000,
+            "lastMs": 1786597200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 33,
+            "firstMs": 1776682800000,
+            "lastMs": 1786132800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 39,
+            "firstMs": 1776618000000,
+            "lastMs": 1785484800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 42,
+            "firstMs": 1776402000000,
+            "lastMs": 1786741200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 32,
+            "firstMs": 1776618000000,
+            "lastMs": 1786276800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 25,
+            "firstMs": 1776668400000,
+            "lastMs": 1786420800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 373,
+          "hitBeforeInvalidation": 0.19839142091152814,
+          "undecidedShare": 0.5040214477211796,
+          "avgMfeAtr": 1.1099825279478952,
+          "avgMaeAtr": 1.2350958192306107
+        },
+        "20": {
+          "n": 373,
+          "hitBeforeInvalidation": 0.3806970509383378,
+          "undecidedShare": 0.11528150134048257,
+          "avgMfeAtr": 2.518143703819604,
+          "avgMaeAtr": 2.706764626477782
+        },
+        "50": {
+          "n": 373,
+          "hitBeforeInvalidation": 0.41823056300268097,
+          "undecidedShare": 0.02680965147453083,
+          "avgMfeAtr": 3.947644905354265,
+          "avgMaeAtr": 4.27996139005995
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 290,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 59,
+      "status": "ok",
+      "winRate": 0.41379310344827586,
+      "undecidedShare": 0.07931034482758621,
+      "invalidatedShare": 0.506896551724138,
+      "avgRR": 0.9630836432335022,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3271725236597673,
+      "avgMfeAtr": 3.8280873547950494,
+      "avgMaeAtr": 3.9748233517313714,
+      "medianBarsToTarget": 5.5,
+      "wilsonLo": 0.358594852268953,
+      "wilsonHi": 0.47124544263823515,
+      "wilsonWidth": 0.11265059036928216,
+      "window": {
+        "firstMs": 1745301600000,
+        "lastMs": 1786762800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 64,
+            "firstMs": 1745301600000,
+            "lastMs": 1786734000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 73,
+            "firstMs": 1745434800000,
+            "lastMs": 1784721600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 28,
+            "firstMs": 1776448800000,
+            "lastMs": 1786518000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 22,
+            "firstMs": 1776384000000,
+            "lastMs": 1785517200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 20,
+            "firstMs": 1777471200000,
+            "lastMs": 1786762800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 33,
+            "firstMs": 1776459600000,
+            "lastMs": 1785600000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 31,
+            "firstMs": 1776531600000,
+            "lastMs": 1786734000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 19,
+            "firstMs": 1776398400000,
+            "lastMs": 1786132800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 290,
+          "hitBeforeInvalidation": 0.20689655172413793,
+          "undecidedShare": 0.49310344827586206,
+          "avgMfeAtr": 1.0729171932456132,
+          "avgMaeAtr": 1.3057879013308298
+        },
+        "20": {
+          "n": 290,
+          "hitBeforeInvalidation": 0.3758620689655172,
+          "undecidedShare": 0.16551724137931034,
+          "avgMfeAtr": 2.4149713810010347,
+          "avgMaeAtr": 2.6474759741411242
+        },
+        "50": {
+          "n": 290,
+          "hitBeforeInvalidation": 0.41379310344827586,
+          "undecidedShare": 0.07931034482758621,
+          "avgMfeAtr": 3.8280873547950494,
+          "avgMaeAtr": 3.9748233517313714
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 231,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 53,
+      "status": "ok",
+      "winRate": 0.48917748917748916,
+      "undecidedShare": 0.03463203463203463,
+      "invalidatedShare": 0.4761904761904762,
+      "avgRR": 0.954855669617949,
+      "significantVsRandom": false,
+      "adjustedLo": 0.38835930564014715,
+      "avgMfeAtr": 4.127199042792151,
+      "avgMaeAtr": 4.322327629309151,
+      "medianBarsToTarget": 5,
+      "wilsonLo": 0.4254195565070018,
+      "wilsonHi": 0.5532894967442109,
+      "wilsonWidth": 0.1278699402372091,
+      "window": {
+        "firstMs": 1745294400000,
+        "lastMs": 1786654800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 44,
+            "firstMs": 1745496000000,
+            "lastMs": 1781874000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 54,
+            "firstMs": 1745294400000,
+            "lastMs": 1786654800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 23,
+            "firstMs": 1776625200000,
+            "lastMs": 1785974400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 22,
+            "firstMs": 1777341600000,
+            "lastMs": 1785182400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 17,
+            "firstMs": 1776823200000,
+            "lastMs": 1785628800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 28,
+            "firstMs": 1776549600000,
+            "lastMs": 1786334400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 30,
+            "firstMs": 1776657600000,
+            "lastMs": 1786327200000
+          },
+          "SUI/USDT:USDT": {
+            "n": 13,
+            "firstMs": 1776823200000,
+            "lastMs": 1786003200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 231,
+          "hitBeforeInvalidation": 0.2683982683982684,
+          "undecidedShare": 0.43722943722943725,
+          "avgMfeAtr": 1.193102262015461,
+          "avgMaeAtr": 1.1877246997884756
+        },
+        "20": {
+          "n": 231,
+          "hitBeforeInvalidation": 0.46320346320346323,
+          "undecidedShare": 0.08658008658008658,
+          "avgMfeAtr": 2.4171917844764392,
+          "avgMaeAtr": 2.463043132355787
+        },
+        "50": {
+          "n": 231,
+          "hitBeforeInvalidation": 0.48917748917748916,
+          "undecidedShare": 0.03463203463203463,
+          "avgMfeAtr": 4.127199042792151,
+          "avgMaeAtr": 4.322327629309151
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 171,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 53,
+      "status": "ok",
+      "winRate": 0.4152046783625731,
+      "undecidedShare": 0.08771929824561403,
+      "invalidatedShare": 0.49707602339181284,
+      "avgRR": 0.8645359662373744,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3045559560343766,
+      "avgMfeAtr": 3.7536426336145894,
+      "avgMaeAtr": 4.341800434227345,
+      "medianBarsToTarget": 3,
+      "wilsonLo": 0.34400302705250496,
+      "wilsonHi": 0.49013255624117336,
+      "wilsonWidth": 0.1461295291886684,
+      "window": {
+        "firstMs": 1746676800000,
+        "lastMs": 1786759200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 38,
+            "firstMs": 1746831600000,
+            "lastMs": 1785261600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 41,
+            "firstMs": 1746676800000,
+            "lastMs": 1784235600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 17,
+            "firstMs": 1777410000000,
+            "lastMs": 1786759200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 19,
+            "firstMs": 1777618800000,
+            "lastMs": 1786330800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 17,
+            "firstMs": 1778122800000,
+            "lastMs": 1786478400000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1776668400000,
+            "lastMs": 1785373200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 20,
+            "firstMs": 1778137200000,
+            "lastMs": 1786554000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1777276800000,
+            "lastMs": 1782219600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 171,
+          "hitBeforeInvalidation": 0.27485380116959063,
+          "undecidedShare": 0.4853801169590643,
+          "avgMfeAtr": 1.3774815591477954,
+          "avgMaeAtr": 1.1435750514832266
+        },
+        "20": {
+          "n": 171,
+          "hitBeforeInvalidation": 0.38011695906432746,
+          "undecidedShare": 0.19883040935672514,
+          "avgMfeAtr": 2.3487740008040436,
+          "avgMaeAtr": 2.5627317991505114
+        },
+        "50": {
+          "n": 171,
+          "hitBeforeInvalidation": 0.4152046783625731,
+          "undecidedShare": 0.08771929824561403,
+          "avgMfeAtr": 3.7536426336145894,
+          "avgMaeAtr": 4.341800434227345
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 132,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 42,
+      "status": "ok",
+      "winRate": 0.3712121212121212,
+      "undecidedShare": 0.17424242424242425,
+      "invalidatedShare": 0.45454545454545453,
+      "avgRR": 1.3809284859390603,
+      "significantVsRandom": false,
+      "adjustedLo": 0.25234995373957464,
+      "avgMfeAtr": 4.136833357277994,
+      "avgMaeAtr": 2.99568978364934,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.29352649022408883,
+      "wilsonHi": 0.45618199377492175,
+      "wilsonWidth": 0.16265550355083291,
+      "window": {
+        "firstMs": 1745316000000,
+        "lastMs": 1786024800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 42,
+            "firstMs": 1746262800000,
+            "lastMs": 1785646800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1745316000000,
+            "lastMs": 1784034000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1776384000000,
+            "lastMs": 1783580400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 22,
+            "firstMs": 1776510000000,
+            "lastMs": 1785981600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 17,
+            "firstMs": 1776492000000,
+            "lastMs": 1786024800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1778259600000,
+            "lastMs": 1782496800000
+          },
+          "LINK/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1776384000000,
+            "lastMs": 1784041200000
+          },
+          "SUI/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1777276800000,
+            "lastMs": 1783580400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 132,
+          "hitBeforeInvalidation": 0.2727272727272727,
+          "undecidedShare": 0.4696969696969697,
+          "avgMfeAtr": 1.3708952125533738,
+          "avgMaeAtr": 1.1295021249481663
+        },
+        "20": {
+          "n": 132,
+          "hitBeforeInvalidation": 0.3409090909090909,
+          "undecidedShare": 0.2803030303030303,
+          "avgMfeAtr": 2.8825472141627815,
+          "avgMaeAtr": 2.098500298228415
+        },
+        "50": {
+          "n": 132,
+          "hitBeforeInvalidation": 0.3712121212121212,
+          "undecidedShare": 0.17424242424242425,
+          "avgMfeAtr": 4.136833357277994,
+          "avgMaeAtr": 2.99568978364934
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 123,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 44,
+      "status": "ok",
+      "winRate": 0.3252032520325203,
+      "undecidedShare": 0.1951219512195122,
+      "invalidatedShare": 0.4796747967479675,
+      "avgRR": 1.1124808590240396,
+      "significantVsRandom": false,
+      "adjustedLo": 0.20978221067715908,
+      "avgMfeAtr": 3.759200817788146,
+      "avgMaeAtr": 3.379115053796097,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.24880085370854418,
+      "wilsonHi": 0.41219364651851065,
+      "wilsonWidth": 0.16339279280996646,
+      "window": {
+        "firstMs": 1745341200000,
+        "lastMs": 1786770000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 33,
+            "firstMs": 1747069200000,
+            "lastMs": 1782136800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1745341200000,
+            "lastMs": 1782763200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1776384000000,
+            "lastMs": 1786536000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1776384000000,
+            "lastMs": 1786197600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776384000000,
+            "lastMs": 1786294800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 16,
+            "firstMs": 1776384000000,
+            "lastMs": 1786770000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1776384000000,
+            "lastMs": 1782993600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 13,
+            "firstMs": 1776384000000,
+            "lastMs": 1786208400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 123,
+          "hitBeforeInvalidation": 0.21138211382113822,
+          "undecidedShare": 0.5121951219512195,
+          "avgMfeAtr": 1.3486680138802276,
+          "avgMaeAtr": 1.1367764506450928
+        },
+        "20": {
+          "n": 123,
+          "hitBeforeInvalidation": 0.2926829268292683,
+          "undecidedShare": 0.2845528455284553,
+          "avgMfeAtr": 2.544302517878618,
+          "avgMaeAtr": 2.2305137852506456
+        },
+        "50": {
+          "n": 123,
+          "hitBeforeInvalidation": 0.3252032520325203,
+          "undecidedShare": 0.1951219512195122,
+          "avgMfeAtr": 3.759200817788146,
+          "avgMaeAtr": 3.379115053796097
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "RECLAIM",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 121,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 37,
+      "status": "ok",
+      "winRate": 0.5206611570247934,
+      "undecidedShare": 0.01652892561983471,
+      "invalidatedShare": 0.46280991735537186,
+      "avgRR": 1.4216327461340068,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3818033447161372,
+      "avgMfeAtr": 5.9726715226021545,
+      "avgMaeAtr": 4.201275989768988,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.43238853029085866,
+      "wilsonHi": 0.6076622220224729,
+      "wilsonWidth": 0.17527369173161422,
+      "window": {
+        "firstMs": 1749038400000,
+        "lastMs": 1786852800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 22,
+            "firstMs": 1749038400000,
+            "lastMs": 1786766400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 26,
+            "firstMs": 1749110400000,
+            "lastMs": 1786694400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 13,
+            "firstMs": 1777449600000,
+            "lastMs": 1786795200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1777939200000,
+            "lastMs": 1786852800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1777651200000,
+            "lastMs": 1786363200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1777852800000,
+            "lastMs": 1786838400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1779523200000,
+            "lastMs": 1785412800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 19,
+            "firstMs": 1777680000000,
+            "lastMs": 1786766400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 121,
+          "hitBeforeInvalidation": 0.3305785123966942,
+          "undecidedShare": 0.4380165289256198,
+          "avgMfeAtr": 1.2797813080345855,
+          "avgMaeAtr": 1.0491520175066607
+        },
+        "20": {
+          "n": 121,
+          "hitBeforeInvalidation": 0.512396694214876,
+          "undecidedShare": 0.09090909090909091,
+          "avgMfeAtr": 2.5655956702206426,
+          "avgMaeAtr": 2.264104625429379
+        },
+        "50": {
+          "n": 121,
+          "hitBeforeInvalidation": 0.5206611570247934,
+          "undecidedShare": 0.01652892561983471,
+          "avgMfeAtr": 5.9726715226021545,
+          "avgMaeAtr": 4.201275989768988
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 120,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 41,
+      "status": "ok",
+      "winRate": 0.44166666666666665,
+      "undecidedShare": 0.03333333333333333,
+      "invalidatedShare": 0.525,
+      "avgRR": 1.045099208002751,
+      "significantVsRandom": false,
+      "adjustedLo": 0.30904214652749806,
+      "avgMfeAtr": 4.481792108064487,
+      "avgMaeAtr": 4.288389153628264,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.3559959731595542,
+      "wilsonHi": 0.530956391796971,
+      "wilsonWidth": 0.17496041863741674,
+      "window": {
+        "firstMs": 1745690400000,
+        "lastMs": 1786845600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 35,
+            "firstMs": 1745690400000,
+            "lastMs": 1786536000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1746025200000,
+            "lastMs": 1782370800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776718800000,
+            "lastMs": 1783360800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1776945600000,
+            "lastMs": 1786845600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 16,
+            "firstMs": 1777147200000,
+            "lastMs": 1785171600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1776517200000,
+            "lastMs": 1786298400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1776546000000,
+            "lastMs": 1786420800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1777024800000,
+            "lastMs": 1786168800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 120,
+          "hitBeforeInvalidation": 0.30833333333333335,
+          "undecidedShare": 0.325,
+          "avgMfeAtr": 1.2653722052365708,
+          "avgMaeAtr": 1.2689393865521479
+        },
+        "20": {
+          "n": 120,
+          "hitBeforeInvalidation": 0.4166666666666667,
+          "undecidedShare": 0.10833333333333334,
+          "avgMfeAtr": 2.7498535047348787,
+          "avgMaeAtr": 2.5326307894260647
+        },
+        "50": {
+          "n": 120,
+          "hitBeforeInvalidation": 0.44166666666666665,
+          "undecidedShare": 0.03333333333333333,
+          "avgMfeAtr": 4.481792108064487,
+          "avgMaeAtr": 4.288389153628264
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 113,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 38,
+      "status": "ok",
+      "winRate": 0.46017699115044247,
+      "undecidedShare": 0.04424778761061947,
+      "invalidatedShare": 0.495575221238938,
+      "avgRR": 0.8633142222120789,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3219863758316772,
+      "avgMfeAtr": 4.1309819825489225,
+      "avgMaeAtr": 4.785027138744529,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.37110242693962714,
+      "wilsonHi": 0.551870212942059,
+      "wilsonWidth": 0.18076778600243182,
+      "window": {
+        "firstMs": 1745280000000,
+        "lastMs": 1786759200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 25,
+            "firstMs": 1745280000000,
+            "lastMs": 1785952800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 20,
+            "firstMs": 1745856000000,
+            "lastMs": 1783832400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776715200000,
+            "lastMs": 1784656800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 18,
+            "firstMs": 1777125600000,
+            "lastMs": 1786759200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1778860800000,
+            "lastMs": 1785888000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1777442400000,
+            "lastMs": 1785654000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1776715200000,
+            "lastMs": 1786280400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1777442400000,
+            "lastMs": 1786381200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 113,
+          "hitBeforeInvalidation": 0.35398230088495575,
+          "undecidedShare": 0.2920353982300885,
+          "avgMfeAtr": 1.4214457693198548,
+          "avgMaeAtr": 1.0286459960647951
+        },
+        "20": {
+          "n": 113,
+          "hitBeforeInvalidation": 0.4336283185840708,
+          "undecidedShare": 0.12389380530973451,
+          "avgMfeAtr": 2.528709030965028,
+          "avgMaeAtr": 2.85054027545237
+        },
+        "50": {
+          "n": 113,
+          "hitBeforeInvalidation": 0.46017699115044247,
+          "undecidedShare": 0.04424778761061947,
+          "avgMfeAtr": 4.1309819825489225,
+          "avgMaeAtr": 4.785027138744529
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 106,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 38,
+      "status": "ok",
+      "winRate": 0.3867924528301887,
+      "undecidedShare": 0.1509433962264151,
+      "invalidatedShare": 0.46226415094339623,
+      "avgRR": 0.9738224727818587,
+      "significantVsRandom": false,
+      "adjustedLo": 0.25388527309439146,
+      "avgMfeAtr": 3.875513054558047,
+      "avgMaeAtr": 3.979691538116909,
+      "medianBarsToTarget": 5,
+      "wilsonLo": 0.29958735620971916,
+      "wilsonHi": 0.4819161907160358,
+      "wilsonWidth": 0.18232883450631665,
+      "window": {
+        "firstMs": 1745431200000,
+        "lastMs": 1786759200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 31,
+            "firstMs": 1745431200000,
+            "lastMs": 1785517200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1746201600000,
+            "lastMs": 1783303200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1778194800000,
+            "lastMs": 1786366800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1776715200000,
+            "lastMs": 1784916000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1777442400000,
+            "lastMs": 1786366800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1776384000000,
+            "lastMs": 1783065600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1778119200000,
+            "lastMs": 1784710800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1778119200000,
+            "lastMs": 1786759200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 106,
+          "hitBeforeInvalidation": 0.19811320754716982,
+          "undecidedShare": 0.5754716981132075,
+          "avgMfeAtr": 1.271174634668932,
+          "avgMaeAtr": 1.204895385150749
+        },
+        "20": {
+          "n": 106,
+          "hitBeforeInvalidation": 0.330188679245283,
+          "undecidedShare": 0.3018867924528302,
+          "avgMfeAtr": 2.6254189554289624,
+          "avgMaeAtr": 2.3088008908901765
+        },
+        "50": {
+          "n": 106,
+          "hitBeforeInvalidation": 0.3867924528301887,
+          "undecidedShare": 0.1509433962264151,
+          "avgMfeAtr": 3.875513054558047,
+          "avgMaeAtr": 3.979691538116909
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "RECLAIM",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 96,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 35,
+      "status": "ok",
+      "winRate": 0.5104166666666666,
+      "undecidedShare": 0.041666666666666664,
+      "invalidatedShare": 0.4479166666666667,
+      "avgRR": 1.624273130166437,
+      "significantVsRandom": false,
+      "adjustedLo": 0.35670595189076265,
+      "avgMfeAtr": 5.7334479904223885,
+      "avgMaeAtr": 3.5298546063092786,
+      "medianBarsToTarget": 3,
+      "wilsonLo": 0.41195862420919654,
+      "wilsonHi": 0.6080731060515364,
+      "wilsonWidth": 0.19611448184233987,
+      "window": {
+        "firstMs": 1745539200000,
+        "lastMs": 1786795200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 25,
+            "firstMs": 1745539200000,
+            "lastMs": 1784606400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 16,
+            "firstMs": 1745712000000,
+            "lastMs": 1782633600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1776484800000,
+            "lastMs": 1784347200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776384000000,
+            "lastMs": 1782964800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1779609600000,
+            "lastMs": 1786795200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1776499200000,
+            "lastMs": 1783296000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776513600000,
+            "lastMs": 1782532800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776556800000,
+            "lastMs": 1782374400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 96,
+          "hitBeforeInvalidation": 0.3541666666666667,
+          "undecidedShare": 0.34375,
+          "avgMfeAtr": 1.1840478529887175,
+          "avgMaeAtr": 1.230478033109594
+        },
+        "20": {
+          "n": 96,
+          "hitBeforeInvalidation": 0.46875,
+          "undecidedShare": 0.13541666666666666,
+          "avgMfeAtr": 2.5920995802295304,
+          "avgMaeAtr": 2.301206075415117
+        },
+        "50": {
+          "n": 96,
+          "hitBeforeInvalidation": 0.5104166666666666,
+          "undecidedShare": 0.041666666666666664,
+          "avgMfeAtr": 5.7334479904223885,
+          "avgMaeAtr": 3.5298546063092786
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 95,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 44,
+      "status": "ok",
+      "winRate": 0.43157894736842106,
+      "undecidedShare": 0.010526315789473684,
+      "invalidatedShare": 0.5578947368421052,
+      "avgRR": 1.4352341518754335,
+      "significantVsRandom": false,
+      "adjustedLo": 0.28583952104853766,
+      "avgMfeAtr": 5.2390830606988334,
+      "avgMaeAtr": 3.65033332982836,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.336556700478959,
+      "wilsonHi": 0.5319197304974721,
+      "wilsonWidth": 0.19536303001851307,
+      "window": {
+        "firstMs": 1746079200000,
+        "lastMs": 1786608000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 32,
+            "firstMs": 1746079200000,
+            "lastMs": 1785787200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1747443600000,
+            "lastMs": 1782716400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1777111200000,
+            "lastMs": 1786114800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1776574800000,
+            "lastMs": 1785337200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1777132800000,
+            "lastMs": 1782885600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776726000000,
+            "lastMs": 1784520000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1777143600000,
+            "lastMs": 1786042800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776920400000,
+            "lastMs": 1786608000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 95,
+          "hitBeforeInvalidation": 0.3157894736842105,
+          "undecidedShare": 0.2631578947368421,
+          "avgMfeAtr": 1.2597202825360798,
+          "avgMaeAtr": 1.0582194965655778
+        },
+        "20": {
+          "n": 95,
+          "hitBeforeInvalidation": 0.42105263157894735,
+          "undecidedShare": 0.042105263157894736,
+          "avgMfeAtr": 3.217435680367259,
+          "avgMaeAtr": 2.0266948397338966
+        },
+        "50": {
+          "n": 95,
+          "hitBeforeInvalidation": 0.43157894736842106,
+          "undecidedShare": 0.010526315789473684,
+          "avgMfeAtr": 5.2390830606988334,
+          "avgMaeAtr": 3.65033332982836
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 84,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 32,
+      "status": "ok",
+      "winRate": 0.32142857142857145,
+      "undecidedShare": 0.13095238095238096,
+      "invalidatedShare": 0.5476190476190477,
+      "avgRR": 0.847765943374087,
+      "significantVsRandom": false,
+      "adjustedLo": 0.18752920872215548,
+      "avgMfeAtr": 3.5487277197287392,
+      "avgMaeAtr": 4.185975796108172,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.23125977350162447,
+      "wilsonHi": 0.42721639268842665,
+      "wilsonWidth": 0.19595661918680218,
+      "window": {
+        "firstMs": 1745323200000,
+        "lastMs": 1786500000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 16,
+            "firstMs": 1745323200000,
+            "lastMs": 1782579600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1745488800000,
+            "lastMs": 1782928800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776646800000,
+            "lastMs": 1785427200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1776769200000,
+            "lastMs": 1786500000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776765600000,
+            "lastMs": 1786201200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776574800000,
+            "lastMs": 1785117600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776567600000,
+            "lastMs": 1782252000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1776574800000,
+            "lastMs": 1785420000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 84,
+          "hitBeforeInvalidation": 0.25,
+          "undecidedShare": 0.4166666666666667,
+          "avgMfeAtr": 1.0569866226876936,
+          "avgMaeAtr": 1.2634421239146474
+        },
+        "20": {
+          "n": 84,
+          "hitBeforeInvalidation": 0.30952380952380953,
+          "undecidedShare": 0.16666666666666666,
+          "avgMfeAtr": 2.161000296585204,
+          "avgMaeAtr": 2.6847036781303166
+        },
+        "50": {
+          "n": 84,
+          "hitBeforeInvalidation": 0.32142857142857145,
+          "undecidedShare": 0.13095238095238096,
+          "avgMfeAtr": 3.5487277197287392,
+          "avgMaeAtr": 4.185975796108172
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 84,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 36,
+      "status": "ok",
+      "winRate": 0.39285714285714285,
+      "undecidedShare": 0.023809523809523808,
+      "invalidatedShare": 0.5833333333333334,
+      "avgRR": 1.3140054368875485,
+      "significantVsRandom": false,
+      "adjustedLo": 0.2452672691444037,
+      "avgMfeAtr": 4.523801819718928,
+      "avgMaeAtr": 3.4427573073322613,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.2953018006281275,
+      "wilsonHi": 0.49978389908590315,
+      "wilsonWidth": 0.20448209845777565,
+      "window": {
+        "firstMs": 1745971200000,
+        "lastMs": 1786550400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 26,
+            "firstMs": 1745985600000,
+            "lastMs": 1781449200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1745971200000,
+            "lastMs": 1783584000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776974400000,
+            "lastMs": 1785970800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1779026400000,
+            "lastMs": 1786179600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1776726000000,
+            "lastMs": 1784440800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1776513600000,
+            "lastMs": 1786550400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776816000000,
+            "lastMs": 1785283200000
+          },
+          "SUI/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776715200000,
+            "lastMs": 1785596400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 84,
+          "hitBeforeInvalidation": 0.27380952380952384,
+          "undecidedShare": 0.23809523809523808,
+          "avgMfeAtr": 1.115605486927969,
+          "avgMaeAtr": 1.1529696808975236
+        },
+        "20": {
+          "n": 84,
+          "hitBeforeInvalidation": 0.34523809523809523,
+          "undecidedShare": 0.09523809523809523,
+          "avgMfeAtr": 2.6483339979860725,
+          "avgMaeAtr": 2.2127910702244735
+        },
+        "50": {
+          "n": 84,
+          "hitBeforeInvalidation": 0.39285714285714285,
+          "undecidedShare": 0.023809523809523808,
+          "avgMfeAtr": 4.523801819718928,
+          "avgMaeAtr": 3.4427573073322613
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 79,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 33,
+      "status": "ok",
+      "winRate": 0.3924050632911392,
+      "undecidedShare": 0.05063291139240506,
+      "invalidatedShare": 0.5569620253164557,
+      "avgRR": 0.7688897703400184,
+      "significantVsRandom": false,
+      "adjustedLo": 0.24109894156990663,
+      "avgMfeAtr": 3.5355917580191516,
+      "avgMaeAtr": 4.598307708601251,
+      "medianBarsToTarget": 1,
+      "wilsonLo": 0.29212697667380405,
+      "wilsonHi": 0.5026621147971477,
+      "wilsonWidth": 0.21053513812334368,
+      "window": {
+        "firstMs": 1745809200000,
+        "lastMs": 1786168800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 18,
+            "firstMs": 1746028800000,
+            "lastMs": 1781175600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1745809200000,
+            "lastMs": 1759856400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777867200000,
+            "lastMs": 1784570400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 13,
+            "firstMs": 1777867200000,
+            "lastMs": 1785384000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1777284000000,
+            "lastMs": 1785420000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1777140000000,
+            "lastMs": 1786161600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776546000000,
+            "lastMs": 1781208000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776999600000,
+            "lastMs": 1786168800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 79,
+          "hitBeforeInvalidation": 0.34177215189873417,
+          "undecidedShare": 0.26582278481012656,
+          "avgMfeAtr": 1.2901164186676235,
+          "avgMaeAtr": 1.0233628556101568
+        },
+        "20": {
+          "n": 79,
+          "hitBeforeInvalidation": 0.3924050632911392,
+          "undecidedShare": 0.10126582278481013,
+          "avgMfeAtr": 2.2682646178586827,
+          "avgMaeAtr": 2.363710887081749
+        },
+        "50": {
+          "n": 79,
+          "hitBeforeInvalidation": 0.3924050632911392,
+          "undecidedShare": 0.05063291139240506,
+          "avgMfeAtr": 3.5355917580191516,
+          "avgMaeAtr": 4.598307708601251
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 74,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 31,
+      "status": "ok",
+      "winRate": 0.3783783783783784,
+      "undecidedShare": 0.08108108108108109,
+      "invalidatedShare": 0.5405405405405406,
+      "avgRR": 1.0314864844279776,
+      "significantVsRandom": false,
+      "adjustedLo": 0.2256129713085,
+      "avgMfeAtr": 4.269401473015797,
+      "avgMaeAtr": 4.13907650509201,
+      "medianBarsToTarget": 3,
+      "wilsonLo": 0.2764736658122867,
+      "wilsonHi": 0.492287510730847,
+      "wilsonWidth": 0.21581384491856026,
+      "window": {
+        "firstMs": 1746100800000,
+        "lastMs": 1786644000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 19,
+            "firstMs": 1746100800000,
+            "lastMs": 1782550800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1747080000000,
+            "lastMs": 1782558000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1777251600000,
+            "lastMs": 1785423600000
+          },
+          "BNB/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1776384000000,
+            "lastMs": 1786644000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776844800000,
+            "lastMs": 1786201200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1778587200000,
+            "lastMs": 1785006000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1778598000000,
+            "lastMs": 1784660400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1776513600000,
+            "lastMs": 1785261600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 74,
+          "hitBeforeInvalidation": 0.2972972972972973,
+          "undecidedShare": 0.3783783783783784,
+          "avgMfeAtr": 1.3191347002883382,
+          "avgMaeAtr": 1.1556128000325445
+        },
+        "20": {
+          "n": 74,
+          "hitBeforeInvalidation": 0.35135135135135137,
+          "undecidedShare": 0.14864864864864866,
+          "avgMfeAtr": 2.3973311485607525,
+          "avgMaeAtr": 2.4561823407911163
+        },
+        "50": {
+          "n": 74,
+          "hitBeforeInvalidation": 0.3783783783783784,
+          "undecidedShare": 0.08108108108108109,
+          "avgMfeAtr": 4.269401473015797,
+          "avgMaeAtr": 4.13907650509201
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:weak|htf:0",
+      "event": "CHOCH",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 72,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 31,
+      "status": "ok",
+      "winRate": 0.5,
+      "undecidedShare": 0.08333333333333333,
+      "invalidatedShare": 0.4166666666666667,
+      "avgRR": 0.8360225963198047,
+      "significantVsRandom": false,
+      "adjustedLo": 0.32628046006650446,
+      "avgMfeAtr": 3.5828450995523795,
+      "avgMaeAtr": 4.28558404440761,
+      "medianBarsToTarget": 3,
+      "wilsonLo": 0.3874689600472425,
+      "wilsonHi": 0.6125310399527575,
+      "wilsonWidth": 0.22506207990551497,
+      "window": {
+        "firstMs": 1745280000000,
+        "lastMs": 1786762800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1746813600000,
+            "lastMs": 1783162800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1745280000000,
+            "lastMs": 1783256400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1777618800000,
+            "lastMs": 1785956400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1777647600000,
+            "lastMs": 1786586400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1776384000000,
+            "lastMs": 1786363200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776592800000,
+            "lastMs": 1786762800000
+          },
+          "LINK/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1776510000000,
+            "lastMs": 1786762800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1776384000000,
+            "lastMs": 1785045600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 72,
+          "hitBeforeInvalidation": 0.3472222222222222,
+          "undecidedShare": 0.3611111111111111,
+          "avgMfeAtr": 1.0395108815565306,
+          "avgMaeAtr": 1.300660014597298
+        },
+        "20": {
+          "n": 72,
+          "hitBeforeInvalidation": 0.4722222222222222,
+          "undecidedShare": 0.1388888888888889,
+          "avgMfeAtr": 2.0525836550893266,
+          "avgMaeAtr": 2.685098493101622
+        },
+        "50": {
+          "n": 72,
+          "hitBeforeInvalidation": 0.5,
+          "undecidedShare": 0.08333333333333333,
+          "avgMfeAtr": 3.5828450995523795,
+          "avgMaeAtr": 4.28558404440761
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 68,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 31,
+      "status": "ok",
+      "winRate": 0.3088235294117647,
+      "undecidedShare": 0.19117647058823528,
+      "invalidatedShare": 0.5,
+      "avgRR": 1.2381553887484216,
+      "significantVsRandom": false,
+      "adjustedLo": 0.1667176029963951,
+      "avgMfeAtr": 4.231390618084063,
+      "avgMaeAtr": 3.4174956201267492,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.21172233668927842,
+      "wilsonHi": 0.42637035612379925,
+      "wilsonWidth": 0.21464801943452083,
+      "window": {
+        "firstMs": 1745366400000,
+        "lastMs": 1786766400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 20,
+            "firstMs": 1745366400000,
+            "lastMs": 1783008000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1745366400000,
+            "lastMs": 1784073600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1778299200000,
+            "lastMs": 1783512000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776412800000,
+            "lastMs": 1781409600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1777305600000,
+            "lastMs": 1786464000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776859200000,
+            "lastMs": 1783123200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776859200000,
+            "lastMs": 1786766400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776643200000,
+            "lastMs": 1781366400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 68,
+          "hitBeforeInvalidation": 0.25,
+          "undecidedShare": 0.4852941176470588,
+          "avgMfeAtr": 1.4275629826850194,
+          "avgMaeAtr": 1.0354612233970057
+        },
+        "20": {
+          "n": 68,
+          "hitBeforeInvalidation": 0.29411764705882354,
+          "undecidedShare": 0.29411764705882354,
+          "avgMfeAtr": 2.8027103214749123,
+          "avgMaeAtr": 2.0852399010810676
+        },
+        "50": {
+          "n": 68,
+          "hitBeforeInvalidation": 0.3088235294117647,
+          "undecidedShare": 0.19117647058823528,
+          "avgMfeAtr": 4.231390618084063,
+          "avgMaeAtr": 3.4174956201267492
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 58,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 25,
+      "status": "ok",
+      "winRate": 0.5862068965517241,
+      "undecidedShare": 0.034482758620689655,
+      "invalidatedShare": 0.37931034482758624,
+      "avgRR": 0.9413331774700188,
+      "significantVsRandom": false,
+      "adjustedLo": 0.38529912172607167,
+      "avgMfeAtr": 3.8491770121562716,
+      "avgMaeAtr": 4.089069740962006,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.4579817755925391,
+      "wilsonHi": 0.7037216732186171,
+      "wilsonWidth": 0.245739897626078,
+      "window": {
+        "firstMs": 1746410400000,
+        "lastMs": 1785708000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1750165200000,
+            "lastMs": 1782925200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1746410400000,
+            "lastMs": 1751389200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1782745200000,
+            "lastMs": 1785708000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776574800000,
+            "lastMs": 1784624400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1776596400000,
+            "lastMs": 1782928800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776726000000,
+            "lastMs": 1785099600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776920400000,
+            "lastMs": 1782003600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1776520800000,
+            "lastMs": 1784466000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 58,
+          "hitBeforeInvalidation": 0.4827586206896552,
+          "undecidedShare": 0.27586206896551724,
+          "avgMfeAtr": 1.2245909231559264,
+          "avgMaeAtr": 1.1738068536870374
+        },
+        "20": {
+          "n": 58,
+          "hitBeforeInvalidation": 0.5517241379310345,
+          "undecidedShare": 0.08620689655172414,
+          "avgMfeAtr": 2.0657626243883245,
+          "avgMaeAtr": 2.4756067079097988
+        },
+        "50": {
+          "n": 58,
+          "hitBeforeInvalidation": 0.5862068965517241,
+          "undecidedShare": 0.034482758620689655,
+          "avgMfeAtr": 3.8491770121562716,
+          "avgMaeAtr": 4.089069740962006
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 53,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 24,
+      "status": "ok",
+      "winRate": 0.5094339622641509,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.49056603773584906,
+      "avgRR": 1.0475170112440793,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3097470489051346,
+      "avgMfeAtr": 5.149001472287716,
+      "avgMaeAtr": 4.915434706088949,
+      "medianBarsToTarget": 3,
+      "wilsonLo": 0.3788330425329779,
+      "wilsonHi": 0.6387597064396054,
+      "wilsonWidth": 0.25992666390662755,
+      "window": {
+        "firstMs": 1748563200000,
+        "lastMs": 1786795200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 17,
+            "firstMs": 1748563200000,
+            "lastMs": 1786161600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1765843200000,
+            "lastMs": 1786291200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777924800000,
+            "lastMs": 1785153600000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777824000000,
+            "lastMs": 1779321600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777824000000,
+            "lastMs": 1783396800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1777910400000,
+            "lastMs": 1786795200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1777896000000,
+            "lastMs": 1786348800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1777435200000,
+            "lastMs": 1784433600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.3584905660377358,
+          "undecidedShare": 0.22641509433962265,
+          "avgMfeAtr": 1.0662336642224437,
+          "avgMaeAtr": 1.2876282960989716
+        },
+        "20": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.4528301886792453,
+          "undecidedShare": 0.07547169811320754,
+          "avgMfeAtr": 2.459078354576949,
+          "avgMaeAtr": 2.753341040922664
+        },
+        "50": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.5094339622641509,
+          "undecidedShare": 0,
+          "avgMfeAtr": 5.149001472287716,
+          "avgMaeAtr": 4.915434706088949
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "RECLAIM",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 53,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 29,
+      "status": "ok",
+      "winRate": 0.49056603773584906,
+      "undecidedShare": 0.018867924528301886,
+      "invalidatedShare": 0.49056603773584906,
+      "avgRR": 0.6325173077714127,
+      "significantVsRandom": false,
+      "adjustedLo": 0.29384490738474206,
+      "avgMfeAtr": 3.4206451739701302,
+      "avgMaeAtr": 5.407986677901828,
+      "medianBarsToTarget": 4.5,
+      "wilsonLo": 0.36124029356039444,
+      "wilsonHi": 0.6211669574670219,
+      "wilsonWidth": 0.25992666390662744,
+      "window": {
+        "firstMs": 1746662400000,
+        "lastMs": 1786593600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 13,
+            "firstMs": 1748822400000,
+            "lastMs": 1785657600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1746662400000,
+            "lastMs": 1786593600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777809600000,
+            "lastMs": 1786132800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1780502400000,
+            "lastMs": 1786406400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1778155200000,
+            "lastMs": 1785672000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1779508800000,
+            "lastMs": 1785729600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1783684800000,
+            "lastMs": 1785672000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1782144000000,
+            "lastMs": 1786521600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.2830188679245283,
+          "undecidedShare": 0.37735849056603776,
+          "avgMfeAtr": 1.4010175635626225,
+          "avgMaeAtr": 1.448274214465194
+        },
+        "20": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.4716981132075472,
+          "undecidedShare": 0.1320754716981132,
+          "avgMfeAtr": 2.2428802549960105,
+          "avgMaeAtr": 3.1057750125513133
+        },
+        "50": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.49056603773584906,
+          "undecidedShare": 0.018867924528301886,
+          "avgMfeAtr": 3.4206451739701302,
+          "avgMaeAtr": 5.407986677901828
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 53,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 28,
+      "status": "ok",
+      "winRate": 0.4339622641509434,
+      "undecidedShare": 0.1320754716981132,
+      "invalidatedShare": 0.4339622641509434,
+      "avgRR": 1.2291213923810056,
+      "significantVsRandom": false,
+      "adjustedLo": 0.24757135164496855,
+      "avgMfeAtr": 4.064570518546056,
+      "avgMaeAtr": 3.30689103919372,
+      "medianBarsToTarget": 1,
+      "wilsonLo": 0.30950190698960345,
+      "wilsonHi": 0.5673488502023123,
+      "wilsonWidth": 0.25784694321270885,
+      "window": {
+        "firstMs": 1745366400000,
+        "lastMs": 1785110400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 16,
+            "firstMs": 1753444800000,
+            "lastMs": 1783008000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1745366400000,
+            "lastMs": 1784073600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1778716800000,
+            "lastMs": 1783684800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776398400000,
+            "lastMs": 1783166400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777305600000,
+            "lastMs": 1783094400000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776542400000,
+            "lastMs": 1781553600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776571200000,
+            "lastMs": 1785110400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776542400000,
+            "lastMs": 1782576000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.33962264150943394,
+          "undecidedShare": 0.4528301886792453,
+          "avgMfeAtr": 1.3766461308109674,
+          "avgMaeAtr": 0.8160818388932859
+        },
+        "20": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.4339622641509434,
+          "undecidedShare": 0.20754716981132076,
+          "avgMfeAtr": 2.6995882756059,
+          "avgMaeAtr": 2.052611377850135
+        },
+        "50": {
+          "n": 53,
+          "hitBeforeInvalidation": 0.4339622641509434,
+          "undecidedShare": 0.1320754716981132,
+          "avgMfeAtr": 4.064570518546056,
+          "avgMaeAtr": 3.30689103919372
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 49,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 25,
+      "status": "ok",
+      "winRate": 0.4489795918367347,
+      "undecidedShare": 0.04081632653061224,
+      "invalidatedShare": 0.510204081632653,
+      "avgRR": 1.1395731946689287,
+      "significantVsRandom": false,
+      "adjustedLo": 0.25357739798782586,
+      "avgMfeAtr": 5.042630175226958,
+      "avgMaeAtr": 4.425016487591176,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.3185262492963633,
+      "wilsonHi": 0.5868513320032188,
+      "wilsonWidth": 0.2683250827068555,
+      "window": {
+        "firstMs": 1745280000000,
+        "lastMs": 1786600800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 15,
+            "firstMs": 1745280000000,
+            "lastMs": 1782280800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1754010000000,
+            "lastMs": 1758265200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1777280400000,
+            "lastMs": 1785114000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777125600000,
+            "lastMs": 1783000800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1778050800000,
+            "lastMs": 1785099600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1777442400000,
+            "lastMs": 1786600800000
+          },
+          "LINK/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777464000000,
+            "lastMs": 1781949600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776834000000,
+            "lastMs": 1782727200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 49,
+          "hitBeforeInvalidation": 0.3673469387755102,
+          "undecidedShare": 0.24489795918367346,
+          "avgMfeAtr": 1.475873080193626,
+          "avgMaeAtr": 1.265207212783224
+        },
+        "20": {
+          "n": 49,
+          "hitBeforeInvalidation": 0.4489795918367347,
+          "undecidedShare": 0.061224489795918366,
+          "avgMfeAtr": 3.1267121533297555,
+          "avgMaeAtr": 2.6882660231472513
+        },
+        "50": {
+          "n": 49,
+          "hitBeforeInvalidation": 0.4489795918367347,
+          "undecidedShare": 0.04081632653061224,
+          "avgMfeAtr": 5.042630175226958,
+          "avgMaeAtr": 4.425016487591176
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "RECLAIM",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 49,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 28,
+      "status": "ok",
+      "winRate": 0.5510204081632653,
+      "undecidedShare": 0.04081632653061224,
+      "invalidatedShare": 0.4081632653061225,
+      "avgRR": 1.175262949760988,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3384892251595477,
+      "avgMfeAtr": 3.9503975129000644,
+      "avgMaeAtr": 3.3612882238000035,
+      "medianBarsToTarget": 4,
+      "wilsonLo": 0.41314866799678107,
+      "wilsonHi": 0.6814737507036366,
+      "wilsonWidth": 0.2683250827068555,
+      "window": {
+        "firstMs": 1745337600000,
+        "lastMs": 1786507200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 12,
+            "firstMs": 1747080000000,
+            "lastMs": 1780833600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1745337600000,
+            "lastMs": 1784217600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1778688000000,
+            "lastMs": 1784073600000
+          },
+          "BNB/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776931200000,
+            "lastMs": 1783051200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776916800000,
+            "lastMs": 1786507200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776931200000,
+            "lastMs": 1778803200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777017600000,
+            "lastMs": 1785024000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776499200000,
+            "lastMs": 1782028800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 49,
+          "hitBeforeInvalidation": 0.3469387755102041,
+          "undecidedShare": 0.4489795918367347,
+          "avgMfeAtr": 1.2282874564476514,
+          "avgMaeAtr": 0.9612886502153085
+        },
+        "20": {
+          "n": 49,
+          "hitBeforeInvalidation": 0.4897959183673469,
+          "undecidedShare": 0.20408163265306123,
+          "avgMfeAtr": 2.277109625612743,
+          "avgMaeAtr": 2.120682442456456
+        },
+        "50": {
+          "n": 49,
+          "hitBeforeInvalidation": 0.5510204081632653,
+          "undecidedShare": 0.04081632653061224,
+          "avgMfeAtr": 3.9503975129000644,
+          "avgMaeAtr": 3.3612882238000035
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 44,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 23,
+      "status": "ok",
+      "winRate": 0.5227272727272727,
+      "undecidedShare": 0.022727272727272728,
+      "invalidatedShare": 0.4545454545454546,
+      "avgRR": 1.13953475167259,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3045892126600306,
+      "avgMfeAtr": 3.8910456747802744,
+      "avgMaeAtr": 3.41459149803818,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.379352201361717,
+      "wilsonHi": 0.6624524205572824,
+      "wilsonWidth": 0.2831002191955654,
+      "window": {
+        "firstMs": 1745280000000,
+        "lastMs": 1785110400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 9,
+            "firstMs": 1745280000000,
+            "lastMs": 1784073600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1762502400000,
+            "lastMs": 1785110400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777305600000,
+            "lastMs": 1781654400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1777219200000,
+            "lastMs": 1783108800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778558400000,
+            "lastMs": 1778832000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777305600000,
+            "lastMs": 1781251200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1778616000000,
+            "lastMs": 1784779200000
+          },
+          "SUI/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777305600000,
+            "lastMs": 1781496000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 44,
+          "hitBeforeInvalidation": 0.36363636363636365,
+          "undecidedShare": 0.38636363636363635,
+          "avgMfeAtr": 1.243400400781157,
+          "avgMaeAtr": 1.25673612296536
+        },
+        "20": {
+          "n": 44,
+          "hitBeforeInvalidation": 0.4772727272727273,
+          "undecidedShare": 0.11363636363636363,
+          "avgMfeAtr": 2.7562193185187382,
+          "avgMaeAtr": 2.2789550273912855
+        },
+        "50": {
+          "n": 44,
+          "hitBeforeInvalidation": 0.5227272727272727,
+          "undecidedShare": 0.022727272727272728,
+          "avgMfeAtr": 3.8910456747802744,
+          "avgMaeAtr": 3.41459149803818
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 43,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 23,
+      "status": "ok",
+      "winRate": 0.46511627906976744,
+      "undecidedShare": 0.023255813953488372,
+      "invalidatedShare": 0.5116279069767442,
+      "avgRR": 0.8160009430472495,
+      "significantVsRandom": false,
+      "adjustedLo": 0.2558996552370378,
+      "avgMfeAtr": 4.070391797484214,
+      "avgMaeAtr": 4.9882194771538675,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.32510826263918563,
+      "wilsonHi": 0.6108461027112722,
+      "wilsonWidth": 0.2857378400720865,
+      "window": {
+        "firstMs": 1749182400000,
+        "lastMs": 1786694400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1749182400000,
+            "lastMs": 1785456000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1749182400000,
+            "lastMs": 1785988800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786219200000,
+            "lastMs": 1786219200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1779969600000,
+            "lastMs": 1785110400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777982400000,
+            "lastMs": 1784793600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1777982400000,
+            "lastMs": 1786694400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1777348800000,
+            "lastMs": 1786464000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777982400000,
+            "lastMs": 1784073600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 43,
+          "hitBeforeInvalidation": 0.32558139534883723,
+          "undecidedShare": 0.3023255813953488,
+          "avgMfeAtr": 1.1255177426637502,
+          "avgMaeAtr": 1.1771585592650051
+        },
+        "20": {
+          "n": 43,
+          "hitBeforeInvalidation": 0.46511627906976744,
+          "undecidedShare": 0.09302325581395349,
+          "avgMfeAtr": 2.165273066075902,
+          "avgMaeAtr": 2.6764457667496995
+        },
+        "50": {
+          "n": 43,
+          "hitBeforeInvalidation": 0.46511627906976744,
+          "undecidedShare": 0.023255813953488372,
+          "avgMfeAtr": 4.070391797484214,
+          "avgMaeAtr": 4.9882194771538675
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:weak|htf:0",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 36,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 21,
+      "status": "ok",
+      "winRate": 0.3611111111111111,
+      "undecidedShare": 0.19444444444444445,
+      "invalidatedShare": 0.4444444444444444,
+      "avgRR": 0.8990294430250124,
+      "significantVsRandom": false,
+      "adjustedLo": 0.16609663707976155,
+      "avgMfeAtr": 3.1196405702636993,
+      "avgMaeAtr": 3.4700093467093556,
+      "medianBarsToTarget": 1,
+      "wilsonLo": 0.2247538679218132,
+      "wilsonHi": 0.5242521960916802,
+      "wilsonWidth": 0.299498328169867,
+      "window": {
+        "firstMs": 1745294400000,
+        "lastMs": 1786608000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1745294400000,
+            "lastMs": 1781532000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1751623200000,
+            "lastMs": 1782993600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777647600000,
+            "lastMs": 1780880400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777651200000,
+            "lastMs": 1786608000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777647600000,
+            "lastMs": 1782993600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776567600000,
+            "lastMs": 1783116000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776769200000,
+            "lastMs": 1782579600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777280400000,
+            "lastMs": 1780128000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 36,
+          "hitBeforeInvalidation": 0.3055555555555556,
+          "undecidedShare": 0.4166666666666667,
+          "avgMfeAtr": 1.1792783315509712,
+          "avgMaeAtr": 1.3046240980027872
+        },
+        "20": {
+          "n": 36,
+          "hitBeforeInvalidation": 0.3333333333333333,
+          "undecidedShare": 0.25,
+          "avgMfeAtr": 2.0737717171165544,
+          "avgMaeAtr": 2.4365516693956937
+        },
+        "50": {
+          "n": 36,
+          "hitBeforeInvalidation": 0.3611111111111111,
+          "undecidedShare": 0.19444444444444445,
+          "avgMfeAtr": 3.1196405702636993,
+          "avgMaeAtr": 3.4700093467093556
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 33,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 19,
+      "status": "ok",
+      "winRate": 0.3939393939393939,
+      "undecidedShare": 0.030303030303030304,
+      "invalidatedShare": 0.5757575757575758,
+      "avgRR": 0.7675303982178578,
+      "significantVsRandom": false,
+      "adjustedLo": 0.1825294622364837,
+      "avgMfeAtr": 4.086818496502178,
+      "avgMaeAtr": 5.3246340548744815,
+      "medianBarsToTarget": 1,
+      "wilsonLo": 0.24682882231508207,
+      "wilsonHi": 0.5631685719348962,
+      "wilsonWidth": 0.31633974961981415,
+      "window": {
+        "firstMs": 1746262800000,
+        "lastMs": 1786802400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1746356400000,
+            "lastMs": 1775419200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1746262800000,
+            "lastMs": 1746262800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1777269600000,
+            "lastMs": 1785988800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778914800000,
+            "lastMs": 1784408400000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1777114800000,
+            "lastMs": 1784617200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777064400000,
+            "lastMs": 1777647600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777348800000,
+            "lastMs": 1786802400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 33,
+          "hitBeforeInvalidation": 0.36363636363636365,
+          "undecidedShare": 0.12121212121212122,
+          "avgMfeAtr": 1.1902158090632937,
+          "avgMaeAtr": 1.4028077664734624
+        },
+        "20": {
+          "n": 33,
+          "hitBeforeInvalidation": 0.3939393939393939,
+          "undecidedShare": 0.030303030303030304,
+          "avgMfeAtr": 2.0143617231523354,
+          "avgMaeAtr": 3.1848637635810086
+        },
+        "50": {
+          "n": 33,
+          "hitBeforeInvalidation": 0.3939393939393939,
+          "undecidedShare": 0.030303030303030304,
+          "avgMfeAtr": 4.086818496502178,
+          "avgMaeAtr": 5.3246340548744815
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 32,
+      "uniqueSymbols": 6,
+      "uniqueWeeks": 22,
+      "status": "ok",
+      "winRate": 0.5,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.5,
+      "avgRR": 1.6395255111466338,
+      "significantVsRandom": false,
+      "adjustedLo": 0.2571027656778534,
+      "avgMfeAtr": 6.211072954836139,
+      "avgMaeAtr": 3.788335657242872,
+      "medianBarsToTarget": 3.5,
+      "wilsonLo": 0.33630614316859386,
+      "wilsonHi": 0.6636938568314061,
+      "wilsonWidth": 0.3273877136628123,
+      "window": {
+        "firstMs": 1747281600000,
+        "lastMs": 1785873600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 14,
+            "firstMs": 1747281600000,
+            "lastMs": 1785873600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1748678400000,
+            "lastMs": 1760040000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1779969600000,
+            "lastMs": 1779969600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1778083200000,
+            "lastMs": 1784649600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1778011200000,
+            "lastMs": 1782964800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777968000000,
+            "lastMs": 1784592000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 32,
+          "hitBeforeInvalidation": 0.34375,
+          "undecidedShare": 0.34375,
+          "avgMfeAtr": 1.6427739954799037,
+          "avgMaeAtr": 0.9500137842510152
+        },
+        "20": {
+          "n": 32,
+          "hitBeforeInvalidation": 0.4375,
+          "undecidedShare": 0.125,
+          "avgMfeAtr": 2.941248228851251,
+          "avgMaeAtr": 2.2391512135211675
+        },
+        "50": {
+          "n": 32,
+          "hitBeforeInvalidation": 0.5,
+          "undecidedShare": 0,
+          "avgMfeAtr": 6.211072954836139,
+          "avgMaeAtr": 3.788335657242872
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 32,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 22,
+      "status": "ok",
+      "winRate": 0.59375,
+      "undecidedShare": 0.0625,
+      "invalidatedShare": 0.34375,
+      "avgRR": 1.2281562143524696,
+      "significantVsRandom": false,
+      "adjustedLo": 0.3320123691221668,
+      "avgMfeAtr": 3.751034557450147,
+      "avgMaeAtr": 3.0541998758910602,
+      "medianBarsToTarget": 2,
+      "wilsonLo": 0.4225972657298823,
+      "wilsonHi": 0.744805975196862,
+      "wilsonWidth": 0.32220870946697966,
+      "window": {
+        "firstMs": 1747641600000,
+        "lastMs": 1786464000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 11,
+            "firstMs": 1748577600000,
+            "lastMs": 1784116800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1747641600000,
+            "lastMs": 1785988800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778947200000,
+            "lastMs": 1778947200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1780545600000,
+            "lastMs": 1785441600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777982400000,
+            "lastMs": 1785542400000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1777982400000,
+            "lastMs": 1785686400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777507200000,
+            "lastMs": 1786464000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1781510400000,
+            "lastMs": 1784073600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 32,
+          "hitBeforeInvalidation": 0.4375,
+          "undecidedShare": 0.375,
+          "avgMfeAtr": 1.175416637908668,
+          "avgMaeAtr": 1.0325054060142125
+        },
+        "20": {
+          "n": 32,
+          "hitBeforeInvalidation": 0.5625,
+          "undecidedShare": 0.125,
+          "avgMfeAtr": 2.2168766000792943,
+          "avgMaeAtr": 2.1867020067226908
+        },
+        "50": {
+          "n": 32,
+          "hitBeforeInvalidation": 0.59375,
+          "undecidedShare": 0.0625,
+          "avgMfeAtr": 3.751034557450147,
+          "avgMaeAtr": 3.0541998758910602
+        }
+      }
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "BOS",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 29,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 17,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1749726000000,
+        "lastMs": 1786291200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1750539600000,
+            "lastMs": 1782993600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1749726000000,
+            "lastMs": 1782576000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777496400000,
+            "lastMs": 1781481600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777993200000,
+            "lastMs": 1784127600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776564000000,
+            "lastMs": 1779264000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1778583600000,
+            "lastMs": 1782972000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1778295600000,
+            "lastMs": 1786291200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 29,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 29,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 29,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:weak|htf:0",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 27,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 15,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1750752000000,
+        "lastMs": 1785902400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1752998400000,
+            "lastMs": 1766116800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1750752000000,
+            "lastMs": 1769889600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1776384000000,
+            "lastMs": 1783396800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785902400000,
+            "lastMs": 1785902400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776643200000,
+            "lastMs": 1780142400000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1778572800000,
+            "lastMs": 1783281600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776384000000,
+            "lastMs": 1776960000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776844800000,
+            "lastMs": 1778572800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 27,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 27,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 27,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 27,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 14,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1750579200000,
+        "lastMs": 1784001600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1754049600000,
+            "lastMs": 1783152000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1750579200000,
+            "lastMs": 1750579200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776859200000,
+            "lastMs": 1782777600000
+          },
+          "BNB/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1776873600000,
+            "lastMs": 1783137600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1776873600000,
+            "lastMs": 1784001600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776384000000,
+            "lastMs": 1783080000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1776816000000,
+            "lastMs": 1779940800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778299200000,
+            "lastMs": 1780444800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 27,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 27,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 27,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "RECLAIM",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 26,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 14,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1746489600000,
+        "lastMs": 1782518400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1750982400000,
+            "lastMs": 1765152000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 8,
+            "firstMs": 1746489600000,
+            "lastMs": 1777852800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777852800000,
+            "lastMs": 1779840000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777939200000,
+            "lastMs": 1780272000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778025600000,
+            "lastMs": 1780272000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1778025600000,
+            "lastMs": 1782518400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777766400000,
+            "lastMs": 1778716800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778025600000,
+            "lastMs": 1778025600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 26,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 26,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 26,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 24,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 16,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1745352000000,
+        "lastMs": 1784462400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1745352000000,
+            "lastMs": 1776153600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1754064000000,
+            "lastMs": 1781236800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777118400000,
+            "lastMs": 1784462400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1778947200000,
+            "lastMs": 1783209600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1780401600000,
+            "lastMs": 1782561600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776628800000,
+            "lastMs": 1782057600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1781366400000,
+            "lastMs": 1781366400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1776873600000,
+            "lastMs": 1776873600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 24,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 24,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 24,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 24,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 18,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1746633600000,
+        "lastMs": 1785873600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1761739200000,
+            "lastMs": 1773302400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1746633600000,
+            "lastMs": 1769140800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778011200000,
+            "lastMs": 1778011200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785873600000,
+            "lastMs": 1785873600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1778947200000,
+            "lastMs": 1784145600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1783440000000,
+            "lastMs": 1784030400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1785528000000,
+            "lastMs": 1785758400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1780171200000,
+            "lastMs": 1784750400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 24,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 24,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 24,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "CHOCH",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 23,
+      "uniqueSymbols": 6,
+      "uniqueWeeks": 20,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1747094400000,
+        "lastMs": 1786075200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1747094400000,
+            "lastMs": 1767873600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1747540800000,
+            "lastMs": 1783036800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1779336000000,
+            "lastMs": 1786075200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778025600000,
+            "lastMs": 1779955200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1779422400000,
+            "lastMs": 1785196800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1783713600000,
+            "lastMs": 1784736000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 23,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 16,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1751846400000,
+        "lastMs": 1786795200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 7,
+            "firstMs": 1751846400000,
+            "lastMs": 1785801600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785499200000,
+            "lastMs": 1785499200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777334400000,
+            "lastMs": 1786190400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1784160000000,
+            "lastMs": 1785254400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1784937600000,
+            "lastMs": 1785974400000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1777867200000,
+            "lastMs": 1786795200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777896000000,
+            "lastMs": 1786219200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "RECLAIM",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 23,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 16,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1755475200000,
+        "lastMs": 1786492800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 10,
+            "firstMs": 1755475200000,
+            "lastMs": 1786060800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1766448000000,
+            "lastMs": 1786320000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1784592000000,
+            "lastMs": 1786060800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1784592000000,
+            "lastMs": 1784592000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783468800000,
+            "lastMs": 1783468800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785974400000,
+            "lastMs": 1785974400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786492800000,
+            "lastMs": 1786492800000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1784505600000,
+            "lastMs": 1784505600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 23,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 20,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 16,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1750636800000,
+        "lastMs": 1785196800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 6,
+            "firstMs": 1750636800000,
+            "lastMs": 1764734400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1755518400000,
+            "lastMs": 1782964800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777507200000,
+            "lastMs": 1777507200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1776470400000,
+            "lastMs": 1779436800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1779854400000,
+            "lastMs": 1785196800000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777507200000,
+            "lastMs": 1777507200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778716800000,
+            "lastMs": 1778889600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:weak|htf:0",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 20,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 14,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1753099200000,
+        "lastMs": 1784592000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1753099200000,
+            "lastMs": 1784592000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1754035200000,
+            "lastMs": 1784433600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1776412800000,
+            "lastMs": 1776412800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1781208000000,
+            "lastMs": 1781208000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776470400000,
+            "lastMs": 1779235200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776657600000,
+            "lastMs": 1777233600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1776412800000,
+            "lastMs": 1781395200000
+          },
+          "SUI/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1777204800000,
+            "lastMs": 1780272000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 20,
+      "uniqueSymbols": 8,
+      "uniqueWeeks": 14,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1746921600000,
+        "lastMs": 1786665600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1754265600000,
+            "lastMs": 1784764800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1746921600000,
+            "lastMs": 1784246400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780617600000,
+            "lastMs": 1780617600000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1780358400000,
+            "lastMs": 1780704000000
+          },
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780617600000,
+            "lastMs": 1780617600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778630400000,
+            "lastMs": 1780617600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1778198400000,
+            "lastMs": 1786665600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780099200000,
+            "lastMs": 1780099200000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 20,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 18,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 11,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1748217600000,
+        "lastMs": 1786665600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1759536000000,
+            "lastMs": 1781913600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1748217600000,
+            "lastMs": 1754265600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1780617600000,
+            "lastMs": 1781568000000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780704000000,
+            "lastMs": 1780704000000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780617600000,
+            "lastMs": 1780617600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1778198400000,
+            "lastMs": 1786665600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1780012800000,
+            "lastMs": 1781654400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 18,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 18,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 18,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 16,
+      "uniqueSymbols": 6,
+      "uniqueWeeks": 12,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1746489600000,
+        "lastMs": 1784246400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1746489600000,
+            "lastMs": 1772236800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 5,
+            "firstMs": 1749254400000,
+            "lastMs": 1782345600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778284800000,
+            "lastMs": 1778284800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778630400000,
+            "lastMs": 1780185600000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1781308800000,
+            "lastMs": 1782345600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1779667200000,
+            "lastMs": 1784246400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 16,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 16,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 16,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 15,
+      "uniqueSymbols": 6,
+      "uniqueWeeks": 11,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1750636800000,
+        "lastMs": 1786147200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1754179200000,
+            "lastMs": 1782518400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1750636800000,
+            "lastMs": 1755734400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777593600000,
+            "lastMs": 1786147200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1778025600000,
+            "lastMs": 1783296000000
+          },
+          "LINK/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1778889600000,
+            "lastMs": 1782518400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778284800000,
+            "lastMs": 1778284800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 15,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 15,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 15,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "BOS",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 12,
+      "uniqueSymbols": 6,
+      "uniqueWeeks": 9,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1746446400000,
+        "lastMs": 1786694400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1766635200000,
+            "lastMs": 1785830400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1746446400000,
+            "lastMs": 1746446400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778025600000,
+            "lastMs": 1786694400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778371200000,
+            "lastMs": 1779091200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1782777600000,
+            "lastMs": 1782777600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1782950400000,
+            "lastMs": 1785801600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 12,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 12,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 12,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:weak|htf:0",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 10,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 7,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1748736000000,
+        "lastMs": 1780185600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1748736000000,
+            "lastMs": 1778630400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1751241600000,
+            "lastMs": 1777680000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780099200000,
+            "lastMs": 1780099200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778371200000,
+            "lastMs": 1778371200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1779753600000,
+            "lastMs": 1779753600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780185600000,
+            "lastMs": 1780185600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777680000000,
+            "lastMs": 1777680000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 10,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 10,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 10,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:displacement|htf:0",
+      "event": "RECLAIM",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 9,
+      "uniqueSymbols": 5,
+      "uniqueWeeks": 8,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1748822400000,
+        "lastMs": 1782172800000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1749513600000,
+            "lastMs": 1749513600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1748822400000,
+            "lastMs": 1756339200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1779148800000,
+            "lastMs": 1779148800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1779321600000,
+            "lastMs": 1782172800000
+          },
+          "XRP/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1778284800000,
+            "lastMs": 1782000000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 9,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 9,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 9,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 8,
+      "uniqueSymbols": 3,
+      "uniqueWeeks": 8,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1757721600000,
+        "lastMs": 1786406400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1757721600000,
+            "lastMs": 1784592000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1774828800000,
+            "lastMs": 1783900800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786406400000,
+            "lastMs": 1786406400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:weak|htf:0",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 8,
+      "uniqueSymbols": 7,
+      "uniqueWeeks": 7,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1762300800000,
+        "lastMs": 1782345600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1762300800000,
+            "lastMs": 1776988800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1772755200000,
+            "lastMs": 1772755200000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780099200000,
+            "lastMs": 1780099200000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778630400000,
+            "lastMs": 1778630400000
+          },
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777593600000,
+            "lastMs": 1777593600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1780185600000,
+            "lastMs": 1780185600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1782345600000,
+            "lastMs": 1782345600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 8,
+      "uniqueSymbols": 3,
+      "uniqueWeeks": 7,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1758758400000,
+        "lastMs": 1785110400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1767571200000,
+            "lastMs": 1785110400000
+          },
+          "ETH/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1758758400000,
+            "lastMs": 1774656000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1784332800000,
+            "lastMs": 1784332800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 8,
+      "uniqueSymbols": 5,
+      "uniqueWeeks": 7,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1775779200000,
+        "lastMs": 1785715200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785715200000,
+            "lastMs": 1785715200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 4,
+            "firstMs": 1775779200000,
+            "lastMs": 1785628800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1784419200000,
+            "lastMs": 1784419200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783123200000,
+            "lastMs": 1783123200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785628800000,
+            "lastMs": 1785628800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 8,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 7,
+      "uniqueSymbols": 4,
+      "uniqueWeeks": 6,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1746489600000,
+        "lastMs": 1784246400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 3,
+            "firstMs": 1746489600000,
+            "lastMs": 1773792000000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1769904000000,
+            "lastMs": 1769904000000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1778457600000,
+            "lastMs": 1778457600000
+          },
+          "LINK/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1780358400000,
+            "lastMs": 1784246400000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 7,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 7,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 7,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:weak|htf:0",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": false,
+      "location": null,
+      "n": 7,
+      "uniqueSymbols": 5,
+      "uniqueWeeks": 6,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1750636800000,
+        "lastMs": 1779235200000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777939200000,
+            "lastMs": 1777939200000
+          },
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1750636800000,
+            "lastMs": 1763683200000
+          },
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1779235200000,
+            "lastMs": 1779235200000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777680000000,
+            "lastMs": 1777680000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1777680000000,
+            "lastMs": 1778544000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 7,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 7,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 7,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 6,
+      "uniqueSymbols": 6,
+      "uniqueWeeks": 6,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1758758400000,
+        "lastMs": 1786406400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1773532800000,
+            "lastMs": 1773532800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1758758400000,
+            "lastMs": 1758758400000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785542400000,
+            "lastMs": 1785542400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786406400000,
+            "lastMs": 1786406400000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783728000000,
+            "lastMs": 1783728000000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1784764800000,
+            "lastMs": 1784764800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 6,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 6,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 6,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "RECLAIM",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 5,
+      "uniqueSymbols": 3,
+      "uniqueWeeks": 5,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1761955200000,
+        "lastMs": 1785888000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1761955200000,
+            "lastMs": 1766361600000
+          },
+          "AVAX/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783641600000,
+            "lastMs": 1783641600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1785196800000,
+            "lastMs": 1785888000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 5,
+      "uniqueSymbols": 4,
+      "uniqueWeeks": 5,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1757376000000,
+        "lastMs": 1786406400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1767657600000,
+            "lastMs": 1767657600000
+          },
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1757376000000,
+            "lastMs": 1776211200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786406400000,
+            "lastMs": 1786406400000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783296000000,
+            "lastMs": 1783296000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:weak|htf:1",
+      "event": "CHOCH",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 5,
+      "uniqueSymbols": 4,
+      "uniqueWeeks": 5,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1752019200000,
+        "lastMs": 1785801600000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1767657600000,
+            "lastMs": 1776124800000
+          },
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1752019200000,
+            "lastMs": 1752019200000
+          },
+          "LINK/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785801600000,
+            "lastMs": 1785801600000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783209600000,
+            "lastMs": 1783209600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 5,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:displacement|htf:1",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": true,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 4,
+      "uniqueSymbols": 4,
+      "uniqueWeeks": 4,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1776124800000,
+        "lastMs": 1786406400000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1776124800000,
+            "lastMs": 1776124800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786406400000,
+            "lastMs": 1786406400000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785715200000,
+            "lastMs": 1785715200000
+          },
+          "SUI/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1785369600000,
+            "lastMs": 1785369600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 4,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 4,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 4,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "BOS",
+      "tf": "1d",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 4,
+      "uniqueSymbols": 3,
+      "uniqueWeeks": 4,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1769126400000,
+        "lastMs": 1786665600000,
+        "bySymbol": {
+          "ETH/USDT:USDT": {
+            "n": 2,
+            "firstMs": 1769126400000,
+            "lastMs": 1776124800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1783036800000,
+            "lastMs": 1783036800000
+          },
+          "BNB/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786665600000,
+            "lastMs": 1786665600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 4,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 4,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 4,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": false,
+      "location": null,
+      "n": 2,
+      "uniqueSymbols": 2,
+      "uniqueWeeks": 2,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1770418800000,
+        "lastMs": 1782612000000,
+        "bySymbol": {
+          "BTC/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1770418800000,
+            "lastMs": 1770418800000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1782612000000,
+            "lastMs": 1782612000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 2,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 2,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 2,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:0|body:weak|htf:1",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "weak",
+      "htfZone": true,
+      "location": null,
+      "n": 2,
+      "uniqueSymbols": 2,
+      "uniqueWeeks": 2,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1779624000000,
+        "lastMs": 1786539600000,
+        "bySymbol": {
+          "ETH/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1786539600000,
+            "lastMs": 1786539600000
+          },
+          "SOL/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1779624000000,
+            "lastMs": 1779624000000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 2,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 2,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 2,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "RECLAIM",
+      "tf": "1h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 1,
+      "uniqueSymbols": 1,
+      "uniqueWeeks": 1,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1777780800000,
+        "lastMs": 1777780800000,
+        "bySymbol": {
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1777780800000,
+            "lastMs": 1777780800000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 1,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 1,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 1,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "event": "RECLAIM",
+      "tf": "4h",
+      "oi": "unknown",
+      "priorSweep": false,
+      "body": "displacement",
+      "htfZone": true,
+      "location": null,
+      "n": 1,
+      "uniqueSymbols": 1,
+      "uniqueWeeks": 1,
+      "status": "insufficient",
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "avgRR": null,
+      "significantVsRandom": false,
+      "adjustedLo": null,
+      "avgMfeAtr": null,
+      "avgMaeAtr": null,
+      "medianBarsToTarget": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "wilsonWidth": null,
+      "window": {
+        "firstMs": 1784937600000,
+        "lastMs": 1784937600000,
+        "bySymbol": {
+          "XRP/USDT:USDT": {
+            "n": 1,
+            "firstMs": 1784937600000,
+            "lastMs": 1784937600000
+          }
+        }
+      },
+      "byHorizon": {
+        "5": {
+          "n": 1,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "20": {
+          "n": 1,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        },
+        "50": {
+          "n": 1,
+          "hitBeforeInvalidation": null,
+          "undecidedShare": null,
+          "avgMfeAtr": null,
+          "avgMaeAtr": null
+        }
+      }
+    }
+  ],
+  "holdout": [
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 96,
+      "winRate": 0.46875,
+      "undecidedShare": 0.020833333333333332,
+      "invalidatedShare": 0.5104166666666666,
+      "wilsonLo": 0.3720590570105098,
+      "wilsonHi": 0.5678457522072913,
+      "significantVsRandom": false,
+      "trainWinRate": 0.41823056300268097,
+      "trainAvgRR": 0.9223552610830842,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 66,
+      "winRate": 0.3787878787878788,
+      "undecidedShare": 0.045454545454545456,
+      "invalidatedShare": 0.5757575757575758,
+      "wilsonLo": 0.271492715804161,
+      "wilsonHi": 0.49941745807501703,
+      "significantVsRandom": false,
+      "trainWinRate": 0.48917748917748916,
+      "trainAvgRR": 0.954855669617949,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 63,
+      "winRate": 0.42857142857142855,
+      "undecidedShare": 0.047619047619047616,
+      "invalidatedShare": 0.5238095238095237,
+      "wilsonLo": 0.3139672637328724,
+      "wilsonHi": 0.5513860491740598,
+      "significantVsRandom": false,
+      "trainWinRate": 0.41379310344827586,
+      "trainAvgRR": 0.9630836432335022,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 42,
+      "winRate": 0.35714285714285715,
+      "undecidedShare": 0.09523809523809523,
+      "invalidatedShare": 0.5476190476190476,
+      "wilsonLo": 0.22988992501626865,
+      "wilsonHi": 0.5083391071292063,
+      "significantVsRandom": false,
+      "trainWinRate": 0.4152046783625731,
+      "trainAvgRR": 0.8645359662373744,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 32,
+      "winRate": 0.21875,
+      "undecidedShare": 0.34375,
+      "invalidatedShare": 0.4375,
+      "wilsonLo": 0.11023696931531854,
+      "wilsonHi": 0.3875533079044484,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3252032520325203,
+      "trainAvgRR": 1.1124808590240396,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 32,
+      "winRate": 0.4375,
+      "undecidedShare": 0.0625,
+      "invalidatedShare": 0.5,
+      "wilsonLo": 0.2816508596944317,
+      "wilsonHi": 0.6067469796877387,
+      "significantVsRandom": false,
+      "trainWinRate": 0.46017699115044247,
+      "trainAvgRR": 0.8633142222120789,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 32,
+      "winRate": 0.40625,
+      "undecidedShare": 0.125,
+      "invalidatedShare": 0.46875,
+      "wilsonLo": 0.255194024803138,
+      "wilsonHi": 0.5774027342701177,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5104166666666666,
+      "trainAvgRR": 1.624273130166437,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 29,
+      "winRate": 0.3448275862068966,
+      "undecidedShare": 0.06896551724137931,
+      "invalidatedShare": 0.5862068965517241,
+      "wilsonLo": 0.19940508749190486,
+      "wilsonHi": 0.52655223492844,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3783783783783784,
+      "trainAvgRR": 1.0314864844279776,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 28,
+      "winRate": 0.5714285714285714,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.4285714285714286,
+      "wilsonLo": 0.390704789856154,
+      "wilsonHi": 0.7349170381926877,
+      "significantVsRandom": false,
+      "trainWinRate": 0.43157894736842106,
+      "trainAvgRR": 1.4352341518754335,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 26,
+      "winRate": 0.23076923076923078,
+      "undecidedShare": 0.11538461538461539,
+      "invalidatedShare": 0.6538461538461537,
+      "wilsonLo": 0.11033699683676687,
+      "wilsonHi": 0.42051925751956787,
+      "significantVsRandom": false,
+      "trainWinRate": 0.32142857142857145,
+      "trainAvgRR": 0.847765943374087,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 25,
+      "winRate": 0.36,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.64,
+      "wilsonLo": 0.20247656431735636,
+      "wilsonHi": 0.5548184539895337,
+      "significantVsRandom": false,
+      "trainWinRate": 0.44166666666666665,
+      "trainAvgRR": 1.045099208002751,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 24,
+      "winRate": 0.3333333333333333,
+      "undecidedShare": 0.25,
+      "invalidatedShare": 0.41666666666666674,
+      "wilsonLo": 0.17971978688379642,
+      "wilsonHi": 0.5329404050591954,
+      "significantVsRandom": false,
+      "trainWinRate": 0.4339622641509434,
+      "trainAvgRR": 1.2291213923810056,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 22,
+      "winRate": 0.18181818181818182,
+      "undecidedShare": 0.3181818181818182,
+      "invalidatedShare": 0.49999999999999994,
+      "wilsonLo": 0.07306766024105121,
+      "wilsonHi": 0.38517021976637866,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3712121212121212,
+      "trainAvgRR": 1.3809284859390603,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 22,
+      "winRate": 0.4090909090909091,
+      "undecidedShare": 0.18181818181818182,
+      "invalidatedShare": 0.409090909090909,
+      "wilsonLo": 0.23255559668820378,
+      "wilsonHi": 0.6126552261710619,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3867924528301887,
+      "trainAvgRR": 0.9738224727818587,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 21,
+      "winRate": 0.7619047619047619,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.23809523809523814,
+      "wilsonLo": 0.5490841802765406,
+      "wilsonHi": 0.8937214361088773,
+      "significantVsRandom": true,
+      "trainWinRate": 0.4489795918367347,
+      "trainAvgRR": 1.1395731946689287,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 20,
+      "winRate": 0.6,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.4,
+      "wilsonLo": 0.3865779423152061,
+      "wilsonHi": 0.7811960325858074,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5862068965517241,
+      "trainAvgRR": 0.9413331774700188,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 17,
+      "winRate": 0.47058823529411764,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.5294117647058824,
+      "wilsonLo": 0.26164801196088106,
+      "wilsonHi": 0.6903710268845051,
+      "significantVsRandom": false,
+      "trainWinRate": 0.39285714285714285,
+      "trainAvgRR": 1.3140054368875485,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 17,
+      "winRate": 0.47058823529411764,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.5294117647058824,
+      "wilsonLo": 0.26164801196088106,
+      "wilsonHi": 0.6903710268845051,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3924050632911392,
+      "trainAvgRR": 0.7688897703400184,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 16,
+      "winRate": 0.375,
+      "undecidedShare": 0.1875,
+      "invalidatedShare": 0.4375,
+      "wilsonLo": 0.18480982554752806,
+      "wilsonHi": 0.613593529020652,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5510204081632653,
+      "trainAvgRR": 1.175262949760988,
+      "trainSignificant": false,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 16,
+      "winRate": 0.5,
+      "undecidedShare": 0.125,
+      "invalidatedShare": 0.375,
+      "wilsonLo": 0.2799923761135083,
+      "wilsonHi": 0.7200076238864916,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:weak|htf:0",
+      "n": 15,
+      "winRate": 0.4,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.6,
+      "wilsonLo": 0.19824228082594664,
+      "wilsonHi": 0.642535572434923,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1h|oi:unknown|sweep:0|body:weak|htf:0",
+      "n": 14,
+      "winRate": 0.5,
+      "undecidedShare": 0.21428571428571427,
+      "invalidatedShare": 0.2857142857142857,
+      "wilsonLo": 0.2679886791947528,
+      "wilsonHi": 0.7320113208052472,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5,
+      "trainAvgRR": 0.8360225963198047,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 12,
+      "winRate": 0.75,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.25,
+      "wilsonLo": 0.46768966087934005,
+      "wilsonHi": 0.9110599603710386,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5206611570247934,
+      "trainAvgRR": 1.4216327461340068,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 11,
+      "winRate": 0.5454545454545454,
+      "undecidedShare": 0.2727272727272727,
+      "invalidatedShare": 0.18181818181818188,
+      "wilsonLo": 0.28008775568998817,
+      "wilsonHi": 0.7872904245601196,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3088235294117647,
+      "trainAvgRR": 1.2381553887484216,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 11,
+      "winRate": 0.6363636363636364,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.36363636363636365,
+      "wilsonLo": 0.35379677689163724,
+      "wilsonHi": 0.8483377638586862,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5227272727272727,
+      "trainAvgRR": 1.13953475167259,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 11,
+      "winRate": 0.2727272727272727,
+      "undecidedShare": 0.36363636363636365,
+      "invalidatedShare": 0.36363636363636365,
+      "wilsonLo": 0.09745880573921467,
+      "wilsonHi": 0.5656502930102463,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 10,
+      "winRate": 0.6,
+      "undecidedShare": 0.1,
+      "invalidatedShare": 0.30000000000000004,
+      "wilsonLo": 0.3126695474501864,
+      "wilsonHi": 0.8318224187964902,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3939393939393939,
+      "trainAvgRR": 0.7675303982178578,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 10,
+      "winRate": 0.7,
+      "undecidedShare": 0.1,
+      "invalidatedShare": 0.20000000000000004,
+      "wilsonLo": 0.39677321997956516,
+      "wilsonHi": 0.892210712513788,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 10,
+      "winRate": 0.5,
+      "undecidedShare": 0.1,
+      "invalidatedShare": 0.4,
+      "wilsonLo": 0.23658959361548731,
+      "wilsonHi": 0.7634104063845126,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 9,
+      "winRate": 0.1111111111111111,
+      "undecidedShare": 0.1111111111111111,
+      "invalidatedShare": 0.7777777777777777,
+      "wilsonLo": 0.019890371327130535,
+      "wilsonHi": 0.4350062147680601,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 9,
+      "winRate": 0.3333333333333333,
+      "undecidedShare": 0.3333333333333333,
+      "invalidatedShare": 0.3333333333333334,
+      "wilsonLo": 0.12058159868274293,
+      "wilsonHi": 0.6458026525009102,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 7,
+      "winRate": 0.7142857142857143,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.2857142857142857,
+      "wilsonLo": 0.35892909014821267,
+      "wilsonHi": 0.9177828342909844,
+      "significantVsRandom": false,
+      "trainWinRate": 0.49056603773584906,
+      "trainAvgRR": 0.6325173077714127,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:weak|htf:0",
+      "n": 7,
+      "winRate": 0.14285714285714285,
+      "undecidedShare": 0.14285714285714285,
+      "invalidatedShare": 0.7142857142857144,
+      "wilsonLo": 0.02567895594897479,
+      "wilsonHi": 0.51313450331903,
+      "significantVsRandom": false,
+      "trainWinRate": 0.3611111111111111,
+      "trainAvgRR": 0.8990294430250124,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:weak|htf:0",
+      "n": 7,
+      "winRate": 0.7142857142857143,
+      "undecidedShare": 0.14285714285714285,
+      "invalidatedShare": 0.14285714285714285,
+      "wilsonLo": 0.35892909014821267,
+      "wilsonHi": 0.9177828342909844,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 6,
+      "winRate": 0.5,
+      "undecidedShare": 0.3333333333333333,
+      "invalidatedShare": 0.16666666666666669,
+      "wilsonLo": 0.18761280689940868,
+      "wilsonHi": 0.8123871931005913,
+      "significantVsRandom": false,
+      "trainWinRate": 0.46511627906976744,
+      "trainAvgRR": 0.8160009430472495,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 6,
+      "winRate": 0.6666666666666666,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.33333333333333337,
+      "wilsonLo": 0.29998832134152864,
+      "wilsonHi": 0.9032306674407831,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5,
+      "trainAvgRR": 1.6395255111466338,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 6,
+      "winRate": 0.5,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.5,
+      "wilsonLo": 0.18761280689940868,
+      "wilsonHi": 0.8123871931005913,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:displacement|htf:0",
+      "n": 6,
+      "winRate": 0.16666666666666666,
+      "undecidedShare": 0.5,
+      "invalidatedShare": 0.33333333333333337,
+      "wilsonLo": 0.03005258587173032,
+      "wilsonHi": 0.563509436563646,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 5,
+      "winRate": 0.4,
+      "undecidedShare": 0.6,
+      "invalidatedShare": 0,
+      "wilsonLo": 0.1176182311592533,
+      "wilsonHi": 0.769280067791163,
+      "significantVsRandom": false,
+      "trainWinRate": 0.59375,
+      "trainAvgRR": 1.2281562143524696,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 5,
+      "winRate": 0.4,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.6,
+      "wilsonLo": 0.1176182311592533,
+      "wilsonHi": 0.769280067791163,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 5,
+      "winRate": 0.2,
+      "undecidedShare": 0.6,
+      "invalidatedShare": 0.20000000000000007,
+      "wilsonLo": 0.03622316096978745,
+      "wilsonHi": 0.6244717358814613,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 5,
+      "winRate": 0,
+      "undecidedShare": 0.2,
+      "invalidatedShare": 0.8,
+      "wilsonLo": 0,
+      "wilsonHi": 0.43449149475208104,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 4,
+      "winRate": 0.25,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.75,
+      "wilsonLo": 0.045586062644636216,
+      "wilsonHi": 0.6993639475573634,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 4,
+      "winRate": 0.25,
+      "undecidedShare": 0.25,
+      "invalidatedShare": 0.5,
+      "wilsonLo": 0.045586062644636216,
+      "wilsonHi": 0.6993639475573634,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 4,
+      "winRate": 0.25,
+      "undecidedShare": 0.25,
+      "invalidatedShare": 0.5,
+      "wilsonLo": 0.045586062644636216,
+      "wilsonHi": 0.6993639475573634,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 3,
+      "winRate": 1,
+      "undecidedShare": 0,
+      "invalidatedShare": 0,
+      "wilsonLo": 0.43849391955098227,
+      "wilsonHi": 1,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 3,
+      "winRate": 0.6666666666666666,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.33333333333333337,
+      "wilsonLo": 0.2076549551264879,
+      "wilsonHi": 0.9385096847238394,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 3,
+      "winRate": 0,
+      "undecidedShare": 1,
+      "invalidatedShare": 0,
+      "wilsonLo": 0,
+      "wilsonHi": 0.5615060804490177,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|4h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 2,
+      "winRate": 0.5,
+      "undecidedShare": 0,
+      "invalidatedShare": 0.5,
+      "wilsonLo": 0.09452865480086614,
+      "wilsonHi": 0.9054713451991339,
+      "significantVsRandom": false,
+      "trainWinRate": 0.5094339622641509,
+      "trainAvgRR": 1.0475170112440793,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|4h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 2,
+      "winRate": 1,
+      "undecidedShare": 0,
+      "invalidatedShare": 0,
+      "wilsonLo": 0.34237195288961925,
+      "wilsonHi": 1,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 2,
+      "winRate": 0,
+      "undecidedShare": 1,
+      "invalidatedShare": 0,
+      "wilsonLo": 0,
+      "wilsonHi": 0.6576280471103807,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 1,
+      "winRate": 0,
+      "undecidedShare": 0,
+      "invalidatedShare": 1,
+      "wilsonLo": 0,
+      "wilsonHi": 0.7934567085261071,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:weak|htf:0",
+      "n": 1,
+      "winRate": 0,
+      "undecidedShare": 1,
+      "invalidatedShare": 0,
+      "wilsonLo": 0,
+      "wilsonHi": 0.7934567085261071,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1d|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 1,
+      "winRate": 1,
+      "undecidedShare": 0,
+      "invalidatedShare": 0,
+      "wilsonLo": 0.20654329147389294,
+      "wilsonHi": 1,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:1|body:weak|htf:1",
+      "n": 1,
+      "winRate": 0,
+      "undecidedShare": 1,
+      "invalidatedShare": 0,
+      "wilsonLo": 0,
+      "wilsonHi": 0.7934567085261071,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:1|body:displacement|htf:1",
+      "n": 1,
+      "winRate": 0,
+      "undecidedShare": 1,
+      "invalidatedShare": 0,
+      "wilsonLo": 0,
+      "wilsonHi": 0.7934567085261071,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:0|body:displacement|htf:0",
+      "n": 1,
+      "winRate": 0,
+      "undecidedShare": 0,
+      "invalidatedShare": 1,
+      "wilsonLo": 0,
+      "wilsonHi": 0.7934567085261071,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "CHOCH|1d|oi:unknown|sweep:0|body:weak|htf:0",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:weak|htf:0",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "BOS|1d|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:0|body:weak|htf:1",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|1h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "RECLAIM|4h|oi:unknown|sweep:0|body:displacement|htf:1",
+      "n": 0,
+      "winRate": null,
+      "undecidedShare": null,
+      "invalidatedShare": null,
+      "wilsonLo": null,
+      "wilsonHi": null,
+      "significantVsRandom": false,
+      "trainWinRate": null,
+      "trainAvgRR": null,
+      "trainSignificant": false,
+      "overfit": false,
+      "survives": false
+    }
+  ]
+}

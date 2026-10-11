@@ -13,9 +13,7 @@ const DataLog = ({ signal }: DataLogProps) => {
 
   const lines: string[] = []
 
-  if (signal.probabilityPct > 0 || signal.hasActiveSetup) {
-    lines.push(`> ${t('log_score')}: ${signal.score}/10`)
-    lines.push(`> ${t('log_probability')}: ${signal.probabilityPct}%`)
+  if (signal.hasActiveSetup || signal.direction) {
     if (signal.direction) {
       lines.push(
         `> ${t('log_direction')}: ${

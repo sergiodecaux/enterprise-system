@@ -15,7 +15,6 @@ interface CompositeAnalysisPanelProps {
 const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
   const {
     assetType,
-    overallScore,
     marketPhase,
     dominantForce,
     volatilityLevel,
@@ -44,15 +43,6 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
 
   const colors = assetColors[assetType]
 
-  const scoreColor =
-    overallScore >= 80
-      ? 'text-matrix'
-      : overallScore >= 60
-        ? 'text-yellow-400'
-        : overallScore >= 40
-          ? 'text-holo'
-          : 'text-alert'
-
   const forceEmoji: Record<CompositeAnalysis['dominantForce'], string> = {
     STRONG_BUYERS: '🟢🟢',
     BUYERS: '🟢',
@@ -64,8 +54,6 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
   const breakdownEntries = Object.entries(confluenceBreakdown) as Array<
     [keyof typeof confluenceBreakdown, (typeof confluenceBreakdown)['technical']]
   >
-  const maxScore = Math.max(...breakdownEntries.map(([, d]) => d.score))
-
   return (
     <div className={`rounded-xl border ${colors.border} ${colors.bg} space-y-4 p-4`}>
       <div className="flex items-start justify-between">
@@ -76,14 +64,8 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
           </span>
         </div>
 
-        <div className="text-right">
-          <div className={`mb-0.5 font-mono text-3xl font-bold ${scoreColor}`}>
-            {overallScore}
-            <span className="text-sm text-holo/40">/100</span>
-          </div>
-          <div className={`font-mono text-[10px] font-bold uppercase ${colors.text}`}>
-            {assetTypeLabel[assetType]}
-          </div>
+        <div className={`font-mono text-[10px] font-bold uppercase ${colors.text}`}>
+          {assetTypeLabel[assetType]}
         </div>
       </div>
 
@@ -130,43 +112,17 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
         </div>
 
         {breakdownEntries.map(([category, data]) => {
-          const isDominant = data.score === maxScore && maxScore > 0
-
+          const facts = data.factors.filter((line) => !/уверенн|probability|win/i.test(line))
           return (
             <div key={category} className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-xs text-holo/70">
-                  {confluenceCategoryLabel[category] ?? category}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-holo">
-                    {data.score}%
-                  </span>
-                  {isDominant && (
-                    <span className="rounded bg-matrix/20 px-1.5 py-0.5 font-mono text-[9px] font-bold text-matrix">
-                      ДОМИНИРУЕТ
-                    </span>
-                  )}
-                </div>
+              <div className="font-mono text-xs text-holo/70">
+                {confluenceCategoryLabel[category] ?? category}
               </div>
 
-              <div className="h-1.5 overflow-hidden rounded-full bg-hull-border">
-                <div
-                  className={`h-full rounded-full transition-all ${
-                    data.score >= 70
-                      ? 'bg-matrix'
-                      : data.score >= 50
-                        ? 'bg-yellow-400'
-                        : 'bg-holo/30'
-                  }`}
-                  style={{ width: `${data.score}%` }}
-                />
-              </div>
-
-              {data.factors.length > 0 && (
+              {facts.length > 0 && (
                 <div className="pl-2 font-mono text-[10px] text-holo/40">
-                  {data.factors.slice(0, 2).join(' · ')}
-                  {data.factors.length > 2 && ` +ещё ${data.factors.length - 2}`}
+                  {facts.slice(0, 2).join(' · ')}
+                  {facts.length > 2 && ` +ещё ${facts.length - 2}`}
                 </div>
               )}
             </div>
@@ -219,15 +175,6 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
             </div>
             <div className="font-mono text-xs text-holo">
               {tacticalAdvice.optimal.stop}
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
-              Цели
-            </div>
-            <div className="font-mono text-xs text-holo">
-              {tacticalAdvice.optimal.targets}
             </div>
           </div>
 

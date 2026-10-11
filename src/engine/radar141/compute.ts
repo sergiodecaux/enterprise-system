@@ -431,7 +431,7 @@ export function buildRadar141Row(input: {
     /* false exit tracked in hook */
   }
 
-  const scoreWhy = `Score ${opportunityScore}: gap ${gapPct.toFixed(1)}%, RS ${rsLabel.toLowerCase()}, liquidity ${grade}${
+  const scoreWhy = `пропасть ${gapPct.toFixed(1)}% · ${gapAtr.toFixed(1)} ATR, RS ${rsLabel.toLowerCase()}, ликвидность ${grade}${
     !isBtc && altBias && altBias !== 'NEUTRAL'
       ? `, макро ${altBias === 'LONG' ? 'лонг альты' : 'шорт альты'}`
       : ''
@@ -502,12 +502,11 @@ export function rowPassesFilters(
   return true
 }
 
+/** List order is the measured gap in ATR, then the name. */
 export function sortByExpectedTravel(rows: Radar141Row[]): Radar141Row[] {
   return [...rows].sort((a, b) => {
-    if (b.expectedTravel !== a.expectedTravel) {
-      return b.expectedTravel - a.expectedTravel
-    }
-    return b.opportunityScore - a.opportunityScore
+    if (b.gapAtr !== a.gapAtr) return b.gapAtr - a.gapAtr
+    return a.displayName.localeCompare(b.displayName, 'en')
   })
 }
 

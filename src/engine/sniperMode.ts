@@ -325,10 +325,5 @@ export function getSniperSignals(
     .filter(isSniperQuality)
     .map(toSniperSignal)
     .filter((s) => styleFilter === 'ALL' || s.tradeStyle === styleFilter)
-    .sort((a, b) => {
-      if (a.calibratedWinRate !== b.calibratedWinRate) {
-        return b.calibratedWinRate - a.calibratedWinRate
-      }
-      return b.riskReward - a.riskReward
-    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'en'))
 }

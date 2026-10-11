@@ -1,5 +1,6 @@
 /**
- * Compact now-state on the chart: в зоне / подход / отскок / потеря + long/short + live %.
+ * Compact now-state on the chart: в зоне / подход / отскок / потеря + long/short.
+ * No probability figure: the calibration has not confirmed an edge.
  */
 
 import type { StoryNowKind } from '../../engine/smc/chartStory'
@@ -8,7 +9,6 @@ interface Props {
   line: string
   kind: StoryNowKind
   side: 'LONG' | 'SHORT' | null
-  oddsPct?: number | null
   fact?: string | null
   /** Phone / Telegram drawer — larger type, narrower pill so candles stay visible. */
   dense?: boolean
@@ -21,7 +21,6 @@ const NowStoryHud = ({
   line,
   kind,
   side,
-  oddsPct,
   fact,
   dense = false,
   toolbar = false,
@@ -39,11 +38,6 @@ const NowStoryHud = ({
             ? 'border-rose-400/45 bg-rose-950/80 text-rose-100'
             : 'border-white/15 bg-black/70 text-white/75'
   const arrow = side === 'LONG' ? '↑' : side === 'SHORT' ? '↓' : ''
-  const hasPct = line.includes('%')
-  const pctBit =
-    !hasPct && oddsPct != null && Number.isFinite(oddsPct)
-      ? ` ${Math.round(oddsPct)}%`
-      : ''
   return (
     <div
       className={`rounded-md border font-mono font-bold leading-tight backdrop-blur-md ${tone} ${
@@ -56,7 +50,6 @@ const NowStoryHud = ({
       title={[fact || line, dailyLine].filter(Boolean).join(' · ')}
     >
       {line}
-      {pctBit}
       {arrow ? ` ${arrow}` : ''}
       {dailyLine && !toolbar ? (
         <span className="mt-0.5 block font-semibold text-violet-200/85">

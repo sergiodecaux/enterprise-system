@@ -31,10 +31,10 @@ const ZoneAdvisorCard = ({ brief, botStatus, onClose }: Props) => {
                 up ? 'text-emerald-300' : 'text-rose-300'
               }`}
             >
-              {a.side === 'LONG' ? 'лонг' : 'шорт'} {a.probability}%
+              {a.side === 'LONG' ? 'лонг' : 'шорт'}
             </span>
             <span className="font-mono text-[10px] text-white/40">
-              слом {b.probability}%
+              слом
             </span>
             {botStatus === 'sent' && (
               <span className="font-mono text-[9px] text-cyan-300/80">в бота</span>

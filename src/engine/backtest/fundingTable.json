@@ -1,0 +1,177 @@
+{
+  "lockedAt": "2026-10-11",
+  "rerunPolicy": "10/90 and 8h/24h are the only combination on this sample. A null result is the result.",
+  "universe": "blue-chip-pinned",
+  "symbols": [
+    "BTC/USDT:USDT",
+    "ETH/USDT:USDT",
+    "SOL/USDT:USDT",
+    "BNB/USDT:USDT",
+    "XRP/USDT:USDT",
+    "AVAX/USDT:USDT",
+    "LINK/USDT:USDT",
+    "SUI/USDT:USDT",
+    "TON/USDT:USDT"
+  ],
+  "window": 90,
+  "percentiles": [
+    10,
+    90
+  ],
+  "horizonsH": [
+    8,
+    24
+  ],
+  "dedupH": 24,
+  "familyAlpha": 0.05,
+  "comparisons": 4,
+  "adjustedZ": 2.4977054769619746,
+  "holdoutFrom": 1786867200000,
+  "newestSettle": 1791705600000,
+  "perSymbol": [
+    {
+      "symbol": "BTC/USDT:USDT",
+      "settles": 1620,
+      "events": 227
+    },
+    {
+      "symbol": "ETH/USDT:USDT",
+      "settles": 1620,
+      "events": 232
+    },
+    {
+      "symbol": "SOL/USDT:USDT",
+      "settles": 1620,
+      "events": 269
+    },
+    {
+      "symbol": "BNB/USDT:USDT",
+      "settles": 1620,
+      "events": 128
+    },
+    {
+      "symbol": "XRP/USDT:USDT",
+      "settles": 1620,
+      "events": 279
+    },
+    {
+      "symbol": "AVAX/USDT:USDT",
+      "settles": 1620,
+      "events": 340
+    },
+    {
+      "symbol": "LINK/USDT:USDT",
+      "settles": 1620,
+      "events": 371
+    },
+    {
+      "symbol": "SUI/USDT:USDT",
+      "settles": 1620,
+      "events": 308
+    },
+    {
+      "symbol": "TON/USDT:USDT",
+      "settles": 1358,
+      "events": 7
+    }
+  ],
+  "events": 2161,
+  "cells": [
+    {
+      "key": "high_pos|8h",
+      "n": 1216,
+      "wins": 622,
+      "uniqueWeeks": 65,
+      "uniqueSymbols": 9,
+      "winRate": 0.5115131578947368,
+      "undecidedShare": 0.009046052631578948,
+      "wilsonLo": 0.4834251761561907,
+      "wilsonHi": 0.5395286237470099,
+      "status": "ok",
+      "significantVsRandom": false,
+      "adjustedLo": 0.4757420229328605
+    },
+    {
+      "key": "low_neg|8h",
+      "n": 696,
+      "wins": 333,
+      "uniqueWeeks": 63,
+      "uniqueSymbols": 8,
+      "winRate": 0.47844827586206895,
+      "undecidedShare": 0.0028735632183908046,
+      "wilsonLo": 0.4415561082989022,
+      "wilsonHi": 0.5155770486897648,
+      "status": "ok",
+      "significantVsRandom": false,
+      "adjustedLo": 0.4315562432058284
+    },
+    {
+      "key": "high_pos|24h",
+      "n": 1216,
+      "wins": 679,
+      "uniqueWeeks": 65,
+      "uniqueSymbols": 9,
+      "winRate": 0.5583881578947368,
+      "undecidedShare": 0.006578947368421052,
+      "wilsonLo": 0.530336505557397,
+      "wilsonHi": 0.5860720510945487,
+      "status": "ok",
+      "significantVsRandom": true,
+      "adjustedLo": 0.5226114894182704
+    },
+    {
+      "key": "low_neg|24h",
+      "n": 696,
+      "wins": 354,
+      "uniqueWeeks": 63,
+      "uniqueSymbols": 8,
+      "winRate": 0.5086206896551724,
+      "undecidedShare": 0,
+      "wilsonLo": 0.4715341348974467,
+      "wilsonHi": 0.5456126023070863,
+      "status": "ok",
+      "significantVsRandom": false,
+      "adjustedLo": 0.4614241450091653
+    }
+  ],
+  "holdout": [
+    {
+      "key": "high_pos|8h",
+      "n": 169,
+      "winRate": 0.39644970414201186,
+      "wilsonLo": 0.32578886389575046,
+      "trainWinRate": 0.5115131578947368,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "low_neg|8h",
+      "n": 80,
+      "winRate": 0.475,
+      "wilsonLo": 0.3692454986165162,
+      "trainWinRate": 0.47844827586206895,
+      "overfit": false,
+      "survives": false
+    },
+    {
+      "key": "high_pos|24h",
+      "n": 169,
+      "winRate": 0.40828402366863903,
+      "wilsonLo": 0.3370168131585148,
+      "trainWinRate": 0.5583881578947368,
+      "overfit": true,
+      "survives": false
+    },
+    {
+      "key": "low_neg|24h",
+      "n": 78,
+      "winRate": 0.5512820512820513,
+      "wilsonLo": 0.4410917185751463,
+      "trainWinRate": 0.5086206896551724,
+      "overfit": false,
+      "survives": false
+    }
+  ],
+  "groupsSignificant": 1,
+  "groupsSurvive": 0
+}

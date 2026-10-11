@@ -130,25 +130,13 @@ const CoinAnalysisUpgradePanel = ({
             <History className="h-3.5 w-3.5" />
             История 30д
           </div>
-          {hist.winRate != null ? (
-            <>
-              <div className="font-mono text-sm font-bold text-holo">
-                Hist WR {hist.winRate.toFixed(0)}%
-                <span className="ml-1 text-[10px] font-normal text-holo/45">
-                  ({hist.wins}W/{hist.losses}L)
-                </span>
-              </div>
-              <div className="mt-0.5 font-mono text-[10px] text-holo/50">
-                {hist.avgR != null ? `avg R ${hist.avgR.toFixed(2)} · ` : ''}
-                {hist.sample === 'GLOBAL' ? 'глоб. похожие' : 'эта монета'}
-              </div>
-            </>
-          ) : (
-            <div className="font-mono text-xs text-holo/45">
-              Мало сделок в журнале
-              {hist.open > 0 ? ` · open ${hist.open}` : ''}
-            </div>
-          )}
+          <div className="font-mono text-xs leading-snug text-holo/70">
+            Журнал ведётся отдельно. Частота исходов здесь не показывается.
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-holo/45">
+            {hist.sample === 'GLOBAL' ? 'похожие сетапы' : 'эта монета'}
+            {hist.open > 0 ? ` · открыто ${hist.open}` : ''}
+          </div>
         </div>
       </div>
 
@@ -204,10 +192,6 @@ const CoinAnalysisUpgradePanel = ({
               <div className="font-mono text-[9px] uppercase text-sky-200/70">
                 Структура (HTF)
               </div>
-              <div className="font-mono text-lg font-bold text-sky-100">
-                {technical?.score ?? '—'}
-                <span className="text-[10px] text-holo/40">/100</span>
-              </div>
               <div className="font-mono text-[10px] text-holo/50 leading-snug">
                 {technical?.factors?.[0] ?? 'SMC / HTF / Fib'}
               </div>
@@ -215,10 +199,6 @@ const CoinAnalysisUpgradePanel = ({
             <div className="rounded-lg border border-amber-400/25 bg-amber-500/5 px-2.5 py-2">
               <div className="font-mono text-[9px] uppercase text-amber-200/70">
                 Микро-давление
-              </div>
-              <div className="font-mono text-lg font-bold text-amber-100">
-                {orderFlow?.score ?? '—'}
-                <span className="text-[10px] text-holo/40">/100</span>
               </div>
               <div className="font-mono text-[10px] text-holo/50 leading-snug">
                 {orderFlow?.factors?.[0] ??
@@ -258,7 +238,7 @@ const CoinAnalysisUpgradePanel = ({
               )}
               {workerCtx.fearGreed != null && (
                 <span className="rounded border border-hull-border px-1.5 py-0.5">
-                  F&G {workerCtx.fearGreed}
+                  F&G alternative.me {workerCtx.fearGreed}
                 </span>
               )}
               {coinNews && (

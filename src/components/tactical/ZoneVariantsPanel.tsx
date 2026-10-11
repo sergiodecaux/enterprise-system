@@ -151,9 +151,6 @@ const ZoneVariantsPanel = ({
                         : `Удерж BSL → вниз · слом > ${fmt(s.invalidation)}`}
                   </div>
                 </div>
-                <div className="text-right font-mono text-sm font-bold text-holo">
-                  {Math.round(s.probability)}%
-                </div>
               </div>
 
               <div className="grid grid-cols-4 gap-1 font-mono text-[9px] text-holo/45">
