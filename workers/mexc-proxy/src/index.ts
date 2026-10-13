@@ -2588,17 +2588,19 @@ async function runCronScan(
         ].join('\n')
       }
     }
-    // Pure signals only: skip any entry whose first target is under 1% away.
-    // Runs after the alt-jewel target rewrite so it judges the final target.
-    const mv = entryMovePct(a.tradePlan)
-    if (mv != null && mv < MIN_ENTRY_MOVE_PCT) {
-      skipped++
-      console.log(
-        '[cron] blocked <1% expected move',
-        a.tradePlan?.symbol,
-        mv.toFixed(2)
-      )
-      return
+    // Elite bot pure signals: skip any entry whose first target is under 1%
+    // away. Elite lane only — the meme / Predator lane keeps its own rules.
+    if (lane === 'elite') {
+      const mv = entryMovePct(a.tradePlan)
+      if (mv != null && mv < MIN_ENTRY_MOVE_PCT) {
+        skipped++
+        console.log(
+          '[cron] elite blocked <1% expected move',
+          a.tradePlan?.symbol,
+          mv.toFixed(2)
+        )
+        return
+      }
     }
     // Exclusive meme lane: only Cloudflare Jeweler Burst signals.
     if (a.type === 'MEME') {

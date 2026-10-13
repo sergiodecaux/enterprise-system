@@ -1078,8 +1078,9 @@ export async function createPaperTradeFromPlan(
     | 'jeweler_risk_bounds'
     | 'move_lt_1pct'
 }> {
-  // Pure signals only: never open a trade whose first target is under 1% away.
-  {
+  // Elite pure signals: never open an elite (SNIPER) trade whose first target
+  // is under 1% away. The meme / Predator lane (alertType MEME) keeps its rules.
+  if (plan.alertType !== 'MEME') {
     const entry = plan.entryIdeal > 0 ? plan.entryIdeal : plan.signalPrice
     const target = plan.target1 ?? plan.tp
     if (entry > 0 && target > 0 && (Math.abs(target - entry) / entry) * 100 < 1) {
