@@ -407,6 +407,22 @@ interface AlertPayload {
   channel?: TgChannel
 }
 
+/**
+ * Elite bot ships pure entry signals only: a trade is sent when the expected
+ * move from the entry to the first target is at least this. Locked before the
+ * run, not fitted. Signals below the threshold are skipped, never sent.
+ */
+const MIN_ENTRY_MOVE_PCT = 1
+
+/** Expected move to the first target, percent of entry. Null when unknown. */
+function entryMovePct(plan: TradePlanPayload | null | undefined): number | null {
+  if (!plan) return null
+  const entry = plan.entryIdeal > 0 ? plan.entryIdeal : plan.signalPrice
+  const target = plan.target1 ?? plan.tp
+  if (!(entry > 0) || !(target > 0)) return null
+  return (Math.abs(target - entry) / entry) * 100
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -1940,27 +1956,12 @@ async function maybeSendFavSnapshot(
   scene: SnapshotScene,
   kind: string
 ): Promise<boolean> {
-  const token = tokenForChannel(env, 'sniper')
-  if (!token || !(scene.entry > 0)) return false
-  const key = favSnapDedupeKey(chatId, scene.symbol, kind)
-  const prev = await runtimeGet(key)
-  if (prev) return false
-  const kv = env.SUBSCRIBERS
-    ? {
-        get: (k: string) => env.SUBSCRIBERS!.get(k),
-        put: (k: string, v: string) => env.SUBSCRIBERS!.put(k, v),
-      }
-    : undefined
-  const built = await buildSetupScene(scene.symbol, scene, kv)
-  if (!built) return false
-  const ok = await tgSendPhotoPng({
-    token,
-    chatId,
-    png: built.png,
-    caption: scene.caption,
-  })
-  if (ok) await runtimePut(key, String(Date.now()))
-  return ok
+  // Chart PNG snapshots removed: the elite bot ships text entry signals only.
+  void env
+  void chatId
+  void scene
+  void kind
+  return false
 }
 
 async function sceneFromPlan(
@@ -1970,17 +1971,13 @@ async function sceneFromPlan(
   entry?: number,
   extra?: Partial<SnapshotScene>
 ): Promise<SnapshotScene | null> {
-  const kv = env.SUBSCRIBERS
-    ? {
-        get: (k: string) => env.SUBSCRIBERS!.get(k),
-        put: (k: string, v: string) => env.SUBSCRIBERS!.put(k, v),
-      }
-    : undefined
-  return inferEliteScene(symbol, kv, {
-    side,
-    ...(entry && entry > 0 ? { entry } : {}),
-    ...extra,
-  })
+  // Snapshots removed — skip scene building to save subrequests.
+  void env
+  void symbol
+  void side
+  void entry
+  void extra
+  return null
 }
 
 async function sniperChatIds(env: Env): Promise<number[]> {
@@ -1992,6 +1989,11 @@ async function sendSniperToFavoriteChats(
   env: Env,
   a: ScanAlert
 ): Promise<{ sent: number; failed: number; chats: number[] }> {
+  // Pure signals only: skip entries with under 1% to the first target.
+  const mv = entryMovePct(a.tradePlan)
+  if (mv != null && mv < MIN_ENTRY_MOVE_PCT) {
+    return { sent: 0, failed: 0, chats: [] }
+  }
   const symbol = a.tradePlan?.symbol
   if (!symbol) {
     const r = await broadcastAlert(env, {
@@ -2585,6 +2587,18 @@ async function runCronScan(
             : 'По тренду старших ТФ, лимитка на откате. Не догонять.',
         ].join('\n')
       }
+    }
+    // Pure signals only: skip any entry whose first target is under 1% away.
+    // Runs after the alt-jewel target rewrite so it judges the final target.
+    const mv = entryMovePct(a.tradePlan)
+    if (mv != null && mv < MIN_ENTRY_MOVE_PCT) {
+      skipped++
+      console.log(
+        '[cron] blocked <1% expected move',
+        a.tradePlan?.symbol,
+        mv.toFixed(2)
+      )
+      return
     }
     // Exclusive meme lane: only Cloudflare Jeweler Burst signals.
     if (a.type === 'MEME') {
@@ -3351,6 +3365,7 @@ async function runCronScan(
       for (const v of verdicts) {
         if (huntBudget <= 0) break
         if (!isTacticReady(v)) continue
+        if ((v.movePct ?? 0) < MIN_ENTRY_MOVE_PCT) continue
         const copy = formatHuntUrgent({
           symbol: v.symbol,
           side: v.side,
@@ -3786,13 +3801,9 @@ async function runCronScan(
     await runVane()
   }
 
-  if (lane === 'elite' && (role === 'elite_hourly' || role === 'all')) {
-    await runEliteBrief('hourly')
-  }
-
-  if (lane === 'elite' && role === 'elite_daily') {
-    await runEliteBrief('daily')
-  }
+  // Briefings removed: the elite bot ships pure entry signals only.
+  // Scheduled hourly / daily briefings no longer fire.
+  void runEliteBrief
 
   if (lane === 'elite' && (role === 'favorites_digest' || role === 'all')) {
     try {

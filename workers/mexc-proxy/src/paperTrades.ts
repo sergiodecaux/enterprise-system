@@ -1076,7 +1076,16 @@ export async function createPaperTradeFromPlan(
     | 'pre_stopped'
     | 'setup'
     | 'jeweler_risk_bounds'
+    | 'move_lt_1pct'
 }> {
+  // Pure signals only: never open a trade whose first target is under 1% away.
+  {
+    const entry = plan.entryIdeal > 0 ? plan.entryIdeal : plan.signalPrice
+    const target = plan.target1 ?? plan.tp
+    if (entry > 0 && target > 0 && (Math.abs(target - entry) / entry) * 100 < 1) {
+      return { created: false, comment: null, skipReason: 'move_lt_1pct' }
+    }
+  }
   // Predator: PEAK / DUMP_CONT / CONT_* SHORT. Elite: PUMP / CONT_* LONG + ALT_JEWEL.
   const eliteMemeLong =
     plan.alertType === 'SNIPER' &&
