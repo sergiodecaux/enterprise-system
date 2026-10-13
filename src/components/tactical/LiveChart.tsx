@@ -87,6 +87,7 @@ import {
   type StructureRead,
   type StructureTf,
 } from '../../engine/smc/structureRead'
+import { deriveMacroStructure } from '../../engine/analysis/macroStructure'
 import {
   buildZoneReactionBoard,
   srBoardToLiquidityZones,
@@ -812,6 +813,11 @@ const LiveChart = ({
         btcDominance: workerCtx?.btcDominance ?? null,
         btcDomDelta24h: workerCtx?.btcDomDelta24h ?? null,
         total3Delta24h: workerCtx?.total3Delta24h ?? workerCtx?.totalMcapDelta24h ?? null,
+        macroAltTilt: deriveMacroStructure({
+          btcD: workerCtx?.macroSeries?.btcD,
+          total3: workerCtx?.macroSeries?.total3,
+          others: workerCtx?.macroSeries?.others,
+        }).altTilt,
         newsBias,
         newsScore,
         btcRs,
@@ -855,6 +861,7 @@ const LiveChart = ({
     workerCtx?.btcDomDelta24h,
     workerCtx?.total3Delta24h,
     workerCtx?.totalMcapDelta24h,
+    workerCtx?.macroSeries,
     fearGreedValue,
     newsBias,
     newsScore,

@@ -29,10 +29,29 @@ export interface WorkerMarketContext {
   /** TOTAL3 24h %, from snapshot when available */
   total3Delta24h?: number | null
   totalMcapDelta24h?: number | null
+  /** Alt mcap excluding the top 10 (the long tail). */
+  othersUsd?: number | null
+  othersDelta24h?: number | null
   altRegime?: AltRegime | null
   altBias?: AltBias | null
+  /** Reconstructed daily series (oldest→newest) for structure reads. */
+  macroSeries?: MacroSeries | null
   fetchedAt: number
   lines: string[]
+}
+
+export interface MacroSeries {
+  /** Daily BTC.D %, oldest→newest. */
+  btcD: number[]
+  /** Daily TOTAL3 (alt mcap ex BTC+ETH), USD. */
+  total3: number[]
+  /** Daily OTHERS (alt mcap ex top 10), USD. */
+  others: number[]
+  /** Where the series came from, shown to the user for honesty. */
+  source: string
+  /** True when the series was reconstructed from top-10 caps. */
+  reconstructed: boolean
+  builtAt: number
 }
 
 export async function fetchWorkerMarketContext(): Promise<WorkerMarketContext | null> {

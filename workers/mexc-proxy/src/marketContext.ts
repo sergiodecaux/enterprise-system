@@ -31,15 +31,47 @@ export interface MarketContext {
   total3Usd: number | null
   total3Delta24h: number | null
   totalMcapDelta24h: number | null
+  /** Alt mcap excluding the top 10 (the long tail). */
+  othersUsd: number | null
+  othersDelta24h: number | null
   altRegime: AltRegime
   altBias: AltBias
+  /** Reconstructed daily series (oldest→newest) for structure reads. */
+  macroSeries: MacroSeries | null
   fetchedAt: number
   lines: string[]
 }
 
+export interface MacroSeries {
+  /** Daily BTC.D %, oldest→newest. */
+  btcD: number[]
+  /** Daily TOTAL3 (alt mcap ex BTC+ETH), USD. */
+  total3: number[]
+  /** Daily OTHERS (alt mcap ex top 10), USD. */
+  others: number[]
+  /** Where the series came from, shown to the user for honesty. */
+  source: string
+  /** How the series was built (reconstructed vs direct). */
+  reconstructed: boolean
+  builtAt: number
+}
+
 const FG_URL = 'https://api.alternative.me/fng/?limit=2'
 const CG_GLOBAL = 'https://api.coingecko.com/api/v3/global'
+const CG_MARKETS =
+  'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1&sparkline=false'
+const CG_CHART = (id: string) =>
+  `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=90&interval=daily`
 const LORE_GLOBAL = 'https://api.coinlore.net/api/global/'
+
+/** How long the reconstructed daily series stay fresh (they move slowly). */
+const MACRO_HISTORY_MS = 6 * 3600_000
+const MACRO_HISTORY_KV_KEY = 'market_ctx:macro_series'
+const MACRO_HISTORY_CACHE_REQ = new Request(
+  'https://enterprise-system-runtime.invalid/macro-series'
+)
+/** Daily points kept per series. */
+const MACRO_SERIES_LEN = 60
 const CP_URL =
   'https://cryptopanic.com/api/v1/posts/?public=true&kind=news&limit=25'
 
@@ -274,6 +306,139 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   }
 }
 
+async function loadMacroSeries(kv?: KVNamespace): Promise<MacroSeries | null> {
+  const fresh = (s: MacroSeries | null): MacroSeries | null =>
+    s && Date.now() - s.builtAt < MACRO_HISTORY_MS ? s : null
+  try {
+    const cached = await caches.default.match(MACRO_HISTORY_CACHE_REQ)
+    if (cached) {
+      const parsed = fresh((await cached.json()) as MacroSeries)
+      if (parsed) return parsed
+    }
+  } catch {
+    /* fall through */
+  }
+  if (kv) {
+    try {
+      const raw = await kv.get(MACRO_HISTORY_KV_KEY)
+      if (raw) {
+        const parsed = fresh(JSON.parse(raw) as MacroSeries)
+        if (parsed) return parsed
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null
+}
+
+async function saveMacroSeries(series: MacroSeries, kv?: KVNamespace): Promise<void> {
+  const body = JSON.stringify(series)
+  try {
+    await caches.default.put(
+      MACRO_HISTORY_CACHE_REQ,
+      new Response(body, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${Math.round(MACRO_HISTORY_MS / 1000)}`,
+        },
+      })
+    )
+  } catch {
+    /* isolate only */
+  }
+  if (kv) {
+    await kvPutThrottled(kv, MACRO_HISTORY_KV_KEY, body, MACRO_HISTORY_MS, {
+      expirationTtl: 2 * 24 * 3600,
+    })
+  }
+}
+
+/**
+ * Reconstruct daily BTC.D / TOTAL3 / OTHERS from CoinGecko market caps.
+ * Top-10 coins give btc, eth and the top-10 sum; the current full-market
+ * total scales that sum up to a proxy for the whole market. Fails soft:
+ * returns null when CoinGecko is unavailable, and the caller keeps the
+ * current + 24h snapshot path.
+ */
+async function buildMacroSeries(totalNow: number | null): Promise<MacroSeries | null> {
+  const markets = await fetchJson<Array<{ id?: string; market_cap?: number }>>(
+    CG_MARKETS
+  )
+  if (!markets || markets.length < 5) return null
+  const ids = markets
+    .map((m) => m.id)
+    .filter((x): x is string => Boolean(x))
+    .slice(0, 10)
+  if (ids.length < 5) return null
+
+  const charts = await Promise.all(
+    ids.map((id) =>
+      fetchJson<{ market_caps?: Array<[number, number]> }>(CG_CHART(id))
+    )
+  )
+  const caps: Record<string, number[]> = {}
+  let minLen = Infinity
+  ids.forEach((id, i) => {
+    const arr = (charts[i]?.market_caps ?? [])
+      .map((p) => p[1])
+      .filter((v) => Number.isFinite(v) && v > 0)
+    if (arr.length) {
+      caps[id] = arr
+      minLen = Math.min(minLen, arr.length)
+    }
+  })
+  const btc = caps['bitcoin']
+  const eth = caps['ethereum']
+  if (!btc || !eth || !Number.isFinite(minLen) || minLen < 10) return null
+
+  const len = Math.min(minLen, MACRO_SERIES_LEN)
+  const tailOf = (a: number[]): number[] => a.slice(a.length - len)
+  const btcT = tailOf(btc)
+  const ethT = tailOf(eth)
+  const top10sum = new Array<number>(len).fill(0)
+  for (const id of ids) {
+    const a = caps[id]
+    if (!a) continue
+    const t = tailOf(a)
+    for (let i = 0; i < len; i++) top10sum[i]! += t[i] ?? 0
+  }
+
+  const top10now = top10sum[len - 1] || 0
+  const k = totalNow && top10now > 0 ? Math.max(1, totalNow / top10now) : 1
+  const btcD: number[] = []
+  const total3: number[] = []
+  const others: number[] = []
+  for (let i = 0; i < len; i++) {
+    const total = top10sum[i]! * k
+    if (!(total > 0)) continue
+    btcD.push((btcT[i]! / total) * 100)
+    total3.push(total - btcT[i]! - ethT[i]!)
+    others.push(total - top10sum[i]!)
+  }
+  if (btcD.length < 10) return null
+
+  return {
+    btcD,
+    total3,
+    others,
+    source: 'CoinGecko',
+    reconstructed: k !== 1,
+    builtAt: Date.now(),
+  }
+}
+
+async function getMacroHistory(
+  totalNow: number | null,
+  kv?: KVNamespace
+): Promise<MacroSeries | null> {
+  const cached = await loadMacroSeries(kv)
+  if (cached) return cached
+  const fresh = await buildMacroSeries(totalNow)
+  if (fresh) await saveMacroSeries(fresh, kv)
+  return fresh
+}
+
 export async function getMarketContext(kv?: KVNamespace): Promise<MarketContext> {
   if (cache && Date.now() - cache.fetchedAt < CACHE_MS) return cache
 
@@ -404,6 +569,16 @@ export async function getMarketContext(kv?: KVNamespace): Promise<MarketContext>
     totalMcapDelta24h,
   })
 
+  const macroSeries = await getMacroHistory(totalMcap, kv)
+  let othersUsd: number | null = null
+  let othersDelta24h: number | null = null
+  if (macroSeries && macroSeries.others.length >= 2) {
+    const o = macroSeries.others
+    othersUsd = o[o.length - 1]!
+    const prev = o[o.length - 2]!
+    if (prev > 0) othersDelta24h = ((othersUsd - prev) / prev) * 100
+  }
+
   const lines: string[] = []
   if (fearGreed != null) lines.push(`Fear&Greed: ${fearGreed} (${fearGreedLabel})`)
   lines.push(
@@ -429,6 +604,15 @@ export async function getMarketContext(kv?: KVNamespace): Promise<MarketContext>
       }`
     )
   }
+  if (othersUsd != null) {
+    lines.push(
+      `OTHERS: ${fmtTotal3(othersUsd)}${
+        othersDelta24h != null
+          ? ` ${othersDelta24h >= 0 ? '+' : ''}${othersDelta24h.toFixed(1)}%`
+          : ''
+      }${macroSeries?.reconstructed ? ' (реконстр.)' : ''}`
+    )
+  }
   lines.push(macro.line)
   if (titles[0]) lines.push(`Headline: ${titles[0].slice(0, 80)}`)
 
@@ -445,8 +629,11 @@ export async function getMarketContext(kv?: KVNamespace): Promise<MarketContext>
     total3Usd,
     total3Delta24h,
     totalMcapDelta24h,
+    othersUsd,
+    othersDelta24h,
     altRegime: macro.altRegime,
     altBias: macro.altBias,
+    macroSeries,
     fetchedAt: now,
     lines,
   }

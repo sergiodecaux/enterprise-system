@@ -1818,6 +1818,12 @@ const PATH_RHYTHM: CoinRhythm = {
   deltas: [],
 }
 
+// Each live path keeps its own shape so the four scenarios read differently.
+// Hold: measured continuation with a deeper breather.
+// Sweep: deep liquidity grab, hard reclaim, shallow pullback, runs further.
+const HOLD_RHYTHM: CoinRhythm = { ...PATH_RHYTHM, retraceFrac: 0.5, impulseBars: 4 }
+const SWEEP_RHYTHM: CoinRhythm = { ...PATH_RHYTHM, retraceFrac: 0.28, impulseBars: 3 }
+
 function wavePath(
   price: number,
   stops: Array<{ frac: number; price: number; label: string }>,
@@ -1888,7 +1894,7 @@ function paintLiveAct(
   if (hold && holdDest > 0) {
     const holdName = hold.toLabel
     const dir: 1 | -1 = holdDest >= level ? 1 : -1
-    const { peak, dip } = impulseThenRetrace(level, holdDest, dir, PATH_RHYTHM)
+    const { peak, dip } = impulseThenRetrace(level, holdDest, dir, HOLD_RHYTHM)
     const title =
       act.kind === 'PIN'
         ? `${holdSide === 'LONG' ? 'выход вверх' : 'выход вниз'} ${fmtPx(holdDir > 0 ? Math.max(level, act.far) : Math.min(level, act.far))}`
@@ -1913,18 +1919,21 @@ function paintLiveAct(
   }
 
   if (sweep) {
-    const through = level - holdDir * step
-    const dir: 1 | -1 = holdDest >= level ? 1 : -1
-    const { peak, dip } = impulseThenRetrace(level, holdDest, dir, PATH_RHYTHM)
+    // Sweep targets its own pool, not the hold's — a liquidity grab that
+    // reclaims and runs to the opposite side, deeper wick and sharper reclaim.
+    const sweepDest = destOf(sweep, holdDir)
+    const dir: 1 | -1 = sweepDest >= level ? 1 : -1
+    const through = level - holdDir * step * 1.8
+    const { peak, dip } = impulseThenRetrace(level, sweepDest, dir, SWEEP_RHYTHM)
     const title = `снятие ${px} → ${sweep.toLabel}`
     const path = wavePath(
       price,
       [
-        { frac: 0.18, price: through, label: `снятие ${px}` },
-        { frac: 0.36, price: level, label: 'возврат' },
-        { frac: 0.58, price: peak, label: 'импульс' },
-        { frac: 0.76, price: dip, label: 'откат' },
-        { frac: 1, price: holdDest, label: sweep.toLabel },
+        { frac: 0.2, price: through, label: `снятие ${px}` },
+        { frac: 0.34, price: level, label: 'возврат' },
+        { frac: 0.6, price: peak, label: 'импульс' },
+        { frac: 0.78, price: dip, label: 'откат' },
+        { frac: 1, price: sweepDest, label: sweep.toLabel },
       ],
       end
     )

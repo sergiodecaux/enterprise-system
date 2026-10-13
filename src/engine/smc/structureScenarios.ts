@@ -316,6 +316,7 @@ type ScenarioCtx = {
   fearGreed: number | null
   btcDominance: number | null
   total3Delta: number | null
+  macroAltTilt: number | null
   newsBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   newsScore: number
   btcRs: number | null
@@ -466,6 +467,9 @@ function tiltWeight(s: RawScenario, ctx: ScenarioCtx): number {
   }
 
   if (ctx.desk === 'ALT' && !ctx.isBtc) {
+    // Balanced macro structure (BTC.D / TOTAL3 / OTHERS) — the main macro lean
+    // for alts. Positive tilt favours alt longs, negative favours alt shorts.
+    if (ctx.macroAltTilt != null) t += dir * ctx.macroAltTilt * 4.5
     if (ctx.altBias === 'LONG') t += dir * 3.4
     if (ctx.altBias === 'SHORT') t -= dir * 3.4
     if (ctx.altRegime === 'ALT_ON') t += dir * 2.2
@@ -689,6 +693,7 @@ export function buildStructureScenarios(input: {
   btcDominance?: number | null
   btcDomDelta24h?: number | null
   total3Delta24h?: number | null
+  macroAltTilt?: number | null
   newsBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   newsScore?: number
   btcRs?: number | null
@@ -765,6 +770,7 @@ export function buildStructureScenarios(input: {
     fearGreed: input.fearGreed ?? null,
     btcDominance: input.btcDominance ?? null,
     total3Delta: input.total3Delta24h ?? null,
+    macroAltTilt: input.macroAltTilt ?? null,
     newsBias: input.newsBias ?? 'NEUTRAL',
     newsScore: input.newsScore ?? 0,
     btcRs: input.btcRs ?? null,

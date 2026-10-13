@@ -958,6 +958,8 @@ export function composeStructureRead(input: {
   btcDominance?: number | null
   btcDomDelta24h?: number | null
   total3Delta24h?: number | null
+  /** −1…+1 balanced macro tilt from BTC.D/TOTAL3/OTHERS structure (alts). */
+  macroAltTilt?: number | null
   newsBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   newsScore?: number
   btcRs?: number | null
@@ -1168,6 +1170,7 @@ export function composeStructureRead(input: {
       btcDominance: input.btcDominance,
       btcDomDelta24h: input.btcDomDelta24h,
       total3Delta24h: input.total3Delta24h,
+      macroAltTilt: input.macroAltTilt,
       newsBias: input.newsBias,
       newsScore: input.newsScore,
       btcRs: input.btcRs,
