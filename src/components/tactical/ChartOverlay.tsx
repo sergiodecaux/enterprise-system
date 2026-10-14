@@ -9,6 +9,7 @@ import {
   watchLayer,
   type LabelRequest,
 } from './chartLabels/LabelLayoutManager'
+import { useViewportRedraw } from './useViewportRedraw'
 
 interface Props {
   chart: IChartApi | null
@@ -25,6 +26,8 @@ interface Props {
   onlyStrong?: boolean
   /** Fullscreen: smaller primary caption, skip weak labels and edge prices */
   thinLabels?: boolean
+  /** Skip redraw while user pans/zooms */
+  interactingRef?: React.MutableRefObject<boolean>
 }
 
 type Rgba = { r: number; g: number; b: number }
@@ -123,9 +126,9 @@ function strengthVisual(
 
   if (isPrimary) {
     return {
-      fillA: 0.56,
+      fillA: onlyStrong ? 0.62 : 0.56,
       borderA: 1,
-      borderW: 3.2,
+      borderW: onlyStrong ? 3.8 : 3.2,
       stripeW: 0,
       tier: 'STRONG' as const,
       isFib141: false,
@@ -138,9 +141,9 @@ function strengthVisual(
 
   if (isSecondary) {
     return {
-      fillA: 0.12,
-      borderA: 0.72,
-      borderW: 1.4,
+      fillA: onlyStrong ? 0.06 : 0.12,
+      borderA: onlyStrong ? 0.45 : 0.72,
+      borderW: 1.2,
       stripeW: 0,
       tier: 'WEAK' as const,
       isFib141,
@@ -289,22 +292,26 @@ const ChartOverlay = ({
   quiet = true,
   onlyStrong = true,
   thinLabels = false,
+  interactingRef,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
   const layout = useChartLabels()
+  const fromListenerRef = useRef(false)
+  const redrawRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     if (!chart || !series || !overlayRef.current || !containerRef.current) {
       layout.clear('chart-zones')
+      redrawRef.current = () => {}
       return
     }
 
     const overlay = overlayRef.current
     const timeScale = chart.timeScale()
-    let fromListener = false
 
     const redraw = () => {
       try {
+      const fromListener = fromListenerRef.current
       overlay.innerHTML = ''
       const containerWidth = containerRef.current!.clientWidth
       const containerHeight = containerRef.current!.clientHeight
@@ -596,30 +603,23 @@ const ChartOverlay = ({
     }
 
     const onLayout = () => {
-      fromListener = true
+      fromListenerRef.current = true
       try {
         redraw()
       } finally {
-        fromListener = false
+        fromListenerRef.current = false
       }
     }
 
+    redrawRef.current = redraw
     redraw()
 
     const unsub = watchLayer(layout, 'chart-zones', onLayout)
-    const onVisible = () => redraw()
-    timeScale.subscribeVisibleLogicalRangeChange(onVisible)
-    chart.subscribeCrosshairMove(onVisible)
-
-    const ro = new ResizeObserver(() => redraw())
-    ro.observe(containerRef.current)
 
     return () => {
       unsub()
       layout.clear('chart-zones')
-      timeScale.unsubscribeVisibleLogicalRangeChange(onVisible)
-      chart.unsubscribeCrosshairMove(onVisible)
-      ro.disconnect()
+      redrawRef.current = () => {}
       overlay.innerHTML = ''
     }
   }, [
@@ -635,6 +635,13 @@ const ChartOverlay = ({
     thinLabels,
     layout,
   ])
+
+  useViewportRedraw(
+    chart,
+    containerRef.current,
+    () => redrawRef.current(),
+    { interactingRef, crosshair: false }
+  )
 
   return (
     <div

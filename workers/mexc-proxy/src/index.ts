@@ -409,16 +409,18 @@ interface AlertPayload {
 
 /**
  * Elite bot ships pure entry signals only: a trade is sent when the expected
- * move from the entry to the first target is at least this. Locked before the
- * run, not fitted. Signals below the threshold are skipped, never sent.
+ * move from the entry to the main target (tp) is at least this. Locked before
+ * the run, not fitted. Signals below the threshold are skipped, never sent.
+ * Uses tp (full expected move), not scalp TP1 — vane MACRO TP1 is 0.9% while
+ * the real target sits at 1.5%+.
  */
 const MIN_ENTRY_MOVE_PCT = 1
 
-/** Expected move to the first target, percent of entry. Null when unknown. */
+/** Expected move to the main target, percent of entry. Null when unknown. */
 function entryMovePct(plan: TradePlanPayload | null | undefined): number | null {
   if (!plan) return null
   const entry = plan.entryIdeal > 0 ? plan.entryIdeal : plan.signalPrice
-  const target = plan.target1 ?? plan.tp
+  const target = plan.tp > 0 ? plan.tp : plan.target1
   if (!(entry > 0) || !(target > 0)) return null
   return (Math.abs(target - entry) / entry) * 100
 }
@@ -1989,7 +1991,7 @@ async function sendSniperToFavoriteChats(
   env: Env,
   a: ScanAlert
 ): Promise<{ sent: number; failed: number; chats: number[] }> {
-  // Pure signals only: skip entries with under 1% to the first target.
+  // Pure signals: skip entries whose main target (tp) is under 1%.
   const mv = entryMovePct(a.tradePlan)
   if (mv != null && mv < MIN_ENTRY_MOVE_PCT) {
     return { sent: 0, failed: 0, chats: [] }
@@ -2005,12 +2007,17 @@ async function sendSniperToFavoriteChats(
     })
     return { sent: r.sent, failed: r.failed, chats: [] }
   }
-  const chats = await chatsWatchingSymbol(
-    env.SUBSCRIBERS,
-    await sniperChatIds(env),
-    symbol,
-    { urgentOnly: true }
-  )
+  // Elite bot ships entry signals to subscribers.
+  // Empty favorites ⇒ monitor all symbols (same as chatMonitorsSymbol).
+  // A non-empty list still scopes to those pins; urgentOn=false mutes.
+  const ids = await sniperChatIds(env)
+  const chats: number[] = []
+  for (const chatId of ids) {
+    const rec = await loadFavorites(env.SUBSCRIBERS, chatId)
+    if (rec?.urgentOn === false) continue
+    if (!(await chatMonitorsSymbol(env.SUBSCRIBERS, chatId, symbol))) continue
+    chats.push(chatId)
+  }
   if (!chats.length) return { sent: 0, failed: 0, chats: [] }
   let sent = 0
   let failed = 0
@@ -2020,7 +2027,7 @@ async function sendSniperToFavoriteChats(
           symbol,
           side: a.tradePlan.side,
           entry: a.tradePlan.entryIdeal || a.tradePlan.signalPrice,
-          target: a.tradePlan.target1 ?? a.tradePlan.tp,
+          target: a.tradePlan.tp > 0 ? a.tradePlan.tp : a.tradePlan.target1,
           chased: Boolean(a.needsPullbackWatch || a.watchOnly),
         })
       : { title: a.title, text: a.text }
@@ -2044,7 +2051,7 @@ async function sendSniperToFavoriteChats(
           plan.side,
           plan.entryIdeal || plan.signalPrice,
           {
-            target: plan.target1 ?? plan.tp,
+            target: plan.tp > 0 ? plan.tp : plan.target1,
             zoneLow: plan.zoneLow,
             zoneHigh: plan.zoneHigh,
             magnetPrice: plan.target3,
@@ -2054,7 +2061,7 @@ async function sendSniperToFavoriteChats(
               side: plan.side,
               kind: 'SNIPER',
               entry: plan.entryIdeal || plan.signalPrice,
-              target: plan.target1 ?? plan.tp,
+              target: plan.tp > 0 ? plan.tp : plan.target1,
             }),
           }
         )

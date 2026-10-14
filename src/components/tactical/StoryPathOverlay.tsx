@@ -1,6 +1,6 @@
 /**
- * Four descriptive polylines. Until the user picks a row, all four
- * have the same weight. Color is side and kind, not a confidence rank.
+ * Four descriptive polylines. Lead / active path is bold;
+ * others stay muted so the chart stays readable while panning.
  */
 
 import { useEffect, useRef } from 'react'
@@ -20,6 +20,7 @@ import {
   watchLayer,
   type LabelRequest,
 } from './chartLabels/LabelLayoutManager'
+import { useViewportRedraw } from './useViewportRedraw'
 
 interface Props {
   chart: IChartApi | null
@@ -31,6 +32,7 @@ interface Props {
   lastPrice: number
   scenarios?: StoryScenario[]
   activeId?: StoryScenarioId | null
+  interactingRef?: React.MutableRefObject<boolean>
 }
 
 function clamp(n: number, a: number, b: number): number {
@@ -246,10 +248,13 @@ const StoryPathOverlay = ({
   lastPrice,
   scenarios = [],
   activeId = null,
+  interactingRef,
 }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const askedRight = useRef(0)
   const layout = useChartLabels()
+  const fromListenerRef = useRef(false)
+  const redrawRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -258,13 +263,13 @@ const StoryPathOverlay = ({
       const ctx = canvas?.getContext('2d')
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height)
       layout.clear('story')
+      redrawRef.current = () => {}
       return
     }
 
-    let fromListener = false
-
     const redraw = () => {
       try {
+        const fromListener = fromListenerRef.current
         const host = containerRef.current
         if (!host) return
         const w = host.clientWidth
@@ -445,13 +450,28 @@ const StoryPathOverlay = ({
           const color = storyPathColor(sc.id, sc.side)
           const dashed = sc.id === 'break' || sc.id === 'chop'
           const dash = dashed ? (on || equal ? [7, 5] : [5, 6]) : []
+          const sweepThru =
+            sc.id === 'sweep' && on && pts.length >= 3
+              ? pts.slice(0, Math.min(3, pts.length))
+              : null
           if (on) {
-            strokePolyline(ctx, pts, 'rgba(8,10,14,0.88)', compact ? 6.2 : 5.4, dash, 1)
-            strokePolyline(ctx, pts, color, compact ? 3.4 : 3.1, dash, 1)
+            strokePolyline(ctx, pts, 'rgba(8,10,14,0.9)', compact ? 7 : 6, dash, 1)
+            strokePolyline(ctx, pts, color, compact ? 3.8 : 3.5, dash, 1)
+            if (sweepThru && sweepThru.length >= 2) {
+              strokePolyline(
+                ctx,
+                sweepThru,
+                hexAlpha(color, 0.95),
+                compact ? 5.2 : 4.6,
+                [],
+                1
+              )
+            }
           } else if (equal) {
-            strokePolyline(ctx, pts, color, compact ? 2.1 : 1.9, dash, 1)
+            // Soft equal weight — lead still slightly stronger via pct sort order
+            strokePolyline(ctx, pts, hexAlpha(color, 0.55), compact ? 1.7 : 1.5, dash, 1)
           } else {
-            strokePolyline(ctx, pts, hexAlpha(color, 0.42), compact ? 1.45 : 1.25, dash, 1)
+            strokePolyline(ctx, pts, hexAlpha(color, 0.24), compact ? 1.15 : 1.05, dash, 1)
           }
           const a = pts[pts.length - 2]
           const b = pts[pts.length - 1]
@@ -461,8 +481,8 @@ const StoryPathOverlay = ({
               b.x,
               b.y,
               Math.atan2(b.y - a.y, b.x - a.x),
-              on || equal ? color : hexAlpha(color, 0.55),
-              on ? (compact ? 16 : 15) : equal ? (compact ? 12 : 11) : compact ? 9 : 8
+              on ? color : equal ? hexAlpha(color, 0.6) : hexAlpha(color, 0.35),
+              on ? (compact ? 17 : 16) : equal ? (compact ? 11 : 10) : compact ? 8 : 7
             )
           }
           if (on) {
@@ -503,14 +523,18 @@ const StoryPathOverlay = ({
           color: string
         }> = []
 
+        const lead =
+          active ??
+          [...rows].sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0))[0] ??
+          null
         const order = [...rows].sort((a, b) => {
-          const ao = active && a.id === active.id ? 1 : 0
-          const bo = active && b.id === active.id ? 1 : 0
+          const ao = lead && a.id === lead.id ? 1 : 0
+          const bo = lead && b.id === lead.id ? 1 : 0
           return ao - bo
         })
-        const equal = !active
+        const equal = !active && !lead
         for (const sc of order) {
-          drawOne(sc, Boolean(active && sc.id === active.id), equal)
+          drawOne(sc, Boolean(lead && sc.id === lead.id), equal)
         }
 
         const requests: LabelRequest[] = captions.map((c) => ({
@@ -552,28 +576,21 @@ const StoryPathOverlay = ({
     }
 
     const onLayout = () => {
-      fromListener = true
+      fromListenerRef.current = true
       try {
         redraw()
       } finally {
-        fromListener = false
+        fromListenerRef.current = false
       }
     }
 
     const unsub = watchLayer(layout, 'story', onLayout)
-    chart.timeScale().subscribeVisibleLogicalRangeChange(redraw)
-    const ro = new ResizeObserver(() => redraw())
-    ro.observe(box)
+    redrawRef.current = redraw
     redraw()
     return () => {
       unsub()
       layout.clear('story')
-      try {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw)
-      } catch {
-        /* ignore */
-      }
-      ro.disconnect()
+      redrawRef.current = () => {}
     }
   }, [
     chart,
@@ -587,6 +604,13 @@ const StoryPathOverlay = ({
     activeId,
     layout,
   ])
+
+  useViewportRedraw(
+    chart,
+    containerRef.current,
+    () => redrawRef.current(),
+    { interactingRef, crosshair: false }
+  )
 
   if (!future) return null
 

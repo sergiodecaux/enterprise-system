@@ -1,11 +1,13 @@
 /**
  * TradingView-style comment pins on the chart — short RU bubbles, not a sheet.
  * Expanded chart: collapsed pins, tap one to read.
+ * Pin positions update via rAF (no React re-render on every pan).
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type { ChartComment } from '../../engine/smc/chartStory'
+import { useViewportRedraw } from './useViewportRedraw'
 
 interface Props {
   chart: IChartApi | null
@@ -15,6 +17,7 @@ interface Props {
   lastPrice: number
   /** Expanded / exchange view — pins only until tapped */
   compactPins: boolean
+  interactingRef?: React.MutableRefObject<boolean>
 }
 
 interface PinLayout {
@@ -74,6 +77,49 @@ function palette(side: ChartComment['side'], kind: ChartComment['kind']): {
   }
 }
 
+function computePins(
+  chart: IChartApi,
+  series: ISeriesApi<'Candlestick'>,
+  box: HTMLDivElement,
+  comments: ChartComment[],
+  lastPrice: number
+): PinLayout[] {
+  const w = box.clientWidth
+  const h = box.clientHeight
+  if (w < 80 || h < 40 || !comments.length) return []
+
+  const yOf = (price: number): number => {
+    const y = series.priceToCoordinate(price)
+    if (y != null && Number.isFinite(Number(y))) return Number(y)
+    return price >= lastPrice ? 22 : h - 28
+  }
+  const xOf = (timeSec?: number): number => {
+    if (timeSec != null) {
+      const x = chart.timeScale().timeToCoordinate(timeSec as never)
+      if (x != null && Number.isFinite(Number(x))) return Number(x)
+    }
+    return w * 0.72
+  }
+
+  const used: number[] = []
+  const placeY = (raw: number): number => {
+    let y = clamp(raw, 18, h - 22)
+    for (let i = 0; i < 8; i++) {
+      if (!used.some((u) => Math.abs(u - y) < 28)) break
+      y = clamp(y + 28, 18, h - 22)
+    }
+    used.push(y)
+    return y
+  }
+
+  return comments.map((c) => ({
+    id: c.id,
+    x: clamp(xOf(c.timeSec), 10, w - 36),
+    y: placeY(yOf(c.price)),
+    comment: c,
+  }))
+}
+
 const ChartCommentsOverlay = ({
   chart,
   series,
@@ -81,69 +127,39 @@ const ChartCommentsOverlay = ({
   comments,
   lastPrice,
   compactPins,
+  interactingRef,
 }: Props) => {
   const [openId, setOpenId] = useState<string | null>(null)
-  const [tick, setTick] = useState(0)
+  const [pins, setPins] = useState<PinLayout[]>([])
+  const commentsRef = useRef(comments)
+  commentsRef.current = comments
+  const lastPriceRef = useRef(lastPrice)
+  lastPriceRef.current = lastPrice
 
   useEffect(() => {
     if (!compactPins && comments[0]) setOpenId(null)
   }, [compactPins, comments])
 
-  useEffect(() => {
-    if (!chart || !series || !containerRef.current || !comments.length) return
-    const bump = () => setTick((n) => n + 1)
-    chart.timeScale().subscribeVisibleLogicalRangeChange(bump)
-    const ro = new ResizeObserver(bump)
-    ro.observe(containerRef.current)
-    return () => {
-      try {
-        chart.timeScale().unsubscribeVisibleLogicalRangeChange(bump)
-      } catch {
-        /* ignore */
-      }
-      ro.disconnect()
-    }
-  }, [chart, series, containerRef, comments.length])
-
-  const pins = useMemo((): PinLayout[] => {
+  const redraw = () => {
     const box = containerRef.current
-    if (!box || !chart || !series || !comments.length) return []
-    const w = box.clientWidth
-    const h = box.clientHeight
-    if (w < 80 || h < 40) return []
-    void tick
-
-    const yOf = (price: number): number => {
-      const y = series.priceToCoordinate(price)
-      if (y != null && Number.isFinite(Number(y))) return Number(y)
-      return price >= lastPrice ? 22 : h - 28
+    if (!chart || !series || !box) {
+      setPins([])
+      return
     }
-    const xOf = (timeSec?: number): number => {
-      if (timeSec != null) {
-        const x = chart.timeScale().timeToCoordinate(timeSec as never)
-        if (x != null && Number.isFinite(Number(x))) return Number(x)
-      }
-      return w * 0.72
-    }
+    setPins(
+      computePins(chart, series, box, commentsRef.current, lastPriceRef.current)
+    )
+  }
 
-    const used: number[] = []
-    const placeY = (raw: number): number => {
-      let y = clamp(raw, 18, h - 22)
-      for (let i = 0; i < 8; i++) {
-        if (!used.some((u) => Math.abs(u - y) < 28)) break
-        y = clamp(y + 28, 18, h - 22)
-      }
-      used.push(y)
-      return y
-    }
+  useEffect(() => {
+    redraw()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart, series, comments, lastPrice])
 
-    return comments.map((c) => ({
-      id: c.id,
-      x: clamp(xOf(c.timeSec), 10, w - 36),
-      y: placeY(yOf(c.price)),
-      comment: c,
-    }))
-  }, [chart, series, containerRef, comments, lastPrice, tick])
+  useViewportRedraw(chart, containerRef.current, redraw, {
+    interactingRef,
+    crosshair: false,
+  })
 
   if (!comments.length || !pins.length) return null
 

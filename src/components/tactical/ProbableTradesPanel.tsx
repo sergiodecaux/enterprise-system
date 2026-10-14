@@ -165,7 +165,14 @@ const ProbableTradesPanel = ({
                 </ul>
 
                 <div className="grid grid-cols-3 gap-1 font-mono text-[9px] text-holo/45">
-                  <span>In {fmt(s.limitEntry)}</span>
+                  <span
+                    className={
+                      s.side === 'SHORT' ? 'text-rose-300/90' : 'text-teal-300/90'
+                    }
+                  >
+                    {s.side === 'SHORT' ? 'ЛИМ SHORT' : 'ЛИМ LONG'}{' '}
+                    {fmt(s.limitEntry)}
+                  </span>
                   <span className="text-alert/70">SL {fmt(s.invalidation)}</span>
                   <span className="text-matrix/70">TP2 {fmt(s.target)}</span>
                 </div>

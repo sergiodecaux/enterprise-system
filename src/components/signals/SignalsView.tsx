@@ -792,8 +792,12 @@ const SignalsView = () => {
                   </span>
                 </div>
                 <div>
-                  Лимит:{' '}
-                  <span className="text-holo">
+                  {result.side === 'SHORT' ? 'Лимитка SHORT' : 'Лимитка LONG'}:{' '}
+                  <span
+                    className={
+                      result.side === 'SHORT' ? 'text-rose-300' : 'text-teal-300'
+                    }
+                  >
                     {fmtPx(setup?.limitEntry ?? zone?.limitEntry ?? 0)}
                   </span>
                   {(zone?.distancePct != null || setup) && (

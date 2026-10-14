@@ -981,11 +981,11 @@ export function buildChartComments(opts: {
       out.push({
         id: 'entry',
         kind: 'ENTRY',
-        title: setup.side === 'SHORT' ? 'ВХОД шорт' : 'ВХОД лонг',
+        title: setup.side === 'SHORT' ? 'ЛИМИТКА SHORT' : 'ЛИМИТКА LONG',
         text:
           setup.side === 'SHORT'
-            ? `ВХОД шорт от ${fmtStoryTargetPx(px)} — не догонять.`
-            : `ВХОД лонг от ${fmtStoryTargetPx(px)} — не догонять.`,
+            ? `Лимитку SHORT кидать здесь · ${fmtStoryTargetPx(px)} — не догонять.`
+            : `Лимитку LONG кидать здесь · ${fmtStoryTargetPx(px)} — не догонять.`,
         price: px,
         side: setup.side,
       })
@@ -999,11 +999,11 @@ export function buildChartComments(opts: {
     out.push({
       id: 'entry',
       kind: 'ENTRY',
-      title: story.side === 'SHORT' ? 'ВХОД шорт' : 'ВХОД лонг',
+      title: story.side === 'SHORT' ? 'ЛИМИТКА SHORT' : 'ЛИМИТКА LONG',
       text:
         story.side === 'SHORT'
-          ? 'ВХОД шорт в зоне — не догонять.'
-          : 'ВХОД лонг в зоне — не догонять.',
+          ? 'Лимитку SHORT кидать в зоне — не догонять.'
+          : 'Лимитку LONG кидать в зоне — не догонять.',
       price: mid > 0 ? mid : price,
       side: story.side,
     })

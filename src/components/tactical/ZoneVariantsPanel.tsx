@@ -161,8 +161,14 @@ const ZoneVariantsPanel = ({
                   </div>
                 </div>
                 <div>
-                  Вход
-                  <div className="text-sky-300/90">{fmt(s.limitEntry)}</div>
+                  {s.side === 'SHORT' ? 'Лим SHORT' : 'Лим LONG'}
+                  <div
+                    className={
+                      s.side === 'SHORT' ? 'text-rose-300/90' : 'text-teal-300/90'
+                    }
+                  >
+                    {fmt(s.limitEntry)}
+                  </div>
                 </div>
                 <div>
                   Слом

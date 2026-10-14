@@ -56,9 +56,13 @@ import {
   refreshZoneSetups,
   type FoundTradeZone,
 } from '../../engine/zones/findTradeZones'
-import { findProbableTrades, findLiveSignal } from '../../engine/trades'
+import {
+  findProbableTrades,
+  findLiveSignal,
+  findBounceSetups,
+} from '../../engine/trades'
 import { recordSequenceHit, setProcessAudioEnabled, seedHitBaselineFromCandles } from '../../engine/sequence'
-import type { LiveSignalResult } from '../../engine/trades'
+import type { LiveSignalResult, BounceModeResult } from '../../engine/trades'
 import {
   pushJewelEntryAlert,
   pushProbableTradesAck,
@@ -106,6 +110,7 @@ import {
   readContinuationReaction,
 } from '../../engine/smc/continuationExtension'
 import ChartCommentsOverlay from './ChartCommentsOverlay'
+import BounceArrowsOverlay from './BounceArrowsOverlay'
 import {
   analyzeZoneTap,
   hitZoneAt,
@@ -371,6 +376,8 @@ const LiveChart = ({
   const [zonesMode, setZonesMode] = useState(false)
   const [tradesMode, setTradesMode] = useState(false)
   const [signalMode, setSignalMode] = useState(false)
+  const [bouncesMode, setBouncesMode] = useState(false)
+  const [bounceResult, setBounceResult] = useState<BounceModeResult | null>(null)
   const [liveSignal, setLiveSignal] = useState<LiveSignalResult | null>(null)
   const [tradesGlobalView, setTradesGlobalView] =
     useState<TradeGlobalView | null>(null)
@@ -1239,6 +1246,8 @@ const LiveChart = ({
     setFoundChartZones(result.chartZones)
     setZonesMode(true)
     setTradesMode(false)
+    setBouncesMode(false)
+    setBounceResult(null)
     setTradesGlobalView(null)
     setTradesMagnet(null)
     setLiquidityMap(symbol, result.liquidityMap)
@@ -1832,6 +1841,62 @@ const LiveChart = ({
     [candles, currentPrice]
   )
 
+  const handleClearBounces = useCallback(() => {
+    setBouncesMode(false)
+    setBounceResult(null)
+  }, [])
+
+  const handleFindBounces = useCallback(() => {
+    if (!(currentPrice > 0) || candles.length < 20) {
+      showAlert('Нужны свечи и цена — подождите загрузку графика')
+      return
+    }
+    setSignalMode(false)
+    setLiveSignal(null)
+    setTradesMode(false)
+    setZonesMode(false)
+    setShowSetupPicker(false)
+    setTradesGlobalView(null)
+    setTradesMagnet(null)
+    setAdvisor(null)
+    setShowHints(false)
+    setShowDirection(false)
+    setOnlyStrong(true)
+    writeLsFlag('enterprise_only_strong', true)
+
+    const tradeStyle = horizonToStyle(forecastHorizon)
+    const result = findBounceSetups({
+      candles,
+      symbol,
+      flatSymbol,
+      price: currentPrice,
+      atr: chartAtr,
+      liquidityMap: eqLiquidityMap,
+      board: liveZones,
+      tradeStyle,
+    })
+    setBounceResult(result)
+    setBouncesMode(true)
+    setPickedSetups(result.setups)
+    setSelectedSetupId(result.setups[0]?.id ?? null)
+    setShowForecast(false)
+    haptic.success()
+    if (!result.zones.length) {
+      showAlert('Сильных зон отскока рядом нет — смени ТФ или пару')
+    }
+  }, [
+    currentPrice,
+    candles,
+    symbol,
+    flatSymbol,
+    chartAtr,
+    eqLiquidityMap,
+    liveZones,
+    forecastHorizon,
+    showAlert,
+    haptic,
+  ])
+
   const ictRead = useMemo(
     () =>
       readIctStructure({
@@ -1916,14 +1981,47 @@ const LiveChart = ({
     ]
   )
 
-  const overlayZones =
-    cleanMode || onlyStrong ? chartStory.displayZones : candidateZones
-  const tapZones = cleanMode || onlyStrong ? overlayZones : candidateZones
+  const overlayZones = bouncesMode
+    ? bounceResult?.zones ?? []
+    : cleanMode || onlyStrong
+      ? chartStory.displayZones
+      : candidateZones
+  const tapZones = bouncesMode
+    ? bounceResult?.zones ?? []
+    : cleanMode || onlyStrong
+      ? overlayZones
+      : candidateZones
 
   useEffect(() => {
     storyPickedRef.current = false
     setStoryPathId(null)
+    setBouncesMode(false)
+    setBounceResult(null)
   }, [symbol, timeframe])
+
+  // Auto-emphasize the lead story path when user hasn't picked one
+  useEffect(() => {
+    if (
+      storyPickedRef.current ||
+      zonesMode ||
+      tradesMode ||
+      signalMode ||
+      bouncesMode
+    ) {
+      return
+    }
+    const lead = [...chartStory.scenarios]
+      .filter((s) => s.path.length >= 2)
+      .sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0))[0]
+    if (lead && storyPathId !== lead.id) setStoryPathId(lead.id)
+  }, [
+    chartStory.scenarios,
+    storyPathId,
+    zonesMode,
+    tradesMode,
+    signalMode,
+    bouncesMode,
+  ])
 
   useEffect(() => {
     const series = candleRef.current
@@ -2079,13 +2177,13 @@ const LiveChart = ({
     let sizeRo: ResizeObserver | null = null
     let waitRo: ResizeObserver | null = null
 
-    const onTouchStart = () => {
+    const onInteractStart = () => {
       userPanningRef.current = true
     }
-    const onTouchEnd = () => {
+    const onInteractEnd = () => {
       window.setTimeout(() => {
         userPanningRef.current = false
-      }, 400)
+      }, 180)
     }
 
     const mountChart = () => {
@@ -2146,7 +2244,8 @@ const LiveChart = ({
             mouseWheel: true,
             pressedMouseMove: true,
             horzTouchDrag: true,
-            vertTouchDrag: true,
+            // Vertical drag fights price-scale zoom on phones — keep TV-like feel
+            vertTouchDrag: false,
           },
           handleScale: {
             axisPressedMouseMove: { time: true, price: true },
@@ -2156,7 +2255,7 @@ const LiveChart = ({
           },
           kineticScroll: {
             touch: true,
-            mouse: true,
+            mouse: false,
           },
         })
       } catch (err) {
@@ -2194,8 +2293,12 @@ const LiveChart = ({
         }
       }
 
-      el.addEventListener('touchstart', onTouchStart, { passive: true })
-      el.addEventListener('touchend', onTouchEnd, { passive: true })
+      el.addEventListener('touchstart', onInteractStart, { passive: true })
+      el.addEventListener('touchend', onInteractEnd, { passive: true })
+      el.addEventListener('mousedown', onInteractStart)
+      el.addEventListener('mouseup', onInteractEnd)
+      el.addEventListener('mouseleave', onInteractEnd)
+      el.addEventListener('wheel', onInteractStart, { passive: true })
 
       sizeRo = new ResizeObserver((entries) => {
         if (!entries.length || !chartRef.current) return
@@ -2225,8 +2328,13 @@ const LiveChart = ({
       cancelled = true
       waitRo?.disconnect()
       sizeRo?.disconnect()
-      containerRef.current?.removeEventListener('touchstart', onTouchStart)
-      containerRef.current?.removeEventListener('touchend', onTouchEnd)
+      const el = containerRef.current
+      el?.removeEventListener('touchstart', onInteractStart)
+      el?.removeEventListener('touchend', onInteractEnd)
+      el?.removeEventListener('mousedown', onInteractStart)
+      el?.removeEventListener('mouseup', onInteractEnd)
+      el?.removeEventListener('mouseleave', onInteractEnd)
+      el?.removeEventListener('wheel', onInteractStart)
       const instance = chart
       if (!instance) {
         chartRef.current = null
@@ -2479,20 +2587,82 @@ const LiveChart = ({
       }
     }
 
-    // SL / TP / вход только в режиме сигнала или выбранного сетапа
-    if (signalMode || selectedSetup) {
-      const entry =
-        signal?.surgicalEntry?.status === 'READY' &&
-        signal.surgicalEntry.limitEntry != null
-          ? signal.surgicalEntry.limitEntry
-          : null
-      if (entry != null) {
-        addLine(entry, 'rgba(56, 189, 248, 0.95)', 'IN', {
-          lineStyle: 0,
-          lineWidth: 2,
-          axisLabel: true,
-        })
+    // Limit LONG / SHORT — where to rest the order on the chart.
+    // Side-colored axis titles so both directions read at a glance.
+    const paintedLimits: number[] = []
+    const nearLimit = (px: number) =>
+      paintedLimits.some(
+        (p) => Math.abs(p - px) / Math.max(Math.abs(px), 1e-12) < 0.0008
+      )
+    const addLimit = (price: number, side: 'LONG' | 'SHORT') => {
+      if (!(price > 0) || nearLimit(price)) return
+      paintedLimits.push(price)
+      const long = side === 'LONG'
+      addLine(
+        price,
+        long ? 'rgba(45, 212, 191, 0.98)' : 'rgba(251, 113, 133, 0.98)',
+        long ? 'ЛИМ LONG' : 'ЛИМ SHORT',
+        { lineStyle: 0, lineWidth: 2, axisLabel: true }
+      )
+    }
+
+    if (selectedSetup?.limitEntry && selectedSetup.limitEntry > 0) {
+      addLimit(selectedSetup.limitEntry, selectedSetup.side)
+    }
+
+    const surg = signal?.surgicalEntry
+    if (
+      surg?.status === 'READY' &&
+      surg.limitEntry != null &&
+      surg.limitEntry > 0 &&
+      (surg.side === 'LONG' || surg.side === 'SHORT')
+    ) {
+      addLimit(surg.limitEntry, surg.side)
+    }
+
+    // Bounce mode: all limit lines from bounce result
+    if (bouncesMode && bounceResult?.limits.length) {
+      for (const lim of bounceResult.limits) {
+        addLimit(lim.price, lim.side)
       }
+    }
+
+    // Zones / trades: show both nearest long and short limit levels
+    if ((zonesMode || tradesMode) && foundZones.length) {
+      const nearest = (side: 'LONG' | 'SHORT') =>
+        [...foundZones]
+          .filter((z) => z.side === side && z.limitEntry > 0)
+          .sort(
+            (a, b) => Math.abs(a.distancePct) - Math.abs(b.distancePct)
+          )[0]
+      const longZ = nearest('LONG')
+      const shortZ = nearest('SHORT')
+      if (longZ) addLimit(longZ.limitEntry, 'LONG')
+      if (shortZ) addLimit(shortZ.limitEntry, 'SHORT')
+    }
+
+    // Story ENTRY pin → same axis line when no setup/zones painted yet
+    if (paintedLimits.length === 0) {
+      const entryPin = chartStory.comments.find((c) => c.kind === 'ENTRY')
+      if (
+        entryPin &&
+        entryPin.price > 0 &&
+        (entryPin.side === 'LONG' || entryPin.side === 'SHORT')
+      ) {
+        addLimit(entryPin.price, entryPin.side)
+      } else if (
+        chartStory.side &&
+        chartStory.primary &&
+        (chartStory.nowKind === 'IN_ZONE' || chartStory.nowKind === 'BOUNCE')
+      ) {
+        const mid =
+          (chartStory.primary.top + chartStory.primary.bottom) / 2
+        if (mid > 0) addLimit(mid, chartStory.side)
+      }
+    }
+
+    // SL / TP only in signal mode or selected setup
+    if (signalMode || selectedSetup) {
       if (signal?.sl != null) {
         addLine(signal.sl, 'rgba(239, 68, 68, 0.95)', 'SL', {
           lineStyle: 0,
@@ -2508,13 +2678,6 @@ const LiveChart = ({
         })
       }
       if (selectedSetup) {
-        if (selectedSetup.limitEntry > 0) {
-          addLine(selectedSetup.limitEntry, 'rgba(56, 189, 248, 0.95)', 'вход', {
-            lineStyle: 0,
-            lineWidth: 2,
-            axisLabel: true,
-          })
-        }
         if (selectedSetup.invalidation > 0) {
           addLine(
             selectedSetup.invalidation,
@@ -2539,9 +2702,17 @@ const LiveChart = ({
     signal,
     selectedSetup,
     signalMode,
+    zonesMode,
+    tradesMode,
+    bouncesMode,
+    bounceResult,
+    foundZones,
     showSrZones,
     overlayZones,
     chartStory.primary,
+    chartStory.comments,
+    chartStory.side,
+    chartStory.nowKind,
     liveZones,
     onlyStrong,
     cleanMode,
@@ -2836,9 +3007,11 @@ const LiveChart = ({
     'rgba($1, $2, $3, 0.9)'
   )
 
-  const showSessions = sessionSettings.enabled && !cleanMode
-  /** Zones / Сделки / Сигнал draw their own chartPath — hide A/B/C to avoid double story */
-  const pathModeActive = zonesMode || tradesMode || signalMode
+  const showSessions =
+    sessionSettings.enabled && !cleanMode && !bouncesMode
+  /** Zones / Сделки / Сигнал / Отскоки — hide story paths to keep chart clean */
+  const pathModeActive =
+    zonesMode || tradesMode || signalMode || bouncesMode
   const curvePaths = useMemo(() => {
     if (!advisor) return []
     return [
@@ -3257,6 +3430,7 @@ const LiveChart = ({
                 haptic.impact()
                 return
               }
+              handleClearBounces()
               handleFindLiveSignal()
             }}
             className={`shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase ${
@@ -3325,6 +3499,7 @@ const LiveChart = ({
                 }
                 setSignalMode(false)
                 setLiveSignal(null)
+                handleClearBounces()
                 void handleFindProbableTrades()
               }}
               className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
@@ -3347,15 +3522,39 @@ const LiveChart = ({
               onClick={() => {
                 setSignalMode(false)
                 setLiveSignal(null)
+                handleClearBounces()
                 handlePickSetups()
               }}
               className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                showSetupPicker && !zonesMode && !tradesMode && !signalMode
+                showSetupPicker &&
+                !zonesMode &&
+                !tradesMode &&
+                !signalMode &&
+                !bouncesMode
                   ? 'bg-emerald-500/15 text-emerald-300'
                   : 'text-white/35 hover:text-white/70'
               }`}
             >
               Сетапы
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (bouncesMode) {
+                  handleClearBounces()
+                  haptic.impact()
+                  return
+                }
+                handleFindBounces()
+              }}
+              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+                bouncesMode
+                  ? 'bg-teal-500/25 text-teal-100'
+                  : 'text-white/55 hover:text-white/85'
+              }`}
+              title="Чистый график: зоны отскока, лимитки и стрелки до цели"
+            >
+              {bouncesMode ? 'Отскоки ON' : 'Отскоки'}
             </button>
           </div>
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
@@ -3524,20 +3723,41 @@ const LiveChart = ({
             series={candleRef.current}
             zones={overlayZones}
             containerRef={containerRef}
-            opacity={cleanMode ? 32 : 28}
+            opacity={bouncesMode ? 40 : cleanMode ? 32 : 28}
             showLabels
             highlightId={
-              advisor?.zoneId ??
-              highlightedZoneId ??
-              chartStory.primary?.id ??
-              actionPick.launchId
+              bouncesMode
+                ? bounceResult?.zones[0]?.id ?? null
+                : advisor?.zoneId ??
+                  highlightedZoneId ??
+                  chartStory.primary?.id ??
+                  actionPick.launchId
             }
-            quiet={chartExpanded}
-            onlyStrong={cleanMode || onlyStrong}
-            thinLabels={chartExpanded}
+            quiet={chartExpanded || bouncesMode}
+            onlyStrong={cleanMode || onlyStrong || bouncesMode}
+            thinLabels={chartExpanded || bouncesMode}
+            interactingRef={userPanningRef}
           />
         )}
-        {chartReady > 0 && (showFib141 || showCont141) && (fib141View || cont141View) && (
+        {chartReady > 0 &&
+          bouncesMode &&
+          bounceResult &&
+          bounceResult.arrows.length > 0 &&
+          lastCandleTs > 0 && (
+            <BounceArrowsOverlay
+              chart={chartInstance}
+              series={candleRef.current}
+              containerRef={containerRef}
+              arrows={bounceResult.arrows}
+              lastCandleTs={lastCandleTs}
+              visible
+              interactingRef={userPanningRef}
+            />
+          )}
+        {chartReady > 0 &&
+          !bouncesMode &&
+          (showFib141 || showCont141) &&
+          (fib141View || cont141View) && (
           <Fib141ZoneOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3548,7 +3768,7 @@ const LiveChart = ({
             ]}
           />
         )}
-        {chartReady > 0 && ictMarks.length > 0 && (
+        {chartReady > 0 && !bouncesMode && ictMarks.length > 0 && (
           <IctMarksOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3557,7 +3777,10 @@ const LiveChart = ({
             lastPrice={currentPrice}
           />
         )}
-        {chartReady > 0 && showComments && chartStory.comments.length > 0 && (
+        {chartReady > 0 &&
+          !bouncesMode &&
+          showComments &&
+          chartStory.comments.length > 0 && (
           <ChartCommentsOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3565,12 +3788,15 @@ const LiveChart = ({
             comments={chartStory.comments}
             lastPrice={currentPrice}
             compactPins={chartExpanded}
+            interactingRef={userPanningRef}
           />
         )}
         {chartReady > 0 &&
           lastCandleTs > 0 &&
           chartStory.future &&
-          !advisor && (
+          !advisor &&
+          !bouncesMode &&
+          !pathModeActive && (
           <StoryPathOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3581,9 +3807,16 @@ const LiveChart = ({
             lastPrice={currentPrice}
             scenarios={chartStory.scenarios}
             activeId={storyPathId}
+            interactingRef={userPanningRef}
           />
         )}
-        {chartReady > 0 && lastCandleTs > 0 && !cleanMode && !pathModeActive && !advisor && !onlyStrong && (
+        {chartReady > 0 &&
+          lastCandleTs > 0 &&
+          !cleanMode &&
+          !pathModeActive &&
+          !advisor &&
+          !onlyStrong &&
+          !bouncesMode && (
           <StructureOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3612,7 +3845,7 @@ const LiveChart = ({
             }}
           />
         )}
-        {chartReady > 0 && (
+        {chartReady > 0 && !bouncesMode && (
           <LiqHeatmapOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3625,6 +3858,7 @@ const LiveChart = ({
             edgeOnly={cleanMode || chartExpanded || !showLiqMap}
           />
         )}
+        {!bouncesMode && (
         <button
           type="button"
           onClick={() => {
@@ -3652,7 +3886,8 @@ const LiveChart = ({
             {showLiqMap ? 'ON' : 'OFF'}
           </span>
         </button>
-        {chartReady > 0 && (
+        )}
+        {chartReady > 0 && !bouncesMode && (
           <WhaleLevelsOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3662,7 +3897,7 @@ const LiveChart = ({
             priceCeil={candlePriceSpan.ceil}
           />
         )}
-        {chartReady > 0 && !cleanMode && (
+        {chartReady > 0 && !cleanMode && !bouncesMode && (
           <SequenceProcessOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3672,7 +3907,7 @@ const LiveChart = ({
             }
           />
         )}
-        {chartReady > 0 && !chartExpanded && (
+        {chartReady > 0 && !chartExpanded && !bouncesMode && (
           <ChartHintsOverlay
             chart={chartInstance}
             series={candleRef.current}
@@ -3845,6 +4080,21 @@ const LiveChart = ({
         <ZoneVariantsPanel
           zones={foundZones}
           setups={pickedSetups}
+          selectedId={selectedSetupId}
+          watchingIds={watchingIds}
+          busy={watchBusy}
+          onSelect={(s) => {
+            setSelectedSetupId(s.id)
+            haptic.impact()
+          }}
+          onWatch={(s) => void handleWatchSetup(s)}
+        />
+      )}
+
+      {bouncesMode && bounceResult && bounceResult.setups.length > 0 && (
+        <ZoneVariantsPanel
+          zones={[]}
+          setups={bounceResult.setups}
           selectedId={selectedSetupId}
           watchingIds={watchingIds}
           busy={watchBusy}

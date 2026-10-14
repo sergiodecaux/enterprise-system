@@ -1078,12 +1078,18 @@ export async function createPaperTradeFromPlan(
     | 'jeweler_risk_bounds'
     | 'move_lt_1pct'
 }> {
-  // Elite pure signals: never open an elite (SNIPER) trade whose first target
-  // is under 1% away. The meme / Predator lane (alertType MEME) keeps its rules.
+  // Elite pure signals: never open an elite (SNIPER) trade whose main target
+  // (tp) is under 1% away. TP1 is a scalp chip and must not gate the trade.
+  // The meme / Predator lane (alertType MEME) keeps its rules.
   if (plan.alertType !== 'MEME') {
     const entry = plan.entryIdeal > 0 ? plan.entryIdeal : plan.signalPrice
-    const target = plan.target1 ?? plan.tp
-    if (entry > 0 && target > 0 && (Math.abs(target - entry) / entry) * 100 < 1) {
+    const target = plan.tp > 0 ? plan.tp : plan.target1
+    if (
+      entry > 0 &&
+      target != null &&
+      target > 0 &&
+      (Math.abs(target - entry) / entry) * 100 < 1
+    ) {
       return { created: false, comment: null, skipReason: 'move_lt_1pct' }
     }
   }
