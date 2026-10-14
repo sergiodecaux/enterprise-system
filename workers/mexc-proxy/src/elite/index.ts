@@ -54,6 +54,13 @@ export {
   type TacticHuntVerdict,
 } from './tacticHunt'
 export {
+  detectZonePierceCandle,
+  formatZonePierceUrgent,
+  judgeZonePierce,
+  scanZonePierceEntries,
+  type ZonePierceSignal,
+} from './zonePierceEntry'
+export {
   buildSetupScene,
   inferEliteScene,
   renderSetupChartPng,

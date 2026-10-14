@@ -24,6 +24,11 @@ import { runVaneScan, loadVaneRisk, vaneTradingPaused } from './vane'
 import { evaluateVaneSession } from './vane/sessionFilter'
 import { BOT_ENGINE, SNIPER_ENGINE } from './botEngine'
 import {
+  buildHeartbeatMarketHint,
+  buildMarketPulse,
+  MARKET_PULSE_MS,
+} from './marketPulse'
+import {
   buildEliteBriefing,
   buildEliteCoinBrief,
   buildSetupScene,
@@ -52,6 +57,8 @@ import {
   runFavoritesDigest,
   saveFavorites,
   scanTacticHunt,
+  scanZonePierceEntries,
+  formatZonePierceUrgent,
   tacticAllowsEntry,
   tgSendPhotoPng,
   unionHuntUniverse,
@@ -2110,13 +2117,26 @@ async function maybeHeartbeat(env: Env): Promise<number> {
     const engine = channel === 'sniper' ? SNIPER_ENGINE : BOT_ENGINE
     attempted++
     const elite = channel === 'sniper'
+    const marketHint = await buildHeartbeatMarketHint(env.SUBSCRIBERS)
     const r = await broadcastAlert(env, {
       type: 'SYSTEM',
       channel,
-      title: elite ? 'Elite alts online' : 'Scanner online',
+      title: elite ? 'Elite · на связи' : 'Predator · на связи',
       text: elite
-        ? `🏛 Elite · альты как Mini App · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nЗоны / SMC / READY · прокси mexc-proxy-f`
-        : `🟢 Predator · мемы BOOK LONG/SHORT ≥68% · ${engine.id}\n${now}\nПодписчиков: ${subs.length}\nСледующий скан ≤ 2 мин`,
+        ? [
+            `🏛 Elite · альты · ${engine.id}`,
+            now,
+            `Подписчиков: ${subs.length}`,
+            marketHint || 'Макро: обновляю…',
+            'Пульс рынка ~каждые 2ч · вход ≥1% пришлю сразу.',
+          ].join('\n')
+        : [
+            `🟢 Predator · мемы · ${engine.id}`,
+            now,
+            `Подписчиков: ${subs.length}`,
+            marketHint || 'Макро: обновляю…',
+            'Скан ≤ 2 мин · пульс рынка ~каждые 2ч.',
+          ].join('\n'),
       dedupeKey: `heartbeat:${channel}:${tick}`,
     })
     sent += r.sent
@@ -3426,6 +3446,119 @@ async function runCronScan(
         }
         if (delivered) huntBudget--
       }
+
+      // Zone pierce + volume/откуп → ~1% entry (green at support / red at resistance)
+      try {
+        const pierceSyms = [...new Set([...favPins, ...batch])].slice(0, 8)
+        const pierces = await scanZonePierceEntries({
+          symbols: pierceSyms,
+          kv,
+          readBook: async (symbol) => {
+            try {
+              const { readOrderBookEvent } = await import('./orderBookReader')
+              const mexcJson = async <T>(path: string): Promise<T | null> => {
+                try {
+                  const res = await fetch(
+                    `https://contract.mexc.com${path}`,
+                    {
+                      headers: {
+                        Accept: 'application/json',
+                        'User-Agent': 'EnterpriseSystem/2.0',
+                      },
+                    }
+                  )
+                  if (!res.ok) return null
+                  return (await res.json()) as T
+                } catch {
+                  return null
+                }
+              }
+              const read = await readOrderBookEvent({
+                symbol,
+                allowLiveSequence: false,
+                mexcJson,
+              })
+              const kind = read.event?.kind ?? null
+              if (
+                kind !== 'ABSORPTION_LONG' &&
+                kind !== 'ABSORPTION_SHORT'
+              ) {
+                return null
+              }
+              return {
+                kind,
+                note: read.event?.summary ?? read.event?.label ?? null,
+              }
+            } catch {
+              return null
+            }
+          },
+        })
+        let pierceBudget = 2
+        for (const p of pierces) {
+          if (pierceBudget <= 0) break
+          if (p.movePct < MIN_ENTRY_MOVE_PCT) continue
+          const copy = formatZonePierceUrgent(p)
+          let delivered = false
+          for (const chatId of huntChats) {
+            if (await wasUrgentRecent(chatId, p.symbol)) continue
+            const slot = digestSlot()
+            const r = await broadcastAlert(env, {
+              type: 'SYSTEM',
+              channel: 'sniper',
+              chatId,
+              title: copy.title,
+              text: copy.text,
+              dedupeKey: `pierce:${chatId}:${p.symbol}:${p.side}:${slot}`,
+            })
+            if (r.sent > 0) {
+              sent += r.sent
+              watchAlerts += r.sent
+              delivered = true
+              await markUrgentFired(env.SUBSCRIBERS, chatId, p.symbol)
+              try {
+                await createPaperTradeFromPlan(env, {
+                  symbol: p.symbol,
+                  side: p.side,
+                  setup:
+                    p.side === 'LONG'
+                      ? 'VANE_ZONE_PIERCE_LONG'
+                      : 'VANE_ZONE_PIERCE_SHORT',
+                  signalPrice: p.entry,
+                  entryIdeal: p.entry,
+                  zoneLow: p.zoneLow,
+                  zoneHigh: p.zoneHigh,
+                  sl: p.sl,
+                  tp: p.target,
+                  target1: p.target,
+                  target3: p.target,
+                  alertType: 'SNIPER',
+                  qualityTier: 'A',
+                  entryReasons: [
+                    'source:zone_pierce',
+                    p.candleLabel,
+                    p.volumeLabel,
+                    p.whaleLabel ?? '',
+                  ].filter(Boolean),
+                })
+              } catch (err) {
+                console.error('[elite] pierce paper failed', p.symbol, err)
+              }
+            } else {
+              failed += r.failed
+            }
+          }
+          if (delivered) pierceBudget--
+        }
+        if (pierces.length) {
+          console.log(
+            `[elite] zone pierce candidates=${pierces.length} sentBudgetLeft=${pierceBudget}`
+          )
+        }
+      } catch (err) {
+        console.error('[cron] zone pierce scan failed', err)
+      }
+
       const readyN = verdicts.filter((v) => isTacticReady(v)).length
       console.log(
         `[elite] tactic hunt scanned=${batch.length} ready=${readyN} universe=${universe.length}`
@@ -3810,8 +3943,66 @@ async function runCronScan(
     await runVane()
   }
 
-  // Briefings removed: the elite bot ships pure entry signals only.
-  // Scheduled hourly / daily briefings no longer fire.
+  // Market pulse (~2h): keep both bots informative when no entry fired.
+  // Replaces the old essay briefings — short macro + majors + movers.
+  if (role === 'elite_hourly' || role === 'elite_daily' || role === 'all') {
+    try {
+      const pulseKey = `${MARKET_PULSE_KEY}:${lane}`
+      const lastPulse = Number((await durableGet(env, pulseKey)) || 0)
+      const due =
+        !lastPulse ||
+        Date.now() - lastPulse >= MARKET_PULSE_MS ||
+        role === 'elite_daily'
+      if (due) {
+        const channel: TgChannel = lane === 'elite' ? 'sniper' : 'meme'
+        const focus: string[] = []
+        let hot: string[] = predatorHotlist.slice(0, 6)
+        if (lane === 'elite') {
+          for (const id of await sniperChatIds(env)) {
+            const rec = await loadFavorites(env.SUBSCRIBERS, id)
+            if (rec?.symbols?.length) focus.push(...rec.symbols)
+          }
+        } else {
+          if (!hot.length) {
+            try {
+              const { loadPredatorHotlist } = await import('./predatorHotlist')
+              const stored = await loadPredatorHotlist(env.SUBSCRIBERS)
+              hot = (stored?.entries ?? []).map((e) => e.symbol).slice(0, 6)
+            } catch {
+              /* ignore */
+            }
+          }
+          focus.push(...hot, ...predatorHotlist.slice(0, 8))
+        }
+        const pulse = await buildMarketPulse({
+          lane: lane === 'elite' ? 'elite' : 'meme',
+          focusSymbols: [...new Set(focus)].slice(0, 8),
+          hotlist: hot,
+          engineId: lane === 'elite' ? SNIPER_ENGINE.id : BOT_ENGINE.id,
+          kv: env.SUBSCRIBERS,
+        })
+        const pr = await broadcastAlert(env, {
+          type: 'SYSTEM',
+          channel,
+          title: pulse.title,
+          text: pulse.html,
+          dedupeKey: `market-pulse:${lane}:${Math.floor(Date.now() / MARKET_PULSE_MS)}`,
+        })
+        sent += pr.sent
+        failed += pr.failed
+        if (pr.sent > 0) {
+          await durablePut(env, pulseKey, String(Date.now()), 60 * 60 * 24)
+          idlePulses += pr.sent
+          console.log(
+            `[cron] market pulse lane=${lane} sent=${pr.sent} focus=${focus.length}`
+          )
+        }
+      }
+    } catch (err) {
+      console.error('[cron] market pulse failed', err)
+    }
+  }
+  // Old essay briefings stay available for manual /elite/brief only.
   void runEliteBrief
 
   if (lane === 'elite' && (role === 'favorites_digest' || role === 'all')) {
@@ -4022,6 +4213,8 @@ const IDLE_PULSE_KEY = 'telegram:last_idle_pulse'
 const IDLE_PULSE_PENDING_KEY = 'telegram:idle_pulse_pending'
 /** «Ищу сетап» — only on paper cron (fresh subrequest budget) */
 const IDLE_PULSE_MS = 90 * 60_000
+/** Market pulse cadence per lane — locked before run, not fitted */
+const MARKET_PULSE_KEY = 'telegram:last_market_pulse'
 /** If no TG delivery stamp for this long → Worker→TG self-check (not a signal) */
 const DELIVERY_PROBE_MS = 6 * 60 * 60_000
 
