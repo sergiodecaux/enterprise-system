@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Target, Radar as RadarIcon, Activity, Zap } from 'lucide-react'
 import Header from './components/layout/Header'
+import DesktopStatusBar from './components/layout/DesktopStatusBar'
 import SniperView from './components/sniper/SniperView'
+import CoinSearch from './components/radar/CoinSearch'
 import ErrorBoundary from './components/ErrorBoundary'
 import AdvisorPanel from './components/advisor/AdvisorPanel'
 import NewsStrip from './components/news/NewsStrip'
@@ -105,27 +107,33 @@ function App() {
     <ErrorBoundary>
       <div
         className={`bg-space font-mono text-holo ${
-          isDesktop ? 'h-dvh overflow-hidden' : 'min-h-screen'
+          isDesktop ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-screen'
         }`}
       >
         <Header />
 
         {isDesktop ? (
-          <div className="flex h-full pt-14">
-            <div className="flex w-[min(420px,36vw)] min-w-[300px] max-w-[460px] flex-col border-r border-hull-border">
-              <div className="shrink-0 border-b border-hull-border bg-space/95">
-                <TabBar activeTab={activeTab} onSelect={selectTab} />
+          <>
+            <div className="flex min-h-0 flex-1 pt-14">
+              <aside className="flex w-[clamp(264px,23vw,344px)] shrink-0 flex-col border-r border-hull-border bg-hull/20">
+                <div className="shrink-0 border-b border-hull-border bg-space/95">
+                  <TabBar activeTab={activeTab} onSelect={selectTab} />
+                </div>
+                <div className="shrink-0 border-b border-hull-border/60 pt-2">
+                  <CoinSearch />
+                </div>
+                <main className="min-h-0 flex-1 overflow-y-auto">{views}</main>
+              </aside>
+              <div className="min-h-0 min-w-0 flex-1">
+                {drawerMounted && (
+                  <Suspense fallback={null}>
+                    <TacticalDrawer />
+                  </Suspense>
+                )}
               </div>
-              <main className="min-h-0 flex-1 overflow-y-auto">{views}</main>
             </div>
-            <div className="min-h-0 min-w-0 flex-1">
-              {drawerMounted && (
-                <Suspense fallback={null}>
-                  <TacticalDrawer />
-                </Suspense>
-              )}
-            </div>
-          </div>
+            <DesktopStatusBar />
+          </>
         ) : (
           <>
             <div className="sticky top-14 z-20 border-b border-hull-border bg-space/95 backdrop-blur-sm">

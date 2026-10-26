@@ -16,24 +16,27 @@ const StatusIndicator = () => {
     switch (connectionStatus) {
       case 'ONLINE':
         return {
-          color: 'bg-matrix text-matrix',
+          dot: 'bg-matrix',
+          text: 'text-matrix',
           pulse: 'pulse-dot',
-          text: t('status_online'),
+          label: t('status_online'),
         }
       case 'POLLING':
         return {
-          color: 'bg-yellow-500 text-yellow-500',
+          dot: 'bg-yellow-400',
+          text: 'text-yellow-300',
           pulse: 'pulse-dot-slow',
-          text: marketContext?.dailyBias
+          label: marketContext?.dailyBias
             ? `MEXC · ${biasKey(marketContext.dailyBias)}`
             : t('status_polling'),
         }
       case 'OFFLINE':
       default:
         return {
-          color: 'bg-alert text-alert',
+          dot: 'bg-alert',
+          text: 'text-alert',
           pulse: 'pulse-dot-slow',
-          text: t('status_offline'),
+          label: t('status_offline'),
         }
     }
   }
@@ -41,10 +44,14 @@ const StatusIndicator = () => {
   const config = getStatusConfig()
 
   return (
-    <div className="flex items-center gap-2">
-      <div className={`w-2 h-2 rounded-full ${config.color} ${config.pulse}`} />
-      <span className={`text-xs font-mono uppercase tracking-widest ${config.color}`}>
-        {config.text}
+    <div className="flex shrink-0 items-center gap-2 rounded-full border border-hull-border bg-black/30 px-3 py-1">
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${config.dot} ${config.pulse}`}
+      />
+      <span
+        className={`whitespace-nowrap font-mono text-[10px] font-bold uppercase tracking-widest ${config.text}`}
+      >
+        {config.label}
       </span>
     </div>
   )

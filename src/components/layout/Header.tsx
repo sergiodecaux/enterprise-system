@@ -12,14 +12,14 @@ const Header = () => {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-14 border-b border-hull-border bg-hull/95 backdrop-blur-sm">
       <div className="flex h-full items-center justify-between px-4">
-        <div className="flex items-center gap-2">
-          <Shield className="h-4 w-4 text-matrix" />
-          <div className="flex items-baseline gap-1">
-            <span className="font-mono text-sm font-bold tracking-wider text-matrix">
+        <div className="flex min-w-0 items-center gap-2">
+          <Shield className="h-4 w-4 shrink-0 text-matrix" />
+          <div className="flex items-baseline gap-1 whitespace-nowrap">
+            <span className="hidden font-mono text-sm font-bold tracking-wider text-matrix min-[360px]:inline">
               ENTERPRISE
             </span>
-            <span className="font-mono text-xs text-holo/60">SYSTEM</span>
-            <span className="ml-2 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-100/90">
+            <span className="hidden font-mono text-xs text-holo/60 sm:inline">SYSTEM</span>
+            <span className="ml-2 hidden font-mono text-[10px] font-bold uppercase tracking-wider text-amber-100/90 md:inline">
               живое чтение
             </span>
           </div>
@@ -27,7 +27,7 @@ const Header = () => {
 
         <StatusIndicator />
 
-        <div className="flex items-center justify-end gap-0.5">
+        <div className="flex shrink-0 items-center justify-end gap-0.5">
           <button
             type="button"
             onClick={() =>
@@ -36,7 +36,7 @@ const Header = () => {
                 text: 'Найди лучшие сделки прямо сейчас по всему рынку',
               })
             }
-            className="rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber-200/90 transition-colors hover:bg-hull-light/50 hover:text-amber-100"
+            className="hidden rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber-200/90 transition-colors hover:bg-hull-light/50 hover:text-amber-100 sm:inline-block"
             title="Найти сделки по всему рынку"
           >
             Найти сделки

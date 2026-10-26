@@ -202,7 +202,11 @@ const ChartCommentsOverlay = ({
                   className="block font-mono text-[10px] font-extrabold leading-tight"
                   style={{ color: colors.title }}
                 >
-                  {pin.comment.title}
+                  {compactPins && !showBody
+                    ? `${pin.comment.title.slice(0, 26)}${
+                        pin.comment.title.length > 26 ? '…' : ''
+                      }`
+                    : pin.comment.title}
                 </span>
                 {showBody && (
                   <span className="mt-0.5 block font-mono text-[10px] leading-snug text-holo/80">

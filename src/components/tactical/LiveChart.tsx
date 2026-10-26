@@ -3590,7 +3590,7 @@ const LiveChart = ({
         </div>
       </div>
 
-      {!chartExpanded && (
+      {!chartExpanded && !fillParent && (
       <div className="shrink-0">
       <StructureHud
         read={hudRead}
@@ -3647,7 +3647,7 @@ const LiveChart = ({
         {(lwcData.length > 0 || (!chartExpanded && chartStory.nowLine)) && (
           <div
             className={`pointer-events-none absolute left-1.5 top-1.5 z-20 flex flex-col items-start gap-1 ${
-              chartExpanded ? 'max-w-[min(12rem,42%)]' : 'max-w-[min(18rem,68%)]'
+              chartExpanded || fillParent ? 'max-w-[min(12rem,42%)]' : 'max-w-[min(18rem,68%)]'
             }`}
           >
             {lwcData.length > 0 && (
@@ -3701,6 +3701,7 @@ const LiveChart = ({
                 fact={chartStory.odds?.fact ?? null}
                 dailyLine={chartStory.dailyFrame?.line ?? null}
                 dense={denseUi}
+                toolbar={fillParent}
               />
             )}
           </div>
@@ -3787,7 +3788,7 @@ const LiveChart = ({
             containerRef={containerRef}
             comments={chartStory.comments}
             lastPrice={currentPrice}
-            compactPins={chartExpanded}
+            compactPins={chartExpanded || fillParent}
             interactingRef={userPanningRef}
           />
         )}
@@ -3978,6 +3979,13 @@ const LiveChart = ({
         </ChartLabelsProvider>
         </div>
       </div>
+      <div
+        className={
+          fillParent
+            ? 'shrink-0 max-h-[170px] overflow-y-auto overscroll-contain border-t border-white/[0.06]'
+            : 'contents'
+        }
+      >
       <WhaleSitStrip sit={whaleSit} />
       {!chartExpanded && (
         <ZoneLegend
@@ -4141,6 +4149,7 @@ const LiveChart = ({
         )}
         </>
       )}
+      </div>
 
       <ChartSettings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
