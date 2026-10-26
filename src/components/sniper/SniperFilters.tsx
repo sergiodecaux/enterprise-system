@@ -31,7 +31,7 @@ const SniperFilters = ({
     id: SniperStyleFilter
     label: string
   }> = [
-    { id: 'ALL', label: 'Все стили' },
+    { id: 'ALL', label: 'ВСЕ' },
     { id: 'SCALP', label: '⚡️ SCALP' },
     { id: 'INTRADAY', label: '🎯 INTRA' },
     { id: 'SWING', label: '🕯 SWING' },
@@ -45,7 +45,7 @@ const SniperFilters = ({
             key={filter.id}
             type="button"
             onClick={() => onStyleFilterChange(filter.id)}
-            className={`flex-1 rounded-lg px-2 py-2 font-mono text-[10px] font-bold uppercase tracking-wide transition-all ${
+            className={`flex-1 whitespace-nowrap rounded-lg px-1 py-2 font-mono text-[9px] font-bold uppercase tracking-wide transition-all ${
               styleFilter === filter.id
                 ? filter.id === 'SCALP'
                   ? 'border border-yellow-400/50 bg-yellow-400/15 text-yellow-300 shadow-md'
