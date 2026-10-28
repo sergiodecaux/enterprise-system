@@ -14,6 +14,7 @@ export interface AdvisorUiMessage {
   error?: string
   model?: string
   node?: string
+  provider?: string
   symbol?: string | null
 }
 

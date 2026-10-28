@@ -3,10 +3,18 @@ export interface ChatMessage {
   content: string
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high'
+
 export interface ChatRequest {
   messages: ChatMessage[]
   maxTokens: number
   temperature: number
+  /** Hint for reasoning models (Gemini/Groq `reasoning_effort`) */
+  reasoningEffort?: ReasoningEffort
+  /** Workers AI `chat_template_kwargs.enable_thinking`; defaults to the provider setting */
+  thinking?: boolean
+  /** Aborted when the client disconnects or the stop button is pressed */
+  signal?: AbortSignal
 }
 
 export interface TokenUsage {
@@ -48,5 +56,7 @@ export class ProviderError extends Error {
 export interface ChatProvider {
   id: string
   model: string
+  /** External API (personal/trade data must be stripped before it sees the snapshot) */
+  external?: boolean
   open(req: ChatRequest): Promise<ProviderStream>
 }

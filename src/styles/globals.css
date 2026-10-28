@@ -1,14 +1,30 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
+
   body {
-    background-color: #0a0a0a;
-    color: #e0e0e0;
-    font-family: 'JetBrains Mono', monospace;
+    background-color: #07090c;
+    color: #e8eef5;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgba(44, 224, 138, 0.28);
+    color: #ffffff;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(44, 224, 138, 0.65);
+    outline-offset: 2px;
   }
 }
 
@@ -32,13 +48,33 @@
   }
 }
 
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scan-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 @layer utilities {
   .neon-glow {
-    box-shadow: 0 0 10px #00ff41, 0 0 20px #00ff4133;
+    box-shadow: 0 0 10px #2ce08a, 0 0 20px #2ce08a33;
   }
 
   .alert-glow {
-    box-shadow: 0 0 10px #ff003c, 0 0 20px #ff003c33;
+    box-shadow: 0 0 10px #ff5c73, 0 0 20px #ff5c7333;
   }
 
   .pulse-dot {
@@ -59,23 +95,229 @@
     background-size: 200% 100%;
     animation: shimmer 2s ease-in-out infinite;
   }
+
+  .animate-panel-in {
+    animation: panel-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-scan {
+    animation: scan-sweep 1.8s ease-in-out infinite;
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
-/* Smooth scrollbar styling for dark theme */
+/* Chart tool rail — dense exchange-terminal toolbar.
+   Groups read as one segmented control; one accent for active tools. */
+.tv-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+}
+
+.tv-group > button {
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #787b86;
+  background: transparent;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.tv-group > button:hover {
+  color: #d1d4dc;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tv-group > button:disabled {
+  color: rgba(120, 123, 134, 0.35);
+  background: transparent;
+}
+
+/* Any active utility background collapses into one TradingView-blue accent. */
+.tv-group > button[class*='bg-'] {
+  color: #8ab4ff;
+  background: rgba(41, 98, 255, 0.16);
+  border-color: rgba(41, 98, 255, 0.24);
+}
+
+.tv-group > button[class*='bg-']:hover {
+  color: #b6ceff;
+  background: rgba(41, 98, 255, 0.22);
+}
+
+/* Thin rule between tool groups, like the exchange terminal. */
+.tv-sep {
+  width: 1px;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 0 3px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.tv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #787b86;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.tv-btn:hover {
+  color: #d1d4dc;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tv-btn-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(41, 98, 255, 0.26);
+  background: rgba(41, 98, 255, 0.16);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #8ab4ff;
+}
+
+.tv-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  width: 24px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  color: #787b86;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.tv-icon:hover {
+  color: #d1d4dc;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tv-icon-on {
+  color: #8ab4ff;
+  background: rgba(41, 98, 255, 0.14);
+}
+
+/* TradingView-style floating action buttons on the plot. */
+.tv-float {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(19, 23, 34, 0.82);
+  backdrop-filter: blur(8px);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9aa0ac;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.desktop-shell:not(:empty) .tv-float:hover {
+  color: #d1d4dc;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Desktop shell: quiet depth instead of a flat black wall. */
+.desktop-shell {
+  background-color: #07090c;
+  background-image:
+    radial-gradient(920px 520px at 6% -8%, rgba(44, 224, 138, 0.1), transparent 62%),
+    radial-gradient(880px 620px at 102% 108%, rgba(91, 157, 255, 0.09), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 18%);
+}
+
+.terminal-empty {
+  background-image:
+    radial-gradient(760px 460px at 18% 0%, rgba(44, 224, 138, 0.07), transparent 65%),
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: auto, 46px 46px, 46px 46px;
+  background-position: center, center, center;
+}
+
+/* Hairline separators that still read on very dark panels. */
+.separator-glow {
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(44, 224, 138, 0.45) 22%,
+    rgba(44, 224, 138, 0.18) 78%,
+    transparent
+  );
+}
+
+/* Slim scrollbars for terminal panels. */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0a0a;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
-  border-radius: 4px;
+  background: #27313d;
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: #3a495a;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #27313d transparent;
+}
+
+/* Keep native number inputs and chart canvases from flashing white. */
+canvas {
+  background-color: transparent;
 }

@@ -44,12 +44,17 @@ const StatusIndicator = () => {
   const config = getStatusConfig()
 
   return (
-    <div className="flex shrink-0 items-center gap-2 rounded-full border border-hull-border bg-black/30 px-3 py-1">
+    <div className="flex shrink-0 items-center gap-2 rounded-full border border-hull-border/80 bg-black/30 px-2 py-1 sm:px-3">
       <span
         className={`h-1.5 w-1.5 shrink-0 rounded-full ${config.dot} ${config.pulse}`}
       />
       <span
-        className={`whitespace-nowrap font-mono text-[10px] font-bold uppercase tracking-widest ${config.text}`}
+        className={`whitespace-nowrap font-sans text-[10px] font-semibold uppercase tracking-[0.12em] ${config.text} sm:hidden`}
+      >
+        {connectionStatus === 'OFFLINE' ? 'OFF' : 'MEXC'}
+      </span>
+      <span
+        className={`hidden whitespace-nowrap font-sans text-[10px] font-semibold uppercase tracking-[0.12em] sm:inline ${config.text}`}
       >
         {config.label}
       </span>

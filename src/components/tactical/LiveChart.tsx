@@ -7,13 +7,14 @@ import {
   type ISeriesApi,
   type IPriceLine,
   type CandlestickData,
+  type HistogramData,
   type LineData,
   type Time,
   type SeriesMarker,
   type AutoscaleInfo,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, MessageCircle, Volume2, VolumeX, Flame } from 'lucide-react'
+import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, MessageCircle, Volume2, VolumeX, Flame, Package } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import type { AdvisorChartInput } from '../../engine/advisor'
@@ -41,7 +42,6 @@ import ChartOverlay from './ChartOverlay'
 import DirectionArrowOverlay from './DirectionArrowOverlay'
 import { computeDirectionConsensus } from '../../engine/trend/directionConsensus'
 import SessionOverlay from './SessionOverlay'
-import VolumePanel from './VolumePanel'
 import OscillatorPanel from './OscillatorPanel'
 import MultiTFPanel from './MultiTFPanel'
 import PredictionOverlay from './PredictionOverlay'
@@ -67,7 +67,6 @@ import {
   pushJewelEntryAlert,
   pushProbableTradesAck,
   pushZoneWatchAck,
-  pushZoneAdvisorAlert,
 } from '../../api/telegram/formatters'
 import ZonePathOverlay from './ZonePathOverlay'
 import StructureHud from './StructureHud'
@@ -76,7 +75,11 @@ import StoryPathOverlay from './StoryPathOverlay'
 import NowStoryHud from './NowStoryHud'
 import ScenarioBoard, { ZoneLegend } from './ScenarioBoard'
 import CurvePathOverlay from './CurvePathOverlay'
-import ZoneAdvisorCard from './ZoneAdvisorCard'
+import ZoneAdvisorCard, {
+  ADVISOR_CARD_H,
+  ADVISOR_CARD_W,
+  type AdvisorMode,
+} from './ZoneAdvisorCard'
 import ZoneVariantsPanel from './ZoneVariantsPanel'
 import ProbableTradesPanel from './ProbableTradesPanel'
 import SignalNowPanel from './SignalNowPanel'
@@ -110,13 +113,21 @@ import {
   readContinuationReaction,
 } from '../../engine/smc/continuationExtension'
 import ChartCommentsOverlay from './ChartCommentsOverlay'
+import CaseMarkersOverlay from './CaseMarkersOverlay'
+import LimitCasesStrip from './LimitCasesStrip'
 import BounceArrowsOverlay from './BounceArrowsOverlay'
 import {
   analyzeZoneTap,
   hitZoneAt,
   timeframeBarSeconds,
   type ZoneAdvisorBrief,
+  type ZoneContext,
+  type ZoneContext141,
+  type ZoneContextFib,
+  type ZoneContextLiq,
+  type ZoneContextSweep,
 } from '../../engine/smc/zoneAdvisor'
+import { buildLimitCases, type LimitCase } from '../../engine/trades/limitCases'
 import { horizonToStyle } from '../../engine/zones/horizonProfiles'
 import type { ForecastHorizon } from '../../engine/prediction/macroOutlook'
 import { buildMacroContext } from '../../engine/prediction/macroOutlook'
@@ -287,6 +298,7 @@ const LiveChart = ({
   })
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const lineRefs = useRef<Record<string, ISeriesApi<'Line'>>>({})
   const priceLineRefs = useRef<IPriceLine[]>([])
   const liqLineRefs = useRef<IPriceLine[]>([])
@@ -311,6 +323,11 @@ const LiveChart = ({
   const [showComments, setShowComments] = useState(() =>
     readLsFlag('enterprise_chart_comments', true)
   )
+  /** 🧰 Отложенные лимитки на отскок от важных зон */
+  const [showCases, setShowCases] = useState(() =>
+    readLsFlag('enterprise_chart_cases', true)
+  )
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null)
   const [showLiqMap, setShowLiqMap] = useState(() =>
     readLsFlag('enterprise_liq_layer', true)
   )
@@ -370,7 +387,12 @@ const LiveChart = ({
   const [storyPathId, setStoryPathId] = useState<StoryScenarioId | null>(null)
   const storyPickedRef = useRef(false)
   const [advisor, setAdvisor] = useState<ZoneAdvisorBrief | null>(null)
-  const [advisorBot, setAdvisorBot] = useState<'idle' | 'sent' | 'fail'>('idle')
+  const [hoverAdvisor, setHoverAdvisor] = useState<ZoneAdvisorBrief | null>(null)
+  const [hoverAnchor, setHoverAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [advisorMode, setAdvisorMode] = useState<AdvisorMode>('hold')
+  const [advisorAnchor, setAdvisorAnchor] = useState<{ x: number; y: number } | null>(
+    null
+  )
   const [foundZones, setFoundZones] = useState<FoundTradeZone[]>([])
   const [foundChartZones, setFoundChartZones] = useState<LiquidityZone[]>([])
   const [zonesMode, setZonesMode] = useState(false)
@@ -1030,19 +1052,19 @@ const LiveChart = ({
       for (const lv of fib.levels) {
         if (retrace.has(lv.ratio)) {
           if (cleanMode && lv.ratio !== 0.618) continue
-          const isHalf = lv.ratio === 0.5
+          // Without an explicitly pinned fib timeframe, 0.618 alone carries
+          // the read. Extra levels would turn the plot into a lined notebook.
+          if (!extra && lv.ratio !== 0.618) continue
           const is618 = lv.ratio === 0.618
           out.push({
             id: `gfib_${tf}_${lv.ratio}`,
             type: is618 ? 'FIB_618' : 'FIB_OTE',
             price: lv.price,
             label: String(lv.ratio),
-            color: isHalf
-              ? 'rgba(226, 232, 240, 0.42)'
-              : is618
-                ? 'rgba(251, 191, 36, 0.5)'
-                : 'rgba(148, 163, 184, 0.28)',
-            lineStyle: isHalf ? 1 : 2,
+            color: is618
+              ? 'rgba(251, 191, 36, 0.42)'
+              : 'rgba(148, 163, 184, 0.24)',
+            lineStyle: 0,
           })
         }
         if (extra && (lv.ratio === 1.414 || lv.ratio === 1.618)) {
@@ -1052,7 +1074,7 @@ const LiveChart = ({
             price: lv.price,
             label: lv.ratio === 1.414 ? '1.414' : '1.618',
             color: extColors[tf] ?? 'rgba(251, 191, 36, 0.45)',
-            lineStyle: lv.ratio === 1.414 ? 2 : 3,
+            lineStyle: 0,
           })
         }
       }
@@ -1115,81 +1137,6 @@ const LiveChart = ({
     if (telegramSettings.subscribedChatId) return telegramSettings.subscribedChatId
     return null
   }, [userId, telegramSettings])
-
-  const handleZoneTap = useCallback(
-    (zoneId: string) => {
-      const zone = candidateZones.find((z) => z.id === zoneId)
-      if (!zone || !(currentPrice > 0)) return
-      const brief = analyzeZoneTap({
-        zone,
-        price: currentPrice,
-        structure: hudRead,
-        timeframe,
-      })
-      if (!brief) return
-      setAdvisor(brief)
-      setAdvisorBot('idle')
-        try {
-        chartRef.current?.timeScale().applyOptions({ rightOffset: storyRightOffset })
-      } catch {
-        /* ignore */
-      }
-      haptic.impact()
-      const chatId = resolveChatId()
-      void (async () => {
-        if (!isTelegramAlertsConfigured() || chatId == null) {
-          setAdvisorBot('fail')
-          showAlert(
-            chatId == null
-              ? 'Сценарий на графике. Бот: открой Mini App из Telegram или /start'
-              : 'Сценарий на графике. Прокси бота не настроен'
-          )
-          return
-        }
-        try {
-          await subscribeTelegramAlerts({
-            chatId,
-            sniper: telegramSettings.sniper !== false,
-            meme: false,
-          })
-        } catch {
-          /* best-effort */
-        }
-        const r = await pushZoneAdvisorAlert({
-          symbol: flatSymbol,
-          displayName: signal?.displayName,
-          price: currentPrice,
-          brief,
-          chatId,
-        })
-        setAdvisorBot(r.ok ? 'sent' : 'fail')
-        if (r.ok) haptic.success()
-        else {
-          const why = r.reason ?? ''
-          showAlert(
-            why === 'need_start' || why === 'no_chat_id'
-              ? 'Сценарий на графике. Напиши боту /start и открой Mini App из Telegram'
-              : why === 'network'
-                ? 'Сценарий на графике. Нет связи с ботом — проверь сеть'
-                : 'Сценарий на графике. Бот не принял сообщение — /start и подписка'
-          )
-        }
-      })()
-    },
-    [
-      candidateZones,
-      currentPrice,
-      hudRead,
-      timeframe,
-      haptic,
-      resolveChatId,
-      telegramSettings.sniper,
-      flatSymbol,
-      signal?.displayName,
-      showAlert,
-      storyRightOffset,
-    ]
-  )
 
   const handlePickSetups = useCallback(() => {
     if (!signal) {
@@ -1992,6 +1939,61 @@ const LiveChart = ({
       ? overlayZones
       : candidateZones
 
+  /**
+   * 🧰 Автоматические «сундучки»: лимитки на отскок от важных зон.
+   * Не требуют нажатия «Зоны» — живут на графике постоянно, пока
+   * цена не вошла в зону. Только движения цели 1–5 %.
+   */
+  const autoCases = useMemo((): LimitCase[] => {
+    if (!(currentPrice > 0) || candles.length < 20) return []
+    const seen = new Set<string>()
+    const zones: LiquidityZone[] = []
+    for (const z of [
+      ...chartStory.displayZones,
+      ...overlayZones,
+      ...candidateZones,
+    ]) {
+      if (!z || seen.has(z.id)) continue
+      seen.add(z.id)
+      zones.push(z)
+    }
+    const recent = candles.slice(-6)
+    const momentumPct =
+      recent.length >= 2 && recent[0][4] > 0
+        ? ((recent[recent.length - 1][4] - recent[0][4]) / recent[0][4]) * 100
+        : null
+    const buyerAggression =
+      signal?.buyerAggression && signal.buyerAggression.buyToSellRatio > 0
+        ? (signal.buyerAggression.buyToSellRatio /
+            (1 + signal.buyerAggression.buyToSellRatio)) *
+          100
+        : null
+    return buildLimitCases({
+      zones,
+      price: currentPrice,
+      atr: chartAtr,
+      timeframe,
+      orderBookImbalance: orderBookMetrics?.imbalance ?? null,
+      buyerAggression,
+      momentumPct,
+      structureSide: structureRead?.preferredSide ?? null,
+      maxCases: 3,
+      minMovePct: 1,
+      maxMovePct: 5,
+    })
+  }, [
+    currentPrice,
+    candles,
+    chartAtr,
+    timeframe,
+    chartStory.displayZones,
+    overlayZones,
+    candidateZones,
+    orderBookMetrics?.imbalance,
+    signal?.buyerAggression?.buyToSellRatio,
+    structureRead?.preferredSide,
+  ])
+
   useEffect(() => {
     storyPickedRef.current = false
     setStoryPathId(null)
@@ -1999,29 +2001,11 @@ const LiveChart = ({
     setBounceResult(null)
   }, [symbol, timeframe])
 
-  // Auto-emphasize the lead story path when user hasn't picked one
+  // No auto-picked arrows: a scenario path is drawn only after the user
+  // explicitly selects it (ScenarioBoard) or clicks a zone.
   useEffect(() => {
-    if (
-      storyPickedRef.current ||
-      zonesMode ||
-      tradesMode ||
-      signalMode ||
-      bouncesMode
-    ) {
-      return
-    }
-    const lead = [...chartStory.scenarios]
-      .filter((s) => s.path.length >= 2)
-      .sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0))[0]
-    if (lead && storyPathId !== lead.id) setStoryPathId(lead.id)
-  }, [
-    chartStory.scenarios,
-    storyPathId,
-    zonesMode,
-    tradesMode,
-    signalMode,
-    bouncesMode,
-  ])
+    if (!storyPickedRef.current) setStoryPathId(null)
+  }, [symbol, timeframe])
 
   useEffect(() => {
     const series = candleRef.current
@@ -2029,20 +2013,16 @@ const LiveChart = ({
     const picked = storyPathId
       ? chartStory.scenarios.find((s) => s.id === storyPathId) ?? null
       : null
-    const paths = picked
-      ? [picked]
-      : chartStory.scenarios.filter((s) => s.path.length >= 2)
+    const paths = picked ? [picked] : []
     const prices: number[] = []
     for (const sc of paths) {
       for (const p of sc.path) if (p.price > 0) prices.push(p.price)
       if (sc.toPrice && sc.toPrice > 0) prices.push(sc.toPrice)
     }
-    if (!prices.length && chartStory.future?.path) {
-      for (const p of chartStory.future.path) if (p.price > 0) prices.push(p.price)
-    }
-    if (chartStory.future?.targetPrice) prices.push(chartStory.future.targetPrice)
-    if (chartStory.primary) {
-      prices.push(chartStory.primary.top, chartStory.primary.bottom)
+    // Keep the clicked-zone arrow inside the visible price window.
+    if (advisor) {
+      const leg = advisorMode === 'hold' ? advisor.primary : advisor.alternate
+      for (const p of leg.path) if (p.price > 0) prices.push(p.price)
     }
     if (!prices.length) {
       series.applyOptions({ autoscaleInfoProvider: undefined })
@@ -2072,7 +2052,7 @@ const LiveChart = ({
         /* chart may already be gone */
       }
     }
-  }, [chartStory, storyPathId, chartReady])
+  }, [chartStory, storyPathId, chartReady, advisor, advisorMode])
 
   useEffect(() => {
     if (!selectedSetup?.chartPath || !forecast) return
@@ -2197,32 +2177,34 @@ const LiveChart = ({
       try {
         chart = createChart(el, {
           layout: {
-            background: { color: '#0c0e12' },
-            textColor: 'rgba(220, 230, 240, 0.55)',
+            background: { color: '#131722' },
+            textColor: 'rgba(178, 181, 190, 0.92)',
             fontSize: denseUi ? 12 : 11,
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            fontFamily:
+              'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif',
           },
           grid: {
-            vertLines: { color: 'rgba(255,255,255,0.04)' },
-            horzLines: { color: 'rgba(255,255,255,0.045)' },
+            // TradingView dark: barely-there structure, never a wireframe.
+            vertLines: { color: 'rgba(42, 46, 57, 0.42)' },
+            horzLines: { color: 'rgba(42, 46, 57, 0.6)' },
           },
           crosshair: {
             mode: CrosshairMode.Magnet,
             vertLine: {
-              color: 'rgba(148, 163, 184, 0.45)',
+              color: 'rgba(117, 134, 150, 0.72)',
               width: 1,
-              style: 2,
-              labelBackgroundColor: '#1e293b',
+              style: 3,
+              labelBackgroundColor: '#363a45',
             },
             horzLine: {
-              color: 'rgba(148, 163, 184, 0.45)',
+              color: 'rgba(117, 134, 150, 0.72)',
               width: 1,
-              style: 2,
-              labelBackgroundColor: '#1e293b',
+              style: 3,
+              labelBackgroundColor: '#363a45',
             },
           },
           timeScale: {
-            borderColor: 'rgba(255,255,255,0.08)',
+            borderColor: '#2a2e39',
             timeVisible: true,
             secondsVisible: false,
             rightOffset: denseUi ? 18 : 22,
@@ -2232,11 +2214,12 @@ const LiveChart = ({
             shiftVisibleRangeOnNewBar: true,
           },
           rightPriceScale: {
-            borderColor: 'rgba(255,255,255,0.1)',
-            scaleMargins: { top: 0.12, bottom: 0.12 },
+            borderColor: '#2a2e39',
+            scaleMargins: { top: 0.08, bottom: 0.12 },
             autoScale: true,
             entireTextOnly: true,
             alignLabels: true,
+            ticksVisible: false,
           },
           width: startW,
           height: startH,
@@ -2263,22 +2246,39 @@ const LiveChart = ({
         return
       }
 
+      // Volume sits inside the chart on its own overlay scale, like the
+      // exchange terminal — the candle scale keeps the upper 82% of the plot.
+      const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+        lastValueVisible: false,
+        priceLineVisible: false,
+      })
+      try {
+        volumeSeries.priceScale().applyOptions({
+          scaleMargins: { top: 0.82, bottom: 0 },
+        })
+      } catch {
+        /* older lightweight-charts build */
+      }
+
       const candleSeries = chart.addCandlestickSeries({
-        upColor: '#22c55e',
-        downColor: '#f43f5e',
-        borderUpColor: '#16a34a',
-        borderDownColor: '#e11d48',
-        wickUpColor: 'rgba(34, 197, 94, 0.7)',
-        wickDownColor: 'rgba(244, 63, 94, 0.7)',
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderUpColor: '#26a69a',
+        borderDownColor: '#ef5350',
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
         lastValueVisible: true,
         priceLineVisible: true,
-        priceLineColor: 'rgba(148, 163, 184, 0.4)',
+        priceLineColor: 'rgba(178, 181, 190, 0.42)',
         priceLineWidth: 1,
         priceLineStyle: 2,
       })
 
       chartRef.current = chart
       candleRef.current = candleSeries
+      volumeRef.current = volumeSeries
       setChartInstance(chart)
       setChartReady((n) => n + 1)
       waitRo?.disconnect()
@@ -2351,6 +2351,7 @@ const LiveChart = ({
       lineRefs.current = {}
       priceLineRefs.current = []
       liqLineRefs.current = []
+      volumeRef.current = null
       try {
         instance.remove()
       } catch {
@@ -2493,6 +2494,33 @@ const LiveChart = ({
     updateLineSeries()
   }, [updateLineSeries, chartReady])
 
+  // Volume histogram inside the plot (TradingView-style), tinted by candle side.
+  useEffect(() => {
+    const series = volumeRef.current
+    if (!series) return
+    if (!chartPreferences.indicators.volume || indicators.volume.length === 0) {
+      series.setData([])
+      return
+    }
+    const data: HistogramData[] = indicators.volume.map((v) => {
+      const bullish =
+        (v.color ?? '').includes('34, 197, 94') ||
+        (v.color ?? '').includes('34,197,94')
+      return {
+        time: v.time,
+        value: v.value,
+        color: bullish
+          ? 'rgba(38, 166, 154, 0.34)'
+          : 'rgba(239, 83, 80, 0.32)',
+      }
+    })
+    try {
+      series.setData(data)
+    } catch {
+      /* chart may be mid-portal */
+    }
+  }, [indicators.volume, chartReady, chartPreferences.indicators.volume])
+
   useEffect(() => {
     const series = candleRef.current
     if (!series) return
@@ -2532,12 +2560,13 @@ const LiveChart = ({
       }
     }
 
-    // Fib retrace / 141 — thin lines + axis labels (0.5, 0.618), not fat boxes
+    // Fib retrace / 141 — hairline + in-plot tag. Axis labels only for the
+    // one level that matters in clean mode, so the price scale never stacks.
     for (const level of priceLevels) {
       addLine(level.price, level.color, level.label || '', {
         lineStyle: level.lineStyle ?? 2,
         lineWidth: 1,
-        axisLabel: true,
+        axisLabel: cleanMode && level.label === '0.618',
       })
     }
 
@@ -2545,15 +2574,18 @@ const LiveChart = ({
     if (focusZone && focusZone.top !== focusZone.bottom) {
       const up = focusZone.side !== 'BEARISH'
       const color = up ? 'rgba(45, 212, 191, 0.95)' : 'rgba(251, 113, 133, 0.95)'
+      // The band is drawn by ChartOverlay; here we only add hairline edges.
+      // No axis pill: it lands on top of the tick labels and the band already
+      // has a named tag. Fewer numbers on the scale = easier reading.
       addLine(focusZone.top, color, '', {
         lineStyle: 0,
         lineWidth: 1,
-        axisLabel: true,
+        axisLabel: false,
       })
       addLine(focusZone.bottom, color, '', {
         lineStyle: 0,
         lineWidth: 1,
-        axisLabel: true,
+        axisLabel: false,
       })
     }
 
@@ -2582,7 +2614,7 @@ const LiveChart = ({
           px,
           resist ? 'rgba(251, 113, 133, 0.75)' : 'rgba(45, 212, 191, 0.65)',
           '',
-          { lineStyle: 0, lineWidth: 1, axisLabel: true }
+          { lineStyle: 0, lineWidth: 1, axisLabel: false }
         )
       }
     }
@@ -2601,8 +2633,8 @@ const LiveChart = ({
       addLine(
         price,
         long ? 'rgba(45, 212, 191, 0.98)' : 'rgba(251, 113, 133, 0.98)',
-        long ? 'ЛИМ LONG' : 'ЛИМ SHORT',
-        { lineStyle: 0, lineWidth: 2, axisLabel: true }
+        long ? 'LONG' : 'SHORT',
+        { lineStyle: 0, lineWidth: 1, axisLabel: true }
       )
     }
 
@@ -2639,6 +2671,13 @@ const LiveChart = ({
       const shortZ = nearest('SHORT')
       if (longZ) addLimit(longZ.limitEntry, 'LONG')
       if (shortZ) addLimit(shortZ.limitEntry, 'SHORT')
+    }
+
+    // 🧰 «Сундучки»: уровни отложенных лимиток на отскок от зон.
+    if (showCases && autoCases.length) {
+      for (const item of autoCases) {
+        addLimit(item.entry, item.side)
+      }
     }
 
     // Story ENTRY pin → same axis line when no setup/zones painted yet
@@ -2719,6 +2758,8 @@ const LiveChart = ({
     advisor?.zoneId,
     highlightedZoneId,
     actionPick.launchId,
+    showCases,
+    autoCases,
   ])
 
   // ── Liquidity Map: Equal Highs / Equal Lows линии ──────────────────────────
@@ -2763,9 +2804,10 @@ const LiveChart = ({
         const line = series.createPriceLine({
           price: level.price,
           color,
-          lineWidth: level.strength === 'STRONG' ? 2 : 1,
+          lineWidth: 1,
           lineStyle,
-          axisLabelVisible: chartPreferences.showLabels || zonesMode,
+          // Prices already live on the axis; extra colored pills just fight it.
+          axisLabelVisible: false,
           title,
         })
         liqLineRefs.current.push(line)
@@ -2776,13 +2818,13 @@ const LiveChart = ({
 
     // Только ближайшие сильные уровни — иначе каша линий
     const highs = [...eqLiquidityMap.equalHighs]
-      .filter((l) => l.strength !== 'WEAK')
+      .filter((l) => l.strength === 'STRONG')
       .sort((a, b) => a.distancePct - b.distancePct)
-      .slice(0, cleanMode ? 1 : 2)
+      .slice(0, 1)
     const lows = [...eqLiquidityMap.equalLows]
-      .filter((l) => l.strength !== 'WEAK')
+      .filter((l) => l.strength === 'STRONG')
       .sort((a, b) => a.distancePct - b.distancePct)
-      .slice(0, cleanMode ? 1 : 2)
+      .slice(0, 1)
 
     for (const level of highs) drawLiqLevel(level)
     for (const level of lows) drawLiqLevel(level)
@@ -2844,6 +2886,305 @@ const LiveChart = ({
     haptic.impact()
   }, [haptic, lwcData.length, timeframe, storyRightOffset])
 
+  /** Everything the zone card needs besides the zone itself. */
+  const zoneContextFor = useCallback(
+    (zone: LiquidityZone): ZoneContext => {
+      const top = Math.max(zone.top, zone.bottom)
+      const bottom = Math.min(zone.top, zone.bottom)
+      const mid = (top + bottom) / 2
+      const strength = zone.strength ?? 0
+      const tier: ZoneContext['tier'] =
+        zone.strengthTier ??
+        (strength >= 9 ? 'STRONG' : strength >= 6 ? 'MEDIUM' : 'WEAK')
+
+      const findFib = (): ZoneContextFib | null => {
+        for (const tf of [timeframe, '4h', '1d', '1h']) {
+          const map = fibMaps[tf]
+          if (!map) continue
+          let best: { ratio: number; price: number } | null = null
+          let bestPct = Infinity
+          for (const lvl of map.levels) {
+            if (!(lvl.price > 0)) continue
+            const gap =
+              lvl.price > top
+                ? lvl.price - top
+                : lvl.price < bottom
+                  ? bottom - lvl.price
+                  : 0
+            const pct = (gap / mid) * 100
+            if (pct < bestPct) {
+              bestPct = pct
+              best = { ratio: lvl.ratio, price: lvl.price }
+            }
+          }
+          if (best && bestPct <= 1.4) return { ...best, tf, distPct: bestPct }
+        }
+        return null
+      }
+
+      const bandOf = (src: FibZoneLayer): ZoneContext141 => ({
+        kind: src.kind,
+        state: src.state,
+        bias: src.bias,
+        top: src.top,
+        bottom: src.bottom,
+        price141: src.price141,
+        price161: src.price161,
+      })
+      let fib141: ZoneContext141 | null = null
+      let bestOverlap = 0
+      for (const src of [fib141View, cont141View]) {
+        if (!src) continue
+        const hi = Math.min(top, src.top)
+        const lo = Math.max(bottom, src.bottom)
+        const bandH = Math.max(1e-9, src.top - src.bottom)
+        const ov = hi > lo ? (hi - lo) / bandH : 0
+        if (ov > bestOverlap) {
+          bestOverlap = ov
+          fib141 = bandOf(src)
+        }
+      }
+      if (bestOverlap < 0.25) {
+        fib141 = null
+        let nearPct = Infinity
+        for (const src of [fib141View, cont141View]) {
+          if (!src) continue
+          const pct = (Math.abs((src.top + src.bottom) / 2 - mid) / mid) * 100
+          if (pct <= 1.2 && pct < nearPct) {
+            nearPct = pct
+            fib141 = bandOf(src)
+          }
+        }
+      }
+
+      const eq = eqLiquidityMap
+      const above = [...(eq?.equalHighs ?? [])]
+        .filter((l) => l.isActive && l.price > top)
+        .sort((a, b) => a.price - b.price)[0]
+      const below = [...(eq?.equalLows ?? [])]
+        .filter((l) => l.isActive && l.price < bottom)
+        .sort((a, b) => b.price - a.price)[0]
+      const h4 = hudRead?.h4
+      const liqAbove: ZoneContextLiq | null = above
+        ? {
+            price: above.price,
+            label: `BSL ×${above.touches}`,
+            distPct: ((above.price - mid) / mid) * 100,
+          }
+        : h4?.nextBsl != null && h4.nextBsl > top
+          ? {
+              price: h4.nextBsl,
+              label: 'BSL 4ч',
+              distPct: ((h4.nextBsl - mid) / mid) * 100,
+            }
+          : null
+      const liqBelow: ZoneContextLiq | null = below
+        ? {
+            price: below.price,
+            label: `SSL ×${below.touches}`,
+            distPct: ((mid - below.price) / mid) * 100,
+          }
+        : h4?.nextSsl != null && h4.nextSsl < bottom
+          ? {
+              price: h4.nextSsl,
+              label: 'SSL 4ч',
+              distPct: ((mid - h4.nextSsl) / mid) * 100,
+            }
+          : null
+
+      let swept: ZoneContextSweep | null = null
+      let bestGap = 0.035
+      for (const pool of [chartStory.spent.ssl, chartStory.spent.bsl]) {
+        if (!pool) continue
+        const gap = Math.abs(pool.price - mid) / mid
+        if (gap < bestGap) {
+          bestGap = gap
+          swept = {
+            side: pool.kind,
+            price: pool.price,
+            barsAgo: pool.barsAgo,
+            reclaimed: pool.reclaimed,
+          }
+        }
+      }
+
+      const recent = candles.slice(-6)
+      const momentumPct = recent.length >= 2 && recent[0][4] > 0
+        ? ((recent[recent.length - 1][4] - recent[0][4]) / recent[0][4]) * 100
+        : null
+      const buyerAggression =
+        signal?.buyerAggression && signal.buyerAggression.buyToSellRatio > 0
+          ? (signal.buyerAggression.buyToSellRatio / (1 + signal.buyerAggression.buyToSellRatio)) * 100
+          : null
+
+      return {
+        orderBookImbalance: orderBookMetrics?.imbalance ?? null,
+        buyerAggression,
+        momentumPct,
+        strength,
+        tier,
+        fib: findFib(),
+        fib141,
+        liqAbove,
+        liqBelow,
+        swept,
+      }
+    },
+    [
+      timeframe,
+      fibMaps,
+      fib141View,
+      cont141View,
+      eqLiquidityMap,
+      hudRead,
+      chartStory.spent,
+      candles,
+      orderBookMetrics?.imbalance,
+      signal?.buyerAggression?.buyToSellRatio,
+    ]
+  )
+
+  const handleZoneHover = useCallback(
+    (zone: LiquidityZone, x: number, y: number) => {
+      if (advisor || !(currentPrice > 0)) return
+      const brief = analyzeZoneTap({
+        zone,
+        price: currentPrice,
+        structure: hudRead,
+        timeframe,
+        context: zoneContextFor(zone),
+      })
+      if (!brief) return
+      setHoverAdvisor(brief)
+      setHoverAnchor({ x, y })
+    },
+    [advisor, currentPrice, hudRead, timeframe, zoneContextFor]
+  )
+
+  const handleZoneTap = useCallback(
+    (zone: LiquidityZone, x?: number, y?: number) => {
+      setHoverAdvisor(null)
+      setHoverAnchor(null)
+      if (!zone || !(currentPrice > 0)) return
+      const brief = analyzeZoneTap({
+        zone,
+        price: currentPrice,
+        structure: hudRead,
+        timeframe,
+        context: zoneContextFor(zone),
+      })
+      if (!brief) return
+      setAdvisor(brief)
+      setAdvisorMode('hold')
+      setAdvisorAnchor(
+        x != null && y != null
+          ? { x, y }
+          : {
+              x: (containerRef.current?.clientWidth ?? 360) * 0.55,
+              y: (containerRef.current?.clientHeight ?? 320) * 0.45,
+            }
+      )
+      haptic.impact()
+    },
+    [currentPrice, hudRead, timeframe, zoneContextFor, haptic]
+  )
+
+  const closeAdvisor = useCallback(() => {
+    setAdvisor(null)
+    setAdvisorAnchor(null)
+    setHoverAdvisor(null)
+    setHoverAnchor(null)
+    setSelectedCaseId(null)
+  }, [])
+
+  const handleZoneLeave = useCallback(() => {
+    setHoverAdvisor(null)
+    setHoverAnchor(null)
+  }, [])
+
+  /** Открыть разбор зоны из «сундучка» (маркер на графике или лента). */
+  const openLimitCase = useCallback(
+    (item: LimitCase, x?: number, y?: number) => {
+      setSelectedCaseId(item.id)
+      handleZoneTap(
+        {
+          ...item.zone,
+          top: item.top,
+          bottom: item.bottom,
+          strength: item.strength,
+          invalidation: item.stop,
+          target: item.target,
+        },
+        x,
+        y
+      )
+      haptic.impact()
+    },
+    [handleZoneTap, haptic]
+  )
+
+  useEffect(() => {
+    if (!advisor) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeAdvisor()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [advisor, closeAdvisor])
+
+  useEffect(() => {
+    const el = chartShellRef.current
+    if (!el || !advisor) return
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (!t) return
+      if (t.closest('[data-advisor-card]') || t.closest('button')) return
+      closeAdvisor()
+    }
+    el.addEventListener('click', onClick)
+    return () => el.removeEventListener('click', onClick)
+  }, [advisor, closeAdvisor])
+
+  /** Keep the popup inside the chart box, next to the clicked band. */
+  const advisorPos = useMemo(() => {
+    const box = containerRef.current
+    const w = box?.clientWidth ?? hostW
+    const h = box?.clientHeight ?? (fillParent ? fillH : CHART_HEIGHT)
+    const ax = advisorAnchor?.x ?? w * 0.55
+    const ay = advisorAnchor?.y ?? h * 0.4
+    const pad = 8
+    let left = ax + 16
+    if (left + ADVISOR_CARD_W > w - pad) left = ax - ADVISOR_CARD_W - 16
+    left = Math.max(pad, Math.min(left, Math.max(pad, w - ADVISOR_CARD_W - pad)))
+    let top = ay - 30
+    top = Math.max(pad, Math.min(top, Math.max(pad, h - ADVISOR_CARD_H - pad)))
+    return { left, top }
+  }, [advisorAnchor, hostW, fillH, fillParent, chartReady])
+
+  useEffect(() => {
+    if (!advisor && !hoverAdvisor) return
+    const box = containerRef.current
+    if (!box) return
+    const reposition = () => {
+      const width = box.clientWidth
+      const height = box.clientHeight
+      if (advisor && advisorAnchor) {
+        setAdvisorAnchor((anchor) => anchor ? { x: Math.min(anchor.x, width - 8), y: Math.min(anchor.y, height - 8) } : anchor)
+      }
+      if (hoverAdvisor && hoverAnchor) {
+        setHoverAnchor((anchor) => anchor ? { x: Math.min(anchor.x, width - 8), y: Math.min(anchor.y, height - 8) } : anchor)
+      }
+    }
+    const observer = new ResizeObserver(reposition)
+    observer.observe(box)
+    window.addEventListener('resize', reposition)
+    reposition()
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', reposition)
+    }
+  }, [advisor, advisorAnchor, hoverAdvisor, hoverAnchor])
+
   const resolveChartDoubleTap = useCallback(
     (clientX: number, clientY: number) => {
       const chart = chartRef.current
@@ -2863,9 +3204,10 @@ const LiveChart = ({
       }
       if (price == null || !(price > 0)) return
       const zone = hitZoneAt(tapZones, price)
-      if (zone) handleZoneTap(zone.id)
+      if (zone) handleZoneTap(zone, x, y)
+      else closeAdvisor()
     },
-    [tapZones, handleZoneTap]
+    [tapZones, handleZoneTap, closeAdvisor]
   )
 
   useEffect(() => {
@@ -3014,23 +3356,19 @@ const LiveChart = ({
     zonesMode || tradesMode || signalMode || bouncesMode
   const curvePaths = useMemo(() => {
     if (!advisor) return []
+    // One arrow only: the leg the user is looking at in the card.
+    const leg = advisorMode === 'hold' ? advisor.primary : advisor.alternate
+    if (leg.path.length < 2) return []
     return [
       {
-        id: 'hold',
-        points: advisor.primary.path,
-        color: advisor.primary.side === 'LONG' ? '#34d399' : '#fb7185',
-        label: advisor.primary.side === 'LONG' ? 'лонг' : 'шорт',
-        emphasis: false,
-      },
-      {
-        id: 'break',
-        points: advisor.alternate.path,
-        color: '#94a3b8',
-        label: 'слом',
-        emphasis: false,
+        id: advisorMode,
+        points: leg.path,
+        color: leg.side === 'LONG' ? '#34d399' : '#fb7185',
+        label: `${leg.side === 'LONG' ? 'лонг' : 'шорт'} · ${leg.probability}%`,
+        emphasis: true,
       },
     ]
-  }, [advisor])
+  }, [advisor, advisorMode])
   const showPredictionPaths = FORECAST_HORIZON_UI && showForecast && !pathModeActive
   const showGhost =
     !!signal?.direction &&
@@ -3107,7 +3445,7 @@ const LiveChart = ({
     <div
       className={
         chartExpanded || fillParent
-          ? 'flex h-full min-h-0 flex-col bg-[#0c0e12]'
+          ? 'flex h-full min-h-0 flex-col bg-[#131722]'
           : 'space-y-2'
       }
     >
@@ -3157,17 +3495,32 @@ const LiveChart = ({
               })
               haptic.impact()
             }}
-            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showComments
-                ? 'border-sky-400/50 bg-sky-500/20 text-sky-100'
-                : 'border-white/10 bg-hull-light/40 text-holo/55 hover:text-holo'
-            }`}
+            className={`tv-btn ${showComments ? 'tv-btn-on' : ''}`}
             title="Комментарии на графике: что происходит"
           >
             <MessageCircle className="h-3.5 w-3.5" />
-            <span>Коммент</span>
+            <span className="hidden sm:inline">Коммент</span>
             <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
               {showComments ? 'ON' : 'OFF'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowCases((v) => {
+                const next = !v
+                writeLsFlag('enterprise_chart_cases', next)
+                return next
+              })
+              haptic.impact()
+            }}
+            className={`tv-btn ${showCases ? 'tv-btn-on' : ''}`}
+            title="Сундучки: отложенные лимитки на отскок от важных зон (цель 1–5%)"
+          >
+            <Package className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Кейсы</span>
+            <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
+              {showCases ? `${autoCases.length || ''} ON` : 'OFF'}
             </span>
           </button>
           <button
@@ -3176,11 +3529,7 @@ const LiveChart = ({
               setShowHints((v) => !v)
               haptic.impact()
             }}
-            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              showHints
-                ? 'border-cyan-400/45 bg-cyan-500/20 text-cyan-200'
-                : 'border-white/10 bg-hull-light/40 text-holo/55 hover:text-holo'
-            }`}
+            className={`tv-btn ${showHints ? 'tv-btn-on' : ''}`}
             title="Подсказки процесса на графике"
           >
             <MessageSquare className="h-3.5 w-3.5" />
@@ -3199,11 +3548,7 @@ const LiveChart = ({
               })
               haptic.impact()
             }}
-            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              audioOn
-                ? 'border-violet-400/45 bg-violet-500/20 text-violet-200'
-                : 'border-white/10 bg-hull-light/40 text-holo/55 hover:text-holo'
-            }`}
+            className={`tv-btn ${audioOn ? 'tv-btn-on' : ''}`}
             title="Звук процесса: удары, ликвидации, момент"
           >
             {audioOn ? (
@@ -3216,11 +3561,7 @@ const LiveChart = ({
           <button
             type="button"
             onClick={() => applyCleanMode(!cleanMode)}
-            className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-              cleanMode
-                ? 'border border-matrix/40 bg-matrix/15 text-matrix'
-                : 'border border-hull-border text-holo/40 hover:text-holo/70'
-            }`}
+            className={`tv-btn ${cleanMode ? 'tv-btn-on' : ''}`}
             title="Чистый режим — свечи, одна зона, путь вправо. Полный — все слои."
           >
             {cleanMode ? t('chart_clean') : t('chart_full')}
@@ -3232,11 +3573,7 @@ const LiveChart = ({
                 setShowFsScenarios((v) => !v)
                 haptic.impact()
               }}
-              className={`rounded px-2 py-1 font-mono text-[10px] font-bold uppercase transition-colors ${
-                showFsScenarios
-                  ? 'border border-matrix/40 bg-matrix/15 text-matrix'
-                  : 'border border-hull-border text-holo/40 hover:text-holo/70'
-              }`}
+              className={`tv-btn ${showFsScenarios ? 'tv-btn-on' : ''}`}
               title="Показать четыре сценария"
             >
               Сцен.
@@ -3248,11 +3585,7 @@ const LiveChart = ({
               setChartExpanded((v) => !v)
               haptic.impact()
             }}
-            className={`rounded-lg p-1.5 transition-colors ${
-              chartExpanded
-                ? 'bg-matrix/20 text-matrix'
-                : 'bg-hull-light/40 text-holo/60 hover:bg-hull-light/70 hover:text-holo'
-            }`}
+            className={`tv-icon ${chartExpanded ? 'tv-icon-on' : ''}`}
             title={chartExpanded ? 'Свернуть график' : 'Развернуть как на бирже'}
           >
             {chartExpanded ? (
@@ -3264,7 +3597,7 @@ const LiveChart = ({
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}
-            className="rounded-lg bg-hull-light/40 p-1.5 text-holo/60 transition-colors hover:bg-hull-light/70 hover:text-holo"
+            className="tv-icon"
             title={t('chart_settings')}
           >
             <Settings className="h-4 w-4" />
@@ -3274,12 +3607,12 @@ const LiveChart = ({
 
       {/* Tool rail — ТФ и режимы всегда с графиком */}
       <div
-        className={`shrink-0 space-y-1 bg-[#0c0e12] py-1 ${
+        className={`shrink-0 space-y-1 bg-[#131722] py-1 ${
           chartExpanded ? 'px-2' : 'sticky top-0 z-20 bg-space/95 backdrop-blur-sm'
         }`}
       >
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+          <div className="tv-group flex shrink-0 items-center">
             {CHART_TIMEFRAMES.map((tf) => (
               <button
                 key={tf.id}
@@ -3304,10 +3637,11 @@ const LiveChart = ({
               </button>
             ))}
           </div>
+          <span className="tv-sep" aria-hidden />
           <button
             type="button"
             onClick={resetChartView}
-            className="shrink-0 rounded-lg border border-white/[0.08] bg-[#10141a] px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase text-white/45 hover:text-white/75"
+            className="tv-btn shrink-0"
             title="Сбросить масштаб"
           >
             Fit
@@ -3318,10 +3652,8 @@ const LiveChart = ({
               setShowSrZones((v) => !v)
               haptic.impact()
             }}
-            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-              showSrZones
-                ? 'border border-pink-400/35 bg-pink-500/15 text-pink-200'
-                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            className={`tv-btn shrink-0 ${
+              showSrZones ? 'tv-btn-on' : ''
             }`}
             title="Поддержка / сопротивление — ценовой диапазон (не линия)"
           >
@@ -3341,10 +3673,8 @@ const LiveChart = ({
               })
               haptic.impact()
             }}
-            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-              onlyStrong
-                ? 'border border-teal-400/40 bg-teal-500/15 text-teal-200'
-                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            className={`tv-btn shrink-0 ${
+              onlyStrong ? 'tv-btn-on' : ''
             }`}
             title="Только одна сильная зона входа — без стопки коробок"
           >
@@ -3364,10 +3694,8 @@ const LiveChart = ({
               })
               haptic.impact()
             }}
-            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-              showFib141
-                ? 'border border-amber-400/40 bg-amber-500/15 text-amber-200'
-                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            className={`tv-btn shrink-0 ${
+              showFib141 ? 'tv-btn-on' : ''
             }`}
             title="Sweep 141 — зона разворота за пивот"
           >
@@ -3387,16 +3715,15 @@ const LiveChart = ({
               })
               haptic.impact()
             }}
-            className={`shrink-0 rounded-lg px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-              showCont141
-                ? 'border border-sky-400/40 bg-sky-500/15 text-sky-200'
-                : 'border border-white/[0.08] bg-[#10141a] text-white/55 hover:text-white/80'
+            className={`tv-btn shrink-0 ${
+              showCont141 ? 'tv-btn-on' : ''
             }`}
             title="Continuation 141 — расширение за конец импульса"
           >
             Cont
           </button>
-          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+          <span className="tv-sep" aria-hidden />
+          <div className="tv-group flex shrink-0 items-center">
             {FIB_TF_BUTTONS.map((b) => (
               <button
                 key={b.id}
@@ -3420,6 +3747,7 @@ const LiveChart = ({
               </button>
             ))}
           </div>
+          <span className="tv-sep" aria-hidden />
           <button
             id="live-signal-cta"
             type="button"
@@ -3433,17 +3761,13 @@ const LiveChart = ({
               handleClearBounces()
               handleFindLiveSignal()
             }}
-            className={`shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase ${
-              signalMode
-                ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
-                : 'border-amber-400/30 bg-amber-500/10 text-amber-200/80'
-            }`}
+            className={`tv-btn shrink-0 ${signalMode ? 'tv-btn-on' : ''}`}
           >
             {signalMode ? 'Сигнал ON' : 'Сигнал'}
           </button>
         </div>
         <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+          <div className="tv-group flex shrink-0 items-center">
             {FORECAST_HORIZON_UI && (
             <button
               type="button"
@@ -3557,7 +3881,7 @@ const LiveChart = ({
               {bouncesMode ? 'Отскоки ON' : 'Отскоки'}
             </button>
           </div>
-          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-[#10141a] p-0.5">
+          <div className="tv-group flex shrink-0 items-center">
             <button
               type="button"
               onClick={() => setShowDirection((v) => !v)}
@@ -3607,7 +3931,7 @@ const LiveChart = ({
 
       <div
         ref={chartShellRef}
-        className={`relative flex w-full flex-col overflow-hidden bg-[#0c0e12] ${
+        className={`relative flex w-full flex-col overflow-hidden bg-[#131722] ${
           chartExpanded || fillParent
             ? 'min-h-0 flex-1 rounded-none border-0'
             : 'rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
@@ -3647,52 +3971,61 @@ const LiveChart = ({
         {(lwcData.length > 0 || (!chartExpanded && chartStory.nowLine)) && (
           <div
             className={`pointer-events-none absolute left-1.5 top-1.5 z-20 flex flex-col items-start gap-1 ${
-              chartExpanded || fillParent ? 'max-w-[min(12rem,42%)]' : 'max-w-[min(18rem,68%)]'
+              chartExpanded || fillParent ? 'max-w-[min(22rem,54%)]' : 'max-w-[min(22rem,78%)]'
             }`}
           >
-            {lwcData.length > 0 && (
-              <div
-                className={`flex flex-wrap items-baseline gap-x-1.5 font-mono text-white/70 ${
-                  denseUi ? 'text-[11px]' : 'text-[10px]'
-                }`}
-              >
-            {(() => {
+            {lwcData.length > 0 && (() => {
               const bar = lwcData[lwcData.length - 1]
               const pct = bar.open ? ((bar.close - bar.open) / bar.open) * 100 : 0
               const up = pct >= 0
               const fmt = (p: number) =>
                 p >= 1000 ? p.toFixed(2) : p >= 1 ? p.toFixed(4) : p.toPrecision(5)
               return (
-                <>
-                  <span className="font-bold text-white/85">{timeframe}</span>
-                  {!denseUi && (
-                    <>
-                      <span>
-                        O <span className="text-white/90">{fmt(bar.open)}</span>
-                      </span>
-                      <span>
-                        H <span className="text-emerald-300/90">{fmt(bar.high)}</span>
-                      </span>
-                      <span>
-                        L <span className="text-rose-300/90">{fmt(bar.low)}</span>
-                      </span>
-                    </>
-                  )}
-                  <span>
-                    {denseUi ? '' : 'C '}
-                    <span className={up ? 'text-emerald-300' : 'text-rose-300'}>
-                      {fmt(bar.close)}
+                <div className="flex flex-col items-start gap-0.5">
+                  {/* TradingView-style symbol legend */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono text-[11px] font-semibold tracking-wide text-[#d1d4dc]">
+                      {flatSymbol.replace('_', '')}
                     </span>
-                  </span>
-                  <span className={up ? 'text-emerald-400' : 'text-rose-400'}>
-                    {up ? '+' : ''}
-                    {pct.toFixed(2)}%
-                  </span>
-                </>
+                    <span className="rounded-[3px] bg-white/[0.07] px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-wider text-[#b2b5be]/80">
+                      {timeframe}
+                    </span>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#787b86]/80">
+                      MEXC
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 font-mono text-[10px] tabular-nums text-[#787b86]">
+                    {!denseUi && (
+                      <>
+                        <span>
+                          O <span className="text-[#d1d4dc]">{fmt(bar.open)}</span>
+                        </span>
+                        <span>
+                          H <span className="text-[#d1d4dc]">{fmt(bar.high)}</span>
+                        </span>
+                        <span>
+                          L <span className="text-[#d1d4dc]">{fmt(bar.low)}</span>
+                        </span>
+                      </>
+                    )}
+                    <span>
+                      {denseUi ? '' : 'C '}
+                      <span className="text-[#d1d4dc]">{fmt(bar.close)}</span>
+                    </span>
+                    <span
+                      className={`rounded-[3px] px-1 py-px text-[9px] ${
+                        up
+                          ? 'bg-[#26a69a]/14 text-[#26a69a]'
+                          : 'bg-[#ef5350]/14 text-[#ef5350]'
+                      }`}
+                    >
+                      {up ? '+' : ''}
+                      {pct.toFixed(2)}%
+                    </span>
+                  </div>
+                </div>
               )
             })()}
-              </div>
-            )}
             {!chartExpanded && chartReady > 0 && chartStory.nowLine && (
               <NowStoryHud
                 line={chartStory.nowLine}
@@ -3738,6 +4071,9 @@ const LiveChart = ({
             onlyStrong={cleanMode || onlyStrong || bouncesMode}
             thinLabels={chartExpanded || bouncesMode}
             interactingRef={userPanningRef}
+            onZoneClick={tapZones.length > 0 ? handleZoneTap : undefined}
+            onZoneHover={tapZones.length > 0 ? handleZoneHover : undefined}
+            onZoneLeave={handleZoneLeave}
           />
         )}
         {chartReady > 0 &&
@@ -3778,6 +4114,17 @@ const LiveChart = ({
             lastPrice={currentPrice}
           />
         )}
+        {chartReady > 0 && !bouncesMode && showCases && autoCases.length > 0 && (
+          <CaseMarkersOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            cases={autoCases}
+            selectedId={selectedCaseId}
+            dense={denseUi}
+            onSelect={(item, x, y) => openLimitCase(item, x, y)}
+          />
+        )}
         {chartReady > 0 &&
           !bouncesMode &&
           showComments &&
@@ -3788,13 +4135,14 @@ const LiveChart = ({
             containerRef={containerRef}
             comments={chartStory.comments}
             lastPrice={currentPrice}
-            compactPins={chartExpanded || fillParent}
+            compactPins={chartExpanded || fillParent || denseUi}
             interactingRef={userPanningRef}
           />
         )}
         {chartReady > 0 &&
           lastCandleTs > 0 &&
           chartStory.future &&
+          storyPathId &&
           !advisor &&
           !bouncesMode &&
           !pathModeActive && (
@@ -3836,14 +4184,35 @@ const LiveChart = ({
             paths={curvePaths}
           />
         )}
-        {advisor && !chartExpanded && (
+        {!advisor && hoverAdvisor && hoverAnchor && (
+          <div
+            className="pointer-events-none absolute z-20 w-[248px] rounded-lg border border-cyan-300/30 bg-[#111820]/95 px-3 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.45)] backdrop-blur-md"
+            style={{
+              left: Math.max(8, Math.min(hoverAnchor.x + 14, (containerRef.current?.clientWidth ?? 360) - 256)),
+              top: Math.max(8, Math.min(hoverAnchor.y + 14, (containerRef.current?.clientHeight ?? CHART_HEIGHT) - 94)),
+            }}
+          >
+            <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-100">
+              <span className="truncate">{hoverAdvisor.zoneLabel}</span>
+              <span className="shrink-0 text-cyan-200">LIVE · {hoverAdvisor.timeframe}</span>
+            </div>
+            <div className="mt-1 text-[10px] leading-relaxed text-slate-300">{hoverAdvisor.summary}</div>
+            <div className="mt-1.5 flex justify-between border-t border-white/10 pt-1.5 font-mono text-[9px]">
+              <span className="text-emerald-300">Удержание {hoverAdvisor.primary.probability}%</span>
+              <span className="text-rose-300">Пробой {hoverAdvisor.alternate.probability}%</span>
+            </div>
+            <div className="mt-1 text-[9px] text-slate-400">Клик по зоне — полный разбор «если → то»</div>
+          </div>
+        )}
+        {advisor && (
           <ZoneAdvisorCard
             brief={advisor}
-            botStatus={advisorBot}
-            onClose={() => {
-              setAdvisor(null)
-              setAdvisorBot('idle')
-            }}
+            mode={advisorMode}
+            left={advisorPos.left}
+            top={advisorPos.top}
+            mobile={denseUi}
+            onMode={setAdvisorMode}
+            onClose={closeAdvisor}
           />
         )}
         {chartReady > 0 && !bouncesMode && (
@@ -3993,6 +4362,13 @@ const LiveChart = ({
           onlyStrong={cleanMode || onlyStrong}
         />
       )}
+      {denseUi && !chartExpanded && showCases && autoCases.length > 0 && (
+        <LimitCasesStrip
+          cases={autoCases}
+          selectedId={selectedCaseId}
+          onSelect={(item) => openLimitCase(item)}
+        />
+      )}
       {(!chartExpanded || showFsScenarios) && (
         <ScenarioBoard
           scenarios={chartStory.scenarios}
@@ -4016,11 +4392,6 @@ const LiveChart = ({
         height={32}
       />
       )}
-
-      {chartPreferences.indicators.volume &&
-        indicators.volume.length > 0 && (
-          <VolumePanel volumeData={indicators.volume} height={44} />
-        )}
 
       {!chartExpanded &&
         oscillators.map((mode) => (
@@ -4163,7 +4534,7 @@ const LiveChart = ({
     >
       {chartExpanded && !fillParent && (
         <div
-          className="flex h-[440px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#0c0e12] font-mono text-[10px] text-white/35"
+          className="flex h-[440px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#131722] font-mono text-[10px] text-white/35"
           aria-hidden
         >
           график на весь экран

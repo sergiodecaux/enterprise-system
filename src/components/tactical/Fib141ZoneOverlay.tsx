@@ -47,12 +47,31 @@ function fmtPx(p: number): string {
   return p.toPrecision(4)
 }
 
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const radius = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
+  ctx.closePath()
+}
+
 function paintZone(
   ctx: CanvasRenderingContext2D,
   series: ISeriesApi<'Candlestick'>,
   zone: FibZoneLayer,
-  w: number,
+  _w: number,
   h: number,
+  plotRight: number,
   captions: FibCaption[],
   requests: LabelRequest[],
 ) {
@@ -84,31 +103,33 @@ function paintZone(
           ? 'rgba(52, 211, 153, 0.9)'
           : 'rgba(251, 113, 133, 0.9)'
   const fill = fail
-    ? 'rgba(148, 163, 184, 0.08)'
+    ? 'rgba(148, 163, 184, 0.05)'
     : inside
       ? cont
-        ? 'rgba(96, 165, 250, 0.22)'
+        ? 'rgba(96, 165, 250, 0.14)'
         : long
-          ? 'rgba(52, 211, 153, 0.22)'
-          : 'rgba(251, 113, 133, 0.22)'
+          ? 'rgba(52, 211, 153, 0.14)'
+          : 'rgba(251, 113, 133, 0.14)'
       : cont
-        ? 'rgba(96, 165, 250, 0.1)'
+        ? 'rgba(96, 165, 250, 0.05)'
         : long
-          ? 'rgba(52, 211, 153, 0.08)'
-          : 'rgba(251, 113, 133, 0.08)'
+          ? 'rgba(52, 211, 153, 0.045)'
+          : 'rgba(251, 113, 133, 0.045)'
 
+  const bandW = Math.max(2, plotRight - 1)
   ctx.fillStyle = fill
-  ctx.fillRect(0, top, w, Math.max(2, bot - top))
+  ctx.fillRect(0, top, bandW, Math.max(2, bot - top))
   ctx.strokeStyle = stroke
-  ctx.lineWidth = hold || inside ? 2 : 1.25
-  ctx.setLineDash(quiet ? [6, 4] : [])
-  ctx.strokeRect(0.5, top + 0.5, w - 1, Math.max(2, bot - top))
-  ctx.setLineDash([])
+  ctx.globalAlpha = quiet ? 0.4 : 0.72
+  ctx.lineWidth = 1
+  ctx.strokeRect(0.5, top + 0.5, bandW - 1, Math.max(2, bot - top))
+  ctx.globalAlpha = 1
 
   const tag = cont ? 'CONT' : 'SWEEP'
-  const xShift = cont ? 118 : 8
+  const xShift = cont ? 96 : 0
   const push = (id: string, text: string, y: number) => {
-    const ly = Math.max(12, Math.min(h - 6, y))
+    // Keep the caption clear of the symbol legend in the top-left corner.
+    const ly = Math.max(118, Math.min(h - 6, y))
     captions.push({ id, text, y: ly, color: stroke, xShift })
     requests.push({
       id,
@@ -119,27 +140,25 @@ function paintZone(
       height: 14,
     })
   }
+  // 1.41 / 1.61 edges: a short leader by the price axis instead of a
+  // full-width dashed line cutting the candles in half.
   const mark = (price: number | null, id: string, text: string) => {
     if (price == null) return
     const y = yOf(price)
     if (y == null) return
     ctx.strokeStyle = stroke
-    ctx.globalAlpha = 0.7
+    ctx.globalAlpha = 0.55
     ctx.lineWidth = 1
-    ctx.setLineDash([3, 3])
     ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(w, y)
+    ctx.moveTo(Math.max(0, plotRight - 46), y + 0.5)
+    ctx.lineTo(plotRight, y + 0.5)
     ctx.stroke()
-    ctx.setLineDash([])
     ctx.globalAlpha = 1
     push(id, text, y)
   }
 
   mark(zone.price141, `${zone.kind}:141`, `${tag} 141 ${fmtPx(zone.price141 ?? 0)}`)
   mark(zone.price161, `${zone.kind}:161`, `${tag} 161 ${fmtPx(zone.price161 ?? 0)}`)
-  push(`${zone.kind}:top`, `${tag} ${fmtPx(zone.top)}`, top)
-  push(`${zone.kind}:bottom`, fmtPx(zone.bottom), bot)
   if (hold) push(`${zone.kind}:state`, `${tag} HOLD`, (top + bot) / 2)
   if (fail) push(`${zone.kind}:state`, `${tag} BREAK`, (top + bot) / 2)
 }
@@ -148,15 +167,41 @@ function drawCaption(
   ctx: CanvasRenderingContext2D,
   caption: FibCaption,
   y: number,
-  w: number,
+  anchorY: number,
+  plotRight: number,
 ) {
-  ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace'
+  ctx.save()
+  ctx.font = '600 9px Inter, ui-sans-serif, system-ui, sans-serif'
+  const padX = 5
   const tw = ctx.measureText(caption.text).width
-  const x = Math.max(6, w - tw - caption.xShift)
-  ctx.fillStyle = 'rgba(8,10,14,0.88)'
-  ctx.fillRect(x - 3, y - 10, tw + 6, 14)
+  const bw = tw + padX * 2
+  // TradingView puts a rectangle caption at its top-left corner.
+  const x = Math.max(6, Math.min(6 + caption.xShift, plotRight - bw - 6))
+  const top = y - 9
+  if (Math.abs(y - anchorY) > 10) {
+    ctx.setLineDash([2, 3])
+    ctx.strokeStyle = caption.color
+    ctx.globalAlpha = 0.4
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x + 6, anchorY)
+    ctx.lineTo(x + 6, y > anchorY ? top : top + 13)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.globalAlpha = 1
+  }
+  roundRect(ctx, x, top, bw, 13, 2)
+  ctx.fillStyle = 'rgba(19,23,34,0.88)'
+  ctx.fill()
+  ctx.strokeStyle = caption.color
+  ctx.globalAlpha = 0.42
+  ctx.lineWidth = 1
+  ctx.stroke()
+  ctx.globalAlpha = 1
   ctx.fillStyle = caption.color
-  ctx.fillText(caption.text, x, y)
+  ctx.textBaseline = 'middle'
+  ctx.fillText(caption.text, x + padX, top + 6.5)
+  ctx.restore()
 }
 
 const Fib141ZoneOverlay = ({ chart, series, containerRef, zones }: Props) => {
@@ -199,16 +244,24 @@ const Fib141ZoneOverlay = ({ chart, series, containerRef, zones }: Props) => {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, w, h)
 
+        let plotRight = w - 56
+        try {
+          const axisW = chart.priceScale('right').width()
+          if (typeof axisW === 'number' && axisW > 8) plotRight = w - axisW
+        } catch {
+          /* ignore */
+        }
+
         const captions: FibCaption[] = []
         const requests: LabelRequest[] = []
         for (const zone of zones) {
-          paintZone(ctx, series, zone, w, h, captions, requests)
+          paintZone(ctx, series, zone, w, h, plotRight, captions, requests)
         }
         const placed = publishLabels(layout, 'fib', fromListener, requests)
         for (const caption of captions) {
           const y = labelAnchor(placed, caption.id, caption.y)
           if (y == null) continue
-          drawCaption(ctx, caption, y, w)
+          drawCaption(ctx, caption, y, caption.y, plotRight)
         }
       } catch {
         /* overlay must never kill the chart */

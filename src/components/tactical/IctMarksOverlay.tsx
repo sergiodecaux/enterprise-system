@@ -73,6 +73,16 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
         const w = host.clientWidth
         const h = host.clientHeight
         if (w < 80 || h < 40) return
+        // Canvas spans the whole chart host, price axis included. Keep every
+        // line and tag inside the plot so ICT labels never sit on the scale.
+        let priceScaleW = 56
+        try {
+          const sw = chart.priceScale('right').width()
+          if (typeof sw === 'number' && sw > 8) priceScaleW = sw
+        } catch {
+          /* ignore */
+        }
+        const plotRight = Math.max(72, w - priceScaleW - 8)
         const dpr = Math.min(window.devicePixelRatio || 1, 2)
         const pw = Math.round(w * dpr)
         const ph = Math.round(h * dpr)
@@ -110,42 +120,47 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
           const yClamped = clamp(y, 6, h - 6)
           const xStart =
             m.timeSec != null
-              ? clamp(xOf(m.timeSec) ?? w * 0.18, 8, w - 40)
-              : w * 0.16
+              ? clamp(xOf(m.timeSec) ?? plotRight * 0.18, 8, plotRight - 40)
+              : plotRight * 0.16
 
           if (m.style === 'box' && m.top != null && m.bottom != null) {
             const yTop = yOf(m.top)
             const yBot = yOf(m.bottom)
             const top = Math.min(yTop, yBot)
             const bot = Math.max(yTop, yBot)
-            ctx.fillStyle = m.color.replace(/[\d.]+\)$/, '0.16)')
-            ctx.fillRect(xStart, top, Math.max(28, w - 16 - xStart), Math.max(4, bot - top))
+            ctx.fillStyle = m.color.replace(/[\d.]+\)$/, '0.07)')
+            ctx.fillRect(xStart, top, Math.max(28, plotRight - xStart), Math.max(4, bot - top))
             ctx.strokeStyle = m.color
-            ctx.globalAlpha = 0.7
-            ctx.lineWidth = 1.6
-            ctx.setLineDash([4, 3])
-            ctx.strokeRect(xStart, top, Math.max(28, w - 16 - xStart), Math.max(4, bot - top))
-            ctx.setLineDash([])
+            ctx.globalAlpha = 0.5
+            ctx.lineWidth = 1
+            ctx.strokeRect(
+              xStart + 0.5,
+              top + 0.5,
+              Math.max(28, plotRight - xStart),
+              Math.max(4, bot - top)
+            )
             ctx.globalAlpha = 1
           } else if (m.style === 'label') {
             ctx.strokeStyle = m.color
-            ctx.globalAlpha = 0.88
-            ctx.lineWidth = 1.8
-            ctx.setLineDash([5, 3])
+            ctx.globalAlpha = 0.5
+            ctx.lineWidth = 1
+            ctx.setLineDash([3, 4])
             ctx.beginPath()
-            ctx.moveTo(xStart, yClamped)
-            ctx.lineTo(w - 8, yClamped)
+            ctx.moveTo(xStart, yClamped + 0.5)
+            ctx.lineTo(plotRight, yClamped + 0.5)
             ctx.stroke()
             ctx.setLineDash([])
             ctx.globalAlpha = 1
           } else {
             ctx.strokeStyle = m.color
-            ctx.globalAlpha = 0.8
-            ctx.lineWidth = 1.6
-            ctx.setLineDash(m.kind === 'PDH' || m.kind === 'PDL' ? [7, 4] : [4, 4])
+            ctx.globalAlpha = 0.45
+            ctx.lineWidth = 1
+            ctx.setLineDash(
+              m.kind === 'PDH' || m.kind === 'PDL' ? [2, 4] : []
+            )
             ctx.beginPath()
-            ctx.moveTo(10, yClamped)
-            ctx.lineTo(w - 8, yClamped)
+            ctx.moveTo(10, yClamped + 0.5)
+            ctx.lineTo(plotRight, yClamped + 0.5)
             ctx.stroke()
             ctx.setLineDash([])
             ctx.globalAlpha = 1
@@ -165,22 +180,22 @@ const IctMarksOverlay = ({ chart, series, containerRef, marks, lastPrice = 0 }: 
 
         const placed = publishLabels(layout, 'ict', fromListener, requests)
 
-        ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace'
+        ctx.font = '600 9px ui-monospace, SFMono-Regular, Menlo, monospace'
         for (const row of rows) {
           const ly = labelAnchor(placed, row.mark.id, row.ly)
           if (ly == null) continue
           const text = row.mark.label
           const tw = ctx.measureText(text).width
-          const lx = clamp(w - tw - 18, 6, w - tw - 8)
-          ctx.fillStyle = 'rgba(8,10,14,0.9)'
-          ctx.fillRect(lx - 4, ly - 11, tw + 8, 16)
+          const lx = clamp(plotRight - tw - 10, 6, plotRight - tw - 6)
+          ctx.fillStyle = 'rgba(19,23,34,0.88)'
+          ctx.fillRect(lx - 4, ly - 9, tw + 8, 14)
           ctx.strokeStyle = row.mark.color
-          ctx.globalAlpha = 0.55
+          ctx.globalAlpha = 0.5
           ctx.lineWidth = 1
-          ctx.strokeRect(lx - 4, ly - 11, tw + 8, 16)
+          ctx.strokeRect(lx - 4, ly - 9, tw + 8, 14)
           ctx.globalAlpha = 1
           ctx.fillStyle = row.mark.color
-          ctx.fillText(text, lx, ly + 1)
+          ctx.fillText(text, lx, ly + 1.5)
         }
       } catch {
         /* overlay must never kill the chart */

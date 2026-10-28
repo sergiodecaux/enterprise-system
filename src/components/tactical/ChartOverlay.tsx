@@ -28,6 +28,11 @@ interface Props {
   thinLabels?: boolean
   /** Skip redraw while user pans/zooms */
   interactingRef?: React.MutableRefObject<boolean>
+  /** Click / tap on a painted zone → open the advisor (x,y in container px) */
+  onZoneClick?: (zone: LiquidityZone, x: number, y: number) => void
+  /** Hover on a painted zone → show a live preview near the pointer. */
+  onZoneHover?: (zone: LiquidityZone, x: number, y: number) => void
+  onZoneLeave?: () => void
 }
 
 type Rgba = { r: number; g: number; b: number }
@@ -124,11 +129,13 @@ function strengthVisual(
 
   const isAction = zone.type === 'FVG' || zone.type === 'ORDER_BLOCK'
 
+  // TradingView rectangle language: a translucent band, one hairline
+  // border, one accent edge. No neon glow, no fat frames.
   if (isPrimary) {
     return {
-      fillA: onlyStrong ? 0.62 : 0.56,
-      borderA: 1,
-      borderW: onlyStrong ? 3.8 : 3.2,
+      fillA: 0.1,
+      borderA: 0.7,
+      borderW: 1,
       stripeW: 0,
       tier: 'STRONG' as const,
       isFib141: false,
@@ -141,9 +148,9 @@ function strengthVisual(
 
   if (isSecondary) {
     return {
-      fillA: onlyStrong ? 0.06 : 0.12,
-      borderA: onlyStrong ? 0.45 : 0.72,
-      borderW: 1.2,
+      fillA: 0.025,
+      borderA: 0.3,
+      borderW: 1,
       stripeW: 0,
       tier: 'WEAK' as const,
       isFib141,
@@ -156,9 +163,9 @@ function strengthVisual(
 
   if (onlyStrong) {
     return {
-      fillA: 0.08,
-      borderA: 0.5,
-      borderW: 1.2,
+      fillA: 0.03,
+      borderA: 0.26,
+      borderW: 1,
       stripeW: 0,
       tier: 'WEAK' as const,
       isFib141,
@@ -170,42 +177,39 @@ function strengthVisual(
   }
 
   const airy = isFib141 || ((zone.id ?? '').startsWith('sr_') && !isCong)
-  const tierMul = tier === 'STRONG' ? 1.15 : tier === 'MEDIUM' ? 0.85 : 0.55
+  const tierMul = tier === 'STRONG' ? 1 : tier === 'MEDIUM' ? 0.7 : 0.45
   let op = (baseOpacityPct / 100) * tierMul
-  if (airy) op = Math.min(0.09, op * 0.28)
-  if (isCong) op = 0.2
-  if (highlighted) op = Math.min(0.58, op * 1.55)
-  else op *= 1.05
+  if (airy) op = Math.min(0.05, op * 0.22)
+  if (isCong) op = 0.05
+  if (highlighted) op = Math.min(0.12, op * 1.4)
 
   const borderA = isCong
-    ? 0.38
+    ? 0.3
     : isAction
       ? highlighted
-        ? 0.85
-        : 0.62
-    : airy
-      ? 0.32
-      : tier === 'STRONG'
-        ? 0.95
-        : tier === 'MEDIUM'
-          ? 0.72
-          : 0.45
-  const borderW = highlighted ? 2 : isCong || airy ? 1 : tier === 'STRONG' ? 1.5 : 1
-  const stripeW = airy ? 2 : tier === 'STRONG' ? 4 : tier === 'MEDIUM' ? 3 : 2
+        ? 0.68
+        : 0.42
+      : airy
+        ? 0.22
+        : tier === 'STRONG'
+          ? 0.62
+          : tier === 'MEDIUM'
+            ? 0.44
+            : 0.28
+  const borderW = 1
+  const stripeW = 0
 
   return {
     fillA: isCong
-      ? highlighted
-        ? 0.28
-        : 0.2
+      ? 0.05
       : isAction
         ? highlighted
-          ? 0.32
-          : 0.2
-      : airy
-        ? Math.min(0.16, Math.max(0.07, op))
-        : Math.min(0.52, Math.max(0.12, op)),
-    borderA: highlighted ? 1 : borderA,
+          ? 0.12
+          : 0.07
+        : airy
+          ? Math.min(0.05, Math.max(0.025, op))
+          : Math.min(0.14, Math.max(0.04, op)),
+    borderA: highlighted ? 0.9 : borderA,
     borderW,
     stripeW,
     tier,
@@ -243,30 +247,37 @@ function compactLabel(zone: LiquidityZone): string {
   return zone.label || zone.type
 }
 
+function shortZoneLabel(text: string): string {
+  // "попытка сноса 143.1584 · стопы снизу" → "попытка сноса 143.1584"
+  const head = text.split('·')[0].trim()
+  return head.length > 26 ? `${head.slice(0, 25)}…` : head
+}
+
 function zoneCaption(
   zone: LiquidityZone,
   _many: boolean,
   isPrimary: boolean,
   thin: boolean
 ): string {
-  if (thin) return zone.label || (isPrimary ? 'сильная' : compactLabel(zone))
-  if (isPrimary) return zone.contextHint || compactLabel(zone)
-  return zone.label || zone.contextHint || compactLabel(zone)
+  if (thin) return shortZoneLabel(zone.label || (isPrimary ? 'сильная зона' : compactLabel(zone)))
+  if (isPrimary) return shortZoneLabel(zone.contextHint || compactLabel(zone))
+  return shortZoneLabel(zone.label || zone.contextHint || compactLabel(zone))
 }
 
 function edgeLabelStyle(hue: Rgba, dimmed: number, highlighted: boolean, compact: boolean): string {
   return `
     position: absolute;
-    right: 4px;
-    padding: ${compact ? '1px 5px' : '0 4px'};
-    border-radius: 3px;
-    font-size: ${compact ? '11px' : highlighted ? '10px' : '9px'};
+    right: 6px;
+    padding: 0 3px;
+    border-radius: 2px;
+    font-size: ${compact ? 10 : 9}px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-weight: 700;
-    color: rgba(255,255,255,0.95);
-    background: rgba(8,10,14,0.78);
-    border: 1px solid ${rgba(hue, highlighted ? 0.7 : 0.4)};
-    text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: ${rgba(hue, highlighted ? 1 : 0.92)};
+    background: rgba(14,17,22,0.6);
+    border: 0;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.7);
     white-space: nowrap;
     pointer-events: none;
     opacity: ${dimmed};
@@ -293,11 +304,20 @@ const ChartOverlay = ({
   onlyStrong = true,
   thinLabels = false,
   interactingRef,
+  onZoneClick,
+  onZoneHover,
+  onZoneLeave,
 }: Props) => {
   const overlayRef = useRef<HTMLDivElement>(null)
   const layout = useChartLabels()
   const fromListenerRef = useRef(false)
   const redrawRef = useRef<() => void>(() => {})
+  const clickRef = useRef(onZoneClick)
+  const hoverRef = useRef(onZoneHover)
+  const leaveRef = useRef(onZoneLeave)
+  clickRef.current = onZoneClick
+  hoverRef.current = onZoneHover
+  leaveRef.current = onZoneLeave
 
   useEffect(() => {
     if (!chart || !series || !overlayRef.current || !containerRef.current) {
@@ -341,6 +361,9 @@ const ChartOverlay = ({
         id: string
         text: string
         fallbackY: number
+        zoneTop: number
+        anchorX: number
+        hue: string
         css: string
       }> = []
 
@@ -370,7 +393,8 @@ const ChartOverlay = ({
         width: number
       }> = []
 
-      for (const zone of visibleZones) {
+      for (let zi = 0; zi < visibleZones.length; zi++) {
+        const zone = visibleZones[zi]
         let topY: ReturnType<typeof series.priceToCoordinate> = null
         let bottomY: ReturnType<typeof series.priceToCoordinate> = null
         let rawStartX: ReturnType<typeof timeScale.timeToCoordinate> = null
@@ -408,20 +432,18 @@ const ChartOverlay = ({
         if (!Number.isFinite(topN) || !Number.isFinite(botN)) continue
 
         const rawH = Math.abs(botN - topN)
-        const minBand = isPrimaryBand ? (compact ? 44 : 36) : 10
+        const minBand = isPrimaryBand ? 24 : 6
         const height = Math.max(rawH, minBand)
         let yPos = Math.min(topN, botN)
         if (rawH < minBand) yPos -= (minBand - rawH) / 2
         yPos = Math.max(4, Math.min(yPos, containerHeight - height - 4))
-        const left = isPrimaryBand ? 0 : Math.max(0, startXNum)
+        const left = Math.max(0, startXNum)
         const nowCap = plotRight - 8
         const histRight = Number.isFinite(endXNum)
           ? Math.min(nowCap, Math.max(left + 8, endXNum))
-          : Math.min(nowCap, left + Math.max(48, (nowCap - left) * 0.72))
-        const right = isPrimaryBand
-          ? nowCap
-          : Math.max(histRight, Math.min(nowCap, left + Math.max(72, (nowCap - left) * 0.55)))
-        const width = Math.max(isPrimaryBand ? 80 : 12, right - left)
+          : Math.min(nowCap, left + Math.max(56, (nowCap - left) * 0.38))
+        const right = Math.max(histRight, Math.min(nowCap, left + 72))
+        const width = Math.max(16, right - left)
 
         if (yPos < -120 || yPos > containerHeight + 120) continue
         if (left >= plotRight) continue
@@ -431,13 +453,11 @@ const ChartOverlay = ({
         const dimmed = vis.outlineOnly ? 0.92 : 1
 
         const div = document.createElement('div')
-        const minH = vis.isPrimary || vis.isAction || highlighted ? 28 : 8
+        const minH = vis.isPrimary ? 22 : 6
         const fill = vis.isPrimary
-          ? `linear-gradient(180deg, ${rgba(hue, vis.fillA * 0.72)} 0%, ${rgba(hue, vis.fillA)} 45%, ${rgba(hue, vis.fillA * 0.78)} 100%)`
-          : vis.outlineOnly
-            ? rgba(hue, vis.fillA)
-            : `linear-gradient(90deg, ${rgba(hue, vis.fillA)} 0%, ${rgba(hue, vis.fillA * 0.55)} 70%, ${rgba(hue, vis.fillA * 0.2)} 100%)`
-        const dash = vis.outlineOnly || vis.isFib141 ? 'dashed' : 'solid'
+          ? `linear-gradient(180deg, ${rgba(hue, vis.fillA * 0.55)} 0%, ${rgba(hue, vis.fillA)} 100%)`
+          : `linear-gradient(90deg, ${rgba(hue, vis.fillA)} 0%, ${rgba(hue, vis.fillA * 0.45)} 72%, ${rgba(hue, vis.fillA * 0.12)} 100%)`
+        const dash = vis.isFib141 ? 'dashed' : 'solid'
         div.style.cssText = `
           position: absolute;
           left: ${left}px;
@@ -446,16 +466,12 @@ const ChartOverlay = ({
           height: ${Math.max(height, minH)}px;
           background: ${fill};
           border: ${vis.borderW}px ${dash} ${rgba(hue, vis.borderA * dimmed)};
-          box-shadow: ${
-            vis.isPrimary
-              ? `inset 0 0 0 2px ${rgba(hue, 0.7)}, 0 0 22px ${rgba(hue, 0.38)}`
-              : 'none'
-          };
+          box-shadow: ${vis.isPrimary ? `inset 2px 0 0 ${rgba(hue, 0.95)}` : 'none'};
           opacity: 1;
           pointer-events: none;
           box-sizing: border-box;
           overflow: visible;
-          border-radius: 4px;
+          border-radius: 2px;
           z-index: ${vis.isPrimary ? 2 : 1};
         `
 
@@ -483,6 +499,58 @@ const ChartOverlay = ({
         }
 
         overlay.appendChild(div)
+
+        // Invisible, taller hit box so thin bands stay easy to hit. The visual
+        // band itself keeps pointer-events: none (crosshair stays native).
+        const hitH = Math.max(bandH, 20)
+        const hit = document.createElement('div')
+        hit.style.cssText = `
+          position: absolute;
+          left: ${left}px;
+          top: ${yPos - (hitH - bandH) / 2}px;
+          width: ${width}px;
+          height: ${hitH}px;
+          pointer-events: ${clickRef.current ? 'auto' : 'none'};
+          cursor: pointer;
+          z-index: ${30 - zi};
+          border-radius: 3px;
+        `
+        const baseBorder = div.style.borderColor
+        const baseShadow = div.style.boxShadow
+        hit.addEventListener('pointerenter', (ev) => {
+          div.style.borderColor = rgba(hue, Math.max(0.9, vis.borderA))
+          div.style.boxShadow = vis.isPrimary
+            ? `inset 2px 0 0 ${rgba(hue, 1)}, 0 0 0 1px ${rgba(hue, 0.55)}`
+            : `0 0 0 1px ${rgba(hue, 0.55)}`
+          const box = containerRef.current
+          if (box) {
+            const r = box.getBoundingClientRect()
+            hoverRef.current?.(zone, ev.clientX - r.left, ev.clientY - r.top)
+          }
+        })
+        hit.addEventListener('pointermove', (ev) => {
+          const box = containerRef.current
+          if (box) {
+            const r = box.getBoundingClientRect()
+            hoverRef.current?.(zone, ev.clientX - r.left, ev.clientY - r.top)
+          }
+        })
+        hit.addEventListener('pointerleave', () => {
+          div.style.borderColor = baseBorder
+          div.style.boxShadow = baseShadow
+          leaveRef.current?.()
+        })
+        hit.addEventListener('click', (ev) => {
+          const cb = clickRef.current
+          if (!cb) return
+          ev.stopPropagation()
+          const box = containerRef.current
+          if (!box) return
+          const r = box.getBoundingClientRect()
+          cb(zone, ev.clientX - r.left, ev.clientY - r.top)
+        })
+        overlay.appendChild(hit)
+
         captions.push({
           zone,
           vis,
@@ -499,46 +567,29 @@ const ChartOverlay = ({
         const story =
           cap.zone.storyRole === 'PRIMARY' || cap.zone.storyRole === 'SECONDARY'
         if (thinLabels && !isPrimary) continue
+        // A stack of four captions is noise. Keep the lead zone, the action
+        // zone, and the secondary story — drop the rest into the visual band.
+        if (many && !isPrimary && !cap.vis.isAction && cap.zone.storyRole !== 'SECONDARY')
+          continue
         if (!story && !showLabels && quiet) continue
         let text = zoneCaption(cap.zone, many, isPrimary, thinLabels)
         if (!text) continue
         if (thinLabels && text.length > 26) text = `${text.slice(0, 25)}…`
-        const fontPx = thinLabels
-          ? 9
-          : isPrimary
-            ? 11
-            : compact
-              ? 10
-              : 9
-        const padX = thinLabels ? 5 : isPrimary ? 7 : 5
-        const twoLine = !thinLabels && isPrimary && compact && text.length > 22
-        const pillH = thinLabels
-          ? 16
-          : twoLine
-            ? compact
-              ? 32
-              : 28
-            : isPrimary
-              ? compact
-                ? 20
-                : 18
-              : compact
-                ? 16
-                : 14
-        const est = text.length * (fontPx * 0.62) + padX * 2
+        const fontPx = thinLabels ? 9 : isPrimary ? 10 : 9
+        const padX = 5
+        const pillH = isPrimary ? 17 : 15
+        if (text.length > (thinLabels ? 22 : 30)) {
+          text = `${text.slice(0, thinLabels ? 21 : 29)}…`
+        }
+        const est = text.length * (fontPx * 0.6) + padX * 2
         const visLeft = Math.max(10, cap.left)
         const visRight = Math.min(plotRight - 10, cap.left + cap.width)
         const room = Math.max(96, visRight - visLeft - 8)
-        const pillW = Math.min(Math.max(twoLine ? 108 : 84, est), room, plotRight - 20)
-        const preferAbove =
-          cap.height < (twoLine ? 36 : 26) && cap.yPos >= pillH + 4
-        const preferInside = cap.height >= pillH + 6
-        const rawX = Math.max(10, Math.min(visLeft + 6, plotRight - pillW - 10))
-        const rawY = preferAbove
-          ? cap.yPos - pillH - 2
-          : preferInside
-            ? cap.yPos + Math.max(3, (cap.height - pillH) * 0.12)
-            : cap.yPos + 3
+        const pillW = Math.min(Math.max(56, est), room, plotRight - 20)
+        // TradingView places the rectangle caption at the top-left corner of
+        // the drawing, not floating above the price action.
+        const rawX = Math.max(6, Math.min(visLeft + 4, plotRight - pillW - 10))
+        const rawY = cap.yPos + 1
         const id = `zone:${cap.zone.id}:pill`
         requests.push({
           id,
@@ -552,28 +603,29 @@ const ChartOverlay = ({
           id,
           text,
           fallbackY: rawY,
+          zoneTop: cap.yPos,
+          anchorX: rawX,
+          hue: rgba(cap.hue, 0.5),
           css: `
           position: absolute;
           left: ${rawX}px;
           width: ${pillW}px;
           max-width: ${Math.max(80, plotRight - rawX - 10)}px;
-          padding: ${thinLabels ? '1px 5px' : isPrimary ? '2px 7px' : '1px 5px'};
-          border-radius: 4px;
+          padding: 1px ${padX}px 1px ${padX + 2}px;
+          border-radius: 3px;
           font-size: ${fontPx}px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-          font-weight: ${isPrimary ? 800 : 600};
+          font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+          font-weight: 500;
           letter-spacing: 0.01em;
-          line-height: 1.25;
-          color: ${isPrimary ? 'rgba(255,255,255,0.96)' : 'rgba(226,232,240,0.9)'};
-          background: ${isPrimary ? 'rgba(0,0,0,0.84)' : 'rgba(8,10,14,0.78)'};
-          border: ${isPrimary ? 1.5 : 1}px ${isPrimary ? 'solid' : 'dashed'} ${rgba(
-            cap.hue,
-            isPrimary ? 0.9 : 0.55
-          )};
-          white-space: ${twoLine ? 'normal' : 'nowrap'};
-          overflow: visible;
-          word-break: keep-all;
-          text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+          line-height: 1.4;
+          color: ${isPrimary ? 'rgba(255,255,255,0.92)' : rgba(cap.hue, 0.95)};
+          background: rgba(19,23,34,0.9);
+          border: 1px solid ${rgba(cap.hue, isPrimary ? 0.55 : 0.3)};
+          border-left: 2px solid ${rgba(cap.hue, isPrimary ? 0.95 : 0.6)};
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          text-shadow: none;
           opacity: 1;
           pointer-events: none;
         `,
@@ -592,6 +644,24 @@ const ChartOverlay = ({
       for (const job of pillJobs) {
         const y = labelAnchor(placed, job.id, job.fallbackY)
         if (y == null) continue
+        // When the shared layout pushes a caption away from its band, keep
+        // the connection visible with a hairline leader.
+        if (Math.abs(y - job.zoneTop) > 4) {
+          const link = document.createElement('div')
+          const top = Math.min(y, job.zoneTop)
+          const height = Math.abs(y - job.zoneTop)
+          link.style.cssText = `
+            position: absolute;
+            left: ${job.anchorX + 5}px;
+            top: ${top}px;
+            width: 0;
+            height: ${height}px;
+            border-left: 1px dashed ${job.hue};
+            opacity: 0.75;
+            pointer-events: none;
+          `
+          overlay.appendChild(link)
+        }
         const pill = document.createElement('div')
         pill.textContent = job.text
         pill.style.cssText = `${job.css} top: ${y}px;`

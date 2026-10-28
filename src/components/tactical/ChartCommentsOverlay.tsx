@@ -1,13 +1,12 @@
 /**
- * TradingView-style comment pins on the chart — short RU bubbles, not a sheet.
- * Expanded chart: collapsed pins, tap one to read.
- * Pin positions update via rAF (no React re-render on every pan).
+ * Комментарии на графике — короткие русские карточки-пины.
+ * Позиции пересчитываются при pan / zoom / повороте экрана, чтобы
+ * комментарии не «залипали» на старых координатах и не исчезали.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type { ChartComment } from '../../engine/smc/chartStory'
-import { useViewportRedraw } from './useViewportRedraw'
 
 interface Props {
   chart: IChartApi | null
@@ -24,6 +23,7 @@ interface PinLayout {
   id: string
   x: number
   y: number
+  maxW: number
   comment: ChartComment
 }
 
@@ -35,46 +35,61 @@ function palette(side: ChartComment['side'], kind: ChartComment['kind']): {
   border: string
   title: string
   pin: string
+  bg: string
 } {
   if (kind === 'ENTRY') {
     return side === 'SHORT'
       ? {
-          border: 'rgba(251, 113, 133, 0.7)',
-          title: 'rgba(254, 205, 211, 0.98)',
-          pin: 'rgba(251, 113, 133, 0.95)',
+          border: 'rgba(251, 113, 133, 0.75)',
+          title: 'rgba(254, 205, 211, 1)',
+          pin: 'rgba(251, 113, 133, 0.98)',
+          bg: 'rgba(32, 14, 18, 0.94)',
         }
       : {
-          border: 'rgba(45, 212, 191, 0.7)',
-          title: 'rgba(167, 243, 208, 0.98)',
-          pin: 'rgba(45, 212, 191, 0.95)',
+          border: 'rgba(45, 212, 191, 0.75)',
+          title: 'rgba(167, 243, 208, 1)',
+          pin: 'rgba(45, 212, 191, 0.98)',
+          bg: 'rgba(9, 30, 27, 0.94)',
         }
   }
   if (kind === 'EVENT') {
     return {
-      border: 'rgba(251, 191, 36, 0.65)',
-      title: 'rgba(253, 230, 138, 0.98)',
-      pin: 'rgba(251, 191, 36, 0.95)',
+      border: 'rgba(251, 191, 36, 0.7)',
+      title: 'rgba(253, 230, 138, 1)',
+      pin: 'rgba(251, 191, 36, 0.98)',
+      bg: 'rgba(36, 28, 8, 0.94)',
     }
   }
   if (kind === 'DAILY') {
     return {
-      border: 'rgba(167, 139, 250, 0.6)',
-      title: 'rgba(221, 214, 254, 0.98)',
-      pin: 'rgba(167, 139, 250, 0.92)',
+      border: 'rgba(167, 139, 250, 0.65)',
+      title: 'rgba(221, 214, 254, 1)',
+      pin: 'rgba(167, 139, 250, 0.95)',
+      bg: 'rgba(24, 18, 40, 0.94)',
     }
   }
   if (kind === 'FUEL') {
     return {
-      border: 'rgba(96, 165, 250, 0.65)',
-      title: 'rgba(191, 219, 254, 0.98)',
-      pin: 'rgba(96, 165, 250, 0.95)',
+      border: 'rgba(96, 165, 250, 0.7)',
+      title: 'rgba(191, 219, 254, 1)',
+      pin: 'rgba(96, 165, 250, 0.98)',
+      bg: 'rgba(10, 22, 38, 0.94)',
     }
   }
   return {
-    border: 'rgba(125, 211, 252, 0.65)',
-    title: 'rgba(224, 242, 254, 0.98)',
-    pin: 'rgba(56, 189, 248, 0.95)',
+    border: 'rgba(125, 211, 252, 0.7)',
+    title: 'rgba(224, 242, 254, 1)',
+    pin: 'rgba(56, 189, 248, 0.98)',
+    bg: 'rgba(10, 24, 34, 0.94)',
   }
+}
+
+function readableRussian(text: string): string {
+  return text
+    .replace(/\bSHORT\b/g, 'шорт')
+    .replace(/\bLONG\b/g, 'лонг')
+    .replace(/\bSHORTу\b/gi, 'шорту')
+    .replace(/\bLONGу\b/gi, 'лонгу')
 }
 
 function computePins(
@@ -82,42 +97,52 @@ function computePins(
   series: ISeriesApi<'Candlestick'>,
   box: HTMLDivElement,
   comments: ChartComment[],
-  lastPrice: number
+  lastPrice: number,
+  compactPins: boolean,
+  openId: string | null
 ): PinLayout[] {
   const w = box.clientWidth
   const h = box.clientHeight
   if (w < 80 || h < 40 || !comments.length) return []
 
+  const maxW = Math.max(150, Math.min(compactPins ? 236 : 248, w * 0.62))
   const yOf = (price: number): number => {
-    const y = series.priceToCoordinate(price)
-    if (y != null && Number.isFinite(Number(y))) return Number(y)
+    try {
+      const y = series.priceToCoordinate(price)
+      if (y != null && Number.isFinite(Number(y))) return Number(y)
+    } catch {
+      /* chart may be disposed mid-orientation */
+    }
     return price >= lastPrice ? 22 : h - 28
   }
   const xOf = (timeSec?: number): number => {
     if (timeSec != null) {
-      const x = chart.timeScale().timeToCoordinate(timeSec as never)
-      if (x != null && Number.isFinite(Number(x))) return Number(x)
+      try {
+        const x = chart.timeScale().timeToCoordinate(timeSec as never)
+        if (x != null && Number.isFinite(Number(x))) return Number(x)
+      } catch {
+        /* ignore */
+      }
     }
     return w * 0.72
   }
 
   const used: number[] = []
-  const placeY = (raw: number): number => {
-    let y = clamp(raw, 18, h - 22)
+  return comments.map((c) => {
+    const open = !compactPins || openId === c.id
+    // Запас по высоте: длинный русский текст не должен обрезаться
+    // нижней границей графика.
+    const pinH = open ? 76 : 22
+    const rawY = yOf(c.price)
+    let y = clamp(rawY, 8, h - pinH - 8)
     for (let i = 0; i < 8; i++) {
-      if (!used.some((u) => Math.abs(u - y) < 28)) break
-      y = clamp(y + 28, 18, h - 22)
+      if (!used.some((u) => Math.abs(u - y) < pinH + 6)) break
+      y = clamp(y + pinH + 8, 8, h - pinH - 8)
     }
     used.push(y)
-    return y
-  }
-
-  return comments.map((c) => ({
-    id: c.id,
-    x: clamp(xOf(c.timeSec), 10, w - 36),
-    y: placeY(yOf(c.price)),
-    comment: c,
-  }))
+    const x = clamp(xOf(c.timeSec), 8, w - maxW - 10)
+    return { id: c.id, x, y, maxW, comment: c }
+  })
 }
 
 const ChartCommentsOverlay = ({
@@ -127,48 +152,56 @@ const ChartCommentsOverlay = ({
   comments,
   lastPrice,
   compactPins,
-  interactingRef,
 }: Props) => {
-  const [openId, setOpenId] = useState<string | null>(null)
-  const [pins, setPins] = useState<PinLayout[]>([])
-  const commentsRef = useRef(comments)
-  commentsRef.current = comments
-  const lastPriceRef = useRef(lastPrice)
-  lastPriceRef.current = lastPrice
+  const [openId, setOpenId] = useState<string | null>('now')
+  const [, setViewportVersion] = useState(0)
 
   useEffect(() => {
-    if (!compactPins && comments[0]) setOpenId(null)
-  }, [compactPins, comments])
-
-  const redraw = () => {
+    if (!chart) return
+    const scale = chart.timeScale()
+    const update = () => setViewportVersion((v) => v + 1)
+    scale.subscribeVisibleLogicalRangeChange(update)
     const box = containerRef.current
-    if (!chart || !series || !box) {
-      setPins([])
-      return
+    const observer = box ? new ResizeObserver(update) : null
+    if (box) observer?.observe(box)
+    window.addEventListener('resize', update)
+    window.addEventListener('orientationchange', update)
+    window.visualViewport?.addEventListener('resize', update)
+    return () => {
+      scale.unsubscribeVisibleLogicalRangeChange(update)
+      observer?.disconnect()
+      window.removeEventListener('resize', update)
+      window.removeEventListener('orientationchange', update)
+      window.visualViewport?.removeEventListener('resize', update)
     }
-    setPins(
-      computePins(chart, series, box, commentsRef.current, lastPriceRef.current)
-    )
+  }, [chart, containerRef])
+
+  const box = containerRef.current
+  let pins: PinLayout[] = []
+  if (chart && series && box) {
+    try {
+      pins = computePins(
+        chart,
+        series,
+        box,
+        comments,
+        lastPrice,
+        compactPins,
+        openId
+      )
+    } catch {
+      pins = []
+    }
   }
-
-  useEffect(() => {
-    redraw()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chart, series, comments, lastPrice])
-
-  useViewportRedraw(chart, containerRef.current, redraw, {
-    interactingRef,
-    crosshair: false,
-  })
 
   if (!comments.length || !pins.length) return null
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-[9] overflow-hidden">
+    <div className="pointer-events-none absolute inset-0 z-[11] overflow-visible">
       {pins.map((pin) => {
-        const open = compactPins ? openId === pin.id : openId === pin.id || openId == null
+        const showBody = !compactPins || openId === pin.id
         const colors = palette(pin.comment.side, pin.comment.kind)
-        const showBody = compactPins ? openId === pin.id : open
+        const title = readableRussian(pin.comment.title)
         return (
           <button
             key={pin.id}
@@ -177,40 +210,39 @@ const ChartCommentsOverlay = ({
               e.stopPropagation()
               setOpenId((cur) => (cur === pin.id ? null : pin.id))
             }}
-            className="absolute max-w-[min(11.5rem,46%)] text-left"
+            className="absolute text-left"
             style={{
               left: pin.x,
               top: pin.y,
-              transform: 'translate(-8px, -14px)',
+              maxWidth: pin.maxW,
               pointerEvents: 'auto',
             }}
-            title={pin.comment.text}
+            title={readableRussian(pin.comment.text)}
           >
             <span
-              className="inline-flex items-start gap-1 rounded-lg border px-1.5 py-0.5 shadow-md"
+              className="inline-flex items-start gap-1 rounded-[4px] border px-1.5 py-1 shadow-[0_4px_14px_rgba(0,0,0,0.45)] backdrop-blur-sm"
               style={{
                 borderColor: colors.border,
-                background: 'rgba(8, 10, 14, 0.88)',
+                borderLeft: `3px solid ${colors.pin}`,
+                background: colors.bg,
               }}
             >
               <span
-                className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full"
+                className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full"
                 style={{ background: colors.pin }}
               />
               <span className="min-w-0">
                 <span
-                  className="block font-mono text-[10px] font-extrabold leading-tight"
+                  className="block whitespace-nowrap font-mono text-[10px] font-bold leading-tight"
                   style={{ color: colors.title }}
                 >
                   {compactPins && !showBody
-                    ? `${pin.comment.title.slice(0, 26)}${
-                        pin.comment.title.length > 26 ? '…' : ''
-                      }`
-                    : pin.comment.title}
+                    ? `${title.slice(0, 26)}${title.length > 26 ? '…' : ''}`
+                    : title}
                 </span>
                 {showBody && (
-                  <span className="mt-0.5 block font-mono text-[10px] leading-snug text-holo/80">
-                    {pin.comment.text}
+                  <span className="mt-0.5 block font-mono text-[9.5px] leading-snug text-white/70">
+                    {readableRussian(pin.comment.text)}
                   </span>
                 )}
               </span>

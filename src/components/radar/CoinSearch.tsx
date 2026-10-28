@@ -25,7 +25,14 @@ import {
 
 const BTC = 'BTC/USDT:USDT'
 
-const CoinSearch = () => {
+interface CoinSearchProps {
+  /** Внешние отступы; по умолчанию — мобильный вариант. */
+  className?: string
+  /** id поля, чтобы на него можно было повесить горячую клавишу. */
+  inputId?: string
+}
+
+const CoinSearch = ({ className = 'px-4 pb-3', inputId }: CoinSearchProps) => {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -179,10 +186,11 @@ const CoinSearch = () => {
   }
 
   return (
-    <div ref={wrapRef} className="relative px-4 pb-3">
+    <div ref={wrapRef} className={`relative ${className}`}>
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-holo/40" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-holo/35" />
         <input
+          id={inputId}
           type="text"
           value={query}
           onChange={(e) => {
@@ -194,24 +202,30 @@ const CoinSearch = () => {
             loadCatalog()
           }}
           placeholder={t('search_placeholder')}
-          className="w-full bg-hull border border-hull-border rounded-lg pl-10 pr-10 py-2.5 text-sm font-mono text-holo placeholder:text-holo/30 focus:outline-none focus:border-matrix/50"
+          className="w-full rounded-xl border border-hull-border/90 bg-black/25 py-2.5 pl-9 pr-16 font-sans text-[13px] text-holo placeholder:text-holo/30 transition-colors focus:border-matrix/50 focus:bg-black/35 focus:outline-none"
         />
+        {!query && (
+          <span className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center rounded-md border border-hull-border/80 bg-hull/70 px-1.5 py-0.5 font-mono text-[9px] text-holo/30 sm:flex">
+            Ctrl K
+          </span>
+        )}
         {query && (
           <button
             type="button"
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-holo/40 hover:text-holo"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-holo/40 hover:text-holo"
             onClick={() => {
               setQuery('')
               setOpen(false)
             }}
+            aria-label="Очистить поиск"
           >
-            <X className="w-4 h-4" />
+            <X className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
 
       {open && query.trim().length > 0 && (
-        <div className="absolute left-4 right-4 z-30 mt-1 bg-hull border border-hull-border rounded-lg shadow-xl max-h-64 overflow-y-auto">
+        <div className="absolute inset-x-0 top-full z-40 mt-1.5 max-h-72 overflow-y-auto rounded-xl border border-hull-border bg-hull shadow-panel">
           {catalogLoading && (
             <div className="flex items-center gap-2 px-3 py-3 text-xs text-holo/50 font-mono">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -235,18 +249,18 @@ const CoinSearch = () => {
                 type="button"
                 disabled={inList || !!adding}
                 onClick={() => analyzeAndAdd(ticker)}
-                className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-hull-light disabled:opacity-50 border-b border-hull-border/40 last:border-0"
+                className="flex w-full items-center justify-between border-b border-hull-border/40 px-3 py-2.5 text-left transition-colors last:border-0 hover:bg-hull-light/60 disabled:opacity-50"
               >
                 <div>
-                  <div className="text-sm font-mono font-bold text-holo">
+                  <div className="font-mono text-[13px] font-semibold text-holo">
                     {toDisplayName(ticker.symbol)}
                     {label.hint !== 'USDT' && (
-                      <span className="ml-1.5 text-[10px] font-normal text-holo/40">
+                      <span className="ml-1.5 font-sans text-[10px] font-normal text-holo/40">
                         {label.hint}
                       </span>
                     )}
                   </div>
-                  <div className="text-xs font-mono text-holo/40">
+                  <div className="mt-0.5 font-mono text-[11px] text-holo/40">
                     ${ticker.lastPrice.toLocaleString('ru-RU')} ·{' '}
                     <span
                       className={
@@ -258,14 +272,14 @@ const CoinSearch = () => {
                     </span>
                   </div>
                 </div>
-                <div className="text-xs font-mono text-matrix flex items-center gap-1">
+                <div className="flex items-center gap-1 font-sans text-[11px] font-semibold text-matrix">
                   {isAdding ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : inList ? (
-                    t('search_added')
+                    <span className="text-holo/35">{t('search_added')}</span>
                   ) : (
                     <>
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="h-3.5 w-3.5" />
                       {t('search_add')}
                     </>
                   )}

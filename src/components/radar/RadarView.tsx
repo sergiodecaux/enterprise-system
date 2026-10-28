@@ -3,7 +3,6 @@ import { Radar, Radio } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/useAppStore'
 import CoinRow from './CoinRow'
-import CoinSearch from './CoinSearch'
 import FearGreedGauge from '../news/FearGreedGauge'
 import Radar141Board from './Radar141Board'
 import DualHuntBoard from './DualHuntBoard'
@@ -99,8 +98,6 @@ const RadarView = () => {
             </div>
           )}
       </div>
-
-      <CoinSearch />
 
       <div className="flex gap-1 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {(

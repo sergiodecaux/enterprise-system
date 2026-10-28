@@ -347,6 +347,8 @@ export interface AdvisorHealth {
   node?: string
   configured?: boolean
   models?: string[]
+  providers?: Array<{ id: string; model: string; external: boolean }>
+  externalTradeData?: boolean
   used?: number
   cap?: number
   exhausted?: boolean

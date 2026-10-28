@@ -19,6 +19,8 @@ export interface CurvePath {
   color: string
   label: string
   emphasis: boolean
+  /** Break/alternative leg drawn dotted; the active leg stays solid */
+  dashed?: boolean
 }
 
 interface Props {
@@ -113,7 +115,7 @@ const CurvePathOverlay = ({
         const line = chart.addLineSeries({
           color: path.color,
           lineWidth: path.emphasis ? 2 : 1,
-          lineStyle: path.emphasis ? 0 : 2,
+          lineStyle: path.dashed ? 2 : 0,
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,

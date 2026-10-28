@@ -185,7 +185,10 @@ export function useAdvisorChat() {
         snapshot,
         mode,
         signal: controller.signal,
-        onMeta: (m) => useAdvisorStore.getState().patchMessage(replyId, { model: m.model, node: m.node }),
+        onMeta: (m) =>
+          useAdvisorStore
+            .getState()
+            .patchMessage(replyId, { model: m.model, node: m.node, provider: m.provider }),
         onDelta: (d) => useAdvisorStore.getState().appendToMessage(replyId, d),
       })
       const reply = useAdvisorStore.getState().messages.find((m) => m.id === replyId)
@@ -193,6 +196,7 @@ export function useAdvisorChat() {
         pending: false,
         model: meta.model,
         node: meta.node,
+        provider: meta.provider,
         error: reply?.content.trim() ? undefined : 'Пустой ответ модели',
       })
     } catch (err) {

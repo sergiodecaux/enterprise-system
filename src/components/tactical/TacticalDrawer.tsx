@@ -412,13 +412,13 @@ const HeaderStat = ({
   value: string
   tone?: string
 }) => (
-  <div className="min-w-[58px] rounded-lg border border-hull-border/70 bg-black/25 px-2 py-1">
-    <div className="font-mono text-[8px] font-bold uppercase tracking-widest text-holo/30">
+  <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hull-border/70 bg-black/20 px-2.5 py-1">
+    <span className="font-sans text-[9px] font-medium uppercase tracking-[0.08em] text-holo/35">
       {label}
-    </div>
-    <div className={`font-mono text-[11px] font-bold leading-tight ${tone}`}>
+    </span>
+    <span className={`tnum font-mono text-[11px] font-semibold leading-tight ${tone}`}>
       {value}
-    </div>
+    </span>
   </div>
 )
 
@@ -856,110 +856,82 @@ const TacticalDrawer = () => {
     return (
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-space">
         {/* ── Шапка инструмента ─────────────────────────────────────────── */}
-        <div className="shrink-0 border-b border-hull-border bg-hull/30">
-          <div className="flex items-center gap-3 px-4 py-2">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="truncate font-mono text-lg font-bold leading-none tracking-tight text-holo">
-                  {signal.displayName}
-                </h2>
-                {signal.hasActiveSetup && (
-                  <span className="rounded bg-matrix/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-matrix">
-                    сетап
+        <div className="shrink-0 border-b border-hull-border/80 bg-gradient-to-b from-hull/70 to-hull/20">
+          <div className="flex items-center gap-3 px-4 py-2.5">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-matrix/25 bg-gradient-to-br from-matrix/15 to-transparent shadow-[0_0_24px_-14px_rgba(44,224,138,0.9)]">
+                <span className="font-mono text-[10px] font-bold tracking-tight text-matrix">
+                  {toBaseTicker(signal.internalSymbol).slice(0, 4)}
+                </span>
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="truncate font-sans text-xl font-semibold leading-none tracking-tight text-holo">
+                    {signal.displayName}
+                  </h2>
+                  <span className="hidden rounded border border-hull-border/80 bg-black/20 px-1.5 py-0.5 font-sans text-[8px] font-semibold uppercase tracking-[0.12em] text-holo/35 sm:inline">
+                    perp
                   </span>
-                )}
-                {signal.scoreCard && (
+                  {signal.direction && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide ${
+                        signal.direction === 'LONG'
+                          ? 'bg-matrix/15 text-matrix'
+                          : 'bg-alert/15 text-alert'
+                      }`}
+                    >
+                      {signal.direction}
+                    </span>
+                  )}
+                  {signal.hasActiveSetup && (
+                    <span className="hidden rounded bg-matrix/10 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide text-matrix/90 md:inline">
+                      сетап
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="tnum font-mono text-[22px] font-semibold leading-none tracking-tight text-holo">
+                    ${formatPrice(signal.price)}
+                  </span>
                   <span
-                    className={`font-mono text-[10px] font-bold ${
-                      signal.scoreCard.ready ? 'text-matrix' : 'text-holo/45'
+                    className={`tnum font-mono text-[12px] font-medium ${
+                      signal.priceChange24h >= 0 ? 'text-matrix' : 'text-alert'
                     }`}
-                    title={signal.scoreCard.missingFactors.slice(0, 2).join(' · ')}
+                  >
+                    {formatChange(signal.priceChange24h)}
+                  </span>
+                  <span className="font-sans text-[9px] uppercase tracking-[0.12em] text-holo/25">
+                    24ч
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {signal.scoreCard && (
+                <span
+                  className={`hidden flex-col items-end rounded-lg border px-2.5 py-1 xl:flex ${
+                    signal.scoreCard.ready
+                      ? 'border-matrix/30 bg-matrix/[0.07]'
+                      : 'border-hull-border/80 bg-black/20'
+                  }`}
+                  title={signal.scoreCard.missingFactors.slice(0, 2).join(' · ')}
+                >
+                  <span className="font-sans text-[8px] uppercase tracking-[0.12em] text-holo/30">
+                    score
+                  </span>
+                  <span
+                    className={`font-mono text-[11px] font-semibold ${
+                      signal.scoreCard.ready ? 'text-matrix' : 'text-holo/55'
+                    }`}
                   >
                     {signal.scoreCard.grade} · {signal.scoreCard.totalScore}/
                     {signal.scoreCard.maxScore}
                   </span>
-                )}
-              </div>
-              <div className="mt-1 flex items-baseline gap-2 font-mono text-sm">
-                <span className="font-bold text-holo">
-                  ${formatPrice(signal.price)}
                 </span>
-                <span
-                  className={
-                    signal.priceChange24h >= 0 ? 'text-matrix' : 'text-alert'
-                  }
-                >
-                  {formatChange(signal.priceChange24h)}
-                </span>
-                <span className="text-[9px] uppercase tracking-wider text-holo/30">
-                  24ч
-                </span>
-              </div>
-            </div>
-
-            <div className="ml-2 flex items-center gap-1.5">
-              <HeaderStat
-                label="RSI"
-                value={signal.currentRSI !== null ? currentRSI.toFixed(1) : '--'}
-                tone={
-                  currentRSI >= 70
-                    ? 'text-alert'
-                    : currentRSI <= 30
-                      ? 'text-matrix'
-                      : 'text-holo'
-                }
-              />
-              <HeaderStat
-                label="Score"
-                value={signal.score.toFixed(1)}
-                tone={signal.score >= 7 ? 'text-matrix' : 'text-holo'}
-              />
-              <HeaderStat
-                label="Тренд"
-                value={
-                  signal.coinTrend === 'BULLISH'
-                    ? 'вверх'
-                    : signal.coinTrend === 'BEARISH'
-                      ? 'вниз'
-                      : signal.coinTrend === 'RANGING'
-                        ? 'боковик'
-                        : '—'
-                }
-                tone={trendTone}
-              />
-              <HeaderStat
-                label="4ч / день"
-                value={`${
-                  signal.htfTrend?.bias4h === 'BULLISH'
-                    ? '↑'
-                    : signal.htfTrend?.bias4h === 'BEARISH'
-                      ? '↓'
-                      : '↔'
-                } / ${
-                  signal.dailyBias === 'BULLISH'
-                    ? '↑'
-                    : signal.dailyBias === 'BEARISH'
-                      ? '↓'
-                      : '↔'
-                }`}
-              />
-              {signal.sl != null && (
-                <HeaderStat
-                  label="SL"
-                  value={formatPrice(signal.sl)}
-                  tone="text-alert"
-                />
               )}
-              {signal.tp1 != null && (
-                <HeaderStat
-                  label="TP1"
-                  value={formatPrice(signal.tp1)}
-                  tone="text-matrix"
-                />
-              )}
-            </div>
-
-            <div className="ml-auto flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
                 onClick={() =>
@@ -969,20 +941,93 @@ const TacticalDrawer = () => {
                     text: `Разбери график ${signal.displayName}: сведи всё, что на экране, — есть ли сетап?`,
                   })
                 }
-                className="flex items-center gap-1.5 rounded-lg border border-matrix/30 px-2.5 py-1.5 font-mono text-[11px] font-bold text-matrix transition-colors hover:bg-matrix/10"
+                className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/[0.07] px-2.5 py-1.5 font-sans text-[11px] font-semibold text-accent transition-colors hover:border-accent/55 hover:bg-accent/[0.12]"
               >
                 <Bot className="h-4 w-4" />
-                Советник
+                <span className="hidden sm:inline">Советник</span>
               </button>
               <button
                 type="button"
                 onClick={handleClose}
-                className="rounded-lg p-2 transition-colors hover:bg-hull-light"
+                className="rounded-lg border border-transparent p-2 text-holo/40 transition-colors hover:border-hull-border/80 hover:bg-hull-light/60 hover:text-holo/80"
                 aria-label="Закрыть инструмент"
+                title="Закрыть инструмент"
               >
-                <X className="h-4 w-4 text-holo/50" />
+                <X className="h-4 w-4" />
               </button>
             </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-hull-border/50 bg-black/10 px-4 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <HeaderStat
+              label="RSI"
+              value={signal.currentRSI !== null ? currentRSI.toFixed(1) : '--'}
+              tone={
+                currentRSI >= 70
+                  ? 'text-alert'
+                  : currentRSI <= 30
+                    ? 'text-matrix'
+                    : 'text-holo'
+              }
+            />
+            <HeaderStat
+              label="Score"
+              value={signal.score.toFixed(1)}
+              tone={signal.score >= 7 ? 'text-matrix' : 'text-holo'}
+            />
+            <HeaderStat
+              label="Тренд"
+              value={
+                signal.coinTrend === 'BULLISH'
+                  ? 'вверх'
+                  : signal.coinTrend === 'BEARISH'
+                    ? 'вниз'
+                    : signal.coinTrend === 'RANGING'
+                      ? 'боковик'
+                      : '—'
+              }
+              tone={trendTone}
+            />
+            <HeaderStat
+              label="4ч / день"
+              value={`${
+                signal.htfTrend?.bias4h === 'BULLISH'
+                  ? '↑'
+                  : signal.htfTrend?.bias4h === 'BEARISH'
+                    ? '↓'
+                    : '↔'
+              } / ${
+                signal.dailyBias === 'BULLISH'
+                  ? '↑'
+                  : signal.dailyBias === 'BEARISH'
+                    ? '↓'
+                    : '↔'
+              }`}
+            />
+            {signal.sl != null && (
+              <HeaderStat
+                label="SL"
+                value={formatPrice(signal.sl)}
+                tone="text-alert"
+              />
+            )}
+            {signal.tp1 != null && (
+              <HeaderStat
+                label="TP1"
+                value={formatPrice(signal.tp1)}
+                tone="text-matrix"
+              />
+            )}
+            {signal.tp2 != null && (
+              <HeaderStat
+                label="TP2"
+                value={formatPrice(signal.tp2)}
+                tone="text-matrix/80"
+              />
+            )}
+            {signal.tradeStyle && (
+              <HeaderStat label="Стиль" value={signal.tradeStyle} tone="text-accent" />
+            )}
           </div>
 
           {(() => {
@@ -1016,7 +1061,7 @@ const TacticalDrawer = () => {
         </div>
 
         {/* ── График + информационная колонка ───────────────────────────── */}
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(280px,300px)] xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]">
           <div className="flex min-h-0 min-w-0 flex-col p-2">
             <LiveChart
               symbol={signal.internalSymbol}
@@ -1026,17 +1071,17 @@ const TacticalDrawer = () => {
             />
           </div>
 
-          <aside className="flex min-h-0 flex-col border-l border-hull-border bg-hull/15">
-            <div className="flex shrink-0 items-stretch border-b border-hull-border">
+          <aside className="flex min-h-0 flex-col border-l border-hull-border/80 bg-hull/15">
+            <div className="grid shrink-0 grid-cols-5 gap-1 border-b border-hull-border/70 bg-black/15 p-1.5">
               {railTabs.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setRailTab(id)}
-                  className={`flex flex-1 flex-col items-center gap-0.5 border-b-2 py-1.5 font-mono text-[9px] font-bold uppercase tracking-wide transition-colors ${
+                  className={`flex flex-col items-center gap-1 rounded-lg py-1.5 font-sans text-[9px] font-semibold transition-colors ${
                     railTab === id
-                      ? 'border-matrix bg-matrix/5 text-matrix'
-                      : 'border-transparent text-holo/35 hover:bg-hull-light/40 hover:text-holo/70'
+                      ? 'bg-matrix/10 text-matrix ring-1 ring-matrix/20'
+                      : 'text-holo/35 hover:bg-white/[0.045] hover:text-holo/70'
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5" />

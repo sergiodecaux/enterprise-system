@@ -68,17 +68,42 @@ function createThinkFilter(): (piece: string) => string {
   }
 }
 
+const STREAM_IDLE_TIMEOUT_MS = 30_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([
+    promise.finally(() => {
+      if (timer != null) clearTimeout(timer)
+    }),
+    timeout,
+  ])
+}
+
 export async function* parseSse(
   stream: ReadableStream<Uint8Array>,
-  onUsage: (u: TokenUsage) => void
+  onUsage: (u: TokenUsage) => void,
+  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS
 ): AsyncGenerator<string> {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
   const filter = createThinkFilter()
   let buffer = ''
+  let timedOut = false
   try {
     for (;;) {
-      const { value, done } = await reader.read()
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try {
+        chunk = await withTimeout(reader.read(), idleTimeoutMs, 'stream idle timeout')
+      } catch (err) {
+        timedOut = true
+        void reader.cancel().catch(() => undefined)
+        throw err
+      }
+      const { value, done } = chunk
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       let nl = buffer.indexOf('\n')
@@ -103,7 +128,13 @@ export async function* parseSse(
       }
     }
   } finally {
-    reader.releaseLock()
+    if (!timedOut) {
+      try {
+        reader.releaseLock()
+      } catch {
+        /* a read is still pending after a timeout */
+      }
+    }
   }
 }
 
@@ -114,31 +145,34 @@ async function* once(text: string): AsyncGenerator<string> {
 export function workersAiProvider(
   ai: AiBinding,
   model: string,
-  disableThinking: boolean
+  defaultThinking: boolean
 ): ChatProvider {
-  const run = (req: ChatRequest, withKwargs: boolean) => {
+  const run = (req: ChatRequest, withKwargs: boolean, thinking: boolean) => {
     const inputs: Record<string, unknown> = {
       messages: req.messages,
       stream: true,
       max_tokens: req.maxTokens,
       temperature: req.temperature,
     }
-    if (withKwargs) inputs.chat_template_kwargs = { enable_thinking: false }
+    if (withKwargs) inputs.chat_template_kwargs = { enable_thinking: thinking }
     return ai.run(model, inputs)
   }
 
   return {
     id: 'workers-ai',
     model,
+    external: false,
     async open(req): Promise<ProviderStream> {
+      const thinking = req.thinking ?? defaultThinking
       let raw: unknown
       try {
-        raw = await run(req, disableThinking)
+        raw = await run(req, true, thinking)
       } catch (err) {
         const classified = classifyWorkersAiError(err)
-        if (!disableThinking || classified.kind !== 'bad_request') throw classified
+        if (classified.kind !== 'bad_request') throw classified
+        // Some Workers AI models reject chat_template_kwargs entirely.
         try {
-          raw = await run(req, false)
+          raw = await run(req, false, false)
         } catch (retryErr) {
           throw classifyWorkersAiError(retryErr)
         }

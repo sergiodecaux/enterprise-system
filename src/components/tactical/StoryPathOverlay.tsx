@@ -90,13 +90,13 @@ function drawWaypointLabel(
   color: string,
   plotRight: number,
   h: number,
-  compact: boolean
+  _compact: boolean
 ) {
-  const fontPx = compact ? 9 : 10
+  const fontPx = 9
   ctx.save()
-  ctx.font = `700 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
-  const padX = compact ? 4 : 5
-  const padY = compact ? 2 : 3
+  ctx.font = `600 ${fontPx}px Inter, ui-sans-serif, system-ui, sans-serif`
+  const padX = 5
+  const padY = 2
   const tw = ctx.measureText(text).width
   const bw = tw + padX * 2
   const bh = fontPx + padY * 2
@@ -105,13 +105,13 @@ function drawWaypointLabel(
   if (lx < 6) lx = 6
   if (lx + bw > plotRight - 4) lx = Math.max(6, plotRight - bw - 4)
   if (ly + bh > h - 4) ly = Math.max(4, y - bh - 8)
-  roundRect(ctx, lx, ly, bw, bh, 3)
-  ctx.fillStyle = 'rgba(8,10,14,0.82)'
+  roundRect(ctx, lx, ly, bw, bh, 2)
+  ctx.fillStyle = 'rgba(14,17,22,0.82)'
   ctx.fill()
-  ctx.strokeStyle = hexAlpha(color, 0.75)
+  ctx.strokeStyle = hexAlpha(color, 0.4)
   ctx.lineWidth = 1
   ctx.stroke()
-  ctx.fillStyle = 'rgba(255,255,255,0.88)'
+  ctx.fillStyle = hexAlpha(color, 0.95)
   ctx.fillText(text, lx + padX, ly + bh - padY - 1)
   ctx.restore()
 }
@@ -120,18 +120,23 @@ function drawTipLabel(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
+  anchorY: number,
   text: string,
   color: string,
   plotRight: number,
   h: number,
   compact: boolean
 ) {
-  const fontPx = compact ? 11 : 12
+  const fontPx = compact ? 9 : 10
   ctx.save()
-  ctx.font = `700 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, monospace`
-  const padX = compact ? 6 : 7
-  const padY = compact ? 3 : 4
-  const tw = ctx.measureText(text).width
+  ctx.font = `600 ${fontPx}px Inter, ui-sans-serif, system-ui, sans-serif`
+  // Target first, reason never: "ломает вниз 143.1 → стопы снизу" reads as
+  // "ломает вниз 143.1" on the chart; the why lives in the panels.
+  const head = text.split('→')[0].trim()
+  const shown = head.length > 26 ? `${head.slice(0, 25)}…` : head
+  const padX = 6
+  const padY = 3
+  const tw = ctx.measureText(shown).width
   const bw = tw + padX * 2
   const bh = fontPx + padY * 2
   let lx = x + 10
@@ -139,14 +144,26 @@ function drawTipLabel(
   if (lx + bw > plotRight - 4) lx = Math.max(8, x - bw - 10)
   if (ly < 4) ly = Math.min(h - bh - 4, y + 12)
   if (ly + bh > h - 4) ly = Math.max(4, h - bh - 4)
-  roundRect(ctx, lx, ly, bw, bh, 4)
-  ctx.fillStyle = 'rgba(8,10,14,0.9)'
+  // If the shared label layout pushed the caption away from the path tip,
+  // keep the connection readable with a dotted leader.
+  if (Math.abs(ly + bh / 2 - anchorY) > 12) {
+    ctx.setLineDash([2, 3])
+    ctx.strokeStyle = hexAlpha(color, 0.45)
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x, anchorY)
+    ctx.lineTo(Math.max(lx + 4, Math.min(lx + bw - 4, x)), ly + (ly > anchorY ? 0 : bh))
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+  roundRect(ctx, lx, ly, bw, bh, 2)
+  ctx.fillStyle = 'rgba(19,23,34,0.9)'
   ctx.fill()
-  ctx.strokeStyle = color
-  ctx.lineWidth = 1.2
+  ctx.strokeStyle = hexAlpha(color, 0.55)
+  ctx.lineWidth = 1
   ctx.stroke()
-  ctx.fillStyle = 'rgba(255,255,255,0.95)'
-  ctx.fillText(text, lx + padX, ly + bh - padY - 1)
+  ctx.fillStyle = 'rgba(240,244,250,0.94)'
+  ctx.fillText(shown, lx + padX, ly + bh - padY - 1)
   ctx.restore()
 }
 
@@ -455,23 +472,23 @@ const StoryPathOverlay = ({
               ? pts.slice(0, Math.min(3, pts.length))
               : null
           if (on) {
-            strokePolyline(ctx, pts, 'rgba(8,10,14,0.9)', compact ? 7 : 6, dash, 1)
-            strokePolyline(ctx, pts, color, compact ? 3.8 : 3.5, dash, 1)
+            strokePolyline(ctx, pts, 'rgba(8,10,14,0.75)', compact ? 4.6 : 4.2, dash, 1)
+            strokePolyline(ctx, pts, color, compact ? 2.2 : 2, dash, 1)
             if (sweepThru && sweepThru.length >= 2) {
               strokePolyline(
                 ctx,
                 sweepThru,
                 hexAlpha(color, 0.95),
-                compact ? 5.2 : 4.6,
+                compact ? 3.2 : 2.8,
                 [],
                 1
               )
             }
           } else if (equal) {
             // Soft equal weight — lead still slightly stronger via pct sort order
-            strokePolyline(ctx, pts, hexAlpha(color, 0.55), compact ? 1.7 : 1.5, dash, 1)
+            strokePolyline(ctx, pts, hexAlpha(color, 0.5), compact ? 1.4 : 1.2, dash, 1)
           } else {
-            strokePolyline(ctx, pts, hexAlpha(color, 0.24), compact ? 1.15 : 1.05, dash, 1)
+            strokePolyline(ctx, pts, hexAlpha(color, 0.2), compact ? 1 : 0.9, dash, 1)
           }
           const a = pts[pts.length - 2]
           const b = pts[pts.length - 1]
@@ -537,7 +554,26 @@ const StoryPathOverlay = ({
           drawOne(sc, Boolean(lead && sc.id === lead.id), equal)
         }
 
-        const requests: LabelRequest[] = captions.map((c) => ({
+        // Two scenarios usually point at the same level ("ломать вниз …").
+        // Keep one tag per level so the chart doesn't repeat itself.
+        const seenCaption = new Map<string, number>()
+        const uniqueCaptions = captions.filter((c) => {
+          // "ломает вниз 143.1 → стопы" and "ломает вниз 143.1" are the same idea.
+          const key = c.text.split(/[·→—–]/)[0].replace(/\s+/g, ' ').trim().toLowerCase()
+          const at = seenCaption.get(key)
+          if (at == null) {
+            seenCaption.set(key, captions.indexOf(c))
+            return true
+          }
+          // Prefer the longer wording (it carries the "why").
+          const prev = captions[at]
+          if (prev && c.text.length > prev.text.length) {
+            prev.text = c.text
+          }
+          return false
+        })
+
+        const requests: LabelRequest[] = uniqueCaptions.map((c) => ({
           id: c.id,
           priceY: c.y,
           text: c.text,
@@ -546,11 +582,11 @@ const StoryPathOverlay = ({
           height: c.kind === 'tip' ? 22 : 18,
         }))
         const placed = publishLabels(layout, 'story', fromListener, requests)
-        for (const c of captions) {
+        for (const c of uniqueCaptions) {
           const y = labelAnchor(placed, c.id, c.y)
           if (y == null) continue
           if (c.kind === 'tip') {
-            drawTipLabel(ctx, c.x, y, c.text, c.color, plotRight, h, compact)
+            drawTipLabel(ctx, c.x, y, c.y, c.text, c.color, plotRight, h, compact)
           } else if (c.kind === 'way') {
             drawWaypointLabel(ctx, c.x, y, c.text, c.color, plotRight, h, compact)
           } else {

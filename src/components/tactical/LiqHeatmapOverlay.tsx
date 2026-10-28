@@ -76,7 +76,6 @@ const LiqHeatmapOverlay = ({
       layout.clear('liq')
       return
     }
-
     let fromListener = false
 
     const redraw = () => {
@@ -98,7 +97,8 @@ const LiqHeatmapOverlay = ({
         if (!ctx) return
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, w, h)
-        ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity))
+        // The heatmap is context, not the main actor: keep it understated.
+        ctx.globalAlpha = Math.max(0.12, Math.min(0.38, opacity * 0.38))
 
         let priceScaleW = 56
         try {
@@ -109,10 +109,11 @@ const LiqHeatmapOverlay = ({
         }
 
         const leftW = edgeOnly ? 0 : Math.min(78, Math.max(52, w * 0.14))
+        // A thin density ruler, not a barcode: keep it off the axis and quiet.
         const stripW = edgeOnly
-          ? Math.min(22, Math.max(14, w * 0.035))
-          : Math.min(70, Math.max(48, w * 0.13))
-        const stripRight = Math.max(4, w - priceScaleW - 2)
+          ? Math.min(10, Math.max(7, w * 0.014))
+          : Math.min(56, Math.max(36, w * 0.09))
+        const stripRight = Math.max(4, w - priceScaleW - 8)
         const stripLeft = stripRight - stripW
         const maxLong = model.maxLongEntry
         const maxShort = model.maxShortEntry
@@ -187,34 +188,29 @@ const LiqHeatmapOverlay = ({
           const liqL = bin.longLiq / maxLiq
           const liqS = bin.shortLiq / maxLiq
           const crowd = Math.max(longN, shortN)
-          if (liqS > 0.06) {
+          if (liqS > 0.16) {
             const bw = liqS * (stripW - 2)
             const grad = ctx.createLinearGradient(stripRight - bw, y, stripRight, y)
             grad.addColorStop(0, 'rgba(251, 191, 36, 0.05)')
             grad.addColorStop(1, 'rgba(251, 146, 60, 0.88)')
             ctx.fillStyle = grad
-            roundRect(ctx, stripRight - bw, y + 0.2, bw, barH * 0.9, 2)
-            ctx.fill()
+            // Full-height cells: the strip should read as one gradient rail,
+            // not a dashed barcode.
+            ctx.fillRect(stripRight - bw, y, bw, Math.max(1.6, bh))
           }
-          if (liqL > 0.06) {
+          if (liqL > 0.16) {
             const bw = liqL * (stripW - 2)
             const grad = ctx.createLinearGradient(stripRight - bw, y, stripRight, y)
             grad.addColorStop(0, 'rgba(34, 211, 238, 0.05)')
             grad.addColorStop(1, 'rgba(34, 211, 238, 0.8)')
-            ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity)) * 0.85
+            ctx.globalAlpha =
+              Math.max(0.12, Math.min(0.38, opacity * 0.38)) * 0.85
             ctx.fillStyle = grad
-            roundRect(ctx, stripRight - bw, y + 0.2, bw, barH * 0.9, 2)
-            ctx.fill()
-            ctx.globalAlpha = Math.max(0.15, Math.min(1, opacity))
+            ctx.fillRect(stripRight - bw, y, bw, Math.max(1.6, bh))
+            ctx.globalAlpha = Math.max(0.12, Math.min(0.38, opacity * 0.38))
           }
-          if (edgeOnly && crowd > 0.22) {
-            const mark = Math.min(4, 2 + crowd * 3)
-            ctx.fillStyle =
-              longN >= shortN
-                ? 'rgba(52, 211, 153, 0.55)'
-                : 'rgba(251, 113, 133, 0.55)'
-            ctx.fillRect(stripLeft, y + bh * 0.15, mark, Math.max(1, bh * 0.7))
-          }
+          void crowd
+          void stripLeft
         }
       }
 

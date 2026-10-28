@@ -28,10 +28,33 @@ function classify(status: number, body: string): ProviderErrorKind {
   return 'unknown'
 }
 
+/** `AbortSignal.any` is not in the ES2022 lib types; compose by hand. */
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
+  const timeout = AbortSignal.timeout(ms)
+  if (!signal) return timeout
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  if (signal.aborted || timeout.aborted) controller.abort()
+  signal.addEventListener('abort', abort, { once: true })
+  timeout.addEventListener('abort', abort, { once: true })
+  return controller.signal
+}
+
+function reasoningFields(id: string, req: { reasoningEffort?: string }): Record<string, unknown> {
+  if (!req.reasoningEffort) return {}
+  // Only providers with an explicit OpenAI-style effort field. OpenRouter free models
+  // vary in reasoning support, so leave their defaults untouched.
+  if (id === 'gemini' || id === 'groq') {
+    return { reasoning_effort: req.reasoningEffort }
+  }
+  return {}
+}
+
 export function openAiCompatProvider(cfg: OpenAiCompatConfig): ChatProvider {
   return {
     id: cfg.id,
     model: cfg.model,
+    external: true,
     async open(req): Promise<ProviderStream> {
       let res: Response
       try {
@@ -49,8 +72,9 @@ export function openAiCompatProvider(cfg: OpenAiCompatConfig): ChatProvider {
             temperature: req.temperature,
             stream: true,
             stream_options: { include_usage: true },
+            ...reasoningFields(cfg.id, req),
           }),
-          signal: AbortSignal.timeout(OPEN_TIMEOUT_MS),
+          signal: withTimeout(req.signal, OPEN_TIMEOUT_MS),
         })
       } catch (err) {
         throw new ProviderError('capacity', `${cfg.id}: ${err instanceof Error ? err.message : String(err)}`)

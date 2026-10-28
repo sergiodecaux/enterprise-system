@@ -4,7 +4,9 @@
 #   * $env:CF_TOKEN_A / CF_TOKEN_B / ... — API token ("Edit Cloudflare Workers" template) for that account
 #   * otherwise the current `npx wrangler login` session is used
 #
-# Optional: $env:ADVISOR_TOKEN — also (re)writes the ADVISOR_TOKEN secret on every node.
+# Optional: secrets are (re)written on every node from environment variables.
+# A node-specific value wins over the shared one, e.g. GEMINI_API_KEY_A for env a.
+#   ADVISOR_TOKEN, TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY
 #
 #   powershell -ExecutionPolicy Bypass -File scripts/deploy-all.ps1 [-Envs a,b]
 
@@ -17,6 +19,7 @@ Set-Location (Join-Path $PSScriptRoot '..')
 
 $savedToken = $env:CLOUDFLARE_API_TOKEN
 $failed = @()
+$secretNames = @('ADVISOR_TOKEN', 'TELEGRAM_BOT_TOKEN', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY')
 
 foreach ($name in $Envs) {
   $tokenVar = "CF_TOKEN_$($name.ToUpper())"
@@ -28,9 +31,14 @@ foreach ($name in $Envs) {
     npx wrangler deploy --env $name
     if ($LASTEXITCODE -ne 0) { throw "deploy exit $LASTEXITCODE" }
 
-    if ($env:ADVISOR_TOKEN) {
-      $env:ADVISOR_TOKEN | npx wrangler secret put ADVISOR_TOKEN --env $name
-      if ($LASTEXITCODE -ne 0) { throw "secret put exit $LASTEXITCODE" }
+    foreach ($secretName in $secretNames) {
+      $nodeVar = "$($secretName)_$($name.ToUpper())"
+      $value = [Environment]::GetEnvironmentVariable($nodeVar)
+      if (-not $value) { $value = [Environment]::GetEnvironmentVariable($secretName) }
+      if ($value) {
+        $value | npx wrangler secret put $secretName --env $name
+        if ($LASTEXITCODE -ne 0) { throw "secret put $secretName exit $LASTEXITCODE" }
+      }
     }
   } catch {
     Write-Host "!!! env '$name' failed: $_" -ForegroundColor Red

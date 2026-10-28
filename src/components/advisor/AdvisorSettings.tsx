@@ -117,6 +117,14 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
                     ? ` · узел ${h.node} · ${h.used ?? 0}/${h.cap ?? '?'} сегодня${h.configured ? '' : ' · НЕТ ADVISOR_TOKEN'}${h.exhausted ? ' · лимит' : ''}`
                     : ` · ошибка: ${h.error}`)}
               </div>
+              {h?.ok && h.providers?.length ? (
+                <div className="truncate text-holo/35">
+                  {[...new Set(h.providers.filter((p) => p.external).map((p) => p.id))].join(
+                    ' → '
+                  ) || 'только Workers AI'}
+                  {h.externalTradeData ? ' · сделки наружу' : ''}
+                </div>
+              ) : null}
             </div>
           )
         })}

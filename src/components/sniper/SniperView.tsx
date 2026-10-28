@@ -114,8 +114,8 @@ const SniperView = () => {
 
   return (
     <div className="flex min-h-screen flex-col bg-space pb-6">
-      <div className="sticky top-[96px] z-10 border-b border-hull-border bg-space/95 px-4 py-3 backdrop-blur-sm min-[1100px]:top-0">
-        <div className="mb-2.5 flex items-center justify-between gap-2">
+      <div className="sticky top-[120px] z-10 border-b border-hull-border bg-space/95 px-4 py-3 backdrop-blur-sm min-[1100px]:top-0">
+        <div className="mb-2.5 flex items-center justify-between gap-2 min-[1100px]:hidden">
           <div className="flex min-w-0 items-center gap-2">
             <Crosshair className="h-5 w-5 shrink-0 text-matrix" />
             <div className="min-w-0">

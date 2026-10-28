@@ -16,8 +16,10 @@ export interface Env {
   /** Soft per-account daily request cap (Workers AI free = 10k neurons/day) */
   DAILY_CAP?: string
   MAX_OUTPUT_TOKENS?: string
-  /** "0" keeps model reasoning on (costs more neurons and latency) */
+  /** "1" is a global kill switch for Workers AI thinking; "0" allows per-mode thinking */
   DISABLE_THINKING?: string
+  /** "1" lets `trade` mode fall back to external providers (and send trade/journal data) */
+  ALLOW_EXTERNAL_TRADES?: string
   /** Human label of this node in the ring, e.g. "A" */
   NODE_LABEL?: string
   /** External OpenAI-compatible providers (wrangler secrets); tried before Workers AI */

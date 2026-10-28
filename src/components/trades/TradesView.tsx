@@ -46,7 +46,7 @@ const TradesView = () => {
 
   return (
     <div className="flex min-h-screen flex-col bg-space pb-6">
-      <div className="sticky top-0 z-10 border-b border-hull-border bg-space/95 px-4 py-4 backdrop-blur-sm">
+      <div className="sticky top-[120px] z-10 border-b border-hull-border bg-space/95 px-4 py-4 backdrop-blur-sm min-[1100px]:top-0">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Activity className="h-6 w-6 text-matrix" />
