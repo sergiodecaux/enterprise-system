@@ -1,116 +1,104 @@
-import {
-  MIN_RR,
-  TP_MAX_PCT,
-  TP_MIN_PCT,
-  type Side,
-  type VaneRiskLevels,
-} from './types'
-import {
-  MICRO_MIN_RR,
-  MICRO_SL_MAX_PCT,
-  MICRO_SL_MIN_PCT,
-  MICRO_TP_MAX_PCT,
-  MICRO_TP_MIN_PCT,
-} from './microStrategy'
-import {
-  MACRO_MIN_RR,
-  MACRO_SL_MAX_PCT,
-  MACRO_SL_MIN_PCT,
-  MACRO_TP_MAX_PCT,
-  MACRO_TP_MIN_PCT,
-} from './macroStrategy'
+import { MIN_RR, type Side, type VaneRiskLevels } from './types'
+import { MICRO_MIN_RR } from './microStrategy'
+import { MACRO_MIN_RR } from './macroStrategy'
 
 /**
- * Standard Vane scalp TP from ATR1m, clamped to TP_MIN–TP_MAX.
+ * Structural risk only. A stop that needs more than this is rejected, never
+ * squeezed into a cosmetic percentage band.
  */
-export function buildVaneRisk(opts: {
-  side: Side
-  entry: number
-  structureExtreme: number
-  atr15m: number
-  atr1m?: number | null
-  oppositeLiq?: number | null
-  /** High-WR micro band — tight SL/TP for large notional */
-  micro?: boolean
-  /** Real directional move — wide TP 1.5–3.8% */
-  macro?: boolean
-}): VaneRiskLevels {
-  if (opts.macro) return buildMacroRisk(opts)
-  if (opts.micro) return buildMicroRisk(opts)
-  return buildStandardRisk(opts)
+const MAX_STRUCTURAL_SL_PCT = 3.5
+
+function bad(reason: string): VaneRiskLevels {
+  return {
+    entry: 0,
+    sl: 0,
+    tp: 0,
+    slPct: 0,
+    tpPct: 0,
+    rr: 0,
+    ok: false,
+    rejectReason: reason,
+  }
+}
+
+function structuralStop(
+  side: Side,
+  entry: number,
+  structureExtreme: number,
+  atrPad: number
+): number {
+  if (side === 'LONG') {
+    return Math.min(structureExtreme, entry) - atrPad
+  }
+  return Math.max(structureExtreme, entry) + atrPad
+}
+
+function oppositeTarget(
+  side: Side,
+  entry: number,
+  oppositeLiq: number | null | undefined
+): number | null {
+  if (oppositeLiq == null || !(oppositeLiq > 0)) return null
+  const toward =
+    side === 'LONG' ? oppositeLiq > entry : oppositeLiq < entry
+  return toward ? oppositeLiq : null
 }
 
 /**
- * MACRO: SL 0.65–1.15%, TP 1.5–3.8% (ATR-scaled). Catch the body of the move.
+ * Build SL from structure ± ATR pad and TP from real opposite liquidity.
+ * When no liquidity target exists, use an ATR measured move. No min/max
+ * percentage clamp is applied to either side; an unaffordable stop or a
+ * sub-minimum RR is rejected.
  */
-export function buildMacroRisk(opts: {
+function buildStructuralRisk(opts: {
   side: Side
   entry: number
   structureExtreme: number
   atr15m: number
   atr1m?: number | null
   oppositeLiq?: number | null
+  padMult: number
+  fallbackAtrMult: number
+  minRR: number
+  tag: string
 }): VaneRiskLevels {
   const { side, entry, atr15m } = opts
-  if (!(entry > 0)) {
+  if (!(entry > 0) || !(atr15m > 0)) {
+    return bad(`${opts.tag}_bad_entry`)
+  }
+
+  // ATR pad with a tiny floor to avoid a zero stop on a flat bar.
+  const atrPad = Math.max(atr15m * opts.padMult, entry * 0.0005)
+  const sl = structuralStop(side, entry, opts.structureExtreme, atrPad)
+  const slDist = Math.abs(entry - sl)
+  if (!(slDist > 0)) return bad(`${opts.tag}_bad_structure`)
+
+  const slPct = (slDist / entry) * 100
+  if (slPct > MAX_STRUCTURAL_SL_PCT) {
     return {
-      entry: 0,
-      sl: 0,
+      entry,
+      sl,
       tp: 0,
-      slPct: 0,
+      slPct,
       tpPct: 0,
       rr: 0,
       ok: false,
-      rejectReason: 'bad_entry',
+      rejectReason: `${opts.tag}_risk_${slPct.toFixed(2)}_gt_${MAX_STRUCTURAL_SL_PCT}`,
     }
   }
 
-  const atrPad = Math.max(atr15m * 0.35, entry * 0.0015)
-  let sl: number
-  if (side === 'LONG') {
-    sl = Math.min(opts.structureExtreme, entry) - atrPad
-  } else {
-    sl = Math.max(opts.structureExtreme, entry) + atrPad
-  }
-
-  const slDist = Math.abs(entry - sl)
-  const minDist = entry * (MACRO_SL_MIN_PCT / 100)
-  const maxDist = entry * (MACRO_SL_MAX_PCT / 100)
-  const useDist = Math.min(maxDist, Math.max(minDist, slDist))
-  sl = side === 'LONG' ? entry - useDist : entry + useDist
-  const slPct = (useDist / entry) * 100
-
-  const atr1 = opts.atr1m != null && opts.atr1m > 0 ? opts.atr1m : atr15m * 0.35
-  const atr1Pct = (atr1 / entry) * 100
-  // ~3.2× ATR1m inside macro band — ride the move, not a chip scalp
-  let tpPct = Math.min(
-    MACRO_TP_MAX_PCT,
-    Math.max(MACRO_TP_MIN_PCT, atr1Pct * 3.2)
-  )
-  tpPct = Math.max(tpPct, slPct * MACRO_MIN_RR)
-  tpPct = Math.min(MACRO_TP_MAX_PCT, tpPct)
-
-  let tp =
-    side === 'LONG' ? entry * (1 + tpPct / 100) : entry * (1 - tpPct / 100)
-
-  // Clip to opposite liquidity if it still leaves MACRO_TP_MIN
-  if (opts.oppositeLiq != null && opts.oppositeLiq > 0) {
-    const liqPct =
-      (Math.abs(opts.oppositeLiq - entry) / entry) * 100
-    if (liqPct >= MACRO_TP_MIN_PCT && liqPct <= MACRO_TP_MAX_PCT * 1.15) {
-      const toward =
-        side === 'LONG'
-          ? opts.oppositeLiq > entry
-          : opts.oppositeLiq < entry
-      if (toward) {
-        tp = opts.oppositeLiq
-        tpPct = liqPct
-      }
-    }
-  }
-
+  const liq = oppositeTarget(side, entry, opts.oppositeLiq)
+  const atr1 =
+    opts.atr1m != null && opts.atr1m > 0 ? opts.atr1m : atr15m * 0.35
+  const fallbackDist = atr1 * opts.fallbackAtrMult
+  const tpDist = liq != null ? Math.abs(liq - entry) : fallbackDist
+  const tp =
+    liq ??
+    (side === 'LONG' ? entry + fallbackDist : entry - fallbackDist)
+  const tpPct = (tpDist / entry) * 100
   const rr = slPct > 0 ? tpPct / slPct : 0
-  if (rr < MACRO_MIN_RR) {
+
+  if (rr < opts.minRR) {
     return {
       entry,
       sl,
@@ -119,10 +107,48 @@ export function buildMacroRisk(opts: {
       tpPct,
       rr,
       ok: false,
-      rejectReason: `macro_rr_${rr.toFixed(2)}_lt_${MACRO_MIN_RR}`,
+      rejectReason: `${opts.tag}_rr_${rr.toFixed(2)}_lt_${opts.minRR}`,
     }
   }
+
   return { entry, sl, tp, slPct, tpPct, rr, ok: true }
+}
+
+/**
+ * Standard Vane setup: structural SL ± 0.5×ATR15.
+ */
+export function buildVaneRisk(opts: {
+  side: Side
+  entry: number
+  structureExtreme: number
+  atr15m: number
+  atr1m?: number | null
+  oppositeLiq?: number | null
+  /** High-WR micro band — tight structural stop, not a clamp */
+  micro?: boolean
+  /** Real directional move — structural stop, ATR target */
+  macro?: boolean
+}): VaneRiskLevels {
+  if (opts.macro) return buildMacroRisk(opts)
+  if (opts.micro) return buildMicroRisk(opts)
+  return buildStandardRisk(opts)
+}
+
+export function buildMacroRisk(opts: {
+  side: Side
+  entry: number
+  structureExtreme: number
+  atr15m: number
+  atr1m?: number | null
+  oppositeLiq?: number | null
+}): VaneRiskLevels {
+  return buildStructuralRisk({
+    ...opts,
+    padMult: 0.35,
+    fallbackAtrMult: 3.2,
+    minRR: MACRO_MIN_RR,
+    tag: 'macro',
+  })
 }
 
 function buildStandardRisk(opts: {
@@ -133,72 +159,18 @@ function buildStandardRisk(opts: {
   atr1m?: number | null
   oppositeLiq?: number | null
 }): VaneRiskLevels {
-  const { side, entry, atr15m } = opts
-  if (!(entry > 0)) {
-    return {
-      entry: 0,
-      sl: 0,
-      tp: 0,
-      slPct: 0,
-      tpPct: 0,
-      rr: 0,
-      ok: false,
-      rejectReason: 'bad_entry',
-    }
-  }
-
-  const atrPad = Math.max(atr15m * 0.5, entry * 0.0015)
-  let sl: number
-  if (side === 'LONG') {
-    const struct = Math.min(opts.structureExtreme, entry)
-    sl = struct - atrPad
-  } else {
-    const struct = Math.max(opts.structureExtreme, entry)
-    sl = struct + atrPad
-  }
-
-  const minSlDist = entry * 0.0045
-  if (side === 'LONG' && entry - sl < minSlDist) sl = entry - minSlDist
-  if (side === 'SHORT' && sl - entry < minSlDist) sl = entry + minSlDist
-
-  const slPct = (Math.abs(entry - sl) / entry) * 100
-  const atr1 = opts.atr1m != null && opts.atr1m > 0 ? opts.atr1m : atr15m * 0.35
-  const atr1Pct = (atr1 / entry) * 100
-  const dynamicTp = Math.min(TP_MAX_PCT, Math.max(TP_MIN_PCT, atr1Pct * 2.4))
-  const minTpPct = Math.max(TP_MIN_PCT, slPct * MIN_RR)
-  let tpPct = Math.min(TP_MAX_PCT, Math.max(dynamicTp, minTpPct))
-
-  if (opts.oppositeLiq != null && opts.oppositeLiq > 0) {
-    const liqPct =
-      side === 'LONG'
-        ? ((opts.oppositeLiq - entry) / entry) * 100
-        : ((entry - opts.oppositeLiq) / entry) * 100
-    if (liqPct >= TP_MIN_PCT && liqPct <= TP_MAX_PCT + 0.5) {
-      tpPct = Math.min(TP_MAX_PCT, Math.max(TP_MIN_PCT, liqPct))
-    }
-  }
-
-  const tp =
-    side === 'LONG' ? entry * (1 + tpPct / 100) : entry * (1 - tpPct / 100)
-  const rr = slPct > 0 ? tpPct / slPct : 0
-  if (rr < MIN_RR) {
-    return {
-      entry,
-      sl,
-      tp,
-      slPct,
-      tpPct,
-      rr,
-      ok: false,
-      rejectReason: `rr_${rr.toFixed(2)}_lt_${MIN_RR}`,
-    }
-  }
-  return { entry, sl, tp, slPct, tpPct, rr, ok: true }
+  return buildStructuralRisk({
+    ...opts,
+    padMult: 0.5,
+    fallbackAtrMult: 2.4,
+    minRR: MIN_RR,
+    tag: 'rr',
+  })
 }
 
 /**
- * MICRO: tight structural SL capped 0.32–0.45%, TP 0.45–0.70%.
- * Prefer R:R ≥ 1.15 so WR~65% still has positive expectancy.
+ * Micro: tight structural stop ± 0.25×ATR15, TP to real liquidity or 1.8×ATR1m.
+ * An unaffordable stop is rejected, never clamped into 0.32–0.45%.
  */
 export function buildMicroRisk(opts: {
   side: Side
@@ -206,65 +178,15 @@ export function buildMicroRisk(opts: {
   structureExtreme: number
   atr15m: number
   atr1m?: number | null
+  oppositeLiq?: number | null
 }): VaneRiskLevels {
-  const { side, entry, atr15m } = opts
-  if (!(entry > 0)) {
-    return {
-      entry: 0,
-      sl: 0,
-      tp: 0,
-      slPct: 0,
-      tpPct: 0,
-      rr: 0,
-      ok: false,
-      rejectReason: 'bad_entry',
-    }
-  }
-
-  const atrPad = Math.max(atr15m * 0.25, entry * 0.001)
-  let sl: number
-  if (side === 'LONG') {
-    sl = Math.min(opts.structureExtreme, entry) - atrPad
-  } else {
-    sl = Math.max(opts.structureExtreme, entry) + atrPad
-  }
-
-  // Clamp SL into MICRO band
-  const slDist = Math.abs(entry - sl)
-  const minDist = entry * (MICRO_SL_MIN_PCT / 100)
-  const maxDist = entry * (MICRO_SL_MAX_PCT / 100)
-  let useDist = Math.min(maxDist, Math.max(minDist, slDist))
-  sl = side === 'LONG' ? entry - useDist : entry + useDist
-
-  const slPct = (useDist / entry) * 100
-
-  const atr1 = opts.atr1m != null && opts.atr1m > 0 ? opts.atr1m : atr15m * 0.3
-  const atr1Pct = (atr1 / entry) * 100
-  // ~1.8× ATR1m inside micro band — small move, not swing
-  let tpPct = Math.min(
-    MICRO_TP_MAX_PCT,
-    Math.max(MICRO_TP_MIN_PCT, atr1Pct * 1.8)
-  )
-  // Ensure min R:R
-  tpPct = Math.max(tpPct, slPct * MICRO_MIN_RR)
-  tpPct = Math.min(MICRO_TP_MAX_PCT, tpPct)
-
-  const tp =
-    side === 'LONG' ? entry * (1 + tpPct / 100) : entry * (1 - tpPct / 100)
-  const rr = slPct > 0 ? tpPct / slPct : 0
-  if (rr < MICRO_MIN_RR) {
-    return {
-      entry,
-      sl,
-      tp,
-      slPct,
-      tpPct,
-      rr,
-      ok: false,
-      rejectReason: `micro_rr_${rr.toFixed(2)}_lt_${MICRO_MIN_RR}`,
-    }
-  }
-  return { entry, sl, tp, slPct, tpPct, rr, ok: true }
+  return buildStructuralRisk({
+    ...opts,
+    padMult: 0.25,
+    fallbackAtrMult: 1.8,
+    minRR: MICRO_MIN_RR,
+    tag: 'micro',
+  })
 }
 
 export function riskPctForTier(tier: 'TIER1' | 'TIER2'): number {

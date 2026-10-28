@@ -23,7 +23,21 @@ export const useBuyerAggression = (internalSymbol: string | null) => {
       const trades = await fetchRecentTrades(internalSymbol, 100)
       if (!isMounted.current) return
 
-      const result = detectBuyerAggression(trades, WINDOW_SEC, BUY_SELL_THRESHOLD)
+      const cutoff = Date.now() - WINDOW_SEC * 1000
+      const windowTrades = trades.filter((t) => t.timestamp >= cutoff)
+      const first = windowTrades[0]?.price
+      const last = windowTrades[windowTrades.length - 1]?.price
+      const priceMovePct =
+        first != null && last != null && first > 0
+          ? ((last - first) / first) * 100
+          : null
+
+      const result = detectBuyerAggression(
+        trades,
+        WINDOW_SEC,
+        BUY_SELL_THRESHOLD,
+        { priceMovePct }
+      )
       setBuyerAggression(internalSymbol, result)
 
       if (result.detected) {

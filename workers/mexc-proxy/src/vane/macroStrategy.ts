@@ -1,24 +1,21 @@
 /**
- * VANE MACRO v6.1 — catch real directional moves everywhere they start:
- *   ZONE (HTF), RANGE_BREAK (боковик → выход), MOMENTUM (impulse without strong zone).
+ * VANE MACRO v6.2 — catch real directional moves only from real structure:
+ *   ZONE (HTF/internal), RANGE_BREAK at a real zone edge, continuation
+ *   context from session + EMA momentum.
  *
  * Accuracy > coverage spam:
  *   impulse band + 1m with us + book confirm + memory gate.
- *   Mid-range chop rejected. History cooldown after repeat losses.
+ *   No synthetic momentum zone: no real zone = stand aside.
  */
 
 import type { MarketRegime } from '../regime'
-import type { Candle, Side, ZoneGrade, VaneZoneGeom } from './types'
+import type { Candle, Side, ZoneGrade } from './types'
 import type { MacroContext, MacroSymbolMemory } from './macroMemory'
 import { memoryAllowsTrade } from './macroMemory'
 
 export const MACRO_MIN_SCORE = 58
 export const MACRO_MIN_RR = 1.5
 export const MACRO_RISK_PCT = 0.85
-export const MACRO_TP_MIN_PCT = 1.5
-export const MACRO_TP_MAX_PCT = 3.8
-export const MACRO_SL_MIN_PCT = 0.65
-export const MACRO_SL_MAX_PCT = 1.2
 export const MACRO_TP1_PCT = 0.9
 export const MACRO_IMPULSE_MIN = 0.5
 export const MACRO_IMPULSE_MAX = 2.4
@@ -61,9 +58,12 @@ export interface MacroQualifyInput {
   candle1mWithUs: boolean
   directionConfidence: number
   isInternal: boolean
-  chg24Abs: number
-  /** Signed 24h % in trade direction (positive = favors side) */
-  chg24Favor: number
+  /** 8H session return in trade direction, % (positive = favors side) */
+  sessionFavorPct: number
+  /** 1H EMA9/EMA21 agrees with the trade side */
+  emaAligned: boolean
+  /** |EMA9 − EMA21| / EMA21 × 100 */
+  emaStrengthPct: number
   regime: MarketRegime
   range: LocalRange | null
   rangePos: RangePos | null
@@ -116,85 +116,6 @@ export function rangePosition(price: number, range: LocalRange): RangePos {
   if (price <= range.low + pad * 2) return 'NEAR_LOW'
   if (price >= range.high - pad * 2) return 'NEAR_HIGH'
   return 'INSIDE'
-}
-
-/** Synthetic zone from local range edge / break for entries without HTF SSL */
-export function syntheticRangeZone(
-  side: Side,
-  range: LocalRange,
-  price: number
-): VaneZoneGeom {
-  if (side === 'LONG') {
-    const low = range.low
-    const high = Math.min(range.mid, price * 1.004)
-    return {
-      zoneLow: low,
-      zoneHigh: Math.max(high, low * 1.002),
-      mid: (low + high) / 2,
-      limitEntry: Math.min(price, range.low * 1.002),
-      source: 'FVG15',
-      tf: '15m',
-      strength: range.compressed ? 6 : 5,
-      touches: range.touchesLow,
-    }
-  }
-  const high = range.high
-  const low = Math.max(range.mid, price * 0.996)
-  return {
-    zoneLow: Math.min(low, high * 0.998),
-    zoneHigh: high,
-    mid: (low + high) / 2,
-    limitEntry: Math.max(price, range.high * 0.998),
-    source: 'OB15',
-    tf: '15m',
-    strength: range.compressed ? 6 : 5,
-    touches: range.touchesHigh,
-  }
-}
-
-/** Momentum swing zone from recent 5m extreme (no HTF zone required) */
-export function syntheticMomentumZone(
-  side: Side,
-  candles5m: Candle[],
-  price: number
-): VaneZoneGeom | null {
-  if (candles5m.length < 8) return null
-  const slice = candles5m.slice(-12)
-  let extreme = side === 'LONG' ? Infinity : -Infinity
-  for (const c of slice) {
-    if (side === 'LONG' && c[3] < extreme) extreme = c[3]
-    if (side === 'SHORT' && c[2] > extreme) extreme = c[2]
-  }
-  if (!(extreme > 0)) return null
-  const pad = price * 0.004
-  if (side === 'LONG') {
-    const low = extreme
-    const high = Math.min(price, extreme + pad * 2)
-    if (price < low * 0.995) return null
-    return {
-      zoneLow: low,
-      zoneHigh: high,
-      mid: (low + high) / 2,
-      limitEntry: Math.min(price, low * 1.003),
-      source: 'FVG15',
-      tf: '15m',
-      strength: 5,
-      touches: 1,
-    }
-  }
-  const high = extreme
-  const low = Math.max(price, extreme - pad * 2)
-  if (price > high * 1.005) return null
-  return {
-    zoneLow: low,
-    zoneHigh: high,
-    mid: (low + high) / 2,
-    limitEntry: Math.max(price, high * 0.997),
-    source: 'OB15',
-    tf: '15m',
-    strength: 5,
-    touches: 1,
-  }
 }
 
 function bookConfirm(input: MacroQualifyInput, strict: boolean): boolean {
@@ -272,8 +193,12 @@ export function qualifyMacro(input: MacroQualifyInput): MacroQualifyResult {
       (longBreak || shortBreak || edgeLong || edgeShort) &&
       bookConfirm(input, ranging && input.regime === 'VOLATILE_CHOP')
     ) {
-      // Against HTF only if break is clean + 24h/5m agree
-      if (input.conflicts && input.chg24Favor < 0.8 && input.move5mFavor < 0.5) {
+      // Against HTF only if break is clean + session/5m agree
+      if (
+        input.conflicts &&
+        input.sessionFavorPct < 0.8 &&
+        input.move5mFavor < 0.5
+      ) {
         return { ok: false, reason: 'range_vs_htf', tags, context: null }
       }
       tags.push('RANGE_BREAK', `W${input.range.widthPct.toFixed(1)}%`)
@@ -307,22 +232,25 @@ export function qualifyMacro(input: MacroQualifyInput): MacroQualifyResult {
     }
   }
 
-  // --- MOMENTUM (нет сильной зоны, но ход уже идёт) ---
+  // --- MOMENTUM: continuation from a real zone, confirmed by session/EMA ---
   const momOk =
     input.earlyFavorPct >= 0.65 &&
     input.earlyFavorPct <= MACRO_IMPULSE_MAX &&
     bookConfirm(input, true) &&
     input.move5mFavor >= 0.25 &&
-    (input.chg24Favor >= 0.5 || input.directionConfidence >= MACRO_DIR_CONF_MIN) &&
+    (input.emaAligned ||
+      input.sessionFavorPct >= 0.5 ||
+      input.directionConfidence >= MACRO_DIR_CONF_MIN) &&
     !input.greenDeltaWeak
 
   if (momOk) {
-    // Hard conflict with HTF + 24h against = skip
-    if (input.conflicts && input.chg24Favor < 0) {
+    // Hard conflict with HTF + session momentum against = skip
+    if (input.conflicts && input.sessionFavorPct < 0) {
       return { ok: false, reason: 'mom_vs_htf', tags, context: null }
     }
     tags.push('MOMENTUM')
-    if (input.chg24Abs >= 3) tags.push('HOT24')
+    if (input.emaAligned) tags.push(`EMA ${input.emaStrengthPct.toFixed(2)}%`)
+    if (input.sessionFavorPct >= 1) tags.push('SESSION')
     if (input.bookGrade === 'STRONG') tags.push('BOOK_STRONG')
     if (input.absorption) tags.push('ABS')
     return { ok: true, reason: 'macro_momentum', tags, context: 'MOMENTUM' }

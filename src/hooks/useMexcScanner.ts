@@ -260,6 +260,7 @@ export const useMexcScanner = () => {
 
           // Live order book + MM intent + ScoreCard feeds
           let bookImbalance: number | null = null
+          let spreadPct: number | null = null
           let mmIntent = null as ReturnType<typeof computeMmIntent> | null
           let enhancedCvd = null as ReturnType<typeof buildEnhancedCvd> | null
           let spoofAlerts = null as ReturnType<
@@ -273,6 +274,7 @@ export const useMexcScanner = () => {
             const depth = await fetchDepth(symbol, 20)
             const obMetrics = calculateOrderBookMetrics(depth)
             bookImbalance = obMetrics.imbalance
+            spreadPct = obMetrics.spreadPercent
             const wobi = calculateWeightedObi(depth.bids, depth.asks)
             useAppStore.getState().setOrderBookMetrics(symbol, obMetrics)
 
@@ -356,7 +358,8 @@ export const useMexcScanner = () => {
                 hiddenVolumeEstimate: 0,
                 label: i.label,
                 emoji: '🧊',
-                bounceProbPct: i.bounceProbPct,
+                status: i.status,
+                confidencePct: i.confidencePct,
               }))
 
             mmIntent = computeMmIntent({
@@ -410,6 +413,7 @@ export const useMexcScanner = () => {
             ohlcv5m: ohlcv5m.length >= 15 ? ohlcv5m : undefined,
             ohlcv1m: ohlcv1m.length >= 20 ? ohlcv1m : undefined,
             bookImbalance,
+            spreadPct,
             mmIntent,
             sessionDna,
             previousSurgical:

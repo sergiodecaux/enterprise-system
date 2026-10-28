@@ -160,7 +160,18 @@ export interface CoinSignal {
   marketRegime?: MarketRegimeSnapshot | null
   /** Session quality for ScoreCard */
   sessionQuality?: SessionQualitySnapshot | null
+  /** ATR(1h) as % of price — used by dynamic venue-lead thresholds */
+  atrPct?: number | null
+  /** Hard setup rejection reason (never silently widen the stop) */
+  rejected?: SetupRejectReason | null
 }
+
+export type SetupRejectReason =
+  | 'RISK_EXCEEDED'
+  | 'RR_TOO_LOW'
+  | 'INVALID_STRUCTURE'
+  | 'SPREAD_TOO_WIDE'
+  | 'BTC_HARD_BLOCK'
 
 export type SurgicalEntryStatus =
   | 'IDLE'
@@ -271,12 +282,18 @@ export interface SpoofAlertSnapshot {
   updatedAt: number
 }
 
+export type IcebergAlertStatus =
+  | 'HOLDING'
+  | 'EXHAUSTED'
+  | 'BREAKTHROUGH_RISK'
+
 export interface IcebergAlertSnapshot {
   detected: boolean
   side: 'BID' | 'ASK' | null
   price: number
   label: string
-  bounceProbPct: number
+  status: IcebergAlertStatus | null
+  confidencePct: number
   updatedAt: number
 }
 
@@ -608,7 +625,10 @@ export interface OrderBookWall {
 }
 
 export interface OrderBookMetrics {
+  /** Distance-weighted imbalance (spoof-resistant) */
   imbalance: number
+  /** Explicit alias for consumers that want to be unambiguous */
+  weightedImbalance?: number
   bidVolume: number
   askVolume: number
   bidOrders: number
@@ -618,6 +638,8 @@ export interface OrderBookMetrics {
   spread: number | null
   spreadPercent: number | null
   pressure: 'BUYERS' | 'SELLERS' | 'NEUTRAL'
+  /** USD value of the first 10 levels per side */
+  top10Usd?: number | null
 }
 
 export interface OrderBookState {
@@ -1030,6 +1052,12 @@ export interface BuyerAggressionResult {
   label: string
   color: 'GREEN' | 'YELLOW' | 'NEUTRAL'
   updatedAt: number
+  /** High buy ratio without price progress = hidden seller */
+  absorption: boolean
+  /** Total tape notional in the window, USD */
+  volumeUsd: number
+  /** Signed price move over the same window, % */
+  priceMovePct: number | null
 }
 
 // ============================================================================

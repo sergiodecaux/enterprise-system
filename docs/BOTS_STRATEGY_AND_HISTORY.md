@@ -102,12 +102,13 @@ WR монеты: prefer по последним 3 WIN/LOSS; STOCK и дампе�
 ### 2.4. VANE MACRO / MICRO (альты, auto OFF)
 
 **Идея:** HTF-зона / range-break / momentum + book grade + 1m with us + impulse band.
+Синтетических momentum-зон больше нет: нет реальной зоны — VANE стоит в стороне.
 
 | | MACRO | MICRO |
 |---|---|---|
 | Impulse | 0.5–2.4% | 0.35–0.85% |
-| Risk / TP | ~0.85% / 1.5–3.8% | ~0.35% / 0.45–0.7% |
-| Контекст | ZONE / RANGE_BREAK / MOMENTUM | только WITH HTF, tight touch |
+| Risk / TP | структурный SL ±0.35×ATR15, TP по противоположной ликвидности; отказ при SL >3.5% | структурный SL ±0.25×ATR15, TP по ликвидности/ATR; отказ при SL >3.5% |
+| Контекст | ZONE / RANGE_BREAK / MOMENTUM от реальной зоны | только WITH HTF, tight touch |
 
 Сейчас auto-VANE выключен (ассистент). Логика зон осталась в коде, но не ядро мем-поиска.
 

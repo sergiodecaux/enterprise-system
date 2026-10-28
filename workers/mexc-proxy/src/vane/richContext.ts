@@ -24,6 +24,15 @@ export interface DirectionConsensusLite {
   votes: string[]
 }
 
+export interface SessionMomentumLite {
+  bias: ArrowBias
+  /** Return over the last `lookbackBars` 1H candles, % */
+  returnPct: number
+  /** EMA(9) vs EMA(21) distance on 1H, % */
+  emaSpreadPct: number
+  summary: string
+}
+
 export interface ZoneRank {
   score: number
   preferPath: VanePath
@@ -33,6 +42,62 @@ export interface ZoneRank {
 
 function closes(c: Candle[]): number[] {
   return c.map((x) => x[4])
+}
+
+function ema(values: number[], period: number): number | null {
+  if (values.length < period) return null
+  const k = 2 / (period + 1)
+  let e =
+    values.slice(0, period).reduce((a, b) => a + b, 0) / period
+  for (let i = period; i < values.length; i++) {
+    e = values[i]! * k + e * (1 - k)
+  }
+  return e
+}
+
+/**
+ * Session momentum from 1H price action + EMA9/EMA21.
+ * Replaces 24h ticker `riseFallRate`, which mixes overnight gaps and
+ * funding-driven wicks into a single stale number.
+ */
+export function computeSessionMomentum(
+  candles1h: Candle[],
+  lookbackBars = 8
+): SessionMomentumLite {
+  if (candles1h.length < 25) {
+    return {
+      bias: 'FLAT',
+      returnPct: 0,
+      emaSpreadPct: 0,
+      summary: '1H мало данных',
+    }
+  }
+  const px = closes(candles1h)
+  const fast = ema(px, 9)
+  const slow = ema(px, 21)
+  const last = px[px.length - 1]!
+  if (fast == null || slow == null || !(last > 0) || !(slow > 0)) {
+    return {
+      bias: 'FLAT',
+      returnPct: 0,
+      emaSpreadPct: 0,
+      summary: '1H EMA n/a',
+    }
+  }
+  const back = px[Math.max(0, px.length - 1 - lookbackBars)]!
+  const returnPct = back > 0 ? ((last - back) / back) * 100 : 0
+  const emaSpreadPct = ((fast - slow) / slow) * 100
+
+  let bias: ArrowBias = 'FLAT'
+  if (emaSpreadPct >= 0.05 && returnPct >= -0.15) bias = 'UP'
+  else if (emaSpreadPct <= -0.05 && returnPct <= 0.15) bias = 'DOWN'
+
+  return {
+    bias,
+    returnPct,
+    emaSpreadPct,
+    summary: `8h ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}% · EMA ${emaSpreadPct >= 0 ? '+' : ''}${emaSpreadPct.toFixed(2)}%`,
+  }
 }
 
 function swingBias(

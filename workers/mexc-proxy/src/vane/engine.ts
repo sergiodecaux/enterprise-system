@@ -25,6 +25,7 @@ import {
 } from './portfolioRisk'
 import {
   computeHtfTrendLite,
+  computeSessionMomentum,
   computeVaneDirection,
   directionAligns,
   directionConflicts,
@@ -47,8 +48,6 @@ import {
   moveFavorPct,
   qualifyMacro,
   rangePosition,
-  syntheticMomentumZone,
-  syntheticRangeZone,
 } from './macroStrategy'
 import {
   loadMacroMemory,
@@ -82,13 +81,22 @@ import {
 function phaseOfGeom(
   price: number,
   low: number,
-  high: number
+  high: number,
+  atrPct = 0.6
 ): 'FAR' | 'APPROACH' | 'TOUCH' {
-  if (price >= low * 0.997 && price <= high * 1.003) return 'TOUCH'
+  if (!(price > 0) || !(low > 0) || !(high > 0)) return 'FAR'
+  // TOUCH/APPROACH bands scale with ATR instead of fixed 0.3%/2.8%.
+  const touchBand = Math.max(0.12, Math.min(1.2, atrPct * 0.35)) / 100
+  if (
+    price >= low * (1 - touchBand) &&
+    price <= high * (1 + touchBand)
+  ) {
+    return 'TOUCH'
+  }
   const mid = (low + high) / 2
   const dist = Math.abs(price - mid) / price
-  // v4: wider approach so early scalp can arm before perfect touch
-  if (dist <= 0.028) return 'APPROACH'
+  const approachBand = Math.max(0.8, Math.min(3.5, atrPct * 2)) / 100
+  if (dist <= approachBand) return 'APPROACH'
   return 'FAR'
 }
 
@@ -187,6 +195,11 @@ async function analyzeSymbol(opts: {
   const bias4h = tfBias(c4h)
   const bias1d = tfBias(c1d)
   const atr15 = atr(c15m, 14) || price * 0.008
+  const atrPct = price > 0 ? (atr15 / price) * 100 : 0.6
+  const sessionMom = computeSessionMomentum(c1h)
+  const sessionHeat =
+    Math.abs(sessionMom.returnPct) >= 1.2 ||
+    Math.abs(sessionMom.emaSpreadPct) >= 0.35
   const htf = computeHtfTrendLite(c1h, c4h)
   const map = buildHtfLiquidityMap({
     candles4h: c4h,
@@ -195,18 +208,18 @@ async function analyzeSymbol(opts: {
     price,
   })
 
-  // Candidate sides: HTF zones + range/momentum (не только сильные SSL/BSL)
+  // Candidates: real HTF zones + 15m internal zones only. No synthetic
+  // range/momentum zones: if there is no structural zone, VANE stands aside.
   const candidates: Array<{
     side: Side
     zone: VaneZoneGeom
     pathHint: VanePath
     isInternal: boolean
     oppositeLiq: number | null
-    origin: 'HTF' | 'INTERNAL' | 'RANGE' | 'MOMENTUM' | 'FLIP'
+    origin: 'HTF' | 'INTERNAL' | 'FLIP'
   }> = []
 
   const localRange = detectLocalRange(c15m, 24)
-  const chg24Signed = Number(opts.ticker.riseFallRate ?? 0) * 100
 
   for (const side of ['LONG', 'SHORT'] as Side[]) {
     const smart = findSmartZone(side, price, map, atr15, {
@@ -214,13 +227,11 @@ async function analyzeSymbol(opts: {
     })
     if (!smart) continue
     const ph = smart.phase
-    // Zone TOUCH/APPROACH + FAR within 2.5% if hot mover (macro can start approaching)
+    // Zone TOUCH/APPROACH + FAR within 2.5% only when session/EMA has heat.
     const inRadar =
       ph === 'TOUCH' ||
       ph === 'APPROACH' ||
-      (ph === 'FAR' &&
-        smart.distancePct <= 2.5 &&
-        Math.abs(chg24Signed) >= 2)
+      (ph === 'FAR' && smart.distancePct <= 2.5 && sessionHeat)
     if (inRadar) {
       candidates.push({
         side,
@@ -241,7 +252,7 @@ async function analyzeSymbol(opts: {
       bias4h,
     })
     if (iz) {
-      const ph = phaseOfGeom(price, iz.zoneLow, iz.zoneHigh)
+      const ph = phaseOfGeom(price, iz.zoneLow, iz.zoneHigh, atrPct)
       if (ph === 'TOUCH' || ph === 'APPROACH') {
         candidates.push({
           side,
@@ -255,34 +266,14 @@ async function analyzeSymbol(opts: {
     }
   }
 
-  // Боковик: edges / break without HTF zone
-  if (localRange) {
-    const pos = rangePosition(price, localRange)
-    if (pos === 'NEAR_LOW' || pos === 'BROKE_UP' || pos === 'BROKE_DOWN') {
-      candidates.push({
-        side: 'LONG',
-        zone: syntheticRangeZone('LONG', localRange, price),
-        pathHint: 'HOLD',
-        isInternal: true,
-        oppositeLiq: localRange.high,
-        origin: 'RANGE',
-      })
-    }
-    if (pos === 'NEAR_HIGH' || pos === 'BROKE_DOWN' || pos === 'BROKE_UP') {
-      candidates.push({
-        side: 'SHORT',
-        zone: syntheticRangeZone('SHORT', localRange, price),
-        pathHint: 'HOLD',
-        isInternal: true,
-        oppositeLiq: localRange.low,
-        origin: 'RANGE',
-      })
-    }
-  }
-
   if (!candidates.length) {
     const prev = await loadVaneState(opts.kv, symbol)
-    if (prev && (prev.phase === 'RETEST_WAIT' || prev.phase === 'BREAK_ARMED' || prev.phase === 'WEAK_BREAK')) {
+    if (
+      prev &&
+      (prev.phase === 'RETEST_WAIT' ||
+        prev.phase === 'BREAK_ARMED' ||
+        prev.phase === 'WEAK_BREAK')
+    ) {
       candidates.push({
         side: prev.originSide,
         zone: prev.zone,
@@ -291,30 +282,29 @@ async function analyzeSymbol(opts: {
         oppositeLiq: null,
         origin: 'FLIP',
       })
-    } else if (Math.abs(chg24Signed) < 1.2) {
-      // Quiet coin, no structure — skip before LTF
+    } else {
+      // No real zone — stand aside. Momentum without structure is not a setup.
       return null
     }
-    // Hot mover without zone: still load LTF for MOMENTUM path below
   }
 
-  // Soft HTF abort — allow FLAT/RANGING if range or hot 24h (макро в боковике)
+  // Soft HTF abort — allow FLAT/RANGING only with a real zone + session heat
   const htfQuick = computeVaneDirection({
     htf,
     bias4h,
     bias1d,
     regime,
     bookGrade: 'NEUTRAL',
-    bookSide: candidates[0]?.side ?? (chg24Signed >= 0 ? 'LONG' : 'SHORT'),
+    bookSide: candidates[0]!.side,
     nearestLongDist: null,
     nearestShortDist: null,
   })
   if (
     htfQuick.bias === 'FLAT' &&
     htfQuick.confidence < 35 &&
-    Math.abs(chg24Signed) < 1.5 &&
+    !sessionHeat &&
     !localRange?.compressed &&
-    !candidates.some((c) => c.origin === 'RANGE' || c.origin === 'HTF')
+    !candidates.some((c) => c.origin === 'HTF')
   ) {
     return null
   }
@@ -330,50 +320,10 @@ async function analyzeSymbol(opts: {
   if (spike.pause) return null
   const atr1m = atr(c1m, 8) || price * 0.002
 
-  // Momentum synthetic if still no candidates (hot move without HTF zone)
-  if (!candidates.length) {
-    const momSide: Side = chg24Signed >= 0 ? 'LONG' : 'SHORT'
-    const mz = syntheticMomentumZone(momSide, c5m.length ? c5m : c1m, price)
-    if (mz) {
-      candidates.push({
-        side: momSide,
-        zone: mz,
-        pathHint: 'HOLD',
-        isInternal: true,
-        oppositeLiq: null,
-        origin: 'MOMENTUM',
-      })
-    } else {
-      return null
-    }
-  } else {
-    // Also seed opposite momentum if impulse already favors one side strongly
-    for (const side of ['LONG', 'SHORT'] as Side[]) {
-      const fav = earlyMoveFavorPct(c1m, side)
-      if (fav < 0.7) continue
-      if (candidates.some((c) => c.side === side && c.origin === 'MOMENTUM')) {
-        continue
-      }
-      const mz = syntheticMomentumZone(side, c5m.length ? c5m : c1m, price)
-      if (mz) {
-        candidates.push({
-          side,
-          zone: mz,
-          pathHint: 'HOLD',
-          isInternal: true,
-          oppositeLiq: null,
-          origin: 'MOMENTUM',
-        })
-      }
-    }
-  }
-
-  // Skip expensive depth unless near structure, range/momentum, or flip
+  // Depth is only worth loading when a real zone is in the radar.
   const nearOrFlip = candidates.some((c) => {
-    if (c.origin === 'RANGE' || c.origin === 'MOMENTUM' || c.pathHint === 'FLIP') {
-      return true
-    }
-    const ph = phaseOfGeom(price, c.zone.zoneLow, c.zone.zoneHigh)
+    if (c.pathHint === 'FLIP') return true
+    const ph = phaseOfGeom(price, c.zone.zoneLow, c.zone.zoneHigh, atrPct)
     return ph === 'TOUCH' || ph === 'APPROACH' || ph === 'FAR'
   })
   if (!nearOrFlip) return null
@@ -411,7 +361,7 @@ async function analyzeSymbol(opts: {
       oppositeLiq: a.oppositeLiq,
       direction,
       bookGrade: 'NEUTRAL',
-      phase: phaseOfGeom(price, a.zone.zoneLow, a.zone.zoneHigh),
+      phase: phaseOfGeom(price, a.zone.zoneLow, a.zone.zoneHigh, atrPct),
     }).score
     const rb = rankZoneCandidate({
       side: b.side,
@@ -421,7 +371,7 @@ async function analyzeSymbol(opts: {
       oppositeLiq: b.oppositeLiq,
       direction,
       bookGrade: 'NEUTRAL',
-      phase: phaseOfGeom(price, b.zone.zoneLow, b.zone.zoneHigh),
+      phase: phaseOfGeom(price, b.zone.zoneLow, b.zone.zoneHigh, atrPct),
     }).score
     if (rb !== ra) return rb - ra
     return Math.abs(a.zone.mid - price) - Math.abs(b.zone.mid - price)
@@ -429,17 +379,22 @@ async function analyzeSymbol(opts: {
   const pick = candidates[0]!
   const originSide = pick.side
   const zone = pick.zone
-  const phaseGeom = phaseOfGeom(price, zone.zoneLow, zone.zoneHigh)
+  const phaseGeom = phaseOfGeom(price, zone.zoneLow, zone.zoneHigh, atrPct)
 
-  const book = await assessZoneStrength({
-    symbol,
-    side: originSide,
-    mid: zone.mid,
-    candles1m: c1m,
-    kv: opts.kv,
-    /** FAR wait: depth only — skip deals to save a subrequest */
-    skipDeals: phaseGeom === 'FAR',
-  })
+  // Depth + KV state/memory are independent → one parallel burst.
+  const [book, prev, macroMem] = await Promise.all([
+    assessZoneStrength({
+      symbol,
+      side: originSide,
+      mid: zone.mid,
+      candles1m: c1m,
+      kv: opts.kv,
+      /** FAR wait: depth only — skip deals to save a subrequest */
+      skipDeals: phaseGeom === 'FAR',
+    }),
+    loadVaneState(opts.kv, symbol),
+    loadMacroMemory(opts.kv, symbol),
+  ])
 
   direction = computeVaneDirection({
     htf,
@@ -477,7 +432,6 @@ async function analyzeSymbol(opts: {
       (originSide === 'SHORT' && raid.type === 'BEAR_SWEEP')) &&
     phaseGeom === 'TOUCH'
 
-  const prev = await loadVaneState(opts.kv, symbol)
   const { state, emitPath } = advanceVanePhase({
     prev,
     symbol,
@@ -494,13 +448,12 @@ async function analyzeSymbol(opts: {
   const aligns = directionAligns(direction.bias, originSide)
   const conflicts = directionConflicts(direction.bias, originSide)
   const earlyFavor = earlyMoveFavorPct(c1m, originSide)
-  const tickerChg = Math.abs(Number(opts.ticker.riseFallRate ?? 0) * 100)
-  const chg24Raw = Number(opts.ticker.riseFallRate ?? 0) * 100
-  const chg24Favor = originSide === 'LONG' ? chg24Raw : -chg24Raw
+  const sessionFavor =
+    originSide === 'LONG' ? sessionMom.returnPct : -sessionMom.returnPct
+  const emaAligned = directionAligns(sessionMom.bias, originSide)
   const candleWith = candle1mWithSide(c1m, originSide)
   const move5m = moveFavorPct(c5m.length ? c5m : c1m, originSide, 3)
   const rangePos = localRange ? rangePosition(price, localRange) : null
-  const macroMem = await loadMacroMemory(opts.kv, symbol)
 
   // MACRO — ZONE / RANGE_BREAK / MOMENTUM + history memory
   const macroQ = qualifyMacro({
@@ -516,9 +469,10 @@ async function analyzeSymbol(opts: {
     zoneTouches: zone.touches,
     candle1mWithUs: candleWith,
     directionConfidence: direction.confidence,
-    isInternal: pick.isInternal || pick.origin === 'RANGE' || pick.origin === 'MOMENTUM',
-    chg24Abs: tickerChg,
-    chg24Favor,
+    isInternal: pick.isInternal,
+    sessionFavorPct: sessionFavor,
+    emaAligned,
+    emaStrengthPct: Math.abs(sessionMom.emaSpreadPct),
     regime,
     range: localRange,
     rangePos,
@@ -563,11 +517,9 @@ async function analyzeSymbol(opts: {
     earlyFavor >= 0.45 &&
     earlyFavor <= 2.0 &&
     zone.strength >= 4 &&
-    (phaseGeom === 'TOUCH' ||
-      phaseGeom === 'APPROACH' ||
-      pick.origin === 'RANGE' ||
-      pick.origin === 'MOMENTUM') &&
-    (book.absorption || book.cvdConfirm || pick.origin === 'MOMENTUM')
+    (phaseGeom === 'TOUCH' || phaseGeom === 'APPROACH') &&
+    (emaAligned || sessionFavor >= 0.35) &&
+    (book.absorption || book.cvdConfirm)
   ) {
     path = 'HOLD'
     if (
@@ -580,18 +532,20 @@ async function analyzeSymbol(opts: {
   }
 
   if (!path) {
-    await rememberMacroAnalysis(opts.kv, {
-      symbol,
-      side: 'FLAT',
-      context: 'SKIP',
-      reason: macroQ.reason,
-      note: `skip ${phaseGeom}/${book.grade}/e${earlyFavor.toFixed(2)}/${macroQ.reason}`,
-    })
-    await saveVaneState(opts.kv, {
-      ...state,
-      score: 0,
-      reason: `skip · ${macroQ.reason} · ${memorySummary(macroMem)}`,
-    })
+    await Promise.all([
+      rememberMacroAnalysis(opts.kv, {
+        symbol,
+        side: 'FLAT',
+        context: 'SKIP',
+        reason: macroQ.reason,
+        note: `skip ${phaseGeom}/${book.grade}/e${earlyFavor.toFixed(2)}/${macroQ.reason}`,
+      }),
+      saveVaneState(opts.kv, {
+        ...state,
+        score: 0,
+        reason: `skip · ${macroQ.reason} · ${memorySummary(macroMem)}`,
+      }),
+    ])
     return null
   }
 
@@ -686,6 +640,7 @@ async function analyzeSymbol(opts: {
     wallPersistOk: book.wallPersistMs >= WALL_PERSIST_MS,
     zoneGrade: book.grade,
     btcAlignScore: shield.alignScore,
+    btcApplicable: shield.applicable,
     dailyAlign,
     regime,
     toxicBook: book.grade === 'WEAK' && path === 'HOLD',
@@ -755,7 +710,7 @@ async function analyzeSymbol(opts: {
             ? `VANE_INTERNAL_${tradeSide}`
             : `VANE_HOLD_${tradeSide}`
 
-  const macroCtx = macroQ.context ?? (pick.origin === 'RANGE' ? 'RANGE_BREAK' : pick.origin === 'MOMENTUM' ? 'MOMENTUM' : 'ZONE')
+  const macroCtx = macroQ.context ?? 'ZONE'
   const coin = symbol.replace('_USDT', '')
   const title =
     mode === 'MACRO'
@@ -780,7 +735,7 @@ async function analyzeSymbol(opts: {
     `Карта: ${direction.summary}`,
     memorySummary(macroMem),
     earlyFavor >= 0.15
-      ? `Импульс ~${earlyFavor.toFixed(2)}% /3м · 5м ${move5m.toFixed(2)}% · 24h ${(Number(opts.ticker.riseFallRate ?? 0) * 100).toFixed(1)}%`
+      ? `Импульс ~${earlyFavor.toFixed(2)}% /3м · 5м ${move5m.toFixed(2)}% · ${sessionMom.summary}`
       : null,
     macroMode
       ? `Теги: ${macroQ.tags.join(' · ')}`
@@ -903,8 +858,10 @@ export async function runVaneScan(opts?: {
     return []
   }
 
-  const btc = await loadBtcShield()
-  const universe = await loadVaneUniverse({ pinSymbols: opts?.pinSymbols })
+  const [btc, universe] = await Promise.all([
+    loadBtcShield(),
+    loadVaneUniverse({ pinSymbols: opts?.pinSymbols }),
+  ])
   // v4.2: honor cron batchSize (was forcing ≥10 → Too many subrequests)
   const scanN = Math.min(universe.length, Math.max(3, opts?.batchSize ?? 5))
   const { batch: queue, cursor, nextCursor } = await pickVaneBatch({

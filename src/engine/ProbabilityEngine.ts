@@ -1,18 +1,26 @@
 /**
- * ProbabilityEngine — maps SniperBot SMC confluence weights to probability %.
- * Replaces historical system_core.json RSI-bucket lookups.
- * Orchestrates SCALP vs INTRADAY profiles, VPVR, liquidation gate, CVD.
+ * ProbabilityEngine — SniperBot SMC confluence → probability %.
+ *
+ * Scoring is grouped into three non-linear clusters:
+ *   HTF context 40 · Liquidity 33 · Microstructure 27
+ * Additive boosts from correlated sources are not allowed to stack.
+ *
+ * Risk is structural: stop = zone invalidation ± 0.5×ATR. If that stop is
+ * wider than the risk budget the setup is rejected as RISK_EXCEEDED, never
+ * silently clamped. Take profit follows real opposite liquidity/structure;
+ * when the nearest target is closer than the minimum RR the setup is rejected.
  */
 import type { OhlcvCandle } from '../api/mexc'
+import { isCommoditySymbol, toDisplayName, toFlatSymbol } from '../api/mexc'
 import type {
   AbsorptionCandle,
   BtcDivergenceResult,
   CoinSignal,
+  HtfTrendSnapshot,
   LiquidityMap,
-  LiquidityRaidResult,
   LTFChoCHResult,
-  MSSResult,
-  OTESniperZone,
+  SetupRejectReason,
+  SurgicalEntrySnapshot,
   WallTrackerState,
 } from './types'
 import {
@@ -30,21 +38,16 @@ import {
   detectMSS,
   findFvg,
   findOrderBlocks,
-  scoreToProbability,
   type DailyBiasResult,
   type DailyLevels,
   type TradeSide,
   type TrendDirection,
 } from './smc'
-import { toDisplayName, toFlatSymbol } from '../api/mexc'
-import { calculateWallBoost } from './orderbook/scoreBooster'
 import { logger } from '../utils/logger'
 import {
   classifyTradeStyle,
   calculateScalpConfidence,
   calculateIntradayConfidence,
-  buildScalpLevels,
-  buildIntradayLevels,
   isKillzoneActive,
 } from './strategies'
 import {
@@ -61,15 +64,17 @@ import { computeHtfTrendStrength } from './trend/htfTrendStrength'
 import { buildGhostPath } from './prediction/ghostPath'
 import { buildGlobalFibonacci } from './zones/globalFibonacci'
 import { resolveSessionFlip } from './sessions/sessionFlip'
-import { evaluateSessionQuality } from './sessions/sessionQuality'
+import {
+  evaluateSessionQuality,
+  type SessionQuality,
+} from './sessions/sessionQuality'
 import { computeMmIntent } from './mm/mmIntent'
 import {
   resolveSurgicalEntry,
   isSurgicalReady,
 } from './surgical/surgicalEntry'
-import type { SurgicalEntrySnapshot } from './types'
 import { buildScoreCard } from './confluence/scoreCard'
-import { detectMarketRegime } from './regime/marketRegime'
+import { detectMarketRegime, type MarketRegime } from './regime/marketRegime'
 import type { EnhancedCvdSnapshot } from './orderflow/enhancedCvd'
 import type { ObDeltaSnapshot } from './orderbook/obDelta'
 import type { SpoofAlert } from './mm/spoofing'
@@ -79,6 +84,23 @@ export const CONFLUENCE_THRESHOLD = 4.5
 export const SOFT_CONFLUENCE_THRESHOLD = 3.5
 export const COOLDOWN_MS = 90 * 60 * 1000
 export const SCALP_COOLDOWN_MS = 15 * 60 * 1000
+
+/** Structural risk budget. A wider stop means the setup is rejected. */
+const MAX_RISK_PCT = 3.0
+const MAX_COMMODITY_RISK_PCT = 2.0
+/** Minimum reward/risk against real opposite liquidity. */
+const MIN_RR = 1.5
+/** Commodity spread gate (percent, 0.05 = 5 bps). */
+const COMMODITY_MAX_SPREAD_PCT = 0.05
+/** Crypto perp spread gate (percent). */
+const CRYPTO_MAX_SPREAD_PCT = 0.35
+
+export interface MacroContextInput {
+  /** DXY change over the session/day in percent */
+  dxyChangePct?: number | null
+  /** US10Y change over the session/day in percent */
+  us10yChangePct?: number | null
+}
 
 export interface AnalyzeSymbolInput {
   internalSymbol: string
@@ -114,6 +136,10 @@ export interface AnalyzeSymbolInput {
   ohlcv1m?: OhlcvCandle[]
   /** Order book imbalance −100…+100 from live depth */
   bookImbalance?: number | null
+  /** Live book spread in percent (0.08 = 0.08%). Optional; absent = no gate. */
+  spreadPct?: number | null
+  /** Optional DXY / yields context. Absent = neutral, never fabricated. */
+  macroContext?: MacroContextInput | null
   /** Precomputed MM intent (from depth + liq map) */
   mmIntent?: import('./types').MmIntentSnapshot | null
   /** Session DNA for flip bias */
@@ -134,61 +160,352 @@ export interface AnalyzeSymbolResult {
   triggered: boolean
 }
 
-function buildLevels(
-  side: TradeSide,
-  currentPrice: number,
-  confluence: ReturnType<typeof calculateConfluence>,
+interface StructuralLevels {
+  sl: number | null
+  tp1: number | null
+  tp2: number | null
+  tpDaily: number | null
+  riskPct: number
+  rr: number | null
+  reject: SetupRejectReason | null
+  notes: string[]
+}
+
+interface ClusterScore {
+  total: number
+  htf: number
+  liquidity: number
+  microstructure: number
+  notes: string[]
+}
+
+interface ClusterInput {
+  side: TradeSide
+  price: number
+  atr: number
+  confluenceScore: number
+  inZone: boolean
+  nearZone: boolean
+  htfTrend: HtfTrendSnapshot | null
+  dailyBias: DailyBiasResult
+  regime: MarketRegime
+  globalFib: ReturnType<typeof buildGlobalFibonacci> | null
+  btcTrend: TrendDirection
+  isCommodity: boolean
+  macroContext?: MacroContextInput | null
+  session: SessionQuality
+  liquidityMap?: LiquidityMap
+  raidFresh: boolean
+  raidType: string
+  oteInZone: boolean
+  volumeProfile: ReturnType<typeof calculateVolumeProfile> | null
+  liqGateOpen: boolean
+  liqSwept: boolean
+  rejection: boolean
+  mss: boolean
+  choch: boolean
+  absorption: boolean
+  cvdAligned: boolean
+  cvdSource: 'TRADES' | 'OHLCV_PROXY' | 'NONE'
+  bookAligned: boolean
+  bookAgainst: boolean
+  mmAligned: boolean
+  wallAligned: boolean
+  sequenceAligned: boolean
+  spoofAligned: boolean
+  icebergAligned: boolean
+  obDeltaAligned: boolean
+  rr: number | null
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
+}
+
+/** Sub-linear cluster shape: the 10th correlated signal cannot add 10 points. */
+function shape(raw: number, max: number): number {
+  return max * Math.pow(clamp(raw / max, 0, 1), 0.85)
+}
+
+function finitePositive(n: number | null | undefined): n is number {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0
+}
+
+/**
+ * Structural stop and real target selection.
+ * SL = far edge of the zone / invalidation ± 0.5×ATR.
+ * TP = nearest opposite daily/liquidity/Fib structure.
+ */
+function buildLevels(opts: {
+  side: TradeSide
+  price: number
+  confluence: ReturnType<typeof calculateConfluence>
   dailyLevels: DailyLevels | null
-): { sl: number; tp1: number; tp2: number; tpDaily: number | null } {
-  const zoneTop = confluence.bestZone.top!
-  const zoneBottom = confluence.bestZone.bottom!
-
-  let sl: number
-  let tpDaily: number | null = null
-
-  if (side === 'LONG') {
-    const slZone = confluence.bestZone.sl
-    sl = slZone ? slZone * 0.998 : zoneBottom * 0.997
-
-    let slPercent = Math.abs(currentPrice - sl) / currentPrice
-    if (slPercent > 0.015) sl = currentPrice * 0.985
-    slPercent = Math.abs(currentPrice - sl) / currentPrice
-    if (slPercent < 0.002) sl = currentPrice * 0.998
-
-    const slDistance = Math.abs(currentPrice - sl)
-    const tp1 = currentPrice + slDistance * 2
-    const tp2 = currentPrice + slDistance * 3
-
-    if (dailyLevels) {
-      if (dailyLevels.pdh && dailyLevels.pdh > currentPrice) tpDaily = dailyLevels.pdh
-      else if (dailyLevels.nearestResistance && dailyLevels.nearestResistance > currentPrice) {
-        tpDaily = dailyLevels.nearestResistance
-      }
-    }
-
-    return { sl, tp1, tp2, tpDaily }
+  atr: number
+  targets: number[]
+  maxRiskPct: number
+}): StructuralLevels {
+  const { side, price, confluence, dailyLevels, atr, targets, maxRiskPct } = opts
+  const top = confluence.bestZone.top
+  const bottom = confluence.bestZone.bottom
+  const empty: StructuralLevels = {
+    sl: null,
+    tp1: null,
+    tp2: null,
+    tpDaily: null,
+    riskPct: 0,
+    rr: null,
+    reject: 'INVALID_STRUCTURE',
+    notes: ['STRUCTURE: нет валидной зоны'],
   }
 
-  const slZone = confluence.bestZone.sl
-  sl = slZone ? slZone * 1.002 : zoneTop * 1.003
+  if (top == null || bottom == null || !(atr > 0) || !(price > 0)) {
+    return empty
+  }
 
-  let slPercent = Math.abs(currentPrice - sl) / currentPrice
-  if (slPercent > 0.015) sl = currentPrice * 1.015
-  slPercent = Math.abs(currentPrice - sl) / currentPrice
-  if (slPercent < 0.002) sl = currentPrice * 1.002
+  const zoneEdge = side === 'LONG' ? Math.min(top, bottom) : Math.max(top, bottom)
+  const invalidation = confluence.bestZone.sl
+  const farEdge =
+    invalidation != null && Number.isFinite(invalidation)
+      ? side === 'LONG'
+        ? Math.min(zoneEdge, invalidation)
+        : Math.max(zoneEdge, invalidation)
+      : zoneEdge
+  const buffer = atr * 0.5
+  const sl = side === 'LONG' ? farEdge - buffer : farEdge + buffer
 
-  const slDistance = Math.abs(currentPrice - sl)
-  const tp1 = currentPrice - slDistance * 2
-  const tp2 = currentPrice - slDistance * 3
-
-  if (dailyLevels) {
-    if (dailyLevels.pdl && dailyLevels.pdl < currentPrice) tpDaily = dailyLevels.pdl
-    else if (dailyLevels.nearestSupport && dailyLevels.nearestSupport < currentPrice) {
-      tpDaily = dailyLevels.nearestSupport
+  if (!Number.isFinite(sl) || (side === 'LONG' ? sl >= price : sl <= price)) {
+    return {
+      ...empty,
+      notes: ['STRUCTURE: цена уже за инвалидацией зоны'],
     }
   }
 
-  return { sl, tp1, tp2, tpDaily }
+  const risk = Math.abs(price - sl)
+  const riskPct = (risk / price) * 100
+  const dailyTarget =
+    side === 'LONG'
+      ? dailyLevels?.pdh ??
+        dailyLevels?.nearestResistance ??
+        dailyLevels?.pwh ??
+        null
+      : dailyLevels?.pdl ??
+        dailyLevels?.nearestSupport ??
+        dailyLevels?.pwl ??
+        null
+
+  const tpDaily = finitePositive(dailyTarget)
+    ? dailyTarget
+    : null
+
+  const sorted = Array.from(
+    new Set(targets.filter((n) => finitePositive(n)))
+  )
+    .filter((n) => (side === 'LONG' ? n > price : n < price))
+    .sort((a, b) => (side === 'LONG' ? a - b : b - a))
+
+  const tp1 = sorted[0] ?? null
+  const tp2 = sorted[1] ?? null
+  const rr = tp1 != null ? Math.abs(tp1 - price) / risk : null
+
+  let reject: SetupRejectReason | null = null
+  const notes: string[] = [
+    `RISK: ${riskPct.toFixed(2)}% · SL ${sl.toPrecision(6)} (±0.5 ATR)`,
+  ]
+
+  if (riskPct > maxRiskPct) {
+    reject = 'RISK_EXCEEDED'
+    notes.push(
+      `RISK_EXCEEDED: структурный стоп ${riskPct.toFixed(2)}% > ${maxRiskPct.toFixed(2)}%`
+    )
+  }
+
+  if (tp1 == null) {
+    reject = reject ?? 'RR_TOO_LOW'
+    notes.push('RR_TOO_LOW: нет противоположной ликвидности/структуры')
+  } else if (rr != null && rr < MIN_RR) {
+    reject = reject ?? 'RR_TOO_LOW'
+    notes.push(
+      `RR_TOO_LOW: ближайшая цель ${rr.toFixed(2)}R < ${MIN_RR.toFixed(2)}R`
+    )
+  } else if (rr != null) {
+    notes.push(`RR: ${rr.toFixed(2)}R · TP ${tp1.toPrecision(6)}`)
+  }
+
+  if (tp2 == null && tp1 != null) {
+    notes.push('TP2: нет следующей структуры — только TP1')
+  }
+
+  return { sl, tp1, tp2, tpDaily, riskPct, rr, reject, notes }
+}
+
+/**
+ * Three clusters, capped and sub-linear.
+ * HTF 40 · Liquidity 33 · Microstructure 27 = 100.
+ */
+function scoreClusters(input: ClusterInput): ClusterScore {
+  const notes: string[] = []
+  const sideSign = input.side === 'LONG' ? 1 : -1
+  const htfAligned =
+    input.side === 'LONG'
+      ? input.htfTrend?.bias === 'BULLISH'
+      : input.htfTrend?.bias === 'BEARISH'
+  const htfAgainst =
+    input.side === 'LONG'
+      ? input.htfTrend?.bias === 'BEARISH'
+      : input.htfTrend?.bias === 'BULLISH'
+
+  let h = 0
+
+  // 1. HTF trend (max 14)
+  if (input.htfTrend) {
+    const strength = clamp(input.htfTrend.strength, 0, 100) / 100
+    if (htfAligned) {
+      h += 6 + 8 * strength
+    } else if (input.htfTrend.bias === 'RANGING') {
+      h += 5
+    } else if (htfAgainst) {
+      h += 1
+    }
+  } else {
+    h += 3
+  }
+
+  // 2. Daily bias (max 8)
+  const dir = input.dailyBias.direction
+  const dailyAllows =
+    (input.side === 'LONG' && (dir === 'LONG_ONLY' || dir === 'BOTH')) ||
+    (input.side === 'SHORT' && (dir === 'SHORT_ONLY' || dir === 'BOTH'))
+  if (dailyAllows) {
+    h += 4 + 4 * clamp(input.dailyBias.confidence, 0, 100) / 100
+  } else if (dir === 'BOTH') {
+    h += 3
+  }
+
+  // 3. Regime (max 5)
+  if (input.regime === 'TRENDING_STRONG') h += htfAligned ? 5 : 1
+  else if (input.regime === 'TRENDING_WEAK') h += htfAligned ? 3.5 : 1
+  else if (input.regime === 'RANGING') h += 2
+
+  // 4. Global Fib 141 context (max 5)
+  if (input.globalFib?.entryBias === input.side) {
+    if (input.globalFib.in141) h += 5
+    else if (input.globalFib.near141) h += 3
+    else if (input.globalFib.zone141) h += 1.5
+  }
+
+  // 5. Cross-market context (max 5)
+  if (input.isCommodity) {
+    // Gold/silver: DXY and yields are the relevant cross-market drivers.
+    // Missing feeds are neutral, never invented.
+    const dxy = input.macroContext?.dxyChangePct ?? null
+    const yields = input.macroContext?.us10yChangePct ?? null
+    let macroPts = 0
+    let feed = 0
+    for (const v of [dxy, yields]) {
+      if (v == null || !Number.isFinite(v)) continue
+      feed++
+      if (-v * sideSign > 0.02) macroPts += 2.5
+      else if (Math.abs(v) <= 0.02) macroPts += 1.5
+    }
+    if (feed === 0) {
+      h += 2.5
+      notes.push('MACRO: DXY/yields feed отсутствует — нейтрально')
+    } else {
+      h += Math.min(5, macroPts)
+      notes.push(
+        `MACRO: DXY ${dxy == null ? '—' : `${dxy.toFixed(2)}%`} · US10Y ${yields == null ? '—' : `${yields.toFixed(2)}%`}`
+      )
+    }
+  } else {
+    if (input.btcTrend === 'RANGING') h += 2.5
+    else if (
+      (input.side === 'LONG' && input.btcTrend === 'BULLISH') ||
+      (input.side === 'SHORT' && input.btcTrend === 'BEARISH')
+    ) {
+      h += 5
+    }
+  }
+
+  // 6. Session quality (max 3)
+  h += clamp(input.session.score, 0, 100) / 100 * 3
+
+  if (htfAgainst && input.htfTrend?.label === 'STRONG') {
+    h = Math.min(h, 10)
+    notes.push('HTF: сильный встречный тренд — кластер срезан')
+  }
+
+  const htfRaw = clamp(h, 0, 40)
+
+  // Liquidity cluster (max 33)
+  let l = 0
+  if (input.inZone) l += 9
+  else if (input.nearZone) l += 6
+
+  if (input.raidFresh) l += 8
+  else if (input.raidType !== 'NONE') l += 4
+
+  if (input.oteInZone) l += 3
+
+  if (input.rr != null) {
+    if (input.rr >= 2.5) l += 7
+    else if (input.rr >= 1.8) l += 5
+    else if (input.rr >= 1.4) l += 2
+  }
+
+  const vp = input.volumeProfile
+  if (vp?.obPocConfluence) l += 4
+  else if (vp && input.price >= vp.val && input.price <= vp.vah) l += 2
+
+  if (input.liqGateOpen) l += 3
+  if (input.liqSwept) l += 2
+  if (input.liquidityMap?.nearestBSL || input.liquidityMap?.nearestSSL) l += 1
+
+  const liquidityRaw = clamp(l, 0, 33)
+
+  // Microstructure cluster (max 27)
+  const structureRaw = (input.rejection ? 6 : 0) + (input.mss || input.choch ? 5 : 0)
+
+  // All order-flow evidence is one capped bucket. Stacking CVD + book + tape
+  // + spoof + iceberg must not manufacture confidence.
+  let flowRaw = 0
+  if (input.absorption) flowRaw += 4
+  if (input.cvdAligned) flowRaw += 5
+  if (input.bookAligned) flowRaw += 4
+  if (input.bookAgainst) flowRaw -= 2
+  if (input.mmAligned || input.wallAligned) flowRaw += 3
+  if (input.sequenceAligned) flowRaw += 1.5
+  if (input.spoofAligned || input.icebergAligned || input.obDeltaAligned) flowRaw += 1.5
+  const flowCapped = clamp(flowRaw, 0, 15)
+
+  const confluencePts = clamp(input.confluenceScore, 0, 10) * 0.2
+  const microRaw = clamp(structureRaw + flowCapped + confluencePts, 0, 27)
+
+  if (input.cvdSource !== 'TRADES') {
+    notes.push('ORDERFLOW: CVD прокси — микро-кластер ограничен')
+  }
+
+  const htf = shape(htfRaw, 40)
+  const liquidity = shape(liquidityRaw, 33)
+  const microstructure = shape(microRaw, 27)
+
+  let total = htf + liquidity + microstructure
+  if (input.regime === 'VOLATILE_CHOP') total *= 0.8
+  if (input.session.avoid) total *= 0.9
+  if (input.cvdSource !== 'TRADES') total = Math.min(total, 92)
+  total = Math.round(clamp(total, 0, 100))
+
+  notes.unshift(
+    `CLUSTERS: HTF ${htf.toFixed(0)}/40 · LIQ ${liquidity.toFixed(0)}/33 · FLOW ${microstructure.toFixed(0)}/27`
+  )
+
+  return {
+    total,
+    htf,
+    liquidity,
+    microstructure,
+    notes,
+  }
 }
 
 function emptySignal(
@@ -198,7 +515,10 @@ function emptySignal(
   rsi: number | null,
   coinTrend: TrendDirection | null,
   btcTrend: TrendDirection,
-  dailyBias: DailyBiasResult
+  dailyBias: DailyBiasResult,
+  atrPct: number | null,
+  zones: string[] = [],
+  rejected: SetupRejectReason | null = null
 ): CoinSignal {
   const flat = toFlatSymbol(internalSymbol)
   return {
@@ -211,7 +531,7 @@ function emptySignal(
     probabilityPct: 0,
     score: 0,
     direction: null,
-    zones: [],
+    zones,
     sl: null,
     tp1: null,
     tp2: null,
@@ -242,11 +562,15 @@ function emptySignal(
     invalidationMessage: null,
     ghostPathWarning: null,
     unrealisticTp: false,
+    atrPct,
+    rejected,
   }
 }
 
 /**
- * Обогащает сигнал: VPVR, ликвидации, CVD, стиль, confidence, ghost path, invalidation.
+ * Enriches a signal: VPVR, liquidations, CVD, style confidence, ghost path,
+ * invalidation and the strict ScoreCard readiness gate.
+ * It never changes structural SL/TP.
  */
 function enrichSignal(
   signal: CoinSignal,
@@ -266,22 +590,17 @@ function enrichSignal(
     icebergAlerts?: IcebergResult[] | null
     obDelta?: ObDeltaSnapshot | null
     sequence?: import('./sequence/types').SequenceHit | null
+    htfTrend: HtfTrendSnapshot | null
+    regime: MarketRegime
+    session: SessionQuality
   }
 ): CoinSignal {
   if (!signal.direction) return signal
 
-  const atr =
-    calculateAtr(ctx.ohlcv1h, 14) ?? signal.price * 0.005
+  const atr = calculateAtr(ctx.ohlcv1h, 14) ?? signal.price * 0.005
   const dailyAtr =
     calculateAtr(ctx.ohlcv1h.slice(-24), 14) ?? atr
   const dailyAtrPct = (dailyAtr / signal.price) * 100
-
-  const htfTrend =
-    ctx.ohlcv4h && ctx.ohlcv4h.length >= 20
-      ? computeHtfTrendStrength(ctx.ohlcv1h, ctx.ohlcv4h)
-      : ctx.ohlcv1h.length >= 30
-        ? computeHtfTrendStrength(ctx.ohlcv1h, ctx.ohlcv1h)
-        : null
 
   // VPVR
   let vpRaw = calculateVolumeProfile(ctx.ohlcv1h, 48, true)
@@ -334,33 +653,23 @@ function enrichSignal(
     clusterCount: clusters.length,
   }
 
-  let score = signal.score
   const zones = [...signal.zones]
-
   if (volumeProfile?.obPocConfluence) {
-    score = Math.min(score + volumeProfile.scoreBoost, 10)
     zones.push(`VPVR: ${volumeProfile.confluenceLabel}`)
   }
   if (cvdDivergence?.detected) {
     const aligned =
       (signal.direction === 'LONG' && cvdDivergence.type === 'BULLISH') ||
       (signal.direction === 'SHORT' && cvdDivergence.type === 'BEARISH')
-    if (aligned) {
-      score = Math.min(score + cvdDivergence.scoreBoost, 10)
-      zones.push(`CVD: ${cvdDivergence.label}`)
-    }
+    if (aligned) zones.push(`CVD: ${cvdDivergence.label}`)
   }
   if (liq.scoreBoost > 0) {
-    score = Math.min(score + liq.scoreBoost, 10)
     zones.push(`LIQ: ${liq.label}`)
   }
 
-  // Partial enrich for classification
-  let enriched: CoinSignal = {
+  const enriched: CoinSignal = {
     ...signal,
-    score,
     zones,
-    probabilityPct: scoreToProbability(score),
     volumeProfile,
     liquidationContext,
     cvdDivergence,
@@ -370,48 +679,7 @@ function enrichSignal(
   const style = classification.style
   const kz = isKillzoneActive()
 
-  // Style-specific risk model (пересчёт SL/TP если есть уровни)
-  if (enriched.sl != null && enriched.tp1 != null) {
-    if (style === 'SCALP') {
-      const levels = buildScalpLevels(
-        signal.direction,
-        signal.ltfChoCH?.surgicalEntryPrice ?? signal.price,
-        signal.raid?.sweptLevel ?? null,
-        volumeProfile?.vah && signal.direction === 'LONG'
-          ? volumeProfile.vah
-          : volumeProfile?.val && signal.direction === 'SHORT'
-            ? volumeProfile.val
-            : null,
-        atr
-      )
-      enriched = {
-        ...enriched,
-        sl: levels.sl,
-        tp1: levels.tp1,
-        tp2: levels.tp2,
-      }
-    } else {
-      const levels = buildIntradayLevels(
-        signal.direction,
-        signal.price,
-        signal.direction === 'LONG'
-          ? ctx.bestZoneBottom ?? null
-          : ctx.bestZoneTop ?? null,
-        null,
-        enriched.tpDaily,
-        atr
-      )
-      enriched = {
-        ...enriched,
-        sl: levels.sl,
-        tp1: levels.tp1,
-        tp2: levels.tp2,
-        tpDaily: levels.tpDaily ?? enriched.tpDaily,
-      }
-    }
-  }
-
-  // Style confidence
+  // Style confidence (does not rewrite levels)
   let styleConfidence = 0
   let styleFactors: string[] = []
 
@@ -456,12 +724,12 @@ function enrichSignal(
     styleFactors = ic.factors
   }
 
-  // Ghost path realism
+  // Ghost path realism: flag unrealistic TP, never clamp it.
   let ghostPathWarning: string | null = null
   let unrealisticTp = false
   if (enriched.sl != null && enriched.tp1 != null) {
     const ghost = buildGhostPath({
-      entry: enriched.ltfChoCH?.surgicalEntryPrice ?? enriched.price,
+      entry: enriched.surgicalEntry?.limitEntry ?? enriched.price,
       tp1: enriched.tp1,
       tp2: enriched.tp2,
       sl: enriched.sl,
@@ -469,17 +737,15 @@ function enrichSignal(
       atr,
       dailyAtrPct,
       style,
-      candleTimeframeSeconds: style === 'SCALP' ? 60 : style === 'SWING' ? 14_400 : 900,
+      candleTimeframeSeconds:
+        style === 'SCALP' ? 60 : style === 'SWING' ? 14_400 : 900,
     })
     unrealisticTp = ghost.unrealisticTp
     ghostPathWarning = ghost.warning
     if (ghost.unrealisticTp) {
-      enriched = {
-        ...enriched,
-        tp1: ghost.adjustedTp1,
-        tp2: ghost.adjustedTp2,
-      }
-      zones.push('TP_ADJUSTED: ATR realism')
+      zones.push(
+        `TP_REALISM: ${ghost.warning ?? 'TP далеко для текущего ATR'}`
+      )
     }
   }
 
@@ -498,11 +764,8 @@ function enrichSignal(
         : `INV_${inv.timeframe.toUpperCase()}: ${inv.price.toFixed(4)}`
     )
   }
-  if (htfTrend) {
-    zones.push(`HTF_TREND: ${htfTrend.bias} ${htfTrend.label} (${htfTrend.strength})`)
-  }
 
-  // Интрадей: liq gate закрыт — не убиваем сетап, а снижаем confidence / помечаем
+  // Интрадей: liq gate закрыт — не убиваем сетап, а снижаем confidence
   let hasActiveSetup = enriched.hasActiveSetup
   if (
     hasActiveSetup &&
@@ -520,24 +783,27 @@ function enrichSignal(
   // Strong opposing HTF → demote active setup
   if (
     hasActiveSetup &&
-    htfTrend &&
-    htfTrend.label === 'STRONG' &&
-    ((signal.direction === 'LONG' && htfTrend.bias === 'BEARISH') ||
-      (signal.direction === 'SHORT' && htfTrend.bias === 'BULLISH'))
+    ctx.htfTrend &&
+    ctx.htfTrend.label === 'STRONG' &&
+    ((signal.direction === 'LONG' && ctx.htfTrend.bias === 'BEARISH') ||
+      (signal.direction === 'SHORT' && ctx.htfTrend.bias === 'BULLISH'))
   ) {
     hasActiveSetup = false
     zones.push('HTF_OPPOSE: сильный встречный тренд')
   }
 
+  if (enriched.rejected) {
+    hasActiveSetup = false
+    zones.push(`REJECT: ${enriched.rejected}`)
+  }
+
   // ── ScoreCard gate (strict A+/A only) ──────────────────────────────────
-  const regime = detectMarketRegime(ctx.ohlcv1h, ctx.ohlcv4h)
-  const session = evaluateSessionQuality()
   const entryPx =
     signal.surgicalEntry?.limitEntry && signal.surgicalEntry.limitEntry > 0
       ? signal.surgicalEntry.limitEntry
       : signal.price
-  const slPx = enriched.sl ?? signal.sl ?? 0
-  const tpPx = enriched.tp1 ?? signal.tp1 ?? 0
+  const slPx = enriched.sl ?? 0
+  const tpPx = enriched.tp1 ?? 0
   const inOb = zones.some((z) => /OB|Order.?Block|ORDER_BLOCK/i.test(z))
   const inFvg = zones.some((z) => /FVG/i.test(z))
   const hasZone =
@@ -547,7 +813,7 @@ function enrichSignal(
     symbol: signal.internalSymbol,
     direction: signal.direction,
     style,
-    htfTrend,
+    htfTrend: ctx.htfTrend,
     mmIntent: signal.mmIntent ?? null,
     spoofAlerts: ctx.spoofAlerts ?? null,
     icebergAlerts: ctx.icebergAlerts ?? null,
@@ -557,8 +823,8 @@ function enrichSignal(
     inOrderBlock: inOb,
     inFvg,
     hasBestZone: hasZone,
-    regime,
-    session,
+    regime: ctx.regime,
+    session: ctx.session,
     entry: entryPx,
     stopLoss: slPx,
     takeProfit: tpPx,
@@ -567,16 +833,15 @@ function enrichSignal(
 
   if (hasActiveSetup && !card.ready) {
     hasActiveSetup = false
-    zones.push(
-      `SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore} — not ready`
-    )
-  } else if (card.ready) {
-    zones.push(`SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore}`)
-  } else {
-    zones.push(`SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore}`)
   }
+  zones.push(`SCORECARD: ${card.grade} ${card.totalScore}/${card.maxScore}`)
 
-  const probabilityPct = card.percent
+  let probabilityPct = signal.probabilityPct
+  if (signal.rejected) {
+    probabilityPct = Math.min(probabilityPct, 35)
+  } else if (card.ready) {
+    probabilityPct = Math.round(probabilityPct * 0.7 + card.percent * 0.3)
+  }
 
   return {
     ...enriched,
@@ -589,7 +854,7 @@ function enrichSignal(
     invalidationMessage: inv?.message ?? null,
     ghostPathWarning,
     unrealisticTp,
-    htfTrend,
+    htfTrend: ctx.htfTrend,
     scoreCard: {
       direction: card.direction,
       style: card.style,
@@ -605,8 +870,8 @@ function enrichSignal(
       factors: card.factors,
       dataQuality: card.dataQualitySnapshot ?? null,
     },
-    marketRegime: regime,
-    sessionQuality: session,
+    marketRegime: ctx.regime,
+    sessionQuality: ctx.session,
     probabilityPct,
     activeSignal: enriched.activeSignal
       ? {
@@ -633,13 +898,14 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     btcTrend,
     wallTracker,
     newsSentimentBoost,
-    marketCtxBoost,
     marketCtxNotes,
     liquidityMap,
     btcOhlcv1h,
     ohlcv5m,
     ohlcv1m,
     bookImbalance,
+    spreadPct,
+    macroContext,
     mmIntent: mmIntentInput,
     sessionDna,
     previousSurgical,
@@ -650,11 +916,51 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     sequence,
   } = input
 
+  const commodity = isCommoditySymbol(internalSymbol)
+  const closes1h = ohlcv1h.map((c) => c[4])
+  const currentPrice = closes1h[closes1h.length - 1] ?? 0
+  const rsi = closes1h.length ? calculateRsi(closes1h) : null
+  const atr = calculateAtr(ohlcv1h, 14) ?? currentPrice * 0.005
+  const atrPct = currentPrice > 0 ? (atr / currentPrice) * 100 : null
+  const regime = detectMarketRegime(ohlcv1h, ohlcv4h)
+  const session = evaluateSessionQuality()
+  const htfTrend =
+    ohlcv4h && ohlcv4h.length >= 20
+      ? computeHtfTrendStrength(ohlcv1h, ohlcv4h)
+      : ohlcv1h.length >= 30
+        ? computeHtfTrendStrength(ohlcv1h, ohlcv1h)
+        : null
+
+  const effectiveBtcTrend: TrendDirection = commodity ? 'RANGING' : btcTrend
+
+  const spreadLimit = commodity
+    ? COMMODITY_MAX_SPREAD_PCT
+    : CRYPTO_MAX_SPREAD_PCT
+  if (spreadPct != null && Number.isFinite(spreadPct) && spreadPct > spreadLimit) {
+    return {
+      signal: emptySignal(
+        internalSymbol,
+        currentPrice,
+        priceChange24h,
+        rsi,
+        null,
+        btcTrend,
+        dailyBias,
+        atrPct,
+        [
+          `SPREAD_GATE: ${spreadPct.toFixed(3)}% > ${spreadLimit.toFixed(2)}%`,
+        ],
+        'SPREAD_TOO_WIDE'
+      ),
+      triggered: false,
+    }
+  }
+
   // Resolve / compute MM intent early for side selection
   const mmIntent =
     mmIntentInput ??
     computeMmIntent({
-      price: ohlcv1h[ohlcv1h.length - 1]?.[4] ?? 0,
+      price: currentPrice,
       book:
         bookImbalance != null
           ? {
@@ -666,7 +972,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
               walls: [],
               midPrice: null,
               spread: null,
-              spreadPercent: null,
+              spreadPercent: spreadPct ?? null,
               pressure:
                 bookImbalance > 20
                   ? 'BUYERS'
@@ -678,149 +984,15 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       liquidityMap: liquidityMap ?? null,
     })
 
-  const applyMmBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (!direction || mmIntent.drive === 'NEUTRAL') return { score, zones }
-    const boost =
-      direction === 'LONG'
-        ? mmIntent.scoreBoostForLong
-        : mmIntent.scoreBoostForShort
-    if (Math.abs(boost) < 0.15) return { score, zones }
-    return {
-      score: Math.min(Math.max(score + boost, 0), 10),
-      zones: [...zones, `MM_INTENT: ${mmIntent.label}`],
-    }
-  }
-
-  const applyBookBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (bookImbalance == null || !direction || !Number.isFinite(bookImbalance)) {
-      return { score, zones }
-    }
-    const aligned =
-      (direction === 'LONG' && bookImbalance >= 18) ||
-      (direction === 'SHORT' && bookImbalance <= -18)
-    const against =
-      (direction === 'LONG' && bookImbalance <= -25) ||
-      (direction === 'SHORT' && bookImbalance >= 25)
-    if (aligned) {
-      const boost = Math.min(1.2, Math.abs(bookImbalance) / 50)
-      return {
-        score: Math.min(score + boost, 10),
-        zones: [
-          ...zones,
-          `OBI: ${bookImbalance > 0 ? 'Bids' : 'Asks'} ${bookImbalance.toFixed(0)}%`,
-        ],
-      }
-    }
-    if (against) {
-      return {
-        score: Math.max(score - 0.8, 0),
-        zones: [...zones, `OBI_AGAINST: ${bookImbalance.toFixed(0)}%`],
-      }
-    }
-    return { score, zones }
-  }
-
-  const applyWallBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (!wallTracker || !direction) return { score, zones }
-    const wallBoost = calculateWallBoost(wallTracker, direction)
-    if (wallBoost.boost === 0) return { score, zones }
-    const boosted = Math.min(Math.max(score + wallBoost.boost, 0), 10)
-    console.log(
-      `[PE] ${internalSymbol} Wall boost: ${wallBoost.boost >= 0 ? '+' : ''}${wallBoost.boost.toFixed(2)} (${wallBoost.reason})`
-    )
-    return {
-      score: boosted,
-      zones: [...zones, `WALL_BOOST: ${wallBoost.reason}`],
-    }
-  }
-
-  const applyNewsBoost = (
-    score: number,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (newsSentimentBoost === undefined || newsSentimentBoost === 0) {
-      return { score, zones }
-    }
-    const clampedBoost = Math.max(-1.5, Math.min(1.5, newsSentimentBoost))
-    const finalScore = Math.min(Math.max(score + clampedBoost, 0), 10)
-    if (Math.abs(clampedBoost) > 0.1) {
-      logger.info(
-        `[PE] ${internalSymbol} news boost: ${clampedBoost.toFixed(2)}`
-      )
-    }
-    return {
-      score: finalScore,
-      zones: [...zones, `NEWS_BOOST: ${clampedBoost.toFixed(2)}`],
-    }
-  }
-
-  const applyMarketCtxBoost = (
-    score: number,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    const delta = marketCtxBoost ?? 0
-    if (!delta && !(marketCtxNotes?.length)) return { score, zones }
-    const clamped = Math.max(-0.8, Math.min(0.8, delta))
-    const finalScore = Math.min(Math.max(score + clamped, 0), 10)
-    const nextZones = [...zones]
-    if (Math.abs(clamped) > 0.05) {
-      nextZones.push(`CTX_BOOST: ${clamped.toFixed(2)}`)
-    }
-    for (const n of (marketCtxNotes ?? []).slice(0, 3)) {
-      nextZones.push(`CTX: ${n}`)
-    }
-    return { score: finalScore, zones: nextZones }
-  }
-
-  const applyLiquidityBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (!liquidityMap || !direction) return { score, zones }
-    const boost = liquidityMap.liquidityBoost
-    if (boost === 0) return { score, zones }
-
-    const relevantLevel =
-      direction === 'LONG' ? liquidityMap.nearestSSL : liquidityMap.nearestBSL
-    if (!relevantLevel || !relevantLevel.isActive) return { score, zones }
-
-    const finalScore = Math.min(Math.max(score + boost, 0), 10)
-    const tag = `LIQ_${relevantLevel.type}_${relevantLevel.strength}_${relevantLevel.distancePct.toFixed(1)}%`
-    logger.info(
-      `[PE] ${internalSymbol} liquidity boost: +${boost.toFixed(2)} (${tag})`
-    )
-
-    return {
-      score: finalScore,
-      zones: [...zones, `LIQ_BOOST: ${tag}`],
-    }
-  }
-
-  const closes1h = ohlcv1h.map((c) => c[4])
-  const currentPrice = closes1h[closes1h.length - 1] ?? 0
-  const rsi = closes1h.length ? calculateRsi(closes1h) : null
-
   const globalFib = buildGlobalFibonacci(
     ohlcv1d && ohlcv1d.length >= 20 ? ohlcv1d : ohlcv4h,
     currentPrice
   )
 
-  // ── BTC Divergence ────────────────────────────────────────────────────────
+  // BTC divergence is meaningful for crypto only. Metals trade their own
+  // supply/demand plus DXY/yields, never a BTC proxy.
   const divergence: BtcDivergenceResult =
-    btcOhlcv1h && btcOhlcv1h.length >= 25
+    !commodity && btcOhlcv1h && btcOhlcv1h.length >= 25
       ? calculateBtcDivergence(btcOhlcv1h, ohlcv1h, 24)
       : {
           type: 'NONE',
@@ -832,51 +1004,6 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
           lookbackCandles: 24,
         }
 
-  const applyDivergenceBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (
-      !direction ||
-      divergence.type === 'NONE' ||
-      divergence.type === 'CORRELATED'
-    ) {
-      return { score, zones }
-    }
-
-    let boost = 0
-    let tag = ''
-
-    if (direction === 'LONG' && divergence.type === 'BULL_DIV') {
-      boost = divergence.scoreBoost
-      tag = `DIV_BULL: +${boost.toFixed(2)}`
-    } else if (direction === 'SHORT' && divergence.type === 'BEAR_DIV') {
-      boost = divergence.scoreBoost
-      tag = `DIV_BEAR: +${boost.toFixed(2)}`
-    } else if (direction === 'LONG' && divergence.type === 'BEAR_DIV') {
-      boost = -(divergence.scoreBoost * 0.5)
-      tag = `DIV_CONTRA: ${boost.toFixed(2)}`
-    } else if (direction === 'SHORT' && divergence.type === 'BULL_DIV') {
-      boost = -(divergence.scoreBoost * 0.5)
-      tag = `DIV_CONTRA: ${boost.toFixed(2)}`
-    }
-
-    if (boost === 0) return { score, zones }
-
-    const finalScore = Math.min(Math.max(score + boost, 0), 10)
-    logger.info(
-      `[PE] ${internalSymbol} divergence boost: ${boost >= 0 ? '+' : ''}${boost.toFixed(2)} | ${divergence.label}`
-    )
-
-    return {
-      score: finalScore,
-      zones: [...zones, tag],
-    }
-  }
-
-  // ── Pre-compute LTF signals (используются в trySide) ─────────────────────
-  // MSS, Raid, OTE вычисляются один раз и используются в обоих направлениях
   const _mssLong =
     ohlcv5m && ohlcv5m.length >= 15 ? detectMSS(ohlcv5m, 'LONG', 30) : null
   const _mssShort =
@@ -914,106 +1041,6 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const _ltfChoCH: LTFChoCHResult =
     ohlcv1m && ohlcv1m.length >= 20 ? detectLTFChoCH(ohlcv1m, 2) : emptyChoCH
 
-  const applyLTFBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): {
-    score: number
-    zones: string[]
-    mss: MSSResult | null
-    raid: LiquidityRaidResult | null
-    ote: OTESniperZone | null
-  } => {
-    if (!direction) return { score, zones, mss: null, raid: null, ote: null }
-
-    let s = score
-    const z = [...zones]
-    let mssResult: MSSResult | null = null
-    let raidResult: LiquidityRaidResult | null = null
-    let oteResult: OTESniperZone | null = null
-
-    const mss = direction === 'LONG' ? _mssLong : _mssShort
-    if (mss?.detected) {
-      s = Math.min(s + mss.scoreBoost, 10)
-      z.push(`MSS_${direction}: ${mss.label}`)
-      mssResult = mss
-      logger.info(`[PE] ${internalSymbol} MSS boost: +${mss.scoreBoost}`)
-    }
-
-    const raid = direction === 'LONG' ? _raidLong : _raidShort
-    if (raid.type !== 'NONE' && raid.isFresh) {
-      s = Math.min(s + raid.scoreBoost, 10)
-      z.push(`RAID_${raid.type}: ${raid.label}`)
-      raidResult = raid
-      logger.info(`[PE] ${internalSymbol} Raid boost: +${raid.scoreBoost}`)
-    }
-
-    const ote = calculateOTEZone(ohlcv1h, currentPrice, direction)
-    if (ote.priceInZone) {
-      s = Math.min(s + ote.scoreBoost, 10)
-      z.push(`OTE_${direction}: ${ote.label}`)
-      oteResult = ote
-      logger.info(`[PE] ${internalSymbol} OTE boost: +${ote.scoreBoost}`)
-    }
-
-    // Global Fib 141 — главный магнит: вход только в/около зоны 141–161
-    if (globalFib?.entryBias === direction) {
-      const in141 = globalFib.in141 || globalFib.near141
-      if (in141) {
-        const fibBoost = globalFib.in141 ? 1.8 : 1.3
-        s = Math.min(s + fibBoost, 10)
-        z.push(
-          `GLOBAL_FIB_141_${direction}: ${globalFib.zone141?.label ?? '141'} (${globalFib.mode === 'EXPECTED' ? 'ожидаемая' : 'после слома'})`
-        )
-        logger.info(
-          `[PE] ${internalSymbol} Fib 141 boost: +${fibBoost} | ${globalFib.zone141?.label}`
-        )
-      }
-    }
-
-    return { score: s, zones: z, mss: mssResult, raid: raidResult, ote: oteResult }
-  }
-
-  const applyAbsorptionBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (!_absorption.detected || direction !== 'LONG') return { score, zones }
-
-    const finalScore = Math.min(score + _absorption.scoreBoost, 10)
-    logger.info(
-      `[PE] ${internalSymbol} Absorption boost: +${_absorption.scoreBoost} | ${_absorption.label}`
-    )
-    return {
-      score: finalScore,
-      zones: [...zones, `ABSORPTION: ${_absorption.label}`],
-    }
-  }
-
-  const applyChoCHBoost = (
-    score: number,
-    direction: TradeSide | null,
-    zones: string[]
-  ): { score: number; zones: string[] } => {
-    if (!_ltfChoCH.detected || direction !== 'LONG') return { score, zones }
-
-    const finalScore = Math.min(score + _ltfChoCH.scoreBoost, 10)
-    const tag = _ltfChoCH.surgicalEntryDetected
-      ? `LTF_CHOCH+SURGICAL: ${_ltfChoCH.label}`
-      : `LTF_CHOCH: ${_ltfChoCH.label}`
-
-    logger.info(
-      `[PE] ${internalSymbol} LTF CHoCH boost: +${_ltfChoCH.scoreBoost} | ${_ltfChoCH.label}`
-    )
-
-    return {
-      score: finalScore,
-      zones: [...zones, tag],
-    }
-  }
-
   if (
     ohlcv4h.length < 50 ||
     ohlcv1h.length < 50 ||
@@ -1028,7 +1055,8 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
         rsi,
         null,
         btcTrend,
-        dailyBias
+        dailyBias,
+        atrPct
       ),
       triggered: false,
     }
@@ -1045,8 +1073,12 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     (_mssLong?.detected ?? false) ||
     (_mssShort?.detected ?? false)
 
-  // Dual ranging блокирует только если нет LTF-триггера (raid/CHoCH/absorption)
-  if (coinTrend === 'RANGING' && btcTrend === 'RANGING' && !ltfAlive) {
+  // Dual ranging blocks only when there is no LTF trigger. Commodities are
+  // not gated by BTC's range.
+  if (
+    coinTrend === 'RANGING' &&
+    (commodity ? !ltfAlive : effectiveBtcTrend === 'RANGING' && !ltfAlive)
+  ) {
     return {
       signal: emptySignal(
         internalSymbol,
@@ -1055,7 +1087,8 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
         rsi,
         coinTrend,
         btcTrend,
-        dailyBias
+        dailyBias,
+        atrPct
       ),
       triggered: false,
     }
@@ -1081,14 +1114,20 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
   const longAllowed =
     longPermitted &&
     (coinTrend === 'BULLISH' ||
-      (coinTrend === 'RANGING' && btcTrend === 'BULLISH') ||
-      (coinTrend === 'RANGING' && btcTrend === 'RANGING' && ltfAlive) ||
+      (coinTrend === 'RANGING' &&
+        (commodity
+          ? ltfAlive
+          : effectiveBtcTrend === 'BULLISH' ||
+            (effectiveBtcTrend === 'RANGING' && ltfAlive))) ||
       (coinTrend === 'BEARISH' && (_raidLong.isFresh || _ltfChoCH.detected)))
   const shortAllowed =
     shortPermitted &&
     (coinTrend === 'BEARISH' ||
-      (coinTrend === 'RANGING' && btcTrend === 'BEARISH') ||
-      (coinTrend === 'RANGING' && btcTrend === 'RANGING' && ltfAlive) ||
+      (coinTrend === 'RANGING' &&
+        (commodity
+          ? ltfAlive
+          : effectiveBtcTrend === 'BEARISH' ||
+            (effectiveBtcTrend === 'RANGING' && ltfAlive))) ||
       (coinTrend === 'BULLISH' && _raidShort.isFresh))
 
   const sessionFlip = resolveSessionFlip({
@@ -1106,7 +1145,41 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     logger.info(`[PE] ${internalSymbol} session flip: ${sessionFlip.reason}`)
   }
 
-  const trySide = (side: TradeSide): AnalyzeSymbolResult | null => {
+  const liquidationClusters = buildLiquidationClusters(
+    liquidityMap,
+    currentPrice,
+    ohlcv1h
+  )
+  const vpRaw = calculateVolumeProfile(ohlcv1h, 48, true)
+  const cvdSrc = ohlcv5m?.length ? ohlcv5m : ohlcv15m
+  const fallbackCvd = detectCvdDivergence(cvdSrc, 20)
+
+  const targetsFor = (side: TradeSide): number[] => {
+    const out: number[] = []
+    const dl = dailyBias.dailyLevels
+    if (dl) {
+      if (side === 'LONG') {
+        out.push(dl.pdh, dl.pwh, dl.nearestResistance ?? NaN)
+      } else {
+        out.push(dl.pdl, dl.pwl, dl.nearestSupport ?? NaN)
+      }
+      for (const k of dl.keyLevels ?? []) out.push(k.price)
+    }
+    if (liquidityMap) {
+      const level =
+        side === 'LONG' ? liquidityMap.nearestBSL : liquidityMap.nearestSSL
+      if (level) out.push(level.price)
+    }
+    if (fibLevels) out.push(fibLevels['1.0'])
+    if (globalFib?.price141 != null) out.push(globalFib.price141)
+    if (vpRaw) out.push(side === 'LONG' ? vpRaw.vah : vpRaw.val)
+    return out.filter((n) => finitePositive(n))
+  }
+
+  const trySide = (
+    side: TradeSide,
+    mode: 'STRICT' | 'SOFT'
+  ): AnalyzeSymbolResult | null => {
     const confluence = calculateConfluence(
       currentPrice,
       orderBlocks,
@@ -1114,13 +1187,20 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       fibLevels,
       side
     )
-    if (confluence.score < CONFLUENCE_THRESHOLD) return null
-    if (!confluence.bestZone.top || !confluence.bestZone.bottom) return null
+    const minScore =
+      mode === 'STRICT' ? CONFLUENCE_THRESHOLD : SOFT_CONFLUENCE_THRESHOLD
+    if (confluence.score < minScore) return null
+    if (confluence.bestZone.top == null || confluence.bestZone.bottom == null) {
+      return null
+    }
+
+    const top = confluence.bestZone.top
+    const bottom = confluence.bestZone.bottom
 
     const rejection1h = checkCandleRejection(
       ohlcv1h[ohlcv1h.length - 1],
-      confluence.bestZone.top,
-      confluence.bestZone.bottom,
+      top,
+      bottom,
       side,
       0.35
     )
@@ -1128,8 +1208,8 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       ohlcv15m.length > 0
         ? checkCandleRejection(
             ohlcv15m[ohlcv15m.length - 1],
-            confluence.bestZone.top,
-            confluence.bestZone.bottom,
+            top,
+            bottom,
             side,
             0.28
           )
@@ -1138,8 +1218,8 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       ohlcv5m && ohlcv5m.length > 0
         ? checkCandleRejection(
             ohlcv5m[ohlcv5m.length - 1],
-            confluence.bestZone.top,
-            confluence.bestZone.bottom,
+            top,
+            bottom,
             side,
             0.25
           )
@@ -1147,6 +1227,7 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
 
     const raidFresh =
       side === 'LONG' ? _raidLong.isFresh : _raidShort.isFresh
+    const raid = side === 'LONG' ? _raidLong : _raidShort
     const surgicalLtf =
       _ltfChoCH.detected && !!_ltfChoCH.surgicalEntryDetected
     const ltfConfirm =
@@ -1157,106 +1238,228 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
 
     const hasRejection =
       rejection1h.rejected || rejection15m.rejected || rejection5m.rejected
+    const priceInZone = currentPrice <= top && currentPrice >= bottom
 
-    // Ювелирный вход: rejection ИЛИ (LTF confirm + цена в зоне / surgical)
-    const priceInZone =
-      currentPrice <= confluence.bestZone.top &&
-      currentPrice >= confluence.bestZone.bottom
-    if (!hasRejection && !(ltfConfirm && (priceInZone || surgicalLtf))) {
+    if (
+      mode === 'STRICT' &&
+      !hasRejection &&
+      !(ltfConfirm && (priceInZone || surgicalLtf))
+    ) {
       return null
     }
 
-    // RSI: мягче для LTF/scalp, жёстче без подтверждения
+    // Regime-aware RSI: in a trend a 50–70 pullback is valid; only ranging
+    // markets keep the old ~55 cap / ~45 floor.
+    const trending =
+      regime === 'TRENDING_STRONG' || regime === 'TRENDING_WEAK'
     if (side === 'LONG') {
-      const rsiCap = ltfConfirm || hasRejection ? 58 : 48
-      if (rsi === null || rsi >= rsiCap) return null
+      const maxRsi = trending ? 72 : 55
+      const minRsi = trending ? 42 : 35
+      if (rsi == null || rsi > maxRsi || rsi < minRsi) return null
+    } else {
+      const minRsi = trending ? 28 : 45
+      const maxRsi = trending ? 58 : 65
+      if (rsi == null || rsi < minRsi || rsi > maxRsi) return null
     }
-    if (side === 'SHORT') {
-      const rsiFloor = ltfConfirm || hasRejection ? 42 : 52
-      if (rsi === null || rsi <= rsiFloor) return null
+
+    const levels = buildLevels({
+      side,
+      price: currentPrice,
+      confluence,
+      dailyLevels: dailyBias.dailyLevels,
+      atr,
+      targets: targetsFor(side),
+      maxRiskPct: commodity ? MAX_COMMODITY_RISK_PCT : MAX_RISK_PCT,
+    })
+
+    const btcHardBlock =
+      !commodity &&
+      ((side === 'LONG' &&
+        btcTrend === 'BEARISH' &&
+        htfTrend?.bias === 'BEARISH' &&
+        htfTrend.label === 'STRONG') ||
+        (side === 'SHORT' &&
+          btcTrend === 'BULLISH' &&
+          htfTrend?.bias === 'BULLISH' &&
+          htfTrend.label === 'STRONG'))
+
+    const rejected: SetupRejectReason | null = btcHardBlock
+      ? 'BTC_HARD_BLOCK'
+      : levels.reject
+
+    const mss = side === 'LONG' ? _mssLong : _mssShort
+    const ote = calculateOTEZone(ohlcv1h, currentPrice, side)
+    const ltf = {
+      mss: mss?.detected ? mss : null,
+      raid: raidFresh ? raid : null,
+      ote: ote.priceInZone ? ote : null,
     }
 
-    const levels = buildLevels(side, currentPrice, confluence, dailyBias.dailyLevels)
-    const wallBoosted = applyWallBoost(confluence.score, side, confluence.zones)
-    const bookBoosted = applyBookBoost(wallBoosted.score, side, wallBoosted.zones)
-    const mmBoosted = applyMmBoost(bookBoosted.score, side, bookBoosted.zones)
-    const newsBoosted = applyNewsBoost(mmBoosted.score, mmBoosted.zones)
-    const ctxBoosted = applyMarketCtxBoost(newsBoosted.score, newsBoosted.zones)
-    const liqBoosted = applyLiquidityBoost(
-      ctxBoosted.score,
+    const liq = evaluateLiquidationGate(
+      liquidationClusters,
       side,
-      ctxBoosted.zones
+      currentPrice,
+      ltf.raid
     )
-    const divBoosted = applyDivergenceBoost(
-      liqBoosted.score,
-      side,
-      liqBoosted.zones
-    )
-    const ltfResult = applyLTFBoost(divBoosted.score, side, divBoosted.zones)
-    const absorptionResult = applyAbsorptionBoost(
-      ltfResult.score,
-      side,
-      ltfResult.zones
-    )
-    const chochResult = applyChoCHBoost(
-      absorptionResult.score,
-      side,
-      absorptionResult.zones
-    )
-    const boosted = { score: chochResult.score, zones: chochResult.zones }
-    const probabilityPct = scoreToProbability(boosted.score)
-    const flat = toFlatSymbol(internalSymbol)
+    const vpSide =
+      vpRaw && top != null && bottom != null
+        ? applyObPocConfluence(vpRaw, top, bottom)
+        : vpRaw
 
-    const entryHint = hasRejection
-      ? 'REJECTION'
-      : raidFresh
-        ? 'RAID_ENTRY'
-        : 'SURGICAL_LTF'
+    const cvdTrend = enhancedCvd
+      ? enhancedCvd.trend
+      : fallbackCvd.detected
+        ? fallbackCvd.type
+        : null
+    const cvdSource: ClusterInput['cvdSource'] = enhancedCvd
+      ? enhancedCvd.source
+      : fallbackCvd.detected
+        ? 'OHLCV_PROXY'
+        : 'NONE'
+    const cvdAligned =
+      cvdTrend === (side === 'LONG' ? 'BULLISH' : 'BEARISH')
 
-    const atr = calculateAtr(ohlcv1h, 14) ?? currentPrice * 0.005
+    const bookAligned =
+      bookImbalance != null &&
+      ((side === 'LONG' && bookImbalance >= 18) ||
+        (side === 'SHORT' && bookImbalance <= -18))
+    const bookAgainst =
+      bookImbalance != null &&
+      ((side === 'LONG' && bookImbalance <= -25) ||
+        (side === 'SHORT' && bookImbalance >= 25))
+
+    const mmAligned =
+      mmIntent.drive !== 'NEUTRAL' &&
+      mmIntent.preferredSide === side &&
+      ((side === 'LONG' && mmIntent.scoreBoostForLong > 0.15) ||
+        (side === 'SHORT' && mmIntent.scoreBoostForShort > 0.15))
+
+    let wallAligned = false
+    if (wallTracker) {
+      for (const wall of wallTracker.walls.values()) {
+        if (!wall.isActive) continue
+        if (Math.abs(wall.price - currentPrice) / currentPrice > 0.005) continue
+        if (
+          (side === 'LONG' && wall.side === 'BID') ||
+          (side === 'SHORT' && wall.side === 'ASK')
+        ) {
+          wallAligned = true
+          break
+        }
+      }
+    }
+
+    const sequenceAligned =
+      sequence != null &&
+      sequence.side === side &&
+      sequence.confidence >= 60
+    const spoofAligned =
+      spoofAlerts?.some(
+        (a) =>
+          a.detected &&
+          ((side === 'LONG' && a.side === 'ASK') ||
+            (side === 'SHORT' && a.side === 'BID'))
+      ) ?? false
+    const icebergAligned =
+      icebergAlerts?.some(
+        (a) =>
+          a.detected &&
+          a.status === 'HOLDING' &&
+          ((side === 'LONG' && a.side === 'BID') ||
+            (side === 'SHORT' && a.side === 'ASK'))
+      ) ?? false
+    const obDeltaAligned =
+      obDelta != null &&
+      ((side === 'LONG' && obDelta.volumeShift === 'BUYING') ||
+        (side === 'SHORT' && obDelta.volumeShift === 'SELLING'))
+
+    const nearZone =
+      Math.abs(currentPrice - (top + bottom) / 2) <= atr * 0.75
+    const cluster = scoreClusters({
+      side,
+      price: currentPrice,
+      atr,
+      confluenceScore: confluence.score,
+      inZone: priceInZone,
+      nearZone,
+      htfTrend,
+      dailyBias,
+      regime,
+      globalFib,
+      btcTrend: effectiveBtcTrend,
+      isCommodity: commodity,
+      macroContext,
+      session,
+      liquidityMap,
+      raidFresh,
+      raidType: raid.type,
+      oteInZone: ote.priceInZone,
+      volumeProfile: vpSide,
+      liqGateOpen: liq.gateOpen,
+      liqSwept: liq.swept,
+      rejection: hasRejection,
+      mss: !!ltf.mss,
+      choch: side === 'LONG' && _ltfChoCH.detected,
+      absorption: side === 'LONG' && _absorption.detected,
+      cvdAligned,
+      cvdSource,
+      bookAligned,
+      bookAgainst,
+      mmAligned,
+      wallAligned,
+      sequenceAligned,
+      spoofAligned,
+      icebergAligned,
+      obDeltaAligned,
+      rr: levels.rr,
+    })
+
     const surgicalPlan = resolveSurgicalEntry({
       side,
       price: currentPrice,
       candles1m: ohlcv1m,
       candles5m: ohlcv5m,
       mmIntent,
-      ote: ltfResult.ote,
-      mss: ltfResult.mss,
-      raid: ltfResult.raid,
+      ote: ltf.ote,
+      mss: ltf.mss,
+      raid: ltf.raid,
       absorption: _absorption.detected ? _absorption : null,
       ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
-      zoneTop: confluence.bestZone.top,
-      zoneBottom: confluence.bestZone.bottom,
+      zoneTop: top,
+      zoneBottom: bottom,
       previous: previousSurgical?.side === side ? previousSurgical : null,
       atr,
     })
 
     const preciseReady = isSurgicalReady(surgicalPlan)
-    // With MM micro hunt — only READY is a full trigger; otherwise keep classic LTF path
     const hasMicroHunt = surgicalPlan.microTarget != null
-    const setupActive = hasMicroHunt ? preciseReady : true
+    const setupActive =
+      mode === 'STRICT' &&
+      !rejected &&
+      (hasMicroHunt ? preciseReady : true)
+
     if (hasMicroHunt && !preciseReady) {
       logger.info(
         `[PE] ${internalSymbol} surgical ${surgicalPlan.status}: ${surgicalPlan.reason}`
       )
     }
 
-    let entrySl = levels.sl
-    let entryTp1 = levels.tp1
-    let entryTp2 = levels.tp2
-    if (preciseReady && surgicalPlan.limitEntry != null) {
-      const entry = surgicalPlan.limitEntry
-      const risk = Math.abs(entry - levels.sl)
-      if (side === 'LONG') {
-        entrySl = surgicalPlan.invalidation ?? levels.sl
-        entryTp1 = entry + risk * 2
-        entryTp2 = entry + risk * 3.5
-      } else {
-        entrySl = surgicalPlan.invalidation ?? levels.sl
-        entryTp1 = entry - risk * 2
-        entryTp2 = entry - risk * 3.5
-      }
-    }
+    const flat = toFlatSymbol(internalSymbol)
+    const zones = [
+      ...confluence.zones,
+      ...cluster.notes,
+      ...levels.notes,
+      ...(rejected ? [`REJECT: ${rejected}`] : []),
+      ...(newsSentimentBoost
+        ? [`NEWS: ${newsSentimentBoost.toFixed(2)}`]
+        : []),
+      ...(marketCtxNotes ?? []).slice(0, 3).map((n) => `CTX: ${n}`),
+      ...(divergence.type !== 'NONE'
+        ? [`BTC_DIV: ${divergence.type}`]
+        : []),
+      `ENTRY: ${hasRejection ? 'REJECTION' : raidFresh ? 'RAID_ENTRY' : 'SURGICAL_LTF'}`,
+      `SURGICAL: ${surgicalPlan.status}`,
+    ]
 
     const signal: CoinSignal = {
       symbol: flat,
@@ -1265,17 +1468,13 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       price: currentPrice,
       priceChange24h,
       currentRSI: rsi,
-      probabilityPct,
-      score: preciseReady ? Math.min(boosted.score + 0.8, 10) : boosted.score,
+      probabilityPct: cluster.total,
+      score: cluster.total / 10,
       direction: side,
-      zones: [
-        ...boosted.zones,
-        `ENTRY: ${entryHint}`,
-        `SURGICAL: ${surgicalPlan.status}`,
-      ],
-      sl: entrySl,
-      tp1: entryTp1,
-      tp2: entryTp2,
+      zones,
+      sl: levels.sl,
+      tp1: levels.tp1,
+      tp2: levels.tp2,
       tpDaily: levels.tpDaily,
       coinTrend,
       btcTrend,
@@ -1285,22 +1484,24 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
       isLocked: false,
       hasActiveSetup: setupActive,
       activeSignal: {
-        win_rate: probabilityPct,
-        samples: boosted.score,
+        win_rate: cluster.total,
+        samples: cluster.total / 10,
         direction: side,
         avg_return: 0,
       },
-      activeSignalKey: `SMC_${boosted.score}`,
+      activeSignalKey: `CLUSTER_${cluster.total}`,
       btcDivergence: divergence.type !== 'NONE' ? divergence : null,
-      mss: ltfResult.mss,
-      raid: ltfResult.raid,
-      ote: ltfResult.ote,
+      mss: ltf.mss,
+      raid: ltf.raid,
+      ote: ltf.ote,
       absorption: _absorption.detected ? _absorption : null,
       ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
       buyerAggression: null,
       mmIntent,
       sessionFlipReason: sessionFlip.reason || null,
       surgicalEntry: surgicalPlan,
+      atrPct,
+      rejected,
       globalFib: globalFib
         ? {
             impulse: globalFib.impulse,
@@ -1318,29 +1519,32 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
         : null,
     }
 
-    const enriched = enrichSignal(signal, {
-      ohlcv1h,
-      ohlcv15m,
-      ohlcv5m,
-      ohlcv1m,
-      ohlcv4h,
-      liquidityMap,
-      wallSupport:
-        Boolean(wallTracker) ||
-        (bookImbalance != null &&
-          ((side === 'LONG' && bookImbalance > 15) ||
-            (side === 'SHORT' && bookImbalance < -15))),
-      bestZoneTop: confluence.bestZone.top,
-      bestZoneBottom: confluence.bestZone.bottom,
-      enhancedCvd,
-      spoofAlerts,
-      icebergAlerts,
-      obDelta,
-      sequence,
-    })
-
-    // Still return the plan when waiting — radar shows it, sniper waits READY
-    return { signal: enriched, triggered: enriched.hasActiveSetup }
+    return {
+      signal: enrichSignal(signal, {
+        ohlcv1h,
+        ohlcv15m,
+        ohlcv5m,
+        ohlcv1m,
+        ohlcv4h,
+        liquidityMap,
+        wallSupport:
+          wallAligned ||
+          (bookImbalance != null &&
+            ((side === 'LONG' && bookImbalance > 15) ||
+              (side === 'SHORT' && bookImbalance < -15))),
+        bestZoneTop: top,
+        bestZoneBottom: bottom,
+        enhancedCvd,
+        spoofAlerts,
+        icebergAlerts,
+        obDelta,
+        sequence,
+        htfTrend,
+        regime,
+        session,
+      }),
+      triggered: false, // replaced below after enrichment
+    }
   }
 
   // Prefer session/MM liquidity hunt order; fib bias only if session not flipped
@@ -1350,273 +1554,49 @@ export function analyzeSymbol(input: AnalyzeSymbolInput): AnalyzeSymbolResult {
     tryOrder = [fibBias, fibBias === 'LONG' ? 'SHORT' : 'LONG']
   }
 
-  let pendingSurgical: AnalyzeSymbolResult | null = null
+  let pending: AnalyzeSymbolResult | null = null
 
   for (const side of tryOrder) {
     if (side === 'LONG' && !longAllowedFinal) continue
     if (side === 'SHORT' && !shortAllowedFinal) continue
-    const result = trySide(side)
-    if (result?.triggered) return result
-    if (result && !pendingSurgical) pendingSurgical = result
-  }
-  if (pendingSurgical) {
-    // Show WAITING plan on radar; sniper still blocked until READY
-    return pendingSurgical
-  }
-
-  // No full trigger — still show best confluence as soft probability for radar
-  let softScore = 0
-  let softDirection: TradeSide | null = null
-  let softZones: string[] = []
-
-  // Soft-bias: session/MM preferred side first, then fib
-  const softPrefer = sessionFlip.tryOrder[0]
-  if (softPrefer === 'LONG' && longAllowedFinal) {
-    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
-    softScore = c.score + (mmIntent.scoreBoostForLong > 0 ? 0.8 : 0)
-    softDirection = 'LONG'
-    softZones = [
-      ...c.zones,
-      sessionFlip.reason ? `SESSION: ${sessionFlip.reason}` : '',
-      mmIntent.drive !== 'NEUTRAL' ? `MM: ${mmIntent.label}` : '',
-    ].filter(Boolean)
-  } else if (softPrefer === 'SHORT' && shortAllowedFinal) {
-    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
-    softScore = c.score + (mmIntent.scoreBoostForShort > 0 ? 0.8 : 0)
-    softDirection = 'SHORT'
-    softZones = [
-      ...c.zones,
-      sessionFlip.reason ? `SESSION: ${sessionFlip.reason}` : '',
-      mmIntent.drive !== 'NEUTRAL' ? `MM: ${mmIntent.label}` : '',
-    ].filter(Boolean)
-  } else if (globalFib?.entryBias === 'LONG' && longAllowedFinal) {
-    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
-    const at141 = globalFib.in141 || globalFib.near141
-    softScore =
-      c.score +
-      (at141 ? 2.4 : globalFib.zone141 ? (globalFib.mode === 'EXPECTED' ? 0.3 : 0.8) : 0)
-    softDirection = 'LONG'
-    softZones = [
-      ...c.zones,
-      at141
-        ? [`GLOBAL_FIB_141: ${globalFib.zone141?.label ?? '141'} → ищем LONG`]
-        : [`GLOBAL_FIB_141_WATCH: ждём 141 @ ${globalFib.price141?.toPrecision(6) ?? '—'} → LONG`],
-    ].flat()
-  } else if (globalFib?.entryBias === 'SHORT' && shortAllowedFinal) {
-    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
-    const at141 = globalFib.in141 || globalFib.near141
-    softScore =
-      c.score +
-      (at141 ? 2.4 : globalFib.zone141 ? (globalFib.mode === 'EXPECTED' ? 0.3 : 0.8) : 0)
-    softDirection = 'SHORT'
-    softZones = [
-      ...c.zones,
-      at141
-        ? [`GLOBAL_FIB_141: ${globalFib.zone141?.label ?? '141'} → ищем SHORT`]
-        : [`GLOBAL_FIB_141_WATCH: ждём 141 @ ${globalFib.price141?.toPrecision(6) ?? '—'} → SHORT`],
-    ].flat()
-  }
-
-  if (longAllowedFinal) {
-    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'LONG')
-    if (c.score > softScore) {
-      softScore = c.score
-      softDirection = 'LONG'
-      softZones = c.zones
+    const result = trySide(side, 'STRICT')
+    if (!result) continue
+    if (result.signal.hasActiveSetup) {
+      return { signal: result.signal, triggered: true }
     }
-  }
-  if (shortAllowedFinal) {
-    const c = calculateConfluence(currentPrice, orderBlocks, fvgList, fibLevels, 'SHORT')
-    if (c.score > softScore) {
-      softScore = c.score
-      softDirection = 'SHORT'
-      softZones = c.zones
+    if (
+      !pending ||
+      (pending.signal.rejected != null && result.signal.rejected == null)
+    ) {
+      pending = result
     }
   }
 
-  const softWall = applyWallBoost(softScore, softDirection, softZones)
-  const softBook = applyBookBoost(softWall.score, softDirection, softWall.zones)
-  const softMm = applyMmBoost(softBook.score, softDirection, softBook.zones)
-  const softNews = applyNewsBoost(softMm.score, softMm.zones)
-  const softCtx = applyMarketCtxBoost(softNews.score, softNews.zones)
-  const softLiq = applyLiquidityBoost(
-    softCtx.score,
-    softDirection,
-    softCtx.zones
-  )
-  const softDiv = applyDivergenceBoost(softLiq.score, softDirection, softLiq.zones)
-  const softLTF = applyLTFBoost(softDiv.score, softDirection, softDiv.zones)
-  const softAbsorption = applyAbsorptionBoost(
-    softLTF.score,
-    softDirection,
-    softLTF.zones
-  )
-  const softChoCH = applyChoCHBoost(
-    softAbsorption.score,
-    softDirection,
-    softAbsorption.zones
-  )
-  const softBoosted = { score: softChoCH.score, zones: softChoCH.zones }
-  const flat = toFlatSymbol(internalSymbol)
-  const probabilityPct = scoreToProbability(softBoosted.score)
+  if (pending) {
+    return { signal: pending.signal, triggered: false }
+  }
 
-  // Soft setups with decent confluence get provisional SL/TP (ghost + sniper prep)
-  let softSl: number | null = null
-  let softTp1: number | null = null
-  let softTp2: number | null = null
-  let softTpDaily: number | null = null
-  let softActive = false
-  if (
-    softDirection &&
-    softBoosted.score >= SOFT_CONFLUENCE_THRESHOLD
-  ) {
-    const softConf = calculateConfluence(
-      currentPrice,
-      orderBlocks,
-      fvgList,
-      fibLevels,
-      softDirection
-    )
-    if (softConf.bestZone.top && softConf.bestZone.bottom) {
-      const lv = buildLevels(
-        softDirection,
-        currentPrice,
-        softConf,
-        dailyBias.dailyLevels
-      )
-      softSl = lv.sl
-      softTp1 = lv.tp1
-      softTp2 = lv.tp2
-      softTpDaily = lv.tpDaily
-      // Promote to active only with surgical READY (precise entry)
-      softActive = false
+  // No strict trigger — still show the best waiting plan on the radar.
+  for (const side of tryOrder) {
+    if (side === 'LONG' && !longAllowedFinal) continue
+    if (side === 'SHORT' && !shortAllowedFinal) continue
+    const result = trySide(side, 'SOFT')
+    if (result) {
+      return { signal: result.signal, triggered: false }
     }
   }
-
-  const softAtr = calculateAtr(ohlcv1h, 14) ?? currentPrice * 0.005
-  const softSurgical =
-    softDirection != null
-      ? resolveSurgicalEntry({
-          side: softDirection,
-          price: currentPrice,
-          candles1m: ohlcv1m,
-          candles5m: ohlcv5m,
-          mmIntent,
-          ote: softLTF.ote,
-          mss: softLTF.mss,
-          raid: softLTF.raid,
-          absorption: _absorption.detected ? _absorption : null,
-          ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
-          previous:
-            previousSurgical?.side === softDirection ? previousSurgical : null,
-          atr: softAtr,
-        })
-      : null
-
-  if (
-    softSurgical &&
-    isSurgicalReady(softSurgical) &&
-    softBoosted.score >= CONFLUENCE_THRESHOLD &&
-    softSl != null
-  ) {
-    softActive = true
-    if (softSurgical.limitEntry != null) {
-      const entry = softSurgical.limitEntry
-      const risk = Math.abs(entry - (softSurgical.invalidation ?? softSl))
-      softSl = softSurgical.invalidation ?? softSl
-      if (softDirection === 'LONG') {
-        softTp1 = entry + risk * 2
-        softTp2 = entry + risk * 3.5
-      } else if (softDirection === 'SHORT') {
-        softTp1 = entry - risk * 2
-        softTp2 = entry - risk * 3.5
-      }
-    }
-  }
-
-  const softSignal: CoinSignal = {
-    symbol: flat,
-    internalSymbol,
-    displayName: toDisplayName(internalSymbol),
-    price: currentPrice,
-    priceChange24h,
-    currentRSI: rsi,
-    probabilityPct,
-    score: softBoosted.score,
-    direction: softBoosted.score > 0 ? softDirection : null,
-    zones: softBoosted.zones,
-    sl: softSl,
-    tp1: softTp1,
-    tp2: softTp2,
-    tpDaily: softTpDaily,
-    coinTrend,
-    btcTrend,
-    dailyBias: dailyBias.bias,
-    dailyConfidence: dailyBias.confidence,
-    dailyPattern: dailyBias.dailyAnalysis?.pattern ?? null,
-    isLocked: false,
-    hasActiveSetup: softActive,
-    activeSignal:
-      softBoosted.score > 0 && softDirection
-        ? {
-            win_rate: probabilityPct,
-            samples: softBoosted.score,
-            direction: softDirection,
-            avg_return: 0,
-          }
-        : null,
-    activeSignalKey: softBoosted.score > 0 ? `SOFT_${softBoosted.score}` : null,
-    btcDivergence: divergence.type !== 'NONE' ? divergence : null,
-    mss: softLTF.mss,
-    raid: softLTF.raid,
-    ote: softLTF.ote,
-    absorption: _absorption.detected ? _absorption : null,
-    ltfChoCH: _ltfChoCH.detected ? _ltfChoCH : null,
-    buyerAggression: null,
-    mmIntent,
-    sessionFlipReason: sessionFlip.reason || null,
-    surgicalEntry: softSurgical,
-    globalFib: globalFib
-      ? {
-          impulse: globalFib.impulse,
-          entryBias: globalFib.entryBias,
-          activeLabel:
-            globalFib.zone141?.label ?? globalFib.activeZone?.label ?? null,
-          swingHigh: globalFib.swingHigh,
-          swingLow: globalFib.swingLow,
-          inReactionZone: globalFib.in141 || globalFib.near141,
-          in141: globalFib.in141,
-          near141: globalFib.near141,
-          price141: globalFib.price141,
-          mode: globalFib.mode,
-        }
-      : null,
-  }
-
-  const enrichedSoft =
-    softSignal.direction != null
-      ? enrichSignal(softSignal, {
-          ohlcv1h,
-          ohlcv15m,
-          ohlcv5m,
-          ohlcv1m,
-          ohlcv4h,
-          liquidityMap,
-          wallSupport:
-            Boolean(wallTracker) ||
-            (bookImbalance != null &&
-              ((softSignal.direction === 'LONG' && bookImbalance > 15) ||
-                (softSignal.direction === 'SHORT' && bookImbalance < -15))),
-          enhancedCvd,
-          spoofAlerts,
-          icebergAlerts,
-          obDelta,
-          sequence,
-        })
-      : softSignal
 
   return {
-    signal: enrichedSoft,
-    triggered: enrichedSoft.hasActiveSetup,
+    signal: emptySignal(
+      internalSymbol,
+      currentPrice,
+      priceChange24h,
+      rsi,
+      coinTrend,
+      btcTrend,
+      dailyBias,
+      atrPct
+    ),
+    triggered: false,
   }
 }

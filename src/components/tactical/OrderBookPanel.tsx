@@ -227,7 +227,8 @@ const OrderBookPanel = ({ symbol }: Props) => {
               side: i.side,
               price: i.price,
               label: i.label,
-              bounceProbPct: i.bounceProbPct,
+              status: i.status,
+              confidencePct: i.confidencePct,
               updatedAt: Date.now(),
             }))
           )
@@ -331,6 +332,11 @@ const OrderBookPanel = ({ symbol }: Props) => {
             cvd,
             bookImbalance: metrics.imbalance,
             openInterest: oiRef.current,
+            atrPct: sig?.atrPct ?? null,
+            spreadBps:
+              metrics.spreadPercent != null
+                ? metrics.spreadPercent * 100
+                : null,
           })
           setSequenceHit(symbol, hit)
         } catch {

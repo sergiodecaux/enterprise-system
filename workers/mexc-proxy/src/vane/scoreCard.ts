@@ -20,6 +20,8 @@ export interface VaneScoreInput {
   wallPersistOk: boolean
   zoneGrade: ZoneGrade
   btcAlignScore: number
+  /** False for metals/commodities — BTC correlation is not applicable. */
+  btcApplicable?: boolean
   dailyAlign: boolean
   regime: MarketRegime
   toxicBook: boolean
@@ -94,8 +96,27 @@ export function buildVaneScoreCard(input: VaneScoreInput): VaneScoreResult {
     factors.push('book NEUTRAL soft +2')
   }
 
-  score += Math.min(10, Math.max(0, input.btcAlignScore))
-  factors.push(`BTC align +${Math.min(10, input.btcAlignScore)}`)
+  if (input.btcApplicable === false) {
+    score += 3
+    factors.push('BTC-корреляция off (commodity) +3')
+  } else if (input.btcAlignScore < 0) {
+    // Negative alignment is a real penalty. Clamping it to zero would let a
+    // trade against an active BTC impulse keep the same score as neutral.
+    score += input.btcAlignScore
+    factors.push(`BTC против ${input.btcAlignScore}`)
+    if (input.btcAlignScore <= -8 && (input.directionConfidence ?? 0) < 60) {
+      return {
+        score: 0,
+        tier: null,
+        factors: [...factors, 'BTC hard against — SKIP'],
+        ready: false,
+      }
+    }
+  } else {
+    const pts = Math.min(10, input.btcAlignScore)
+    score += pts
+    factors.push(`BTC align +${pts}`)
+  }
 
   if (input.dailyAlign) {
     score += 5
@@ -146,7 +167,7 @@ export function buildVaneScoreCard(input: VaneScoreInput): VaneScoreResult {
     factors.push('сценарий удерж/цель +4')
   }
 
-  score = Math.min(100, Math.round(score))
+  score = Math.max(0, Math.min(100, Math.round(score)))
   let tier: VaneTier | null = null
   if (score >= TIER1_SCORE) tier = 'TIER1'
   else if (score >= MIN_VANE_SCORE) tier = 'TIER2'

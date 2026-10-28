@@ -139,13 +139,24 @@ export function assessDataQuality(input: DataQualityInput): DataQualityReport {
 
   const icebergAlerts = input.icebergAlerts ?? []
   const detectedIcebergs = icebergAlerts.filter((i) => i.detected)
-  if (detectedIcebergs.length > 0) {
+  const holdingIcebergs = detectedIcebergs.filter((i) => i.status === 'HOLDING')
+  if (holdingIcebergs.length > 0) {
     icebergConfidence = Math.min(
       100,
-      detectedIcebergs.reduce((sum, i) => sum + (i.bounceProbPct ?? 70), 0) /
+      holdingIcebergs.reduce((sum, i) => sum + (i.confidencePct ?? 0), 0) /
+        holdingIcebergs.length
+    )
+    if (icebergConfidence >= 85) mmQuality = 'EXCELLENT'
+    else if (icebergConfidence >= 65 && mmQuality !== 'EXCELLENT') {
+      mmQuality = 'GOOD'
+    }
+  } else if (detectedIcebergs.length > 0) {
+    // Exhausted / breakthrough icebergs are not hidden support.
+    icebergConfidence = Math.min(
+      50,
+      detectedIcebergs.reduce((sum, i) => sum + (i.confidencePct ?? 0), 0) /
         detectedIcebergs.length
     )
-    if (icebergConfidence >= 80) mmQuality = 'EXCELLENT'
   }
 
   if (input.obDelta) {

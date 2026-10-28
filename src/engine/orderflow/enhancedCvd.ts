@@ -1,5 +1,9 @@
 import type { MexcTrade, OhlcvCandle } from '../../api/mexc'
-import { detectCvdDivergence, computeCvdSeries } from './cvd'
+import {
+  detectCvdDivergence,
+  computeCvdSeries,
+  estimateCandleDelta,
+} from './cvd'
 
 export type CvdTrend = 'BULLISH' | 'BEARISH' | 'NEUTRAL'
 
@@ -102,16 +106,18 @@ export function buildEnhancedCvd(params: {
     else if (delta < 0) trend = 'BEARISH'
 
     const div = detectCvdDivergence(candles, 20)
-    const buyish = candles
-      .slice(-20)
-      .filter((c) => c[4] >= c[1])
-      .reduce((s, c) => s + c[5], 0)
-    const sellish = candles
-      .slice(-20)
-      .filter((c) => c[4] < c[1])
-      .reduce((s, c) => s + c[5], 0)
-    const tot = buyish + sellish
-    const aggression = tot > 0 ? (buyish / tot) * 100 : 50
+    // Volume-distribution delta, not candle colour: a green candle with a long
+    // upper wick is net selling into strength.
+    let buyVolume = 0
+    let sellVolume = 0
+    for (const c of candles.slice(-20)) {
+      const delta = estimateCandleDelta(c)
+      const volume = c[5]
+      buyVolume += Math.max(0, (volume + delta) / 2)
+      sellVolume += Math.max(0, (volume - delta) / 2)
+    }
+    const tot = buyVolume + sellVolume
+    const aggression = tot > 0 ? (buyVolume / tot) * 100 : 50
 
     return {
       source: 'OHLCV_PROXY',
@@ -120,8 +126,8 @@ export function buildEnhancedCvd(params: {
       divergence: div.detected,
       divergenceType: div.type,
       cumulativeDelta: last,
-      buyVolume: buyish,
-      sellVolume: sellish,
+      buyVolume,
+      sellVolume,
       tradeCount: 0,
       updatedAt: now,
     }

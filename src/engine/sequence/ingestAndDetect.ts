@@ -50,6 +50,10 @@ export interface IngestOrderFlowInput {
   now?: number
   /** When false, skip Binance lead (already applied via cache) */
   useVenueLead?: boolean
+  /** ATR(1m) as % of price — normalises venue-lead bps thresholds */
+  atrPct?: number | null
+  /** Local spread in bps */
+  spreadBps?: number | null
 }
 
 /**
@@ -153,6 +157,8 @@ export function ingestAndDetectSequence(
     bidWallAlive,
     askWallAlive,
     lead: venueLead,
+    atrPct: input.atrPct ?? null,
+    spreadBps: input.spreadBps ?? null,
   })
   if (venueLead && venueEval.kind !== 'NONE') {
     pushFrames(input.symbol, [venueLeadToFrame(venueEval, venueLead, now)])

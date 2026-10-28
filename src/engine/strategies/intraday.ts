@@ -1,5 +1,5 @@
 import { getSessionAtHour } from '../sessions/sessionMap'
-import type { StyleProfile } from './types'
+import type { StructuralStyleLevels, StyleProfile } from './types'
 
 export const INTRADAY_PROFILE: StyleProfile = {
   style: 'INTRADAY',
@@ -110,7 +110,8 @@ export function calculateIntradayConfidence(input: {
 }
 
 /**
- * Риск-модель интрадея: широкий стоп за структуру, каскадные тейки.
+ * Риск-модель интрадея: стоп за структурой ± 0.5×ATR, без клампа в
+ * 0.35–2.5%. Слишком широкий структурный стоп отклоняет сетап.
  */
 export function buildIntradayLevels(
   side: 'LONG' | 'SHORT',
@@ -119,47 +120,116 @@ export function buildIntradayLevels(
   localSwing: number | null,
   dailyTarget: number | null,
   atr: number
-): { sl: number; tp1: number; tp2: number; tpDaily: number | null } {
-  const { maxStopPct, minStopPct, tp1RMultiple, tp2RMultiple } =
-    INTRADAY_PROFILE.risk
-  const structBuffer = atr * 0.15
+): StructuralStyleLevels {
+  const { maxStopPct, tp1RMultiple, tp2RMultiple } = INTRADAY_PROFILE.risk
+  const notes: string[] = []
+  if (!(entry > 0) || !(atr > 0)) {
+    return {
+      sl: 0,
+      tp1: 0,
+      tp2: 0,
+      tpDaily: null,
+      riskPct: 0,
+      rr: 0,
+      ok: false,
+      rejectReason: 'INVALID_STRUCTURE',
+      notes: ['ENTRY/ATR invalid'],
+    }
+  }
 
-  let sl: number
-  if (side === 'LONG') {
-    const structSl =
-      structuralExtreme != null
-        ? structuralExtreme - structBuffer
-        : entry - atr * 1.2
-    sl = Math.min(structSl, entry * (1 - minStopPct / 100))
-    const maxSl = entry * (1 - maxStopPct / 100)
-    if (sl < maxSl) sl = maxSl
-  } else {
-    const structSl =
-      structuralExtreme != null
-        ? structuralExtreme + structBuffer
-        : entry + atr * 1.2
-    sl = Math.max(structSl, entry * (1 + minStopPct / 100))
-    const maxSl = entry * (1 + maxStopPct / 100)
-    if (sl > maxSl) sl = maxSl
+  const buffer = atr * 0.5
+  const hasStructure =
+    structuralExtreme != null &&
+    Number.isFinite(structuralExtreme) &&
+    structuralExtreme > 0
+  const structSl = hasStructure
+    ? side === 'LONG'
+      ? structuralExtreme - buffer
+      : structuralExtreme + buffer
+    : side === 'LONG'
+      ? entry - atr * 1.2
+      : entry + atr * 1.2
+  const sl = structSl
+
+  if (side === 'LONG' ? sl >= entry : sl <= entry) {
+    return {
+      sl,
+      tp1: 0,
+      tp2: 0,
+      tpDaily: null,
+      riskPct: 0,
+      rr: 0,
+      ok: false,
+      rejectReason: 'INVALID_STRUCTURE',
+      notes: ['Цена уже за структурной инвалидацией'],
+    }
   }
 
   const risk = Math.abs(entry - sl)
-  let tp1 =
-    side === 'LONG' ? entry + risk * tp1RMultiple : entry - risk * tp1RMultiple
-  let tp2 =
-    side === 'LONG' ? entry + risk * tp2RMultiple : entry - risk * tp2RMultiple
+  const riskPct = (risk / entry) * 100
+  notes.push(
+    hasStructure
+      ? `SL: структура ±0.5 ATR (${riskPct.toFixed(2)}%)`
+      : `SL: ATR fallback (${riskPct.toFixed(2)}%)`
+  )
 
-  if (localSwing != null) {
-    if (side === 'LONG' && localSwing > entry) tp1 = localSwing
-    if (side === 'SHORT' && localSwing < entry) tp1 = localSwing
+  if (riskPct > maxStopPct) {
+    return {
+      sl,
+      tp1: 0,
+      tp2: 0,
+      tpDaily: null,
+      riskPct,
+      rr: 0,
+      ok: false,
+      rejectReason: 'RISK_EXCEEDED',
+      notes: [...notes, `RISK ${riskPct.toFixed(2)}% > ${maxStopPct}%`],
+    }
   }
+
+  // Real local structure wins; otherwise an R-multiple model target.
+  const localTp =
+    localSwing != null &&
+    Number.isFinite(localSwing) &&
+    (side === 'LONG' ? localSwing > entry : localSwing < entry)
+      ? localSwing
+      : null
+  const tp1 =
+    localTp ??
+    (side === 'LONG'
+      ? entry + risk * tp1RMultiple
+      : entry - risk * tp1RMultiple)
+  const tp2ByR =
+    side === 'LONG'
+      ? entry + risk * tp2RMultiple
+      : entry - risk * tp2RMultiple
+  const tp2 =
+    side === 'LONG'
+      ? Math.max(tp2ByR, tp1 + risk * 0.5)
+      : Math.min(tp2ByR, tp1 - risk * 0.5)
+
+  const tpPct = (Math.abs(tp1 - entry) / entry) * 100
+  const rr = riskPct > 0 ? tpPct / riskPct : 0
+  const ok = rr >= INTRADAY_PROFILE.minRiskReward
+  notes.push(
+    `${localTp != null ? 'TP1: локальный swing' : 'TP1: R-model'} · ${rr.toFixed(2)}R`
+  )
 
   let tpDaily: number | null = dailyTarget
   if (dailyTarget != null) {
     if (side === 'LONG' && dailyTarget <= entry) tpDaily = null
     else if (side === 'SHORT' && dailyTarget >= entry) tpDaily = null
-    else tpDaily = dailyTarget
   }
 
-  return { sl, tp1, tp2, tpDaily }
+  return {
+    sl,
+    tp1,
+    tp2,
+    tpDaily,
+    riskPct,
+    rr,
+    ok,
+    rejectReason: ok ? undefined : 'RR_TOO_LOW',
+    notes,
+  }
 }

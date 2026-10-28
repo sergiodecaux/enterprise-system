@@ -1,10 +1,20 @@
 import type { OhlcvCandle } from '../../api/mexc'
 
 /**
- * CVD (Cumulative Volume Delta) proxy из OHLCV:
- * бычья свеча → +volume, медвежья → −volume.
- * Для точной ленты нужен trade feed; proxy достаточен для дивергенции на LTF.
+ * CVD (Cumulative Volume Delta).
+ *
+ * Priority:
+ *  1. True taker decomposition when the candle carries taker-buy volume
+ *     (field 7 in an extended OHLCV tuple): delta = 2 * takerBuy - volume.
+ *  2. OHLCV volume-distribution approximation (close location + wick
+ *     rejection), never the naive `close >= open` sign.
+ *
+ * Without a raw aggTrade feed no OHLCV formula can recover the exact delta,
+ * but the distribution model below is materially closer to auction physics
+ * than OBV-style candle colouring.
  */
+export type CvdCandle = OhlcvCandle | [...OhlcvCandle, number?]
+
 export interface CvdPoint {
   index: number
   cvd: number
@@ -20,28 +30,60 @@ export interface CvdDivergenceResult {
   lookback: number
   scoreBoost: number
   label: string
+  /** True when the candle carried real taker-buy volume */
+  takerBased?: boolean
 }
 
-export function computeCvdSeries(candles: OhlcvCandle[]): CvdPoint[] {
+function takerBuyVolume(candle: CvdCandle): number | null {
+  const raw = (candle as readonly unknown[])[6]
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return null
+  return raw
+}
+
+/**
+ * Synthetic per-candle delta from OHLCV (volume distribution model).
+ * closeLocation: where the auction closed inside the range.
+ * wickDelta: lower wick = sellers absorbed (positive), upper wick = buyers
+ * absorbed (negative).
+ */
+export function estimateCandleDelta(candle: CvdCandle): number {
+  const [, open, high, low, close, volume] = candle
+  const totalRange = high - low
+  if (!(volume > 0) || totalRange <= 0) return 0
+
+  const closeLocation = ((close - low) - (high - close)) / totalRange
+  const upperWick = high - Math.max(open, close)
+  const lowerWick = Math.min(open, close) - low
+  const wickDelta = (lowerWick - upperWick) / totalRange
+
+  const syntheticRatio = closeLocation * 0.65 + wickDelta * 0.35
+  return volume * Math.max(-1, Math.min(1, syntheticRatio))
+}
+
+export function computeCvdSeries(candles: CvdCandle[]): CvdPoint[] {
   let cvd = 0
   const points: CvdPoint[] = []
 
   for (let i = 0; i < candles.length; i++) {
-    const [, open, , , close, volume] = candles[i]
-    const delta = close >= open ? volume : -volume
+    const candle = candles[i]
+    const takerBuy = takerBuyVolume(candle)
+    const delta =
+      takerBuy != null
+        ? 2 * takerBuy - candle[5]
+        : estimateCandleDelta(candle)
     cvd += delta
-    points.push({ index: i, cvd, price: close })
+    points.push({ index: i, cvd, price: candle[4] })
   }
 
   return points
 }
 
 /**
- * Бычья дивергенция: цена обновила low, CVD выше предыдущего low-CVD (продавцы истощены).
- * Медвежья: цена обновила high, CVD ниже предыдущего high-CVD.
+ * Бычья дивергенция: цена обновила low, CVD выше предыдущего low-CVD
+ * (продавцы истощены). Медвежья: цена обновила high, CVD ниже high-CVD.
  */
 export function detectCvdDivergence(
-  candles: OhlcvCandle[],
+  candles: CvdCandle[],
   lookback = 20
 ): CvdDivergenceResult {
   const empty: CvdDivergenceResult = {
@@ -80,6 +122,10 @@ export function detectCvdDivergence(
     candles[p.index][2] >= candles[best.index][2] ? p : best
   )
 
+  const takerBased = candles.some((c) => takerBuyVolume(c) != null)
+  const labelSuffix = takerBased ? 'taker' : 'OHLCV-dist'
+  const boost = takerBased ? 1.2 : 0.8
+
   // Bullish: lower low in price, higher low in CVD
   if (priceLow < prevPriceLow && cvdAtPriceLow.cvd > prevCvdAtLow.cvd) {
     return {
@@ -88,8 +134,9 @@ export function detectCvdDivergence(
       priceExtreme: priceLow,
       cvdExtreme: cvdAtPriceLow.cvd,
       lookback,
-      scoreBoost: 1.2,
-      label: `CVD Bull Div: price LL, delta ↑ @ ${last.price.toFixed(4)}`,
+      scoreBoost: boost,
+      label: `CVD Bull Div (${labelSuffix}): price LL, delta ↑ @ ${last.price.toFixed(4)}`,
+      takerBased,
     }
   }
 
@@ -101,8 +148,9 @@ export function detectCvdDivergence(
       priceExtreme: priceHigh,
       cvdExtreme: cvdAtPriceHigh.cvd,
       lookback,
-      scoreBoost: 1.2,
-      label: `CVD Bear Div: price HH, delta ↓ @ ${last.price.toFixed(4)}`,
+      scoreBoost: boost,
+      label: `CVD Bear Div (${labelSuffix}): price HH, delta ↓ @ ${last.price.toFixed(4)}`,
+      takerBased,
     }
   }
 

@@ -60,6 +60,12 @@ export interface LiquidityZone {
   invalidation?: number
   /** Opposite liquidity / magnet target */
   target?: number
+  /** Volume point of control inside the zone (limit entry anchor) */
+  poc?: number
+  /** FVG consequent encroachment (50% of the gap) */
+  ce?: number
+  /** Zone already traded through / filled — do not offer a fresh limit */
+  mitigated?: boolean
   /**
    * Short Russian cue for chart pill, e.g.
    * "удерж ↑ · слом < 1.23" / "удерж ↓ · слом > 4.56"

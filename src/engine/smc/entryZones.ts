@@ -37,8 +37,9 @@ function tag(
     ...zone,
     contextHint: hint,
     label: hint,
-    strength: role === 'launch' ? 11 : Math.max(zone.strength ?? 6, 8),
-    invalidation: zone.side === 'BULLISH' ? zone.bottom : zone.top,
+    invalidation:
+      zone.invalidation ??
+      (zone.side === 'BULLISH' ? zone.bottom : zone.top),
   }
 }
 
@@ -59,9 +60,15 @@ export function pickActionZones(opts: {
     ...calculateFvgZones(candles),
     ...calculateOrderBlockZones(candles),
   ]
-    .filter((z) => z.top > z.bottom)
+    .filter((z) => z.top > z.bottom && !z.mitigated)
     .map((z) => ({ ...z, endTime: visibleEnd }))
-    .filter((z) => distPct(price, z) < 0.14)
+    .filter((z) => {
+      const d = distPct(price, z)
+      // A zone already under price is a launch candidate; a distant one is
+      // only shown when it is within a realistic 0.5–3.5% pullback.
+      if (inside(price, z)) return true
+      return d >= 0.005 && d <= 0.035
+    })
 
   const longs = raw
     .filter((z) => z.side === 'BULLISH' && z.top <= price * 1.004)

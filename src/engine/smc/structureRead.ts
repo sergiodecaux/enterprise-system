@@ -338,11 +338,24 @@ function heldAfter(
   return holds >= 2
 }
 
+/** Average volume of the `lookback` bars strictly before `endIdx`. */
+function averageVolumeBefore(
+  candles: OhlcvCandle[],
+  endIdx: number,
+  lookback = 20
+): number {
+  const start = Math.max(0, endIdx - lookback)
+  if (endIdx <= start) return 0
+  let sum = 0
+  for (let i = start; i < endIdx; i++) sum += candles[i][5]
+  return sum / (endIdx - start)
+}
+
 /**
  * Scan confirmed swings for BOS / CHoCH / sweep / reclaim.
  * BOS = close through swing in the direction of trend (continuation).
  * CHoCH = first close through swing against the trend.
- * Sweep = wick through, close back inside (liquidity grab).
+ * Sweep = wick through, close back inside (liquidity grab) on ≥1.5× volume.
  * Reclaim = after a break, price closes back and holds the original side.
  */
 export function readTfStructure(
@@ -364,6 +377,17 @@ export function readTfStructure(
   let lastReclaim: StructureEvent | null = null
   let liveTrend: StructureTrend = trend
 
+  interface BreakCandidate {
+    side: 'UP' | 'DOWN'
+    price: number
+    timeSec: number
+    index: number
+    held: boolean
+  }
+
+  const breaks: BreakCandidate[] = []
+  const sweeps: StructureEvent[] = []
+
   const consider = swings.slice(-10)
   for (const sw of consider) {
     const after = candles.slice(sw.index + 1)
@@ -377,11 +401,14 @@ export function readTfStructure(
       const closedBeyond = closeBeyond(c[4], sw.price, breakSide, atr)
       const wicked = wickBeyond(c, sw.price, breakSide) && !closedBeyond
 
-      if (wicked && !closedBeyond) {
+      if (wicked) {
         const pen = breakSide === 'UP' ? c[2] - sw.price : sw.price - c[3]
         const minPen = Math.max(atr * 0.15, sw.price * 0.0006)
         if (pen < minPen) continue
-        lastSweep = {
+        // A sweep is a liquidity event only if it carries real volume.
+        const avgVolume = averageVolumeBefore(candles, absIdx)
+        if (avgVolume > 0 && c[5] < avgVolume * 1.5) continue
+        sweeps.push({
           kind: 'SWEEP',
           side: breakSide,
           price: sw.price,
@@ -392,7 +419,7 @@ export function readTfStructure(
               ? `свип BSL ${tf}`
               : `свип SSL ${tf}`,
           held: false,
-        }
+        })
         continue
       }
 
@@ -400,50 +427,69 @@ export function readTfStructure(
 
       const held = heldAfter(candles, absIdx, sw.price, breakSide)
       if (!held) continue
-      const against =
-        (liveTrend === 'BULLISH' && breakSide === 'DOWN') ||
-        (liveTrend === 'BEARISH' && breakSide === 'UP')
-      const withTrend =
-        (liveTrend === 'BULLISH' && breakSide === 'UP') ||
-        (liveTrend === 'BEARISH' && breakSide === 'DOWN')
-
-      if (liveTrend === 'RANGING') {
-        lastChoch = {
-          kind: 'CHOCH',
-          side: breakSide,
-          price: sw.price,
-          timeSec: t,
-          index: absIdx,
-          label: `выход ${tf} ${breakSide === 'UP' ? '↑' : '↓'}`,
-          held,
-        }
-        liveTrend = breakSide === 'UP' ? 'BULLISH' : 'BEARISH'
-      } else if (against) {
-        lastChoch = {
-          kind: 'CHOCH',
-          side: breakSide,
-          price: sw.price,
-          timeSec: t,
-          index: absIdx,
-          label: `CHoCH ${tf} ${breakSide === 'UP' ? '↑' : '↓'}`,
-          held,
-        }
-        liveTrend = breakSide === 'UP' ? 'BULLISH' : 'BEARISH'
-      } else if (withTrend) {
-        lastBos = {
-          kind: 'BOS',
-          side: breakSide,
-          price: sw.price,
-          timeSec: t,
-          index: absIdx,
-          label: `BOS ${tf} ${breakSide === 'UP' ? '↑' : '↓'}`,
-          held,
-        }
-        liveTrend = breakSide === 'UP' ? 'BULLISH' : 'BEARISH'
-      }
+      breaks.push({
+        side: breakSide,
+        price: sw.price,
+        timeSec: t,
+        index: absIdx,
+        held,
+      })
       break
     }
   }
+
+  // Process break events strictly in chronological order. A later swing must
+  // never overwrite a more recent event with an older one.
+  breaks.sort((a, b) => a.index - b.index)
+  let lastEventIndex = -1
+  for (const event of breaks) {
+    if (event.index < lastEventIndex) continue
+    const against =
+      (liveTrend === 'BULLISH' && event.side === 'DOWN') ||
+      (liveTrend === 'BEARISH' && event.side === 'UP')
+    const withTrend =
+      (liveTrend === 'BULLISH' && event.side === 'UP') ||
+      (liveTrend === 'BEARISH' && event.side === 'DOWN')
+
+    if (liveTrend === 'RANGING') {
+      lastChoch = {
+        kind: 'CHOCH',
+        side: event.side,
+        price: event.price,
+        timeSec: event.timeSec,
+        index: event.index,
+        label: `выход ${tf} ${event.side === 'UP' ? '↑' : '↓'}`,
+        held: event.held,
+      }
+      liveTrend = event.side === 'UP' ? 'BULLISH' : 'BEARISH'
+    } else if (against) {
+      lastChoch = {
+        kind: 'CHOCH',
+        side: event.side,
+        price: event.price,
+        timeSec: event.timeSec,
+        index: event.index,
+        label: `CHoCH ${tf} ${event.side === 'UP' ? '↑' : '↓'}`,
+        held: event.held,
+      }
+      liveTrend = event.side === 'UP' ? 'BULLISH' : 'BEARISH'
+    } else if (withTrend) {
+      lastBos = {
+        kind: 'BOS',
+        side: event.side,
+        price: event.price,
+        timeSec: event.timeSec,
+        index: event.index,
+        label: `BOS ${tf} ${event.side === 'UP' ? '↑' : '↓'}`,
+        held: event.held,
+      }
+      liveTrend = event.side === 'UP' ? 'BULLISH' : 'BEARISH'
+    }
+    lastEventIndex = event.index
+  }
+
+  sweeps.sort((a, b) => b.index - a.index)
+  lastSweep = sweeps[0] ?? null
 
   // Reclaim: after a sweep or failed close-through, later close recaptures the level
   if (lastSweep) {

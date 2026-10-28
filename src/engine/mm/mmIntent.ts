@@ -135,12 +135,31 @@ export function computeMmIntent(input: MmIntentInput): MmIntentResult {
   // ── Iceberg: hidden ask = resistance (DOWN); hidden bid = support (UP) ─
   for (const ice of input.icebergAlerts ?? []) {
     if (!ice.detected) continue
+    const conf = Math.max(0.2, Math.min(1, (ice.confidencePct ?? 0) / 100))
+    // HOLDING defends the level. EXHAUSTED / BREAKTHROUGH_RISK means the
+    // hidden wall is being eaten — continuation through it, not a bounce.
     if (ice.side === 'ASK') {
-      downScore += 1.4
-      reasons.push(ice.label || 'Iceberg ASK — скрытое сопротивление')
+      if (ice.status === 'HOLDING') {
+        downScore += 1.4 * conf
+        reasons.push(ice.label || 'Iceberg ASK — скрытое сопротивление')
+      } else if (
+        ice.status === 'EXHAUSTED' ||
+        ice.status === 'BREAKTHROUGH_RISK'
+      ) {
+        upScore += 0.8 * conf
+        reasons.push(ice.label || 'Iceberg ASK истощён — путь вверх')
+      }
     } else if (ice.side === 'BID') {
-      upScore += 1.4
-      reasons.push(ice.label || 'Iceberg BID — скрытая поддержка')
+      if (ice.status === 'HOLDING') {
+        upScore += 1.4 * conf
+        reasons.push(ice.label || 'Iceberg BID — скрытая поддержка')
+      } else if (
+        ice.status === 'EXHAUSTED' ||
+        ice.status === 'BREAKTHROUGH_RISK'
+      ) {
+        downScore += 0.8 * conf
+        reasons.push(ice.label || 'Iceberg BID истощён — путь вниз')
+      }
     }
   }
 

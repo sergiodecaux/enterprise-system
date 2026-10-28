@@ -64,6 +64,10 @@ export function evaluateVenueLead(opts: {
   bidWallAlive: boolean
   askWallAlive: boolean
   lead: VenueLeadSnapshot | null
+  /** ATR(1m) as % of price — normalises the lead threshold per asset */
+  atrPct?: number | null
+  /** Local spread in bps — avoids firing inside the noise floor */
+  spreadBps?: number | null
 }): VenueLeadEval {
   const lead = opts.lead
   if (!lead?.connected || lead.mid == null || !(opts.localPrice > 0)) {
@@ -83,30 +87,38 @@ export function evaluateVenueLead(opts: {
       ? ((opts.localPrice - lead.mid) / lead.mid) * 10_000
       : 0
 
+  // Dynamic thresholds: 0.5 × ATR(1m) in bps, floored by spread noise.
+  const atrBps =
+    opts.atrPct != null && opts.atrPct > 0 ? opts.atrPct * 100 : 0
+  const spreadFloor =
+    opts.spreadBps != null && opts.spreadBps > 0 ? opts.spreadBps * 1.5 : 0
+  const moveThreshold = Math.max(8, atrBps * 0.5, spreadFloor)
+  const basisThreshold = Math.max(15, moveThreshold * 2)
+
   // Binance dumping hard while local BID wall still "holds" → arb will eat it
-  if (move <= -10 && flow <= 45 && opts.bidWallAlive) {
+  if (move <= -moveThreshold && flow <= 45 && opts.bidWallAlive) {
     return {
       kind: 'ARB_WALL_RISK',
       side: 'SHORT',
-      reason: `Binance −${Math.abs(move).toFixed(0)}bps · локальная ОПОРА ещё стоит — стену арбитражнут`,
+      reason: `Binance −${Math.abs(move).toFixed(0)}bps (порог ${moveThreshold.toFixed(0)}) · локальная ОПОРА ещё стоит — стену арбитражнут`,
       confidenceMul: 0.72,
       label: 'Binance arb ↓',
     }
   }
 
   // Binance ripping while local ASK wall stands → roof will get arbed
-  if (move >= 10 && flow >= 55 && opts.askWallAlive) {
+  if (move >= moveThreshold && flow >= 55 && opts.askWallAlive) {
     return {
       kind: 'ARB_WALL_RISK',
       side: 'LONG',
-      reason: `Binance +${move.toFixed(0)}bps · локальная КРЫША ещё стоит — снимут арбитражем`,
+      reason: `Binance +${move.toFixed(0)}bps (порог ${moveThreshold.toFixed(0)}) · локальная КРЫША ещё стоит — снимут арбитражем`,
       confidenceMul: 0.72,
       label: 'Binance arb ↑',
     }
   }
 
   // Lead confirms local direction (same sign, meaningful move)
-  if (move >= 8 && flow >= 56) {
+  if (move >= moveThreshold && flow >= 56) {
     return {
       kind: 'LEAD_CONFIRM',
       side: 'LONG',
@@ -115,7 +127,7 @@ export function evaluateVenueLead(opts: {
       label: 'Binance ↑',
     }
   }
-  if (move <= -8 && flow <= 44) {
+  if (move <= -moveThreshold && flow <= 44) {
     return {
       kind: 'LEAD_CONFIRM',
       side: 'SHORT',
@@ -126,7 +138,7 @@ export function evaluateVenueLead(opts: {
   }
 
   // Large positive basis: local rich vs Binance — fragile bid
-  if (basisBps >= 25 && opts.bidWallAlive && move < 0) {
+  if (basisBps >= basisThreshold && opts.bidWallAlive && move < 0) {
     return {
       kind: 'ARB_WALL_RISK',
       side: 'SHORT',

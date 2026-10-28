@@ -14,10 +14,62 @@ export interface DynamicInvalidation {
   severity: 'WARNING' | 'CRITICAL'
 }
 
+interface BreakAcceptance {
+  /** 2–3 closed bars beyond the level, latest close still beyond */
+  accepted: boolean
+  /** How many of the inspected closed bars closed beyond */
+  closesBeyond: number
+  /** Number of closed bars inspected */
+  bars: number
+  /** Wick beyond but close back inside — a sweep, not acceptance */
+  reclaimed: boolean
+}
+
+/**
+ * A break is accepted only after 2 of the last 3 closed bars settle beyond
+ * the level. A single wick/close is a sweep, and a sweep that closes back
+ * inside is explicitly not invalidation.
+ */
+function breakAcceptance(
+  candles: OhlcvCandle[],
+  level: number,
+  direction: 'LONG' | 'SHORT',
+  lookback = 3,
+  minCloses = 2
+): BreakAcceptance {
+  const n = Math.min(lookback, candles.length)
+  if (n === 0) {
+    return { accepted: false, closesBeyond: 0, bars: 0, reclaimed: false }
+  }
+
+  let closesBeyond = 0
+  let wickBeyond = false
+  for (let i = candles.length - n; i < candles.length; i++) {
+    const candle = candles[i]
+    const closeBeyond =
+      direction === 'LONG' ? candle[4] < level : candle[4] > level
+    if (closeBeyond) closesBeyond++
+    const wick =
+      direction === 'LONG' ? candle[3] < level : candle[2] > level
+    if (wick) wickBeyond = true
+  }
+
+  const lastClose = candles[candles.length - 1][4]
+  const latestBeyond =
+    direction === 'LONG' ? lastClose < level : lastClose > level
+
+  return {
+    accepted: closesBeyond >= minCloses && latestBeyond,
+    closesBeyond,
+    bars: n,
+    reclaimed: wickBeyond && latestBeyond === false,
+  }
+}
+
 /**
  * Динамическая линия инвалидации:
  * LONG — ближайший 5m/1m swing low; SHORT — swing high.
- * Закрытие свечи за линией = Structure Shift → не ждать SL.
+ * Нужны 2 закрытия из 3 за линией; sweep + reclaim не инвалидирует.
  */
 export function calculateDynamicInvalidation(
   ohlcv: OhlcvCandle[],
@@ -27,46 +79,62 @@ export function calculateDynamicInvalidation(
   if (ohlcv.length < 12) return null
 
   const structure = detectMarketStructure(ohlcv, Math.min(20, ohlcv.length))
-  const last = ohlcv[ohlcv.length - 1]
+  // Exclude the forming candle from breach confirmation.
+  const closed = ohlcv.length >= 2 ? ohlcv.slice(0, -1) : ohlcv
+  const last = closed[closed.length - 1]
   const close = last[4]
+  const tfLabel = timeframe === '1m' ? 'M1' : 'M5'
 
   if (direction === 'LONG') {
     const price = structure.lastSwingLow
     if (price == null) return null
-    const breached = close < price && structure.trend === 'BEARISH'
+    const confirm = breakAcceptance(closed, price, direction)
+    const pending =
+      !confirm.accepted &&
+      close < price &&
+      confirm.closesBeyond >= 1
     return {
       price,
-      breached,
-      confidenceAfterBreach: breached ? 20 : 75,
+      breached: confirm.accepted,
+      confidenceAfterBreach: confirm.accepted ? 20 : pending ? 55 : 75,
       timeframe,
       direction,
-      severity: breached ? 'CRITICAL' : 'WARNING',
-      message: breached
-        ? `Паттерн сломан (Structure Shift ${timeframe.toUpperCase()}). Вероятность отработки упала до 20%. Закрывай руками или переводи в BE, не жди удара в Stop Loss!`
-        : `Invalidation M${timeframe === '1m' ? '1' : '5'}: ${price.toFixed(4)} — закрытие ниже = отмена лонга`,
+      severity: confirm.accepted ? 'CRITICAL' : 'WARNING',
+      message: confirm.accepted
+        ? `Пробой принят: ${confirm.closesBeyond}/${confirm.bars} закрытий ${tfLabel} ниже ${price.toFixed(4)}. Вероятность отработки упала до 20%. Не жди SL.`
+        : pending
+          ? `1 закрытие ${tfLabel} ниже ${price.toFixed(4)} — ждём 2/3. Sweep + reclaim не считается.`
+          : `Invalidation ${tfLabel}: ${price.toFixed(4)} — нужно 2 закрытия ниже (сейчас ${confirm.closesBeyond}/${confirm.bars}); sweep+reclaim не считается`,
     }
   }
 
   const price = structure.lastSwingHigh
   if (price == null) return null
-  const breached = close > price && structure.trend === 'BULLISH'
+  const confirm = breakAcceptance(closed, price, direction)
+  const pending =
+    !confirm.accepted &&
+    close > price &&
+    confirm.closesBeyond >= 1
   return {
     price,
-    breached,
-    confidenceAfterBreach: breached ? 20 : 75,
+    breached: confirm.accepted,
+    confidenceAfterBreach: confirm.accepted ? 20 : pending ? 55 : 75,
     timeframe,
     direction,
-    severity: breached ? 'CRITICAL' : 'WARNING',
-    message: breached
-      ? `Паттерн сломан (Structure Shift ${timeframe.toUpperCase()}). Вероятность отработки упала до 20%. Закрывай руками или переводи в BE, не жди удара в Stop Loss!`
-      : `Invalidation M${timeframe === '1m' ? '1' : '5'}: ${price.toFixed(4)} — закрытие выше = отмена шорта`,
+    severity: confirm.accepted ? 'CRITICAL' : 'WARNING',
+    message: confirm.accepted
+      ? `Пробой принят: ${confirm.closesBeyond}/${confirm.bars} закрытий ${tfLabel} выше ${price.toFixed(4)}. Вероятность отработки упала до 20%. Не жди SL.`
+      : pending
+        ? `1 закрытие ${tfLabel} выше ${price.toFixed(4)} — ждём 2/3. Sweep + reclaim не считается.`
+        : `Invalidation ${tfLabel}: ${price.toFixed(4)} — нужно 2 закрытия выше (сейчас ${confirm.closesBeyond}/${confirm.bars}); sweep+reclaim не считается`,
   }
 }
 
 /**
- * Инвалидация по закрытию 1H / 4H (не wick):
- * LONG — close ниже last swing low + медвежья структура
- * SHORT — close выше last swing high + бычья структура
+ * Инвалидация по закрытию 1H / 4H:
+ * LONG — 2 из 3 закрытых свечей ниже last swing low
+ * SHORT — 2 из 3 закрытых свечей выше last swing high
+ * Одиночная свеча или sweep с возвратом не инвалидируют сетап.
  */
 export function calculateHtfInvalidation(
   ohlcv: OhlcvCandle[],
@@ -76,51 +144,58 @@ export function calculateHtfInvalidation(
   const minBars = timeframe === '4h' ? 24 : 30
   if (ohlcv.length < minBars) return null
 
-  // Use last CLOSED candle when possible (exclude forming bar)
-  const closed =
-    ohlcv.length >= 2 ? ohlcv[ohlcv.length - 2] : ohlcv[ohlcv.length - 1]
-  const structureCandles = ohlcv.slice(0, -1)
+  // Use only closed candles (exclude forming bar).
+  const closed = ohlcv.slice(0, -1)
+  if (closed.length < minBars) return null
   const structure = detectMarketStructure(
-    structureCandles.length >= minBars ? structureCandles : ohlcv,
-    Math.min(timeframe === '4h' ? 40 : 50, structureCandles.length || ohlcv.length)
+    closed,
+    Math.min(timeframe === '4h' ? 40 : 50, closed.length)
   )
-  const close = closed[4]
+  const lastClose = closed[closed.length - 1][4]
   const tfLabel = timeframe.toUpperCase()
 
   if (direction === 'LONG') {
     const price = structure.lastSwingLow
     if (price == null) return null
-    const breached = close < price
-    const structureFlip = structure.trend === 'BEARISH'
-    const hardBreach = breached && (structureFlip || close < price * 0.998)
+    const confirm = breakAcceptance(closed, price, direction)
+    const pending =
+      !confirm.accepted &&
+      lastClose < price &&
+      confirm.closesBeyond >= 1
     return {
       price,
-      breached: hardBreach,
-      confidenceAfterBreach: hardBreach ? 15 : 70,
+      breached: confirm.accepted,
+      confidenceAfterBreach: confirm.accepted ? 15 : pending ? 50 : 70,
       timeframe,
       direction,
-      severity: timeframe === '4h' ? 'CRITICAL' : hardBreach ? 'CRITICAL' : 'WARNING',
-      message: hardBreach
-        ? `Сетап сломан: закрытие ${tfLabel} ниже структуры (${price.toFixed(4)}). Закрывай / BE — не жди SL.`
-        : `Inv ${tfLabel}: ${price.toFixed(4)} — закрытие ниже = отмена лонга`,
+      severity: confirm.accepted ? 'CRITICAL' : 'WARNING',
+      message: confirm.accepted
+        ? `Сетап сломан: ${confirm.closesBeyond}/${confirm.bars} закрытий ${tfLabel} ниже структуры (${price.toFixed(4)}). Закрывай / BE.`
+        : pending
+          ? `1 закрытие ${tfLabel} ниже ${price.toFixed(4)} — ждём 2/3, sweep+reclaim не считается.`
+          : `Inv ${tfLabel}: ${price.toFixed(4)} — нужно 2 закрытия ниже (сейчас ${confirm.closesBeyond}/${confirm.bars})`,
     }
   }
 
   const price = structure.lastSwingHigh
   if (price == null) return null
-  const breached = close > price
-  const structureFlip = structure.trend === 'BULLISH'
-  const hardBreach = breached && (structureFlip || close > price * 1.002)
+  const confirm = breakAcceptance(closed, price, direction)
+  const pending =
+    !confirm.accepted &&
+    lastClose > price &&
+    confirm.closesBeyond >= 1
   return {
     price,
-    breached: hardBreach,
-    confidenceAfterBreach: hardBreach ? 15 : 70,
+    breached: confirm.accepted,
+    confidenceAfterBreach: confirm.accepted ? 15 : pending ? 50 : 70,
     timeframe,
     direction,
-    severity: timeframe === '4h' ? 'CRITICAL' : hardBreach ? 'CRITICAL' : 'WARNING',
-    message: hardBreach
-      ? `Сетап сломан: закрытие ${tfLabel} выше структуры (${price.toFixed(4)}). Закрывай / BE — не жди SL.`
-      : `Inv ${tfLabel}: ${price.toFixed(4)} — закрытие выше = отмена шорта`,
+    severity: confirm.accepted ? 'CRITICAL' : 'WARNING',
+    message: confirm.accepted
+      ? `Сетап сломан: ${confirm.closesBeyond}/${confirm.bars} закрытий ${tfLabel} выше структуры (${price.toFixed(4)}). Закрывай / BE.`
+      : pending
+        ? `1 закрытие ${tfLabel} выше ${price.toFixed(4)} — ждём 2/3, sweep+reclaim не считается.`
+        : `Inv ${tfLabel}: ${price.toFixed(4)} — нужно 2 закрытия выше (сейчас ${confirm.closesBeyond}/${confirm.bars})`,
   }
 }
 

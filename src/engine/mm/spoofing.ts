@@ -13,12 +13,35 @@ export interface SpoofAlert {
   ignoreForConfidence: boolean
 }
 
-const SPOOF_MAX_AGE_MS = 2_000
-const APPROACH_PCT = 0.1
-const MIN_WALL_USD = 500_000
+/**
+ * Polling (REST/WS snapshots) has 1–2 s jitter. A 2 s hard cap would miss
+ * most real spoofs and label normal latency as "long-lived". Allow 5 s, but
+ * only near the touch — a far wall disappearing is just a quote change.
+ */
+const SPOOF_MAX_AGE_MS = 5_000
+const APPROACH_PCT = 0.35
+const MIN_WALL_USD = 50_000
+
+export interface SpoofContext {
+  /** Average USD size of the first 10 book levels */
+  avgTop10Usd?: number | null
+  /** 24h quote volume in USD */
+  advUsd?: number | null
+}
+
+function dynamicWallFloorUsd(ctx: SpoofContext = {}): number {
+  const top10 = ctx.avgTop10Usd != null && ctx.avgTop10Usd > 0 ? ctx.avgTop10Usd : 0
+  const advPerMin =
+    ctx.advUsd != null && ctx.advUsd > 0 ? ctx.advUsd / 1440 : 0
+  const candidates = [MIN_WALL_USD]
+  if (top10 > 0) candidates.push(top10 * 5)
+  if (advPerMin > 0) candidates.push(advPerMin * 0.02)
+  // The smallest meaningful anchor wins: alts/metals must not need $500k.
+  return Math.max(MIN_WALL_USD, Math.min(...candidates.filter((n) => n > 0)))
+}
 
 /**
- * Спуфинг: крупная стена появилась и исчезла за ≤2с при подходе цены на 0.1%.
+ * Спуфинг: крупная стена появилась и исчезла при подходе цены.
  * Вызывать когда стена пропала без EATEN (объём не съеден лентой).
  */
 export function detectSpoofFromDisappear(params: {
@@ -27,18 +50,22 @@ export function detectSpoofFromDisappear(params: {
   midPrice: number
   /** Approx USD: price * volume (contracts may need multiplier — best-effort) */
   volumeUsd: number
+  context?: SpoofContext
 }): SpoofAlert | null {
   const lifetimeMs = params.disappearedAt - params.wall.firstSeen
   if (lifetimeMs > SPOOF_MAX_AGE_MS) return null
-  if (params.volumeUsd < MIN_WALL_USD) return null
+
+  const minWallUsd = dynamicWallFloorUsd(params.context)
+  if (params.volumeUsd < minWallUsd) return null
 
   const approachPct =
     (Math.abs(params.midPrice - params.wall.price) / params.midPrice) * 100
-  if (approachPct > APPROACH_PCT * 3) return null // too far — not approach spoof
+  // Far walls are allowed to be repriced; only touch/near-touch disappearance
+  // is information about intent.
+  if (approachPct > APPROACH_PCT * 3) return null
 
-  const nearApproach = approachPct <= APPROACH_PCT * 2
-
-  if (!nearApproach && lifetimeMs > SPOOF_MAX_AGE_MS) return null
+  const nearApproach = approachPct <= APPROACH_PCT
+  if (!nearApproach && lifetimeMs > 2_500) return null
 
   return {
     detected: true,
@@ -48,7 +75,7 @@ export function detectSpoofFromDisappear(params: {
     lifetimeMs,
     approachPct,
     emoji: '👻',
-    label: `SPOOFING: ${params.wall.side} wall $${(params.volumeUsd / 1000).toFixed(0)}k исчезла за ${(lifetimeMs / 1000).toFixed(1)}с`,
+    label: `SPOOFING: ${params.wall.side} wall $${(params.volumeUsd / 1000).toFixed(0)}k исчезла за ${(lifetimeMs / 1000).toFixed(1)}с (порог $${(minWallUsd / 1000).toFixed(0)}k)`,
     ignoreForConfidence: true,
   }
 }
@@ -72,7 +99,9 @@ export function detectFleeingWall(params: {
 }
 
 /**
- * Реальная стена ММ: живёт долго И объём снижается (absorption), не исчезает целиком.
+ * Реальная стена ММ: живёт долго И объём снижается (absorption), не исчезает
+ * целиком. There is no upper bound: eating 80% and still holding is peak
+ * absorption, not a fake wall.
  */
 export function isRealMmWall(wall: TrackedWall, now = Date.now()): boolean {
   const age = now - wall.firstSeen
@@ -81,12 +110,13 @@ export function isRealMmWall(wall: TrackedWall, now = Date.now()): boolean {
     wall.initialVolume > 0
       ? (wall.initialVolume - wall.currentVolume) / wall.initialVolume
       : 0
-  return wall.isActive && eaten > 0.05 && eaten < 0.7
+  return wall.isActive && wall.currentVolume > 0 && eaten > 0.05
 }
 
 export function spoofEventsFromWallUpdate(
   newEvents: WallEvent[],
-  midPrice: number | null
+  midPrice: number | null,
+  context: SpoofContext = {}
 ): SpoofAlert[] {
   if (midPrice == null || midPrice <= 0) return []
   const alerts: SpoofAlert[] = []
@@ -99,6 +129,7 @@ export function spoofEventsFromWallUpdate(
       disappearedAt: ev.timestamp,
       midPrice,
       volumeUsd,
+      context,
     })
     if (alert) alerts.push(alert)
   }

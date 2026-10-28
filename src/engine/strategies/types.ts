@@ -4,6 +4,24 @@ import type { CoinSignal } from '../types'
 /** Горизонт сделки: скальп / интрадей / свинг */
 export type TradeStyle = 'SCALP' | 'INTRADAY' | 'SWING'
 
+export type StyleLevelsReject =
+  | 'RISK_EXCEEDED'
+  | 'RR_TOO_LOW'
+  | 'INVALID_STRUCTURE'
+
+/** Structural SL/TP result shared by built-in style profiles. */
+export interface StructuralStyleLevels {
+  sl: number
+  tp1: number
+  tp2: number
+  tpDaily: number | null
+  riskPct: number
+  rr: number
+  ok: boolean
+  rejectReason?: StyleLevelsReject
+  notes: string[]
+}
+
 export interface StyleRiskModel {
   /** Макс. допустимый стоп в % от цены */
   maxStopPct: number

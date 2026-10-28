@@ -101,8 +101,6 @@ export const VANE_RISK_KEY = 'vane:portfolio_risk_v1'
 export const MIN_VANE_SCORE = 48
 export const TIER1_SCORE = 72
 export const MIN_RR = 1.2
-export const TP_MIN_PCT = 0.75
-export const TP_MAX_PCT = 1.8
 /** Wall must live across ~1–2 cron ticks (was 12s — almost never true) */
 export const WALL_PERSIST_MS = 5_000
 export const RETEST_TTL_BARS_5M = 14

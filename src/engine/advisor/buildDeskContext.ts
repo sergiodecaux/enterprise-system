@@ -270,7 +270,7 @@ export function buildFlowContext(d: AdvisorDeskInput, now: number): AdvisorFlow 
         ...d.spoofs.filter((s) => s.detected && fresh(s)).map((s) => `spoof ${s.side} ${px(s.price)} ${s.label}`),
         ...d.icebergs
           .filter((s) => s.detected && fresh(s))
-          .map((s) => `iceberg ${s.side} ${px(s.price)} bounce ${Math.round(s.bounceProbPct)}%`),
+          .map((s) => `iceberg ${s.side} ${px(s.price)} ${s.status ?? '—'} ${Math.round(s.confidencePct)}%`),
       ],
       3,
       80

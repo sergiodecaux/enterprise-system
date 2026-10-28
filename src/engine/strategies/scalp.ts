@@ -1,4 +1,4 @@
-import type { StyleProfile } from './types'
+import type { StructuralStyleLevels, StyleProfile } from './types'
 
 export const SCALP_PROFILE: StyleProfile = {
   style: 'SCALP',
@@ -78,7 +78,8 @@ export function calculateScalpConfidence(input: {
 }
 
 /**
- * Риск-модель скальпа: микро-стоп за свип, короткий TP до ближайшего имбаланса.
+ * Риск-модель скальпа: стоп за свип ± ATR-буфер, без клампа в 0.08–0.8%.
+ * Слишком широкий структурный стоп отклоняет сетап.
  */
 export function buildScalpLevels(
   side: 'LONG' | 'SHORT',
@@ -86,36 +87,106 @@ export function buildScalpLevels(
   sweepLevel: number | null,
   nearestImbalance: number | null,
   atr: number
-): { sl: number; tp1: number; tp2: number } {
-  const microAtr = atr * 0.35
-  const { maxStopPct, minStopPct, tp1RMultiple, tp2RMultiple } = SCALP_PROFILE.risk
-
-  let sl: number
-  if (side === 'LONG') {
-    const sweepSl = sweepLevel != null ? sweepLevel * 0.9985 : entry - microAtr
-    sl = Math.min(sweepSl, entry * (1 - minStopPct / 100))
-    const maxSl = entry * (1 - maxStopPct / 100)
-    if (sl < maxSl) sl = maxSl
-  } else {
-    const sweepSl = sweepLevel != null ? sweepLevel * 1.0015 : entry + microAtr
-    sl = Math.max(sweepSl, entry * (1 + minStopPct / 100))
-    const maxSl = entry * (1 + maxStopPct / 100)
-    if (sl > maxSl) sl = maxSl
-  }
-
-  const risk = Math.abs(entry - sl)
-  let tp1 =
-    side === 'LONG' ? entry + risk * tp1RMultiple : entry - risk * tp1RMultiple
-  let tp2 =
-    side === 'LONG' ? entry + risk * tp2RMultiple : entry - risk * tp2RMultiple
-
-  if (nearestImbalance != null) {
-    if (side === 'LONG' && nearestImbalance > entry) {
-      tp1 = Math.min(tp1, nearestImbalance)
-    } else if (side === 'SHORT' && nearestImbalance < entry) {
-      tp1 = Math.max(tp1, nearestImbalance)
+): StructuralStyleLevels {
+  const { maxStopPct, tp1RMultiple, tp2RMultiple } = SCALP_PROFILE.risk
+  const notes: string[] = []
+  if (!(entry > 0) || !(atr > 0)) {
+    return {
+      sl: 0,
+      tp1: 0,
+      tp2: 0,
+      tpDaily: null,
+      riskPct: 0,
+      rr: 0,
+      ok: false,
+      rejectReason: 'INVALID_STRUCTURE',
+      notes: ['ENTRY/ATR invalid'],
     }
   }
 
-  return { sl, tp1, tp2 }
+  const microAtr = atr * 0.35
+  const hasSweep =
+    sweepLevel != null && Number.isFinite(sweepLevel) && sweepLevel > 0
+  const sl = hasSweep
+    ? side === 'LONG'
+      ? sweepLevel * 0.9985
+      : sweepLevel * 1.0015
+    : side === 'LONG'
+      ? entry - microAtr
+      : entry + microAtr
+
+  if (side === 'LONG' ? sl >= entry : sl <= entry) {
+    return {
+      sl,
+      tp1: 0,
+      tp2: 0,
+      tpDaily: null,
+      riskPct: 0,
+      rr: 0,
+      ok: false,
+      rejectReason: 'INVALID_STRUCTURE',
+      notes: ['Цена уже за свипом'],
+    }
+  }
+
+  const risk = Math.abs(entry - sl)
+  const riskPct = (risk / entry) * 100
+  notes.push(
+    hasSweep
+      ? `SL: свип + буфер (${riskPct.toFixed(2)}%)`
+      : `SL: ATR fallback (${riskPct.toFixed(2)}%)`
+  )
+
+  if (riskPct > maxStopPct) {
+    return {
+      sl,
+      tp1: 0,
+      tp2: 0,
+      tpDaily: null,
+      riskPct,
+      rr: 0,
+      ok: false,
+      rejectReason: 'RISK_EXCEEDED',
+      notes: [...notes, `RISK ${riskPct.toFixed(2)}% > ${maxStopPct}%`],
+    }
+  }
+
+  const realTarget =
+    nearestImbalance != null &&
+    Number.isFinite(nearestImbalance) &&
+    (side === 'LONG' ? nearestImbalance > entry : nearestImbalance < entry)
+      ? nearestImbalance
+      : null
+  const tp1 =
+    realTarget ??
+    (side === 'LONG'
+      ? entry + risk * tp1RMultiple
+      : entry - risk * tp1RMultiple)
+  const tp2ByR =
+    side === 'LONG'
+      ? entry + risk * tp2RMultiple
+      : entry - risk * tp2RMultiple
+  const tp2 =
+    side === 'LONG'
+      ? Math.max(tp2ByR, tp1 + risk * 0.25)
+      : Math.min(tp2ByR, tp1 - risk * 0.25)
+
+  const tpPct = (Math.abs(tp1 - entry) / entry) * 100
+  const rr = riskPct > 0 ? tpPct / riskPct : 0
+  const ok = rr >= SCALP_PROFILE.minRiskReward
+  notes.push(
+    `${realTarget != null ? 'TP1: имбаланс' : 'TP1: R-model'} · ${rr.toFixed(2)}R`
+  )
+
+  return {
+    sl,
+    tp1,
+    tp2,
+    tpDaily: null,
+    riskPct,
+    rr,
+    ok,
+    rejectReason: ok ? undefined : 'RR_TOO_LOW',
+    notes,
+  }
 }

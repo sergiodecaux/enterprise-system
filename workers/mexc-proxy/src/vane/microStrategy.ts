@@ -2,7 +2,7 @@
  * VANE MICRO — high-WR micro-scalp for large notional / small % moves.
  *
  * Thesis (MEXC maker ≈ free):
- *   TP 0.45–0.70% · SL ≤0.45% · need WR ≥65% to compound safely.
+ *   Structural SL behind the sweep; rejected if it exceeds the 3.5% budget.
  *
  * Edge sources (journal + causality):
  *   1. WITH HTF only — never counter / flip for MICRO
@@ -19,10 +19,6 @@ export const MICRO_MIN_SCORE = 58
 export const MICRO_MIN_RR = 1.15
 /** Equity risk per MICRO trade — size comes from this, not from “big depo feeling” */
 export const MICRO_RISK_PCT = 0.35
-export const MICRO_TP_MIN_PCT = 0.45
-export const MICRO_TP_MAX_PCT = 0.7
-export const MICRO_SL_MIN_PCT = 0.32
-export const MICRO_SL_MAX_PCT = 0.45
 export const MICRO_TP1_PCT = 0.4
 /** Impulse band: started, not exhausted */
 export const MICRO_IMPULSE_MIN = 0.35
