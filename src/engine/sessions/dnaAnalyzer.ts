@@ -177,7 +177,7 @@ function resolvePersonality(
     return {
       personality: 'FAKEOUT_KING',
       label: 'Король ложных пробоев',
-      icon: '🎭',
+      icon: '',
       insight: `Лондон делает ложный вынос в ${london.fakeoutPct.toFixed(0)}% дней — входить после закрытия лондонской свечи`,
     }
   }
@@ -187,7 +187,7 @@ function resolvePersonality(
     return {
       personality: 'LONDON_BREAKER',
       label: 'Лондонский пробойщик',
-      icon: '💥',
+      icon: '',
       insight: `Лондон сносит уровни Азии в ${(
         (london.breaksPrevHighPct + london.breaksPrevLowPct) / 2
       ).toFixed(0)}% случаев`,
@@ -201,7 +201,7 @@ function resolvePersonality(
       return {
         personality: 'NY_REVERSAL',
         label: 'Разворот NY',
-        icon: '🔄',
+        icon: '',
         insight: `Нью-Йорк разворачивает движение Лондона в ${ny.fakeoutPct.toFixed(0)}% случаев — не держать позицию через открытие NY`,
       }
     }
@@ -217,7 +217,7 @@ function resolvePersonality(
       return {
         personality: 'TREND_FOLLOWER',
         label: 'Следование тренду',
-        icon: '📈',
+        icon: '',
         insight:
           'Лондон и NY движутся в одном направлении в большинстве дней — сильные трендовые дни',
       }
@@ -231,7 +231,7 @@ function resolvePersonality(
       return {
         personality: 'OVERLAP_BEAST',
         label: 'Зверь пересечения',
-        icon: '⚡',
+        icon: '',
         insight: `Пересечение Лондон+NY даёт самый большой диапазон (${overlap.avgRangePct.toFixed(2)}%) — торговать именно это время`,
       }
     }
@@ -242,7 +242,7 @@ function resolvePersonality(
     return {
       personality: 'ASIA_RANGER',
       label: 'Азиатский рейнджер',
-      icon: '🌙',
+      icon: '',
       insight: `Азия торгует в диапазоне ${asia.avgRangePct.toFixed(2)}% — ожидать движение на Лондоне`,
     }
   }
@@ -252,7 +252,7 @@ function resolvePersonality(
     return {
       personality: 'STEADY_MOVER',
       label: 'Стабильный ход',
-      icon: '⚖️',
+      icon: '',
       insight: 'Равномерная активность по всем сессиям — нет явного сессионного преимущества',
     }
   }
@@ -260,7 +260,7 @@ function resolvePersonality(
   return {
     personality: 'UNKNOWN',
     label: 'Анализируется',
-    icon: '🔍',
+    icon: '',
     insight: 'Недостаточно данных для определения характера монеты',
   }
 }
@@ -280,7 +280,7 @@ export function analyzeSessionDNA(candles: OhlcvCandle[], symbol: string): Sessi
     sessions: [],
     personality: 'UNKNOWN',
     personalityLabel: 'Анализируется',
-    personalityIcon: '🔍',
+    personalityIcon: '',
     dominantSession: null,
     keyInsight: 'Недостаточно данных',
     candlesAnalyzed: candles.length,

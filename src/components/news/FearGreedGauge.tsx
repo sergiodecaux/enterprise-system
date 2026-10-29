@@ -67,10 +67,10 @@ const FearGreedGauge = ({ data }: Props) => {
     <div className="flex items-center gap-3 rounded-lg bg-hull-light/20 px-3 py-2">
       <canvas ref={canvasRef} className="flex-shrink-0" />
       <div>
-        <div className="font-mono text-[10px] uppercase text-holo/50">
+        <div className="font-mono text-[11px] uppercase text-holo/50">
           Fear & Greed
         </div>
-        <div className="font-mono text-[9px] text-holo/35">индекс alternative.me</div>
+        <div className="font-mono text-[11px] text-holo/35">индекс alternative.me</div>
         <div
           className="font-mono text-xs font-bold"
           style={{ color: config.color }}
@@ -79,7 +79,7 @@ const FearGreedGauge = ({ data }: Props) => {
         </div>
         {delta !== 0 && (
           <div
-            className={`font-mono text-[10px] ${
+            className={`font-mono text-[11px] ${
               delta > 0 ? 'text-matrix' : 'text-alert'
             }`}
           >

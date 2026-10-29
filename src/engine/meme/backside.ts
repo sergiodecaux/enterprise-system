@@ -140,10 +140,10 @@ export function detectBacksideShort(
       lowerHigh: true,
       trendlineBroken: true,
       scoreBoost: boost,
-      emoji: '🎯',
+      emoji: '',
       label: 'SCALP SHORT (The Backside) — хребет тренда сломан',
       alert:
-        '🎯 BACKSIDE SHORT: ММ ушёл, bids сняты. Падение под гравитацией. Элитный шорт.',
+        'BACKSIDE SHORT: ММ ушёл, bids сняты. Падение под гравитацией. Элитный шорт.',
     }
   }
 

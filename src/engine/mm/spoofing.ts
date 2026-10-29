@@ -74,7 +74,7 @@ export function detectSpoofFromDisappear(params: {
     volumeUsdApprox: params.volumeUsd,
     lifetimeMs,
     approachPct,
-    emoji: '👻',
+    emoji: '',
     label: `SPOOFING: ${params.wall.side} wall $${(params.volumeUsd / 1000).toFixed(0)}k исчезла за ${(lifetimeMs / 1000).toFixed(1)}с (порог $${(minWallUsd / 1000).toFixed(0)}k)`,
     ignoreForConfidence: true,
   }

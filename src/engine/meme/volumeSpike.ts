@@ -65,10 +65,10 @@ export function detectVolumeDeltaSpike(
 
   if (volumeMultiplier >= 5) {
     quality = 'CRITICAL'
-    emoji = '🔥'
+    emoji = ''
   } else if (volumeMultiplier >= 3) {
     quality = 'STRONG'
-    emoji = '⚡'
+    emoji = ''
   }
 
   const direction = priceChangePct > 0 ? 'вверх' : 'вниз'

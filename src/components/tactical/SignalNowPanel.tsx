@@ -103,10 +103,10 @@ const SignalNowPanel = ({
   return (
     <div className="space-y-2 rounded-xl border border-amber-400/35 bg-amber-500/[0.06] p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-200/90">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-200/90">
           Сигнал сейчас
         </div>
-        <div className="max-w-[55%] truncate text-right font-mono text-[9px] text-holo/40">
+        <div className="max-w-[55%] truncate text-right font-mono text-[11px] text-holo/40">
           {phaseLabel}
         </div>
       </div>
@@ -117,14 +117,14 @@ const SignalNowPanel = ({
           {liveMarket && (
             <div>
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[8px] font-bold uppercase tracking-wide text-sky-300/80">
+                <span className="font-mono text-[11px] font-bold uppercase tracking-wide text-sky-300/80">
                   1 · Что происходит
                 </span>
-                <span className="font-mono text-[8px] uppercase text-sky-300/55">
+                <span className="font-mono text-[11px] uppercase text-sky-300/55">
                   {reactionTag(liveMarket.reaction)}
                 </span>
               </div>
-              <p className="mt-0.5 font-mono text-[10px] leading-snug text-holo/75">
+              <p className="mt-0.5 font-mono text-[11px] leading-snug text-holo/75">
                 {liveMarket.whatNow}
               </p>
             </div>
@@ -139,11 +139,11 @@ const SignalNowPanel = ({
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[8px] font-bold uppercase tracking-wide text-cyan-200/85">
+                <span className="font-mono text-[11px] font-bold uppercase tracking-wide text-cyan-200/85">
                   2 · Предел процесса
                 </span>
               </div>
-              <p className="mt-0.5 font-mono text-[10px] leading-snug text-holo/75">
+              <p className="mt-0.5 font-mono text-[11px] leading-snug text-holo/75">
                 {seqLive.title}
                 {!seqLive.allowedInRegime ? ' · regime off' : ''}
               </p>
@@ -153,10 +153,10 @@ const SignalNowPanel = ({
           <div>
             <div className="flex items-start justify-between gap-2">
               <div>
-                <span className="font-mono text-[8px] font-bold uppercase tracking-wide text-amber-200/70">
+                <span className="font-mono text-[11px] font-bold uppercase tracking-wide text-amber-200/70">
                   {seqLive ? '3' : '2'} · Что делать
                 </span>
-                <div className="mt-0.5 font-mono text-[9px] uppercase text-amber-200/55">
+                <div className="mt-0.5 font-mono text-[11px] uppercase text-amber-200/55">
                   {kindTag(primary.kind)}
                 </div>
                 <div
@@ -167,20 +167,20 @@ const SignalNowPanel = ({
                 </div>
               </div>
             </div>
-            <p className="mt-1 font-mono text-[10px] leading-snug text-holo/60">
+            <p className="mt-1 font-mono text-[11px] leading-snug text-holo/60">
               {primary.summary}
             </p>
             {primary.steps.length > 0 && (
               <ul className="mt-1 space-y-0.5">
                 {primary.steps.slice(0, 3).map((s) => (
-                  <li key={s} className="font-mono text-[9px] text-holo/45">
+                  <li key={s} className="font-mono text-[11px] text-holo/45">
                     · {s}
                   </li>
                 ))}
               </ul>
             )}
             {primary.invalidation && (
-              <p className="mt-1 font-mono text-[9px] text-alert/70">
+              <p className="mt-1 font-mono text-[11px] text-alert/70">
                 Инвалидация: {primary.invalidation}
               </p>
             )}
@@ -193,7 +193,7 @@ const SignalNowPanel = ({
                     onSelectSetup(bestSetup)
                     onSelectScenario(primary)
                   }}
-                  className="rounded border border-amber-400/40 bg-amber-500/10 px-2 py-1 font-mono text-[9px] font-bold uppercase text-amber-100"
+                  className="rounded border border-amber-400/40 bg-amber-500/10 px-2 py-1 font-mono text-[11px] font-bold uppercase text-amber-100"
                 >
                   На график
                 </button>
@@ -201,7 +201,7 @@ const SignalNowPanel = ({
                   type="button"
                   disabled={busy || watchingIds.has(bestSetup.id)}
                   onClick={() => onWatchSetup(bestSetup)}
-                  className="rounded border border-matrix/40 bg-matrix/10 px-2 py-1 font-mono text-[9px] font-bold uppercase text-matrix"
+                  className="rounded border border-matrix/40 bg-matrix/10 px-2 py-1 font-mono text-[11px] font-bold uppercase text-matrix"
                 >
                   {watchingIds.has(bestSetup.id) ? 'В слежении' : 'В бот'}
                 </button>
@@ -213,7 +213,7 @@ const SignalNowPanel = ({
 
       {liveMarket?.nearestBounce && (
         <div className="rounded-lg border border-sky-400/25 bg-sky-500/[0.05] p-2">
-          <div className="font-mono text-[9px] font-bold uppercase text-sky-200/80">
+          <div className="font-mono text-[11px] font-bold uppercase text-sky-200/80">
             Ближайший отскок → D1 / W
           </div>
           <div
@@ -228,7 +228,7 @@ const SignalNowPanel = ({
               {liveMarket.nearestBounce.targets.map((t) => (
                 <span
                   key={`${t.tf}-${t.price}`}
-                  className="rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[8px] text-sky-100/80"
+                  className="rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-[11px] text-sky-100/80"
                 >
                   {t.tf} {t.side === 'ABOVE' ? '↑' : '↓'} {fmtPx(t.price)}
                 </span>
@@ -240,15 +240,15 @@ const SignalNowPanel = ({
 
       {/* Drive / SMC */}
       <div className="rounded-lg border border-hull-border/50 bg-black/20 p-2">
-        <div className="font-mono text-[9px] font-bold uppercase text-holo/50">
+        <div className="font-mono text-[11px] font-bold uppercase text-holo/50">
           Как гонят цену · Smart Money
         </div>
-        <p className="mt-1 font-mono text-[10px] leading-snug text-holo/65">
+        <p className="mt-1 font-mono text-[11px] leading-snug text-holo/65">
           {driveNarrative}
         </p>
         {globalView && (
           <p
-            className={`mt-1 font-mono text-[9px] ${sideColor(
+            className={`mt-1 font-mono text-[11px] ${sideColor(
               globalView.bias === 'BULLISH'
                 ? 'LONG'
                 : globalView.bias === 'BEARISH'
@@ -263,7 +263,7 @@ const SignalNowPanel = ({
         {smcLines.length > 0 && (
           <ul className="mt-1 space-y-0.5">
             {smcLines.slice(0, 5).map((l) => (
-              <li key={l} className="font-mono text-[9px] text-holo/40">
+              <li key={l} className="font-mono text-[11px] text-holo/40">
                 · {l}
               </li>
             ))}
@@ -274,7 +274,7 @@ const SignalNowPanel = ({
       {/* Alternatives */}
       {scenarios.length > 1 && (
         <div>
-          <div className="mb-1 font-mono text-[9px] font-bold uppercase text-holo/45">
+          <div className="mb-1 font-mono text-[11px] font-bold uppercase text-holo/45">
             Варианты развития
           </div>
           <div className="max-h-52 space-y-1.5 overflow-y-auto overscroll-contain">
@@ -300,15 +300,15 @@ const SignalNowPanel = ({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[9px] text-holo/40">
+                    <span className="font-mono text-[11px] text-holo/40">
                       {kindTag(sc.kind)}
                     </span>
                   </div>
-                  <div className={`font-mono text-[10px] font-bold ${sideColor(sc.side)}`}>
+                  <div className={`font-mono text-[11px] font-bold ${sideColor(sc.side)}`}>
                     {sc.side !== 'FLAT' ? `${sc.side} · ` : ''}
                     {sc.title}
                   </div>
-                  <p className="mt-0.5 line-clamp-2 font-mono text-[9px] text-holo/45">
+                  <p className="mt-0.5 line-clamp-2 font-mono text-[11px] text-holo/45">
                     {sc.summary}
                   </p>
                 </button>

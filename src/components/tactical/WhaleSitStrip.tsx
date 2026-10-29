@@ -23,7 +23,7 @@ const WhaleSitStrip = ({ sit }: Props) => {
 
   return (
     <div
-      className="flex min-w-0 items-center gap-2 overflow-hidden rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] px-2 py-1 font-mono text-[10px] leading-tight"
+      className="flex min-w-0 items-center gap-2 overflow-hidden rounded-md border border-cyan-400/20 bg-cyan-500/[0.06] px-2 py-1 font-mono text-[11px] leading-tight"
       title={sit.huntLine}
     >
       <span className="shrink-0 font-bold uppercase tracking-wider text-cyan-200/85">

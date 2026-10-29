@@ -50,7 +50,7 @@ const MemePulseView = () => {
             <h1 className="font-mono text-2xl font-bold uppercase tracking-tight text-holo">
               Meme Radar
             </h1>
-            <span className="font-mono text-[10px] uppercase text-alert/60">
+            <span className="font-mono text-[11px] uppercase text-alert/60">
               Rocket intercept
             </span>
           </div>
@@ -72,7 +72,7 @@ const MemePulseView = () => {
 
         {memeUniverse && (
           <div className="mb-3 rounded-lg border border-hull-border bg-hull/60 px-3 py-2">
-            <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-holo/50">
+            <div className="mb-1 flex items-center justify-between font-mono text-[11px] text-holo/50">
               <span>
                 Вселенная MEXC: {memeUniverse.memeCount} мемов
                 {memeUniverse.totalTickers > 0
@@ -90,7 +90,7 @@ const MemePulseView = () => {
                 style={{ width: `${coveragePct}%` }}
               />
             </div>
-            <p className="mt-1 font-mono text-[9px] text-holo/35">
+            <p className="mt-1 font-mono text-[11px] text-holo/35">
               Round-robin ×{memeUniverse.batchSize}/цикл · оборот #
               {memeUniverse.rotation} · радар топ-{memeSignals.length}
             </p>
@@ -137,7 +137,7 @@ const MemePulseView = () => {
               key={f.id}
               type="button"
               onClick={() => setFilter(f.id)}
-              className={`flex flex-col items-center justify-center rounded-lg px-1 py-2 font-mono text-[10px] font-bold uppercase transition-all ${
+              className={`flex flex-col items-center justify-center rounded-lg px-1 py-2 font-mono text-[11px] font-bold uppercase transition-all ${
                 filter === f.id
                   ? 'border border-alert/60 bg-alert/20 text-alert shadow-[0_0_10px_rgba(255,0,60,0.25)]'
                   : 'border border-hull-border bg-hull/80 text-holo/40 hover:border-orange-500/30 hover:text-orange-300'
@@ -154,7 +154,10 @@ const MemePulseView = () => {
       <div className="flex-1 px-4 pt-4">
         {filteredSignals.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12">
-            <span className="mb-3 text-5xl opacity-30">🚀</span>
+            <Rocket
+              className="mb-3 h-9 w-9 text-text-muted/40"
+              strokeWidth={1.4}
+            />
             <p className="mb-1 font-mono text-sm font-bold text-holo/60">
               Нет ракет на радаре
             </p>
@@ -185,8 +188,8 @@ const MemePulseView = () => {
               </span>
             </div>
             <p className="font-mono text-xs leading-relaxed text-holo/60">
-              🚀 Squeeze / Ignition = long с ММ. 🎯 Backside = short после слома.
-              ☠️ Toxic / Bid Void = руки прочь. Shadow trailing вместо тупого TP.
+              Squeeze / Ignition = long с ММ. Backside = short после слома.
+              Toxic / Bid Void = руки прочь. Shadow trailing вместо тупого TP.
               Счёт идёт на секунды.
             </p>
           </div>

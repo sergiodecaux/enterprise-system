@@ -81,13 +81,13 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
           className="h-1.5 w-1.5 shrink-0 rounded-full"
           style={{ background: accent }}
         />
-        <span className="truncate font-mono text-[10px] font-semibold text-[#d1d4dc]">
+        <span className="truncate font-mono text-[11px] font-semibold text-[#d1d4dc]">
           {brief.zoneLabel}
         </span>
-        <span className="rounded-sm bg-white/[0.06] px-1 py-px font-mono text-[9px] uppercase tracking-wide text-[#b2b5be]">
+        <span className="rounded-sm bg-white/[0.06] px-1 py-px font-mono text-[11px] uppercase tracking-wide text-[#b2b5be]">
           {brief.strength > 0 ? `${Math.round(brief.strength)}/12` : '—'}
         </span>
-        <span className="ml-auto shrink-0 font-mono text-[9px] text-[#5d6675]">
+        <span className="ml-auto shrink-0 font-mono text-[11px] text-[#5d6675]">
           {brief.timeframe}
         </span>
         <button
@@ -113,7 +113,7 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
               key={t.id}
               type="button"
               onClick={() => onMode(t.id)}
-              className={`flex items-center justify-between rounded-sm border px-1.5 py-1 font-mono text-[10px] transition-colors ${
+              className={`flex items-center justify-between rounded-sm border px-1.5 py-1 font-mono text-[11px] transition-colors ${
                 on
                   ? 'border-[#2a2e39] bg-white/[0.08] text-[#d1d4dc]'
                   : 'border-transparent bg-white/[0.02] text-[#787b86] hover:bg-white/[0.05]'
@@ -130,17 +130,17 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
       <div className="px-2.5 pb-2 pt-2">
         <div className="flex items-center gap-1.5">
           <span
-            className="font-mono text-[10px] font-bold uppercase tracking-wide"
+            className="font-mono text-[11px] font-bold uppercase tracking-wide"
             style={{ color: accent }}
           >
             {up ? 'лонг' : 'шорт'}
           </span>
-          <span className="truncate font-mono text-[9px] text-[#787b86]">
+          <span className="truncate font-mono text-[11px] text-[#787b86]">
             {leg.targetLabel}
           </span>
         </div>
 
-        <p className="mt-1 font-mono text-[9.5px] leading-[1.35] text-[#b2b5be]">
+        <p className="mt-1 font-mono text-[11px] leading-[1.35] text-[#b2b5be]">
           {mode === 'hold'
             ? up
               ? 'ЕСЛИ покупатель удержит зону и вернёт цену выше — вероятен ретест; при слабом импульсе цена может не дойти до цели.'
@@ -150,9 +150,9 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
               : 'ЕСЛИ свеча закроется ниже зоны и ретест снизу не вернёт цену — сценарий продолжения вниз.'}
         </p>
         <div className="mt-2 rounded border border-white/[0.06] bg-black/20 px-2 py-1.5">
-          <div className="mb-1 font-mono text-[8px] uppercase tracking-wider text-[#687386]">Что отменит сценарий</div>
-          <div className="font-mono text-[9px] leading-relaxed text-[#b2b5be]">{leg.invalidationHint}</div>
-          <div className="mt-1 font-mono text-[9px] leading-relaxed text-[#b2b5be]">ЕСЛИ импульс ослабевает до цели — возможен откат к ближайшей встречной зоне.</div>
+          <div className="mb-1 font-mono text-[11px] uppercase tracking-wider text-[#687386]">Что отменит сценарий</div>
+          <div className="font-mono text-[11px] leading-relaxed text-[#b2b5be]">{leg.invalidationHint}</div>
+          <div className="mt-1 font-mono text-[11px] leading-relaxed text-[#b2b5be]">ЕСЛИ импульс ослабевает до цели — возможен откат к ближайшей встречной зоне.</div>
         </div>
 
         <div className="mt-2 grid grid-cols-3 gap-1">
@@ -171,7 +171,7 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
           <Cell label="цель" value={px(leg.targetPrice)} tone={accent} />
         </div>
 
-        <div className="mt-1.5 flex items-center justify-between font-mono text-[9px] text-[#787b86]">
+        <div className="mt-1.5 flex items-center justify-between font-mono text-[11px] text-[#787b86]">
           <span>
             R:R{' '}
             <span className="text-[#b2b5be]">
@@ -207,10 +207,10 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
       {brief.notes.length > 0 && (
         <div className="border-t border-[#2a2e39] px-2.5 py-1.5">
           <div className="mb-1 flex items-center justify-between">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-[#5d6675]">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-[#5d6675]">
               Контекст зоны
             </span>
-            <span className="font-mono text-[9px] text-[#787b86]">
+            <span className="font-mono text-[11px] text-[#787b86]">
               совпадений {brief.confluence}/5
             </span>
           </div>
@@ -220,11 +220,11 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
                 <span
                   className={`h-1 w-1 shrink-0 rounded-full ${TONE_DOT[n.tone]}`}
                 />
-                <span className="shrink-0 font-mono text-[9px] text-[#787b86]">
+                <span className="shrink-0 font-mono text-[11px] text-[#787b86]">
                   {n.label}
                 </span>
                 <span
-                  className={`ml-auto truncate pl-1 text-right font-mono text-[9.5px] ${TONE_TEXT[n.tone]}`}
+                  className={`ml-auto truncate pl-1 text-right font-mono text-[11px] ${TONE_TEXT[n.tone]}`}
                   title={n.value}
                 >
                   {n.value}
@@ -235,7 +235,7 @@ const ZoneAdvisorCard = ({ brief, mode, left, top, mobile = false, onMode, onClo
         </div>
       )}
 
-      <div className="border-t border-[#2a2e39] px-2.5 py-1 font-mono text-[8.5px] text-[#5d6675]">
+      <div className="border-t border-[#2a2e39] px-2.5 py-1 font-mono text-[11px] text-[#5d6675]">
         зона {px(brief.zoneBottom)} – {px(brief.zoneTop)} · клик по графику закрывает
       </div>
     </div>
@@ -253,10 +253,10 @@ function Cell({
 }) {
   return (
     <div className="rounded-sm bg-white/[0.03] px-1 py-1">
-      <div className="font-mono text-[8.5px] uppercase tracking-wide text-[#5d6675]">
+      <div className="font-mono text-[11px] uppercase tracking-wide text-[#5d6675]">
         {label}
       </div>
-      <div className="truncate font-mono text-[10px] font-semibold" style={{ color: tone }}>
+      <div className="truncate font-mono text-[11px] font-semibold" style={{ color: tone }}>
         {value}
       </div>
     </div>

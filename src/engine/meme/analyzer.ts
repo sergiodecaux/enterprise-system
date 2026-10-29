@@ -171,32 +171,32 @@ export function analyzeMemeMarketData(
   let criticalAlert: string | null = null
 
   if (squeeze.inProgress) {
-    setupTag = '🚀 SHORT SQUEEZE'
+    setupTag = 'SHORT SQUEEZE'
     criticalAlert = squeeze.alert
     quality = 'CRITICAL'
     recommendation = 'QUICK_ENTRY'
   } else if (squeeze.setup) {
-    setupTag = '🚀 SQUEEZE SETUP'
+    setupTag = 'SQUEEZE SETUP'
     criticalAlert = squeeze.alert
   } else if (flatline.detected && flatline.scoreBoost >= 40) {
-    setupTag = '🔥 IGNITION'
+    setupTag = 'IGNITION'
     criticalAlert = flatline.alert
     quality = 'CRITICAL'
     recommendation = 'QUICK_ENTRY'
   } else if (backside.detected) {
-    setupTag = '🎯 BACKSIDE SHORT'
+    setupTag = 'BACKSIDE SHORT'
     criticalAlert = backside.alert
     quality = 'CRITICAL'
     recommendation = 'QUICK_ENTRY'
   } else if (cvdTrap.detected) {
-    setupTag = '🎯 CVD TRAP LONG'
+    setupTag = 'CVD TRAP LONG'
     criticalAlert = cvdTrap.alert
   } else if (absorptionAlert.detected && absorptionAlert.type === 'DISTRIBUTION') {
-    setupTag = '🛑 ABSORPTION'
+    setupTag = 'ABSORPTION'
     criticalAlert = absorptionAlert.alert
     recommendation = 'WAIT'
   } else if (toxic.detected) {
-    setupTag = '☠️ TOXIC'
+    setupTag = 'TOXIC'
     criticalAlert = toxic.label
     recommendation = 'WAIT'
   } else if (lifecycle.phase !== 'UNKNOWN') {

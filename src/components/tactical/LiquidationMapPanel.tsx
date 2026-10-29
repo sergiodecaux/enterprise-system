@@ -36,12 +36,12 @@ const LiquidationMapPanel = ({ model }: Props) => {
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/80">
           Карта ликвидаций
         </span>
-        <span className="ml-auto font-mono text-[10px] text-holo/35">оценка</span>
+        <span className="ml-auto font-mono text-[11px] text-holo/35">оценка</span>
       </div>
 
       <p className="mb-2 font-mono text-[11px] leading-snug text-holo/55">{model.label}</p>
 
-      <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase">
+      <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase">
         <span className="text-orange-300">шорты ↑</span>
         <span className="text-holo/30">liq</span>
         <span className="text-cyan-300">лонг ↓</span>
@@ -82,7 +82,7 @@ const LiquidationMapPanel = ({ model }: Props) => {
                 )}
               </div>
               <div
-                className={`text-center font-mono text-[10px] ${
+                className={`text-center font-mono text-[11px] ${
                   isNow ? 'font-bold text-white' : 'text-holo/45'
                 }`}
               >
@@ -110,7 +110,7 @@ const LiquidationMapPanel = ({ model }: Props) => {
         })}
       </div>
 
-      <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-[10px] text-holo/45">
+      <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-[11px] text-holo/45">
         <div>
           Оранжевый — где снимут шорты (forced buy).
           <br />

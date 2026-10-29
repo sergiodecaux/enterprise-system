@@ -44,10 +44,10 @@ const ProbableTradesPanel = ({
   return (
     <div className="space-y-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-sky-300/90">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-sky-300/90">
           Вероятные сделки
         </div>
-        <div className="font-mono text-[9px] text-holo/35">
+        <div className="font-mono text-[11px] text-holo/35">
           {trades.length} шт. ·{' '}
           {trades[0]?.tradeStyle === 'SCALP'
             ? '#SCALP'
@@ -60,21 +60,21 @@ const ProbableTradesPanel = ({
 
       {globalView && (
         <div className="rounded-lg border border-hull-border/50 bg-black/25 p-2">
-          <div className={`font-mono text-[10px] font-bold ${biasColor(globalView.bias)}`}>
+          <div className={`font-mono text-[11px] font-bold ${biasColor(globalView.bias)}`}>
             Глобально: {globalView.bias}
           </div>
-          <p className="mt-0.5 font-mono text-[10px] leading-snug text-holo/55">
+          <p className="mt-0.5 font-mono text-[11px] leading-snug text-holo/55">
             {globalView.summary}
           </p>
           {magnet && (
-            <p className="mt-1 font-mono text-[9px] text-amber-200/80">
+            <p className="mt-1 font-mono text-[11px] text-amber-200/80">
               Магнит рынка: {magnet.label} @ {fmt(magnet.price)}
             </p>
           )}
           {globalView.factors.length > 0 && (
             <ul className="mt-1 space-y-0.5">
               {globalView.factors.slice(0, 4).map((f) => (
-                <li key={f} className="font-mono text-[9px] text-holo/40">
+                <li key={f} className="font-mono text-[11px] text-holo/40">
                   · {f}
                 </li>
               ))}
@@ -106,13 +106,13 @@ const ProbableTradesPanel = ({
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[9px] text-holo/30">
+                      <span className="font-mono text-[11px] text-holo/30">
                         #{idx + 1}
                       </span>
                       <span className={`font-mono text-xs font-bold ${sideColor}`}>
                         {s.side}
                       </span>
-                      <span className="font-mono text-[9px] text-holo/35">
+                      <span className="font-mono text-[11px] text-holo/35">
                         {s.tradeStyle === 'SCALP'
                           ? '#SCALP'
                           : s.tradeStyle === 'SWING'
@@ -130,20 +130,20 @@ const ProbableTradesPanel = ({
                 {ladder && (
                   <div className="mb-1.5 grid grid-cols-3 gap-1 rounded-md bg-black/30 p-1.5">
                     <div className="text-center">
-                      <div className="font-mono text-[8px] text-holo/30">1R</div>
-                      <div className="font-mono text-[10px] text-holo">
+                      <div className="font-mono text-[11px] text-holo/30">1R</div>
+                      <div className="font-mono text-[11px] text-holo">
                         {fmt(ladder.r1)}
                       </div>
                     </div>
                     <div className="text-center">
-                      <div className="font-mono text-[8px] text-holo/30">2R</div>
-                      <div className="font-mono text-[10px] text-matrix/90">
+                      <div className="font-mono text-[11px] text-holo/30">2R</div>
+                      <div className="font-mono text-[11px] text-matrix/90">
                         {fmt(ladder.r2)}
                       </div>
                     </div>
                     <div className="text-center">
-                      <div className="font-mono text-[8px] text-holo/30">3R</div>
-                      <div className="font-mono text-[10px] text-amber-200/90">
+                      <div className="font-mono text-[11px] text-holo/30">3R</div>
+                      <div className="font-mono text-[11px] text-amber-200/90">
                         {fmt(ladder.r3)}
                       </div>
                     </div>
@@ -151,20 +151,20 @@ const ProbableTradesPanel = ({
                 )}
 
                 {s.magnet && (
-                  <p className="mb-1 font-mono text-[9px] text-amber-200/70">
+                  <p className="mb-1 font-mono text-[11px] text-amber-200/70">
                     → {s.magnet.label} @ {fmt(s.magnet.price)}
                   </p>
                 )}
 
                 <ul className="mb-1.5 space-y-0.5">
                   {s.reasoning.slice(0, 3).map((r) => (
-                    <li key={r} className="font-mono text-[9px] text-holo/40">
+                    <li key={r} className="font-mono text-[11px] text-holo/40">
                       · {r}
                     </li>
                   ))}
                 </ul>
 
-                <div className="grid grid-cols-3 gap-1 font-mono text-[9px] text-holo/45">
+                <div className="grid grid-cols-3 gap-1 font-mono text-[11px] text-holo/45">
                   <span
                     className={
                       s.side === 'SHORT' ? 'text-rose-300/90' : 'text-teal-300/90'
@@ -182,7 +182,7 @@ const ProbableTradesPanel = ({
                 type="button"
                 disabled={busy || s.status === 'INVALIDATED'}
                 onClick={() => onWatch(s)}
-                className={`mt-2 w-full rounded-lg py-1.5 font-mono text-[10px] font-bold disabled:opacity-40 ${
+                className={`mt-2 w-full rounded-lg py-1.5 font-mono text-[11px] font-bold disabled:opacity-40 ${
                   watching
                     ? 'border border-yellow-400/40 bg-yellow-400/10 text-yellow-300'
                     : 'bg-sky-500/20 text-sky-200'

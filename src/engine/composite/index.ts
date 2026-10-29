@@ -388,9 +388,9 @@ function buildTacticalAdvice(
     advice.optimal.targets = '2-5% быстрая фиксация'
     advice.optimal.timeframe = '1-5 минут (скальп)'
 
-    advice.warnings.push('⚡ Экстремальная волатильность — разворот за секунды')
-    advice.warnings.push('🚫 Без колебаний при срабатывании стопа')
-    advice.warnings.push('⏰ Избегать низкой ликвидности (ночь в Азии, выходные)')
+    advice.warnings.push('Экстремальная волатильность — разворот за секунды')
+    advice.warnings.push('Без колебаний при срабатывании стопа')
+    advice.warnings.push('Избегать низкой ликвидности (ночь в Азии, выходные)')
     if (memeSignal.spreadPressure.pressure !== 'NEUTRAL') {
       advice.warnings.push(
         `Следить за угасанием давления — выход при смене на ${memeSignal.spreadPressure.pressure === 'BUYERS' ? 'продавцов' : 'покупателей'}`
@@ -460,18 +460,18 @@ function buildTacticalAdvice(
     advice.optimal.targets = 'TP1: закрыть 50% | TP2: раннер до дневного уровня'
     advice.optimal.timeframe = '4-12 часов (интрадей)'
 
-    advice.warnings.push('⏳ Ждать подтверждения структуры — без FOMO')
+    advice.warnings.push('Ждать подтверждения структуры — без FOMO')
     if (signal.dailyBias === 'BEARISH' && signal.direction === 'LONG') {
-      advice.warnings.push('⚠️ Против дневного уклона — уменьшить размер')
+      advice.warnings.push('Против дневного уклона — уменьшить размер')
     }
     if (signal.dailyBias === 'BULLISH' && signal.direction === 'SHORT') {
-      advice.warnings.push('⚠️ Против дневного уклона — уменьшить размер')
+      advice.warnings.push('Против дневного уклона — уменьшить размер')
     }
     if (po3?.currentPhase === 'MANIPULATION') {
-      advice.warnings.push('🎯 PO3 фаза манипуляции — ожидать ложных пробоев')
+      advice.warnings.push('PO3 фаза манипуляции — ожидать ложных пробоев')
     }
     if (volatilityLevel === 'LOW') {
-      advice.warnings.push('📉 Низкая волатильность — цели могут достигаться дольше')
+      advice.warnings.push('Низкая волатильность — цели могут достигаться дольше')
     }
   } else if (assetType === 'BLUE_CHIP') {
     if (signal.hasActiveSetup && signal.score >= 7) {
@@ -500,13 +500,13 @@ function buildTacticalAdvice(
     advice.optimal.targets = 'Свинг-цели (недельные уровни, пулы ликвидности)'
     advice.optimal.timeframe = '1-3 дня (свинг)'
 
-    advice.warnings.push('📅 Учитывать макро-календарь (NFP, FOMC, CPI)')
-    advice.warnings.push('🐋 Следить за активностью китов на уровнях входа')
+    advice.warnings.push('Учитывать макро-календарь (NFP, FOMC, CPI)')
+    advice.warnings.push('Следить за активностью китов на уровнях входа')
     if (dominantForce === 'NEUTRAL') {
-      advice.warnings.push('⚖️ Нейтральный поток ордеров — ждать направленного давления')
+      advice.warnings.push('Нейтральный поток ордеров — ждать направленного давления')
     }
     if (marketPhase === 'RANGING') {
-      advice.warnings.push('📊 Боковой рынок — уже стопы, меньше цели')
+      advice.warnings.push('Боковой рынок — уже стопы, меньше цели')
     }
   }
 

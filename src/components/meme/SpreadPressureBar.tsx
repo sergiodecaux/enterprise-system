@@ -15,7 +15,7 @@ const SpreadPressureBar = ({ pressure }: SpreadPressureBarProps) => {
           Давление спреда
         </span>
         <span
-          className="rounded px-2 py-0.5 font-mono text-[10px] font-bold uppercase"
+          className="rounded px-2 py-0.5 font-mono text-[11px] font-bold uppercase"
           style={{ backgroundColor: color + '30', color }}
         >
           {spreadQualityLabel[quality] ?? quality}
@@ -40,7 +40,7 @@ const SpreadPressureBar = ({ pressure }: SpreadPressureBarProps) => {
         <div className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 bg-holo/30" />
       </div>
 
-      <div className="flex justify-between font-mono text-[9px] text-holo/40">
+      <div className="flex justify-between font-mono text-[11px] text-holo/40">
         <span>ПРОДАВЦЫ</span>
         <span className="max-w-[40%] truncate text-center" style={{ color }}>
           {pressure.pressure === 'NEUTRAL' ? '—' : label}

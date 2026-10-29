@@ -79,10 +79,10 @@ export function detectShortSqueeze(
       localHighBroken: true,
       scoreBoost: 35,
       shortBlocked: true,
-      emoji: '🚀',
+      emoji: '',
       label: `SHORT SQUEEZE IN PROGRESS | FR ${fundingPct.toFixed(3)}% | OI +${oiGrowth.toFixed(0)}%`,
       alert:
-        '🚀 CRITICAL ALERT: SHORT SQUEEZE IN PROGRESS. Толпа в шортах, ММ тащит вверх. Лонг с ММ.',
+        'CRITICAL ALERT: SHORT SQUEEZE IN PROGRESS. Толпа в шортах, ММ тащит вверх. Лонг с ММ.',
     }
   }
 
@@ -98,10 +98,10 @@ export function detectShortSqueeze(
       localHighBroken: highBroken,
       scoreBoost: 25,
       shortBlocked: true,
-      emoji: '🚀',
+      emoji: '',
       label: `SQUEEZE SETUP (LONG) | FR ${fundingPct.toFixed(3)}% | OI +${oiGrowth.toFixed(0)}%`,
       alert:
-        '🚀 SQUEEZE SETUP: толпа шортит, ММ готовит ликвидации вверх. TP за локальный хай.',
+        'SQUEEZE SETUP: толпа шортит, ММ готовит ликвидации вверх. TP за локальный хай.',
     }
   }
 
@@ -116,7 +116,7 @@ export function detectShortSqueeze(
       localHighBroken: highBroken,
       scoreBoost: mildlyNegative && oiRising ? 12 : 5,
       shortBlocked: true,
-      emoji: '🔒',
+      emoji: '',
       label: `Fuel negative FR ${fundingPct.toFixed(3)}% — SHORT blocked`,
       alert: null,
     }

@@ -31,10 +31,14 @@ const DesktopStatusBar = () => {
 
   const status =
     connectionStatus === 'ONLINE'
-      ? { dot: 'bg-matrix', text: 'ONLINE', tone: 'text-matrix' }
+      ? { dot: 'bg-brand', text: 'ONLINE', tone: 'text-brand' }
       : connectionStatus === 'POLLING'
-        ? { dot: 'bg-amber-300', text: 'POLLING', tone: 'text-amber-300' }
-        : { dot: 'bg-alert', text: 'OFFLINE', tone: 'text-alert' }
+        ? {
+            dot: 'bg-market-warning',
+            text: 'POLLING',
+            tone: 'text-market-warning',
+          }
+        : { dot: 'bg-market-short', text: 'OFFLINE', tone: 'text-market-short' }
 
   const scanText = isScanning
     ? marketContext?.scanProgress || 'Сканирование рынка…'
@@ -43,10 +47,10 @@ const DesktopStatusBar = () => {
       : 'Ожидание первого скана'
 
   return (
-    <footer className="relative flex h-8 shrink-0 items-center gap-3 overflow-hidden border-t border-hull-border/80 bg-hull/75 px-3 font-sans text-[10px] text-holo/45">
+    <footer className="relative flex h-6 shrink-0 items-center gap-3 overflow-hidden border-t border-border bg-bg-panel/80 px-3 font-sans text-[11px] text-text-muted">
       {isScanning && (
         <span className="absolute inset-x-0 top-0 h-px overflow-hidden">
-          <span className="animate-scan block h-full w-1/3 bg-gradient-to-r from-transparent via-matrix to-transparent" />
+          <span className="animate-scan block h-full w-1/3 bg-gradient-to-r from-transparent via-brand to-transparent" />
         </span>
       )}
 
@@ -56,57 +60,61 @@ const DesktopStatusBar = () => {
             isScanning ? 'pulse-dot' : ''
           }`}
         />
-        <span className="font-semibold uppercase tracking-[0.1em] text-holo/35">
-          MEXC
-        </span>
-        <span className={`font-mono text-[9px] font-semibold ${status.tone}`}>
+        <span className="font-medium text-text-muted">MEXC</span>
+        <span className={`font-mono text-[11px] font-medium ${status.tone}`}>
           {status.text}
         </span>
       </span>
 
-      <span className="h-3.5 w-px shrink-0 bg-hull-border/80" />
+      <span className="h-3.5 w-px shrink-0 bg-border" />
 
       <span className="flex shrink-0 items-center gap-1.5">
-        <span className="uppercase tracking-[0.1em] text-holo/30">День</span>
+        <span className="text-text-muted">День</span>
         <span
-          className={`font-semibold ${
+          className={`font-medium ${
             marketContext?.dailyBias === 'BULLISH'
-              ? 'text-matrix'
+              ? 'text-market-long'
               : marketContext?.dailyBias === 'BEARISH'
-                ? 'text-alert'
-                : 'text-holo/55'
+                ? 'text-market-short'
+                : 'text-text-secondary'
           }`}
         >
           {biasRu(marketContext?.dailyBias)}
         </span>
       </span>
 
-      <span className="h-3.5 w-px shrink-0 bg-hull-border/80" />
+      <span className="h-3.5 w-px shrink-0 bg-border" />
 
       <span className="flex min-w-0 items-center gap-1.5">
         {isScanning && (
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-300" />
+          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-market-warning" />
         )}
-        <span className="truncate text-holo/50">{scanText}</span>
+        <span className="truncate text-text-muted">{scanText}</span>
       </span>
 
       <span className="ml-auto flex shrink-0 items-center gap-3">
         <span className="flex items-center gap-1">
-          <span className="h-1 w-1 rounded-full bg-matrix" />
-          <span className="font-mono text-[10px] text-matrix/85">L {longCount}</span>
+          <span className="h-1 w-1 rounded-full bg-market-long" />
+          <span className="font-mono text-[11px] text-market-long">
+            L {longCount}
+          </span>
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-1 w-1 rounded-full bg-alert" />
-          <span className="font-mono text-[10px] text-alert/85">S {shortCount}</span>
+          <span className="h-1 w-1 rounded-full bg-market-short" />
+          <span className="font-mono text-[11px] text-market-short">
+            S {shortCount}
+          </span>
         </span>
-        <span className="font-mono text-[10px] text-holo/40">ПАР {tracked}</span>
+        <span className="font-mono text-[11px] text-text-muted">
+          ПАР {tracked}
+        </span>
         <span className="hidden items-center gap-1 min-[1420px]:flex">
-          <span className="uppercase tracking-[0.1em] text-holo/25">ОБН</span>
-          <span className="tnum font-mono text-[10px] text-holo/35">
+          <span className="text-text-muted">ОБН</span>
+          <span className="tnum font-mono text-[11px] text-text-muted">
             {clock(lastUpdate)}
           </span>
         </span>
-        <span className="hidden rounded border border-hull-border/70 px-1.5 py-0.5 font-mono text-[9px] text-holo/25 min-[1280px]:inline">
+        <span className="hidden rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-text-muted min-[1280px]:inline">
           Alt+1…4
         </span>
       </span>

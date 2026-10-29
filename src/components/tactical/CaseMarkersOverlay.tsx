@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { Package } from 'lucide-react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import type { LimitCase } from '../../engine/trades/limitCases'
 
@@ -115,15 +116,19 @@ const CaseMarkersOverlay = ({
             }}
             title={`${long ? 'Лимитная покупка' : 'Лимитная продажа'} · вход ${fmtPx(item.entry)} · цель ${fmtPx(item.target)} · ход ${item.movePct.toFixed(2)}% · оценка модели ${item.probability}%`}
           >
-            <span className="text-[15px] leading-none" aria-hidden="true">🧰</span>
+            <Package
+              className="h-3 w-3 shrink-0 text-market-warning"
+              strokeWidth={2}
+              aria-hidden="true"
+            />
             <span className="min-w-0 flex-1">
               <span
-                className="block truncate font-mono text-[9px] font-bold uppercase tracking-wide"
+                className="block truncate font-mono text-[11px] font-bold uppercase tracking-wide"
                 style={{ color: tone }}
               >
                 {long ? 'лонг' : 'шорт'} · цель {item.movePct.toFixed(1)}%
               </span>
-              <span className="mt-0.5 block truncate font-mono text-[8.5px] leading-tight text-amber-100/75">
+              <span className="mt-0.5 block truncate font-mono text-[11px] leading-tight text-amber-100/75">
                 лимит {fmtPx(item.entry)} · шанс {item.probability}%
               </span>
             </span>

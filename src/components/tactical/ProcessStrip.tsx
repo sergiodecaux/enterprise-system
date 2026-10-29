@@ -135,32 +135,32 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
     <div className="flex flex-col gap-1 rounded-lg border border-white/[0.07] bg-[#0e1218] px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span
-          className={`rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wide ${regimeColor}`}
+          className={`rounded border px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-wide ${regimeColor}`}
           title="Первый кадр: в каком состоянии рынок"
         >
           {REGIME_LABEL[regime]}
         </span>
         <span
-          className="font-mono text-[9px] text-white/40"
+          className="font-mono text-[11px] text-white/40"
           title="Как меняется число открытых контрактов"
         >
           {oiLabel}
         </span>
         <span
-          className={`font-mono text-[9px] font-semibold ${healthTone}`}
+          className={`font-mono text-[11px] font-semibold ${healthTone}`}
           title={healthTip || 'Здоровье: спот vs перпы'}
         >
           {healthLabel}
         </span>
         <span
-          className={`font-mono text-[9px] font-semibold ${venueTone}`}
+          className={`font-mono text-[11px] font-semibold ${venueTone}`}
           title={venueTip}
         >
           {venueLabel}
         </span>
         {seqLive ? (
           <span
-            className={`ml-auto truncate rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold ${
+            className={`ml-auto truncate rounded border px-1.5 py-0.5 font-mono text-[11px] font-bold ${
               seqLive.allowedInRegime
                 ? 'border-cyan-400/40 bg-cyan-500/15 text-cyan-200'
                 : 'border-white/10 bg-white/[0.04] text-white/40'
@@ -171,7 +171,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
             {!seqLive.allowedInRegime ? ' · вне режима' : ''}
           </span>
         ) : (
-          <span className="ml-auto font-mono text-[9px] text-white/25">
+          <span className="ml-auto font-mono text-[11px] text-white/25">
             ждём процесс…
           </span>
         )}
@@ -179,7 +179,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
 
       {dots.length > 0 && (
         <div className="flex items-center gap-0.5 overflow-hidden">
-          <span className="mr-1 shrink-0 font-mono text-[8px] text-white/25">
+          <span className="mr-1 shrink-0 font-mono text-[11px] text-white/25">
             5м
           </span>
           {dots.map((d, i) => (
@@ -190,7 +190,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
               title={d.tip}
             />
           ))}
-          <span className="ml-auto flex flex-wrap gap-x-1.5 gap-y-0 font-mono text-[7px] text-white/25">
+          <span className="ml-auto flex flex-wrap gap-x-1.5 gap-y-0 font-mono text-[11px] text-white/25">
             <span className="text-emerald-400/60">покупки</span>
             <span className="text-rose-400/60">продажи</span>
             <span className="text-cyan-400/60">стены</span>
@@ -201,7 +201,7 @@ const ProcessStrip = ({ symbol, regime, sequence, refreshKey = 0 }: Props) => {
       )}
 
       {seqLive && (
-        <p className="truncate font-mono text-[9px] leading-snug text-white/50">
+        <p className="truncate font-mono text-[11px] leading-snug text-white/50">
           {seqLive.title}
         </p>
       )}

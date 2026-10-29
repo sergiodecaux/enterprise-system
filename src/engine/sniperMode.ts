@@ -235,52 +235,52 @@ export function toSniperSignal(signal: CoinSignal): SniperSignal {
     strengthFilters++
     reasons.push(
       signal.ltfChoCH.surgicalEntryDetected
-        ? '🎯 CHoCH + Surgical Entry'
-        : '✅ CHoCH 1m'
+        ? 'CHoCH + Surgical Entry'
+        : 'CHoCH 1m'
     )
   }
 
   if (isSurgicalReady(signal.surgicalEntry)) {
     reasons.push(
-      `🎯 Limit ${signal.surgicalEntry!.limitEntry!.toPrecision(6)} · ${signal.surgicalEntry!.confirmations.slice(0, 2).join('+')}`
+      `Limit ${signal.surgicalEntry!.limitEntry!.toPrecision(6)} · ${signal.surgicalEntry!.confirmations.slice(0, 2).join('+')}`
     )
   } else if (
     signal.surgicalEntry &&
     signal.surgicalEntry.status !== 'IDLE'
   ) {
-    reasons.push(`⏳ ${signal.surgicalEntry.status}`)
+    reasons.push(`${signal.surgicalEntry.status}`)
   }
 
   if (signal.absorption?.detected) {
     strengthFilters++
     reasons.push(
-      `💎 Absorption ×${signal.absorption.volumeMultiplier.toFixed(1)}`
+      `Absorption ×${signal.absorption.volumeMultiplier.toFixed(1)}`
     )
   }
 
   if (signal.buyerAggression?.detected && signal.direction === 'LONG') {
     strengthFilters++
     reasons.push(
-      `⚡ Buyer Aggression ×${signal.buyerAggression.buyToSellRatio.toFixed(1)}`
+      `Buyer Aggression ×${signal.buyerAggression.buyToSellRatio.toFixed(1)}`
     )
   }
 
   if (signal.raid && signal.raid.type !== 'NONE' && signal.raid.isFresh) {
-    reasons.push('🔄 Liquidity Sweep')
+    reasons.push('Liquidity Sweep')
     if (tradeStyle === 'SCALP') strengthFilters++
   }
 
   if (signal.ote?.priceInZone) {
-    reasons.push('📍 OTE Zone — набирай сеткой')
+    reasons.push('OTE Zone — набирай сеткой')
   }
 
   if (signal.volumeProfile?.obPocConfluence) {
-    reasons.push(`📊 ${signal.volumeProfile.confluenceLabel}`)
+    reasons.push(`${signal.volumeProfile.confluenceLabel}`)
     strengthFilters++
   }
 
   if (signal.liquidationContext?.swept) {
-    reasons.push(`💥 ${signal.liquidationContext.label}`)
+    reasons.push(`${signal.liquidationContext.label}`)
     strengthFilters++
   }
 
@@ -289,14 +289,14 @@ export function toSniperSignal(signal: CoinSignal): SniperSignal {
   }
 
   if (signal.unrealisticTp && signal.ghostPathWarning) {
-    reasons.push(`⚠️ TP скорректирован по ATR`)
+    reasons.push(`TP скорректирован по ATR`)
   }
 
   if (signal.btcDivergence?.type === 'BULL_DIV' && signal.direction === 'LONG') {
-    reasons.push('📈 BTC Bull Divergence')
+    reasons.push('BTC Bull Divergence')
   }
   if (signal.btcDivergence?.type === 'BEAR_DIV' && signal.direction === 'SHORT') {
-    reasons.push('📉 BTC Bear Divergence')
+    reasons.push('BTC Bear Divergence')
   }
 
   return {

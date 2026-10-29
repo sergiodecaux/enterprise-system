@@ -47,7 +47,7 @@ export function detectToxicChop(ohlcv1m: OhlcvCandle[]): ToxicResult {
       wickRatio,
       entryBlocked: true,
       scorePenalty: 50,
-      emoji: '☠️',
+      emoji: '',
       label: `TOXIC / CHOP | wick ${(wickRatio * 100).toFixed(0)}% — пила убивает депозит`,
     }
   }

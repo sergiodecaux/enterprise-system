@@ -119,22 +119,22 @@ const StructureHud = ({
             <DescriptiveNote />
           </div>
           {!compact && read.intra?.line && (
-            <p className="mt-0.5 font-mono text-[10px] text-cyan-200/80">
+            <p className="mt-0.5 font-mono text-[11px] text-cyan-200/80">
               {read.intra.line}
             </p>
           )}
           {read.fuel && Number.isFinite(read.fuel.price) && !compact && (
-            <p className="mt-0.5 font-mono text-[10px] text-white/55">
+            <p className="mt-0.5 font-mono text-[11px] text-white/55">
               Топливо: {read.fuel.label} {read.fuel.price >= 1000 ? read.fuel.price.toFixed(1) : read.fuel.price.toPrecision(5)}
               {nest?.entrySide ? ' · 15м только вход' : ''}
             </p>
           )}
           {read.zones?.active && !compact && (
             <div className="mt-1">
-              <p className="font-mono text-[10px] leading-snug text-pink-100/85">
+              <p className="font-mono text-[11px] leading-snug text-pink-100/85">
                 {read.zones.line}
               </p>
-              <p className="font-mono text-[10px] text-pink-100/70">
+              <p className="font-mono text-[11px] text-pink-100/70">
                 {read.zones.active.zone.bottom >= 1000
                   ? read.zones.active.zone.bottom.toFixed(2)
                   : read.zones.active.zone.bottom.toPrecision(5)}
@@ -144,13 +144,13 @@ const StructureHud = ({
                   : read.zones.active.zone.top.toPrecision(5)}
               </p>
               {read.zones.active.closes && (
-                <p className="mt-0.5 font-mono text-[9px] text-cyan-200/75">
+                <p className="mt-0.5 font-mono text-[11px] text-cyan-200/75">
                   {read.zones.active.closes.h4?.line ?? ''}
                   {read.zones.active.closes.h4 && read.zones.active.closes.h1 ? ' · ' : ''}
                   {read.zones.active.closes.h1?.line ?? ''}
                 </p>
               )}
-              <p className="mt-0.5 font-mono text-[9px] text-white/45">
+              <p className="mt-0.5 font-mono text-[11px] text-white/45">
                 {read.zones.active.zone.tier === 'STRONG' ? 'сил. зона' : 'зона'}
                 {read.zones.active.destination
                   ? ` · цель ${read.zones.active.destination.label}`
@@ -159,7 +159,7 @@ const StructureHud = ({
             </div>
           )}
         </div>
-        <div className="shrink-0 text-right font-mono text-[9px] text-white/40">
+        <div className="shrink-0 text-right font-mono text-[11px] text-white/40">
           <div>{tfBit(read.w1)}</div>
           <div>{tfBit(read.d1)}</div>
           <div>{tfBit(read.h4)}</div>
@@ -175,7 +175,7 @@ const StructureHud = ({
             .map((r) => (
               <span
                 key={r.zone.id}
-                className="rounded border border-white/10 bg-black/25 px-1.5 py-0.5 font-mono text-[9px] text-white/50"
+                className="rounded border border-white/10 bg-black/25 px-1.5 py-0.5 font-mono text-[11px] text-white/50"
               >
                 {r.zone.tier === 'STRONG' ? 'сил. ' : ''}
                 {r.zone.role === 'SUPPORT'
@@ -205,14 +205,14 @@ const StructureHud = ({
                 key={sc.id}
                 className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5"
               >
-                <div className="flex items-baseline gap-2 font-mono text-[10px]">
+                <div className="flex items-baseline gap-2 font-mono text-[11px]">
                   <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-white/35" />
                   <span className="text-white/85">{sc.title}</span>
                 </div>
-                <p className="mt-0.5 pl-4 font-mono text-[10px] leading-snug text-white/60">
+                <p className="mt-0.5 pl-4 font-mono text-[11px] leading-snug text-white/60">
                   {sc.why}
                 </p>
-                <p className="mt-0.5 pl-4 font-mono text-[9px] text-white/40">
+                <p className="mt-0.5 pl-4 font-mono text-[11px] text-white/40">
                   {sc.invalidation}
                 </p>
               </div>

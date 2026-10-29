@@ -1088,7 +1088,7 @@ export function calculateBtcDivergence(
       altChangePct,
       relativeStrength,
       scoreBoost: parseFloat(scoreBoost.toFixed(2)),
-      label: `⚡ Сила альта выше рынка (BTC correlation divergence) [${strengthLabel}: альт ${altChangePct > 0 ? '+' : ''}${altChangePct.toFixed(1)}% vs BTC ${btcChangePct > 0 ? '+' : ''}${btcChangePct.toFixed(1)}%]`,
+      label: `Сила альта выше рынка (BTC correlation divergence) [${strengthLabel}: альт ${altChangePct > 0 ? '+' : ''}${altChangePct.toFixed(1)}% vs BTC ${btcChangePct > 0 ? '+' : ''}${btcChangePct.toFixed(1)}%]`,
       lookbackCandles: lookback,
     }
   }
@@ -1105,7 +1105,7 @@ export function calculateBtcDivergence(
       altChangePct,
       relativeStrength,
       scoreBoost: parseFloat(scoreBoost.toFixed(2)),
-      label: `🔻 Слабость альта хуже рынка (BTC correlation divergence) [${strengthLabel}: альт ${altChangePct > 0 ? '+' : ''}${altChangePct.toFixed(1)}% vs BTC ${btcChangePct > 0 ? '+' : ''}${btcChangePct.toFixed(1)}%]`,
+      label: `Слабость альта хуже рынка (BTC correlation divergence) [${strengthLabel}: альт ${altChangePct > 0 ? '+' : ''}${altChangePct.toFixed(1)}% vs BTC ${btcChangePct > 0 ? '+' : ''}${btcChangePct.toFixed(1)}%]`,
       lookbackCandles: lookback,
     }
   }
@@ -1194,7 +1194,7 @@ export function detectMSS(
         timeframe: '5m',
         breakCandleIndex: lastIdx,
         scoreBoost: 1.5,
-        label: `✅ Ювелирный вход подтверждён (MSS 5m) — пробой ${swingLowPrice.toFixed(4)} вверх`,
+        label: `Ювелирный вход подтверждён (MSS 5m) — пробой ${swingLowPrice.toFixed(4)} вверх`,
       }
     }
   }
@@ -1229,7 +1229,7 @@ export function detectMSS(
         timeframe: '5m',
         breakCandleIndex: lastIdx,
         scoreBoost: 1.5,
-        label: `✅ Ювелирный вход подтверждён (MSS 5m) — пробой ${swingHighPrice.toFixed(4)} вниз`,
+        label: `Ювелирный вход подтверждён (MSS 5m) — пробой ${swingHighPrice.toFixed(4)} вниз`,
       }
     }
   }
@@ -1295,7 +1295,7 @@ export function detectLiquidityRaid(
           candlesAgo,
           isFresh,
           scoreBoost: isFresh ? 2.0 : 0.5,
-          label: `🎯 Sweep SSL: вынос лоу ${localLow.toFixed(4)} (${candlesAgo} свечей назад)${isFresh ? ' — СВЕЖИЙ' : ''}`,
+          label: `Sweep SSL: вынос лоу ${localLow.toFixed(4)} (${candlesAgo} свечей назад)${isFresh ? ' — СВЕЖИЙ' : ''}`,
         }
       }
     }
@@ -1328,7 +1328,7 @@ export function detectLiquidityRaid(
           candlesAgo,
           isFresh,
           scoreBoost: isFresh ? 2.0 : 0.5,
-          label: `🎯 Sweep BSL: вынос хая ${localHigh.toFixed(4)} (${candlesAgo} свечей назад)${isFresh ? ' — СВЕЖИЙ' : ''}`,
+          label: `Sweep BSL: вынос хая ${localHigh.toFixed(4)} (${candlesAgo} свечей назад)${isFresh ? ' — СВЕЖИЙ' : ''}`,
         }
       }
     }
@@ -1409,7 +1409,7 @@ export function calculateOTEZone(
       direction: 'LONG',
       scoreBoost: priceInZone ? 1.0 : 0,
       label: priceInZone
-        ? `🎯 Вход в OTE Zone [${zoneBottom.toFixed(4)}-${zoneTop.toFixed(4)}]. Риск-реворд максимальный`
+        ? `Вход в OTE Zone [${zoneBottom.toFixed(4)}-${zoneTop.toFixed(4)}]. Риск-реворд максимальный`
         : `OTE Zone: ${zoneBottom.toFixed(4)}-${zoneTop.toFixed(4)} (цена вне зоны)`,
     }
   }
@@ -1456,7 +1456,7 @@ export function calculateOTEZone(
       direction: 'SHORT',
       scoreBoost: priceInZone ? 1.0 : 0,
       label: priceInZone
-        ? `🎯 Вход в OTE Zone [${zoneBottom.toFixed(4)}-${zoneTop.toFixed(4)}]. Риск-реворд максимальный`
+        ? `Вход в OTE Zone [${zoneBottom.toFixed(4)}-${zoneTop.toFixed(4)}]. Риск-реворд максимальный`
         : `OTE Zone: ${zoneBottom.toFixed(4)}-${zoneTop.toFixed(4)} (цена вне зоны)`,
     }
   }
@@ -1482,7 +1482,7 @@ export function analyzePO3(
     manipulationDirection: null,
     returnIntoBox: false,
     phaseLabel: 'Нет данных',
-    phaseIcon: '❓',
+    phaseIcon: '',
     tradingAdvice: 'Недостаточно данных для PO3 анализа',
     computedAt: Date.now(),
   }
@@ -1572,7 +1572,7 @@ export function analyzePO3(
   > = {
     ACCUMULATION: {
       label: 'Фаза 1: Накопление (Азия)',
-      icon: '🌙',
+      icon: '',
       advice:
         'Азия формирует диапазон. Ждать открытия Лондона для сигнала направления.',
     },
@@ -1580,23 +1580,23 @@ export function analyzePO3(
       label: manipulationDetected
         ? `Фаза 2: Манипуляция обнаружена (${manipulationDirection === 'HIGH_SWEPT' ? 'вынос хая' : manipulationDirection === 'LOW_SWEPT' ? 'вынос лоя' : 'двойной вынос'})`
         : 'Фаза 2: Лондон (манипуляция)',
-      icon: '🎭',
+      icon: '',
       advice: manipulationDetected
         ? returnIntoBox
-          ? '⚡ Цена вернулась в коробку Азии после выноса — ищи вход в направлении NY!'
+          ? 'Цена вернулась в коробку Азии после выноса — ищи вход в направлении NY!'
           : 'Манипуляция произошла. Ждать возврата цены в коробку Азии для входа.'
         : 'Лондон ещё не сделал манипуляцию. Не торговать пробои хая/лоя Азии.',
     },
     DISTRIBUTION: {
       label: 'Фаза 3: Распределение (NY)',
-      icon: '🚀',
+      icon: '',
       advice: manipulationDetected
         ? 'NY даёт истинное движение. Торговать в направлении возврата после манипуляции.'
         : 'NY открылся без манипуляции Лондона — осторожно, возможен трендовый день.',
     },
     UNKNOWN: {
       label: 'Вне торговых часов',
-      icon: '💤',
+      icon: '',
       advice: 'Рынок закрыт или данные недостаточны.',
     },
   }

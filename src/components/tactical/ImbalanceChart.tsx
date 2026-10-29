@@ -143,18 +143,18 @@ const ImbalanceChart = ({ history, stats }: Props) => {
 
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div className="bg-hull/50 rounded px-2 py-1">
-          <div className="text-holo/50 text-[10px]">{t('imbalance_avg')}</div>
+          <div className="text-holo/50 text-[11px]">{t('imbalance_avg')}</div>
           <div className="font-mono text-holo/80">
             {stats.avg5min > 0 ? '+' : ''}
             {stats.avg5min.toFixed(1)}%
           </div>
         </div>
         <div className="bg-hull/50 rounded px-2 py-1">
-          <div className="text-holo/50 text-[10px]">{t('imbalance_volatility')}</div>
+          <div className="text-holo/50 text-[11px]">{t('imbalance_volatility')}</div>
           <div className="font-mono text-holo/80">{stats.volatility.toFixed(1)}</div>
         </div>
         <div className="bg-hull/50 rounded px-2 py-1">
-          <div className="text-holo/50 text-[10px]">{t('imbalance_peak')}</div>
+          <div className="text-holo/50 text-[11px]">{t('imbalance_peak')}</div>
           <div className="font-mono">
             <span className="text-matrix">+{stats.peakBuyers.toFixed(0)}</span>
             {' / '}

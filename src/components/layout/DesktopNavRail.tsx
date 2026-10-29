@@ -29,15 +29,9 @@ const DesktopNavRail = ({ activeTab, onSelect }: Props) => {
   return (
     <nav
       aria-label="Разделы терминала"
-      className="flex w-[76px] shrink-0 flex-col border-r border-hull-border/80 bg-hull/35"
+      className="flex w-14 shrink-0 flex-col border-r border-border bg-bg-panel/40"
     >
-      <div className="px-2 pb-1 pt-3 text-center">
-        <span className="font-sans text-[8px] font-semibold uppercase tracking-[0.22em] text-holo/25">
-          Разделы
-        </span>
-      </div>
-
-      <div className="flex flex-col gap-1 px-2 py-1">
+      <div className="flex flex-col gap-1 px-1.5 py-2">
         {WORKSPACES.map(({ id, label, hint, icon: Icon, shortcut }) => {
           const active = activeTab === id
           const badge = badges[id] ?? 0
@@ -48,35 +42,35 @@ const DesktopNavRail = ({ activeTab, onSelect }: Props) => {
               onClick={() => onSelect(id)}
               aria-current={active ? 'page' : undefined}
               title={`${label} — ${hint} (${shortcut})`}
-              className={`group relative flex w-full flex-col items-center gap-1 rounded-xl px-1 py-2.5 transition-colors ${
+              className={`group relative flex w-full flex-col items-center gap-1 rounded-lg px-0.5 py-2 transition-colors ${
                 active
-                  ? 'bg-matrix/[0.09] text-matrix'
-                  : 'text-holo/40 hover:bg-white/[0.045] hover:text-holo/75'
+                  ? 'bg-brand/[0.08] text-brand'
+                  : 'text-text-secondary hover:bg-white/[0.04] hover:text-text-primary'
               }`}
             >
               {active && (
-                <span className="absolute left-0 top-1/2 h-7 w-[2px] -translate-y-1/2 rounded-full bg-matrix shadow-[0_0_12px_rgba(44,224,138,0.75)]" />
+                <span className="absolute left-0 top-1/2 h-6 w-[2px] -translate-y-1/2 rounded-full bg-brand" />
               )}
 
               <span
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
                   active
-                    ? 'border border-matrix/25 bg-matrix/10 shadow-[0_0_18px_-8px_rgba(44,224,138,0.9)]'
-                    : 'border border-transparent group-hover:border-hull-border/70 group-hover:bg-hull-light/50'
+                    ? 'border border-brand/20 bg-brand/10'
+                    : 'border border-transparent group-hover:border-border group-hover:bg-bg-elevated/60'
                 }`}
               >
                 <Icon className="h-[17px] w-[17px]" strokeWidth={1.9} />
                 {badge > 0 && (
-                  <span className="absolute -right-1.5 -top-1.5 flex min-w-[15px] items-center justify-center rounded-full border border-space bg-matrix px-1 font-mono text-[8px] font-bold leading-[13px] text-space">
+                  <span className="absolute -right-1.5 -top-1.5 flex min-w-[15px] items-center justify-center rounded-full border border-bg-base bg-brand px-1 font-mono text-[11px] font-semibold leading-[13px] text-bg-base">
                     {badge > 99 ? '99' : badge}
                   </span>
                 )}
                 {id === 'radar' && isScanning && (
-                  <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
+                  <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-market-warning" />
                 )}
               </span>
 
-              <span className="font-sans text-[9px] font-semibold uppercase leading-none tracking-[0.08em]">
+              <span className="font-sans text-[11px] font-medium leading-none">
                 {label}
               </span>
             </button>
@@ -84,23 +78,23 @@ const DesktopNavRail = ({ activeTab, onSelect }: Props) => {
         })}
       </div>
 
-      <div className="mt-auto flex flex-col items-center gap-2 border-t border-hull-border/60 px-2 py-3">
+      <div className="mt-auto flex flex-col items-center gap-2 border-t border-border/70 px-1.5 py-3">
         <button
           type="button"
           onClick={() => setAdvisorOpen(true)}
           title="AI-советник"
-          className="group flex w-full flex-col items-center gap-1 rounded-xl px-1 py-2 text-holo/40 transition-colors hover:bg-accent/[0.08] hover:text-accent"
+          className="group flex w-full flex-col items-center gap-1 rounded-lg px-0.5 py-1.5 text-text-secondary transition-colors hover:bg-market-info/[0.08] hover:text-market-info"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent/20 bg-accent/[0.07] transition-colors group-hover:border-accent/40 group-hover:bg-accent/10">
+          <span className="flex h-8 w-8 items-center justify-center rounded-md border border-market-info/20 bg-market-info/[0.07] transition-colors group-hover:border-market-info/40 group-hover:bg-market-info/10">
             <Bot className="h-[17px] w-[17px]" strokeWidth={1.9} />
           </span>
-          <span className="font-sans text-[9px] font-semibold uppercase tracking-[0.08em]">
+          <span className="font-sans text-[11px] font-medium leading-none">
             AI
           </span>
         </button>
 
         <span
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-hull-border/60 text-holo/25"
+          className="flex h-7 w-7 items-center justify-center rounded-md border border-border/70 text-text-muted"
           title="Горячие клавиши: Alt+1…4 — разделы, Ctrl+K — поиск"
         >
           <Keyboard className="h-3.5 w-3.5" />

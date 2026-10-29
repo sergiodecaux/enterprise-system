@@ -73,10 +73,10 @@ export function detectIcebergAbsorption(
       upperWickRatio,
       scoreBoost: 0,
       longBlocked: true,
-      emoji: '🛑',
+      emoji: '',
       label: `ABSORPTION DETECTED — DISTRIBUTION | buys $${(buyUsd / 1000).toFixed(0)}k`,
       alert:
-        '🛑 ABSORPTION DETECTED. DISTRIBUTION PHASE. Не лонгуй — об тебя закрывают позиции!',
+        'ABSORPTION DETECTED. DISTRIBUTION PHASE. Не лонгуй — об тебя закрывают позиции!',
     }
   }
 
@@ -95,10 +95,10 @@ export function detectIcebergAbsorption(
       upperWickRatio,
       scoreBoost: 30,
       longBlocked: false,
-      emoji: '🎯',
+      emoji: '',
       label: `ABSORPTION LONG — ММ скупает шорты | sells $${(sellUsd / 1000).toFixed(0)}k`,
       alert:
-        '🎯 ABSORPTION LONG: ритейл шортит в таз ММ. Жди выстрел вверх.',
+        'ABSORPTION LONG: ритейл шортит в таз ММ. Жди выстрел вверх.',
     }
   }
 

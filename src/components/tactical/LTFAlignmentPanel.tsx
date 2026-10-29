@@ -1,3 +1,4 @@
+import { ArrowRight, Crosshair } from 'lucide-react'
 import type {
   LiquidityRaidResult,
   MSSResult,
@@ -15,14 +16,14 @@ const LTFAlignmentPanel = ({ mss, raid, ote }: Props) => {
   if (!hasData) return null
 
   return (
-    <div className="rounded-xl border border-hull-border bg-hull p-3">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-base">🎯</span>
-        <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
+    <div className="rounded-lg border border-border bg-bg-panel p-3">
+      <div className="mb-2.5 flex items-center gap-2">
+        <Crosshair className="h-3.5 w-3.5 shrink-0 text-market-info" strokeWidth={1.9} />
+        <span className="font-sans text-[13px] font-medium leading-5 text-text-primary">
           LTF совпадение
         </span>
         {mss?.detected && (
-          <span className="ml-auto rounded bg-matrix/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-matrix">
+          <span className="ml-auto shrink-0 rounded-sm bg-market-long/15 px-1.5 py-0.5 font-mono text-[11px] font-medium leading-4 text-market-long">
             +{mss.scoreBoost.toFixed(1)} к оценке
           </span>
         )}
@@ -30,9 +31,11 @@ const LTFAlignmentPanel = ({ mss, raid, ote }: Props) => {
 
       <div className="space-y-2">
         {mss?.detected && (
-          <div className="rounded-lg border border-matrix/20 bg-matrix/5 p-2">
-            <p className="font-mono text-xs text-matrix">{mss.label}</p>
-            <p className="mt-1 font-mono text-[10px] text-holo/40">
+          <div className="rounded-md border border-market-long/20 bg-market-long/[0.05] p-2">
+            <p className="font-sans text-[11px] font-medium leading-4 text-market-long">
+              {mss.label}
+            </p>
+            <p className="tnum mt-1 font-mono text-[11px] leading-4 text-text-muted">
               Пробой: {mss.breakPrice?.toFixed(4)} · ТФ: {mss.timeframe}
             </p>
           </div>
@@ -40,25 +43,25 @@ const LTFAlignmentPanel = ({ mss, raid, ote }: Props) => {
 
         {raid && raid.type !== 'NONE' && (
           <div
-            className={`rounded-lg border p-2 ${
+            className={`rounded-md border p-2 ${
               raid.isFresh
-                ? 'border-yellow-400/30 bg-yellow-400/5'
-                : 'border-hull-border bg-hull-light/20'
+                ? 'border-market-warning/25 bg-market-warning/[0.05]'
+                : 'border-border bg-bg-base/40'
             }`}
           >
             <p
-              className={`font-mono text-xs ${
-                raid.isFresh ? 'text-yellow-400' : 'text-holo/50'
+              className={`font-sans text-[11px] font-medium leading-4 ${
+                raid.isFresh ? 'text-market-warning' : 'text-text-secondary'
               }`}
             >
               {raid.label}
             </p>
-            <div className="mt-1 flex items-center gap-3">
-              <span className="font-mono text-[10px] text-holo/30">
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <span className="tnum font-mono text-[11px] leading-4 text-text-muted">
                 Глубина: {raid.sweepDepthPct.toFixed(3)}%
               </span>
               {raid.isFresh && (
-                <span className="rounded bg-yellow-400/20 px-1 font-mono text-[9px] font-bold text-yellow-400">
+                <span className="rounded-sm bg-market-warning/15 px-1 font-mono text-[11px] font-medium leading-4 text-market-warning">
                   СВЕЖИЙ +{raid.scoreBoost.toFixed(1)}
                 </span>
               )}
@@ -68,40 +71,42 @@ const LTFAlignmentPanel = ({ mss, raid, ote }: Props) => {
 
         {ote?.isActive && (
           <div
-            className={`rounded-lg border p-2 ${
+            className={`rounded-md border p-2 ${
               ote.priceInZone
-                ? 'border-cyan-400/30 bg-cyan-400/5'
-                : 'border-hull-border bg-hull-light/20'
+                ? 'border-market-info/25 bg-market-info/[0.05]'
+                : 'border-border bg-bg-base/40'
             }`}
           >
             <p
-              className={`font-mono text-xs ${
-                ote.priceInZone ? 'text-cyan-400' : 'text-holo/50'
+              className={`font-sans text-[11px] font-medium leading-4 ${
+                ote.priceInZone ? 'text-market-info' : 'text-text-secondary'
               }`}
             >
               {ote.label}
             </p>
-            <div className="mt-1.5 grid grid-cols-3 gap-1 rounded bg-black/20 p-1.5">
-              <div className="text-center">
-                <div className="font-mono text-[9px] text-holo/30">
+            <div className="mt-1.5 grid grid-cols-3 items-center gap-px overflow-hidden rounded-sm border border-border bg-border">
+              <div className="bg-bg-base/60 px-1.5 py-1 text-center">
+                <div className="font-sans text-[11px] leading-4 text-text-muted">
                   Импульс от
                 </div>
-                <div className="font-mono text-[10px] font-bold text-holo/70">
+                <div className="tnum font-mono text-[11px] font-medium leading-4 text-text-secondary">
                   {ote.impulseOrigin.toFixed(4)}
                 </div>
               </div>
-              <div className="flex items-center justify-center">
-                <span className="font-mono text-[9px] text-holo/20">→</span>
+              <div className="flex items-center justify-center bg-bg-base/60 px-1 py-1">
+                <ArrowRight className="h-3 w-3 text-text-muted" />
               </div>
-              <div className="text-center">
-                <div className="font-mono text-[9px] text-holo/30">До</div>
-                <div className="font-mono text-[10px] font-bold text-holo/70">
+              <div className="bg-bg-base/60 px-1.5 py-1 text-center">
+                <div className="font-sans text-[11px] leading-4 text-text-muted">
+                  До
+                </div>
+                <div className="tnum font-mono text-[11px] font-medium leading-4 text-text-secondary">
                   {ote.impulseEnd.toFixed(4)}
                 </div>
               </div>
             </div>
             {ote.priceInZone && (
-              <p className="mt-1 font-mono text-[9px] text-cyan-400/70">
+              <p className="tnum mt-1 font-sans text-[11px] leading-4 text-market-info/80">
                 Цена в OTE зоне · SL за {ote.impulseOrigin.toFixed(4)}
               </p>
             )}

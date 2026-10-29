@@ -48,7 +48,7 @@ const AdvisorMessage = ({ message }: { message: AdvisorUiMessage }) => {
           <div className="mt-1 text-[11px] text-alert">{message.error}</div>
         )}
         {!isUser && !message.pending && (message.provider || message.model || message.node) && (
-          <div className="mt-1 text-[9px] uppercase text-holo/30">
+          <div className="mt-1 text-[11px] uppercase text-holo/30">
             {message.node ? `узел ${message.node} · ` : ''}
             {message.provider ? `${message.provider} · ` : ''}
             {message.model?.split('/').pop()}

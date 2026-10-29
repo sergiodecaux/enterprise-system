@@ -65,7 +65,7 @@ const OrderBookMetricsView = ({ metrics }: Props) => {
 
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="bg-hull/50 rounded px-2 py-1">
-          <div className="text-holo/50 text-[10px] uppercase">{t('orderbook_volume')}</div>
+          <div className="text-holo/50 text-[11px] uppercase">{t('orderbook_volume')}</div>
           <div className="font-mono">
             <span className="text-matrix">{formatVol(metrics.bidVolume)}</span>
             {' / '}
@@ -74,7 +74,7 @@ const OrderBookMetricsView = ({ metrics }: Props) => {
         </div>
 
         <div className="bg-hull/50 rounded px-2 py-1">
-          <div className="text-holo/50 text-[10px] uppercase">{t('orderbook_orders')}</div>
+          <div className="text-holo/50 text-[11px] uppercase">{t('orderbook_orders')}</div>
           <div className="font-mono text-holo/80">
             {metrics.bidOrders} / {metrics.askOrders}
           </div>
@@ -82,7 +82,7 @@ const OrderBookMetricsView = ({ metrics }: Props) => {
 
         {metrics.spreadPercent !== null && (
           <div className="bg-hull/50 rounded px-2 py-1">
-            <div className="text-holo/50 text-[10px] uppercase">{t('orderbook_spread')}</div>
+            <div className="text-holo/50 text-[11px] uppercase">{t('orderbook_spread')}</div>
             <div className="font-mono text-holo/80">
               {metrics.spreadPercent.toFixed(3)}%
             </div>
@@ -92,7 +92,7 @@ const OrderBookMetricsView = ({ metrics }: Props) => {
         <div className="bg-hull/50 rounded px-2 py-1 flex items-center">
           <div className="flex items-center gap-1">
             <PressureIcon className={`w-3 h-3 ${pressureColor}`} />
-            <span className={`text-[10px] uppercase ${pressureColor}`}>
+            <span className={`text-[11px] uppercase ${pressureColor}`}>
               {t(pressureKey)}
             </span>
           </div>
@@ -101,13 +101,13 @@ const OrderBookMetricsView = ({ metrics }: Props) => {
 
       {metrics.walls.length > 0 && (
         <div className="pt-2 border-t border-hull-border/30">
-          <div className="text-[10px] text-holo/50 uppercase mb-1">
+          <div className="text-[11px] text-holo/50 uppercase mb-1">
             {t('orderbook_walls')}
           </div>
           {metrics.walls.slice(0, 3).map((wall, i) => (
             <div
               key={`${wall.side}-${wall.price}-${i}`}
-              className={`text-[10px] font-mono ${
+              className={`text-[11px] font-mono ${
                 wall.side === 'BID' ? 'text-matrix' : 'text-alert'
               }`}
             >

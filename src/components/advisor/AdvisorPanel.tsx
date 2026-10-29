@@ -104,7 +104,7 @@ const AdvisorPanel = () => {
               <Bot className="h-5 w-5 text-matrix" />
               <span className="font-mono text-sm font-bold uppercase text-holo">Советник AI</span>
               {coinLabel && (
-                <span className="rounded border border-hull-border px-1.5 py-0.5 font-mono text-[10px] text-holo/60">
+                <span className="rounded border border-hull-border px-1.5 py-0.5 font-mono text-[11px] text-holo/60">
                   {coinLabel}
                 </span>
               )}

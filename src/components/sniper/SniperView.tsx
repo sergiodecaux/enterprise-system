@@ -2,9 +2,12 @@ import { useMemo, useState } from 'react'
 import {
   AlertCircle,
   Crosshair,
+  Info,
   Target,
-  TrendingUp,
 } from 'lucide-react'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import SegmentedControl from '../ui/SegmentedControl'
 import { useAppStore } from '../../store/useAppStore'
 import { getSniperSignals } from '../../engine/sniperMode'
 import {
@@ -25,6 +28,11 @@ import SniperFilters from './SniperFilters'
 import LiveLimitCard from './LiveLimitCard'
 
 const POTENTIAL_STEPS = [2, 3, 5, 8] as const
+
+const POTENTIAL_OPTIONS = POTENTIAL_STEPS.map((step) => ({
+  value: String(step),
+  label: `≥${step}%`,
+}))
 
 const SniperView = () => {
   const signals = useAppStore((s) => s.signals)
@@ -103,9 +111,7 @@ const SniperView = () => {
   ).length
   const filledCount = liveTrades.filter((t) => t.state === 'FILLED').length
   const avgPotential = averagePotential(liveTrades)
-  const newCount = liveTrades.filter(
-    (t) => freshMeta[t.id]?.isNew
-  ).length
+  const newCount = liveTrades.filter((t) => freshMeta[t.id]?.isNew).length
 
   const firedCount = Object.keys(firedMeta).length
   const newStrictCount = Object.values(firedMeta).filter(
@@ -113,153 +119,134 @@ const SniperView = () => {
   ).length
 
   return (
-    <div className="flex min-h-screen flex-col bg-space pb-6">
-      <div className="sticky top-[120px] z-10 border-b border-hull-border bg-space/95 px-4 py-3 backdrop-blur-sm min-[1100px]:top-0">
-        <div className="mb-2.5 flex items-center justify-between gap-2 min-[1100px]:hidden">
-          <div className="flex min-w-0 items-center gap-2">
-            <Crosshair className="h-5 w-5 shrink-0 text-matrix" />
-            <div className="min-w-0">
-              <h1 className="truncate font-mono text-lg font-bold uppercase tracking-tight text-holo sm:text-2xl">
-                Снайпер
-              </h1>
-              <p className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wide text-amber-100/80">
-                <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-matrix" />
-                Живые лимитки · потенциал ≥{minPotential}%
-              </p>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-1 rounded-lg border border-matrix/30 bg-matrix/10 px-2 py-1">
-            <TrendingUp className="h-3.5 w-3.5 text-matrix" />
-            <span className="font-mono text-sm font-bold text-matrix">
-              {totalCount}
-            </span>
-          </div>
+    <div className="flex min-h-full flex-col bg-bg-base pb-6">
+      <div className="z-10 border-b border-border bg-bg-base/95 px-3 py-2.5 backdrop-blur-sm min-[1100px]:sticky min-[1100px]:top-0">
+        <div className="mb-2 flex items-center gap-2 min-[1100px]:hidden">
+          <Crosshair className="h-4 w-4 shrink-0 text-brand" />
+          <h1 className="min-w-0 truncate font-sans text-[15px] font-semibold leading-5 text-text-primary">
+            Снайпер
+          </h1>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-sans text-[11px] leading-4 text-text-muted">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
+            {isScanning ? 'скан' : 'live'}
+          </span>
         </div>
 
-        <div className="mb-2.5 grid grid-cols-4 gap-1.5">
-          <div className="rounded-md bg-hull px-1.5 py-1 text-center">
-            <div className="font-mono text-[8px] uppercase text-holo/40">
+        <div className="grid grid-cols-4 divide-x divide-border-subtle">
+          <div className="pr-2">
+            <div className="font-sans text-[11px] leading-4 text-text-muted">
               Лиды
             </div>
-            <div className="font-mono text-base font-bold text-holo">
+            <div className="tnum font-mono text-[15px] font-medium leading-5 text-text-primary">
               {totalCount}
             </div>
           </div>
-          <div className="rounded-md bg-matrix/5 px-1.5 py-1 text-center">
-            <div className="font-mono text-[8px] uppercase text-matrix/60">
+          <div className="px-2">
+            <div className="font-sans text-[11px] leading-4 text-text-muted">
               В зоне
             </div>
-            <div className="font-mono text-base font-bold text-matrix">
+            <div className="tnum font-mono text-[15px] font-medium leading-5 text-market-long">
               {inZoneCount}
             </div>
           </div>
-          <div className="rounded-md bg-yellow-400/5 px-1.5 py-1 text-center">
-            <div className="font-mono text-[8px] uppercase text-yellow-300/70">
+          <div className="px-2">
+            <div className="font-sans text-[11px] leading-4 text-text-muted">
               Подход
             </div>
-            <div className="font-mono text-base font-bold text-yellow-300">
+            <div className="tnum font-mono text-[15px] font-medium leading-5 text-market-warning">
               {approachCount}
             </div>
           </div>
-          <div className="rounded-md bg-hull px-1.5 py-1 text-center">
-            <div className="font-mono text-[8px] uppercase text-holo/40">
-              Ср. +%
+          <div className="pl-2">
+            <div className="font-sans text-[11px] leading-4 text-text-muted">
+              Ср. потенциал
             </div>
-            <div className="font-mono text-base font-bold text-holo">
-              {avgPotential.toFixed(1)}
+            <div className="tnum font-mono text-[15px] font-medium leading-5 text-text-primary">
+              +{avgPotential.toFixed(1)}%
             </div>
           </div>
         </div>
 
-        <div className="mb-2.5">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="font-mono text-[8px] uppercase tracking-wide text-holo/35">
-              Мин. потенциал
-            </span>
-            {(inZoneCount > 0 || filledCount > 0) && (
-              <span className="font-mono text-[8px] text-matrix/70">
-                в зоне {inZoneCount}
-                {filledCount > 0 ? ` · в рынке ${filledCount}` : ''}
-              </span>
-            )}
-          </div>
-          <div className="flex gap-1.5">
-            {POTENTIAL_STEPS.map((step) => (
-              <button
-                key={step}
-                type="button"
-                onClick={() => setMinPotential(step)}
-                className={`flex-1 rounded-md px-1 py-1 font-mono text-[10px] font-bold transition-all ${
-                  minPotential === step
-                    ? 'border border-matrix/50 bg-matrix/20 text-matrix shadow-md'
-                    : 'border border-hull-border bg-hull text-holo/40 hover:bg-hull-light hover:text-holo/70'
-                }`}
-              >
-                ≥{step}%
-              </button>
-            ))}
-          </div>
+        <div className="mt-2.5 flex items-center gap-2">
+          <span className="shrink-0 font-sans text-[11px] leading-4 text-text-muted">
+            Порог
+          </span>
+          <SegmentedControl
+            value={String(minPotential)}
+            onChange={(value) => setMinPotential(Number(value))}
+            options={POTENTIAL_OPTIONS}
+            size="md"
+            stretch
+            ariaLabel="Минимальный потенциал"
+            className="min-w-0 flex-1"
+          />
         </div>
 
-        <SniperFilters
-          activeFilter={activeFilter}
-          onFilterChange={setActiveFilter}
-          styleFilter={styleFilter}
-          onStyleFilterChange={setStyleFilter}
-        />
+        <div className="mt-1.5">
+          <SniperFilters
+            activeFilter={activeFilter}
+            onFilterChange={setActiveFilter}
+            styleFilter={styleFilter}
+            onStyleFilterChange={setStyleFilter}
+          />
+        </div>
       </div>
 
-      <div className="flex-1 px-4 pt-3">
+      <div className="flex-1 px-3 pt-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-matrix" />
-            <h2 className="truncate font-mono text-[10px] font-bold uppercase tracking-wide text-holo/65">
+            <h2 className="truncate font-sans text-[13px] font-medium leading-5 text-text-primary">
               Живые лимитки
             </h2>
-            <span className="rounded bg-matrix/15 px-1 py-0.5 font-mono text-[9px] font-bold text-matrix">
+            <span className="tnum font-mono text-[11px] leading-4 text-text-muted">
               {totalCount}
             </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5 font-mono text-[9px]">
-            {newCount > 0 && (
-              <span className="rounded border border-matrix/40 bg-matrix/10 px-1 py-0.5 font-bold text-matrix">
-                NEW {newCount}
+            {filledCount > 0 && (
+              <span className="font-sans text-[11px] leading-4 text-text-muted">
+                · в рынке {filledCount}
               </span>
             )}
-            <span className="text-matrix/60">{longCount}L</span>
-            <span className="text-alert/60">{shortCount}S</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] leading-4">
+            {newCount > 0 && (
+              <Badge tone="brand" dot>
+                NEW {newCount}
+              </Badge>
+            )}
+            <span className="text-market-long">{longCount}L</span>
+            <span className="text-market-short">{shortCount}S</span>
           </div>
         </div>
 
         {totalCount === 0 && (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-hull-border bg-hull/30 px-4 py-8 text-center">
+          <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-bg-panel/40 px-4 py-8 text-center">
             {isScanning ? (
               <>
-                <div className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-hull-border border-t-matrix" />
-                <p className="font-mono text-xs text-holo/50">
+                <div className="mb-3 h-7 w-7 animate-spin rounded-full border-2 border-bg-surface border-t-brand" />
+                <p className="font-sans text-[12px] text-text-secondary">
                   Сканирование рынка…
                 </p>
               </>
             ) : (
               <>
-                <AlertCircle className="mb-2 h-8 w-8 text-holo/20" />
-                <p className="mb-1 font-mono text-xs font-bold text-holo/60">
+                <AlertCircle className="mb-2 h-6 w-6 text-text-muted" />
+                <p className="mb-1 font-sans text-[13px] font-medium text-text-secondary">
                   Нет лимиток с потенциалом ≥{minPotential}%
                 </p>
-                <p className="max-w-[250px] font-mono text-[10px] leading-relaxed text-holo/35">
+                <p className="max-w-[260px] font-sans text-[11px] leading-4 text-text-muted">
                   Движок ищет откаты к SSL/BSL, surgical-лимиты, MM-ханты и
-                  OTE. Если порог слишком высокий — снизь его или дождись
-                  следующего скана (~75с).
+                  OTE. Если порог слишком высокий — снизьте его или дождитесь
+                  следующего скана (~75 с).
                 </p>
                 {minPotential > 2 && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => setMinPotential(2)}
-                    className="mt-3 rounded-md border border-matrix/40 bg-matrix/10 px-3 py-1.5 font-mono text-[10px] font-bold text-matrix transition-all hover:bg-matrix/20"
+                    className="mt-3"
                   >
                     Показать от 2%
-                  </button>
+                  </Button>
                 )}
               </>
             )}
@@ -267,7 +254,7 @@ const SniperView = () => {
         )}
 
         {totalCount > 0 && (
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {liveTrades.map((trade) => (
               <LiveLimitCard
                 key={trade.id}
@@ -280,19 +267,19 @@ const SniperView = () => {
         )}
       </div>
 
-      <div className="mt-5 px-4">
+      <div className="mt-5 px-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
-            <Target className="h-3.5 w-3.5 shrink-0 text-holo/40" />
-            <h2 className="truncate font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
+            <Target className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            <h2 className="truncate font-sans text-[13px] font-medium leading-5 text-text-primary">
               Готовые снайперские
             </h2>
-            <span className="rounded bg-holo/10 px-1 py-0.5 font-mono text-[9px] font-bold text-holo/50">
+            <span className="tnum font-mono text-[11px] leading-4 text-text-muted">
               {sniperSignals.length}
             </span>
           </div>
           {firedCount > 0 && (
-            <span className="shrink-0 font-mono text-[8px] text-holo/30">
+            <span className="shrink-0 font-mono text-[11px] leading-4 text-text-muted">
               выброшено {firedCount}
               {newStrictCount > 0 ? ` · новых ${newStrictCount}` : ''}
             </span>
@@ -300,12 +287,12 @@ const SniperView = () => {
         </div>
 
         {sniperSignals.length === 0 ? (
-          <p className="rounded-lg border border-hull-border bg-hull/30 px-3 py-2 font-mono text-[9px] leading-relaxed text-holo/30">
+          <p className="rounded-lg border border-border bg-bg-panel/40 px-3 py-2.5 font-sans text-[11px] leading-4 text-text-muted">
             Строгих подтверждённых сетапов сейчас нет — это норма. Живые
             лимитки выше показывают потенциал ещё до подтверждения.
           </p>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {sniperSignals.map((signal) => {
               const key = sniperFireKey(signal)
               const meta = firedMeta[key]
@@ -323,18 +310,18 @@ const SniperView = () => {
         )}
       </div>
 
-      <div className="mt-5 px-4">
-        <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 p-3">
-          <div className="mb-1 flex items-center gap-2">
-            <span className="text-sm">💡</span>
-            <span className="font-mono text-[10px] font-bold uppercase text-yellow-400">
+      <div className="mt-5 px-3">
+        <div className="rounded-md border-l-2 border-market-warning/50 bg-market-warning/[0.05] py-2 pl-2.5 pr-2">
+          <div className="mb-1 flex items-center gap-1.5">
+            <Info className="h-3.5 w-3.5 text-market-warning/90" />
+            <span className="font-sans text-[11px] font-medium leading-4 text-market-warning/90">
               Как читать
             </span>
           </div>
-          <p className="font-mono text-[9px] leading-relaxed text-holo/55">
+          <p className="font-sans text-[11px] leading-4 text-text-muted">
             Потенциал — движение от лимита до первой цели, а не гарантия.
-            Лимит исполняется только при касании; стоп — закон. Чем ближе
-            цена к лимиту, тем выше шанс входа.
+            Лимит исполняется только при касании; стоп — закон. Чем ближе цена
+            к лимиту, тем выше шанс входа.
           </p>
         </div>
       </div>

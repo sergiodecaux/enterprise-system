@@ -41,11 +41,11 @@ export function calculateVolatilityGauge(
     zone,
     label:
       zone === 'RED'
-        ? `🚨 VOL ${movePct.toFixed(1)}%/1m — безумный риск`
+        ? `VOL ${movePct.toFixed(1)}%/1m — безумный риск`
         : zone === 'ORANGE'
-          ? `🔥 VOL ${movePct.toFixed(1)}%/1m`
+          ? `VOL ${movePct.toFixed(1)}%/1m`
           : zone === 'YELLOW'
-            ? `⚡ VOL ${movePct.toFixed(1)}%/1m`
+            ? `VOL ${movePct.toFixed(1)}%/1m`
             : `VOL ${movePct.toFixed(1)}%/1m`,
   }
 }

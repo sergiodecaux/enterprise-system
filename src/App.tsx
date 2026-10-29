@@ -28,7 +28,7 @@ const PANEL_MIN = 300
 const PANEL_MAX = 560
 const PANEL_DEFAULT = 380
 const PANEL_WIDTH_KEY = 'enterprise.desktop.panelWidth'
-const NAV_RAIL_WIDTH = 76
+const NAV_RAIL_WIDTH = 56
 const DIVIDER_WIDTH = 7
 const TERMINAL_MIN = 680
 
@@ -61,7 +61,7 @@ function MobileTabBar({
   onSelect: (tab: WorkspaceId) => void
 }) {
   return (
-    <div className="flex gap-1 px-2 py-2">
+    <div className="flex h-12 gap-0.5 px-2">
       {WORKSPACES.map(({ id, label, icon: Icon }) => {
         const active = activeTab === id
         return (
@@ -69,13 +69,13 @@ function MobileTabBar({
             key={id}
             type="button"
             onClick={() => onSelect(id)}
-            className={`flex flex-1 flex-col items-center gap-1 rounded-lg px-1 py-1.5 font-sans text-[10px] font-semibold transition-colors ${
+            className={`flex h-10 flex-1 flex-col items-center justify-center gap-0.5 rounded-md font-sans text-[11px] font-medium transition-colors ${
               active
-                ? 'bg-matrix/10 text-matrix'
-                : 'text-holo/40 hover:bg-white/5 hover:text-holo/70'
+                ? 'bg-brand/10 text-brand'
+                : 'text-text-secondary hover:bg-white/[0.045] hover:text-text-primary'
             }`}
           >
-            <Icon className="h-4 w-4" strokeWidth={2} />
+            <Icon className="h-4 w-4" strokeWidth={1.9} />
             {label}
           </button>
         )
@@ -227,7 +227,7 @@ function App() {
 
         {isDesktop ? (
           <>
-            <div className="flex min-h-0 flex-1 pt-14">
+            <div className="flex min-h-0 flex-1 pt-12">
               <DesktopNavRail activeTab={activeTab} onSelect={selectTab} />
 
               <aside
@@ -238,12 +238,12 @@ function App() {
                   <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <ActiveIcon className="h-3.5 w-3.5 shrink-0 text-matrix/85" />
-                      <span className="truncate font-sans text-[10px] font-semibold uppercase tracking-[0.16em] text-holo/45">
+                      <span className="truncate font-sans text-[11px] font-semibold uppercase tracking-[0.16em] text-holo/45">
                         {meta.label}
                       </span>
                     </div>
                     <span
-                      className="flex shrink-0 items-center gap-1.5 font-mono text-[9px] text-holo/30"
+                      className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-holo/30"
                       title={
                         isScanning
                           ? 'Идёт сканирование'
@@ -282,7 +282,7 @@ function App() {
                     />
                   )}
                   {activeTab === 'signals' && (
-                    <p className="font-sans text-[10px] leading-relaxed text-holo/35">
+                    <p className="font-sans text-[11px] leading-relaxed text-holo/35">
                       Выберите стиль и сторону в панели ниже — поиск уже внутри
                       сценария.
                     </p>
@@ -333,7 +333,7 @@ function App() {
           </>
         ) : (
           <>
-            <div className="sticky top-14 z-20 border-b border-hull-border/70 bg-space/95 backdrop-blur-sm">
+            <div className="sticky top-12 z-20 border-b border-border bg-bg-base/95 backdrop-blur-sm">
               <MobileTabBar activeTab={activeTab} onSelect={selectTab} />
             </div>
             <main className="px-0 pb-20">{views}</main>

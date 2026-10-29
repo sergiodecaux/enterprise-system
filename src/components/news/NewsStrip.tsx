@@ -38,16 +38,16 @@ const NewsStrip = ({ items }: Props) => {
   const arrow = item.sentiment.label === 'BULLISH' ? '↑' : '↓'
 
   return (
-    <div className="flex items-center gap-3 overflow-hidden border-b border-hull-border/30 bg-hull px-4 py-1.5">
+    <div className="flex min-h-10 items-center gap-3 overflow-hidden border-b border-hull-border/30 bg-hull px-4 py-1.5 desk:min-h-0">
       <div className="flex flex-shrink-0 items-center gap-1.5">
         <Radio className="h-3 w-3 animate-pulse text-matrix" />
-        <span className="font-mono text-[10px] uppercase tracking-widest text-holo/40">
+        <span className="font-mono text-[11px] uppercase tracking-widest text-holo/40">
           NEWS
         </span>
       </div>
 
       <span
-        className="flex-shrink-0 font-mono text-[10px] font-bold"
+        className="flex-shrink-0 font-mono text-[11px] font-bold"
         style={{ color }}
       >
         {arrow} {item.sentiment.label}
@@ -57,7 +57,7 @@ const NewsStrip = ({ items }: Props) => {
         href={item.url}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex-1 truncate font-mono text-[11px] text-holo/70 hover:text-holo"
+        className="flex min-h-10 flex-1 items-center truncate font-mono text-[11px] text-holo/70 hover:text-holo desk:min-h-0"
       >
         {item.title}
       </a>

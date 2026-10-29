@@ -287,7 +287,7 @@ export function computeMmIntent(input: MmIntentInput): MmIntentResult {
     hunt,
     reasons: reasons.slice(0, 6),
     label,
-    emoji: drive === 'UP' ? '👆' : drive === 'DOWN' ? '👇' : '↔️',
+    emoji: drive === 'UP' ? '' : drive === 'DOWN' ? '' : '',
     updatedAt: Date.now(),
   }
 }

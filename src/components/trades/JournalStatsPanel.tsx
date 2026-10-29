@@ -191,7 +191,7 @@ const JournalStatsPanel = () => {
               Лаборатория сигналов
             </h2>
           </div>
-          <p className="font-mono text-[10px] text-holo/40">
+          <p className="font-mono text-[11px] text-holo/40">
             Predator (мемы) + Vane (альты) · отдельно · адаптивные gates
           </p>
         </div>
@@ -262,7 +262,7 @@ const JournalStatsPanel = () => {
                     key={id}
                     type="button"
                     onClick={() => setBotChannel(id)}
-                    className={`rounded px-2 py-1 font-mono text-[9px] font-bold uppercase ${
+                    className={`rounded px-2 py-1 font-mono text-[11px] font-bold uppercase ${
                       botChannel === id
                         ? id === 'MEME'
                           ? 'border border-alert/40 bg-alert/15 text-alert'
@@ -326,7 +326,7 @@ const JournalStatsPanel = () => {
             {gates &&
               (gates.blockedSetups.length > 0 ||
                 gates.boostedSetups.length > 0) && (
-                <div className="mt-2 font-mono text-[10px] text-holo/45">
+                <div className="mt-2 font-mono text-[11px] text-holo/45">
                   {gates.blockedSetups.length > 0 && (
                     <div>Блок: {gates.blockedSetups.join(', ')}</div>
                   )}
@@ -383,7 +383,7 @@ const JournalStatsPanel = () => {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex-1 rounded-lg px-2 py-2 font-mono text-[10px] font-bold uppercase ${
+            className={`flex-1 rounded-lg px-2 py-2 font-mono text-[11px] font-bold uppercase ${
               tab === t.id
                 ? 'border border-matrix/50 bg-matrix/15 text-matrix'
                 : 'border border-hull-border bg-hull text-holo/40'
@@ -442,7 +442,7 @@ const JournalStatsPanel = () => {
           ))}
           {filteredBotSetups.length > 0 && (
             <div className="space-y-2">
-              <div className="font-mono text-[10px] uppercase text-holo/40">
+              <div className="font-mono text-[11px] uppercase text-holo/40">
                 Сетапы · {CHANNEL_LABEL[botChannel]}
               </div>
               {filteredBotSetups.map((s) => (
@@ -457,7 +457,7 @@ const JournalStatsPanel = () => {
                       </span>
                       {botChannel === 'ALL' && (
                         <span
-                          className={`ml-2 rounded border px-1 py-0.5 font-mono text-[8px] ${
+                          className={`ml-2 rounded border px-1 py-0.5 font-mono text-[11px] ${
                             s.alertType === 'SNIPER'
                               ? 'border-sky-400/30 text-sky-300'
                               : s.alertType === 'MEME'
@@ -481,7 +481,7 @@ const JournalStatsPanel = () => {
                       {s.winRate.toFixed(0)}%
                     </span>
                   </div>
-                  <div className="mt-0.5 font-mono text-[10px] text-holo/40">
+                  <div className="mt-0.5 font-mono text-[11px] text-holo/40">
                     {s.wins}W/{s.losses}L · {s.expectancyR.toFixed(2)}R · MAE{' '}
                     {s.avgMae.toFixed(1)}%
                   </div>
@@ -494,7 +494,7 @@ const JournalStatsPanel = () => {
               {filteredBotEntries.slice(0, 40).map((e) => (
                 <div
                   key={e.id}
-                  className="flex items-center justify-between rounded border border-hull-border/40 bg-black/20 px-2 py-1.5 font-mono text-[10px]"
+                  className="flex items-center justify-between rounded border border-hull-border/40 bg-black/20 px-2 py-1.5 font-mono text-[11px]"
                 >
                   <span className="text-holo/70">
                     <span
@@ -560,7 +560,7 @@ const JournalStatsPanel = () => {
 
           {analytics.bySource.length > 0 && (
             <div className="rounded-lg border border-hull-border bg-hull/40 p-3">
-              <div className="mb-2 font-mono text-[10px] uppercase text-holo/40">
+              <div className="mb-2 font-mono text-[11px] uppercase text-holo/40">
                 Источник
               </div>
               {analytics.bySource.map((s) => (
@@ -606,7 +606,7 @@ const JournalStatsPanel = () => {
                   {s.winRate.toFixed(0)}%
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-1 font-mono text-[10px] text-holo/50">
+              <div className="grid grid-cols-3 gap-1 font-mono text-[11px] text-holo/50">
                 <span>
                   {s.wins}W/{s.losses}L/{s.timeouts}TO
                 </span>
@@ -655,7 +655,7 @@ const JournalStatsPanel = () => {
                         {e.direction}
                       </span>
                     </div>
-                    <div className="truncate font-mono text-[10px] text-holo/40">
+                    <div className="truncate font-mono text-[11px] text-holo/40">
                       {SETUP_LABELS[e.setupType]} · {e.source}
                     </div>
                   </div>
@@ -666,14 +666,14 @@ const JournalStatsPanel = () => {
                       {outcomeLabel(e)}
                     </div>
                     {e.pnlPercent != null && (
-                      <div className="font-mono text-[10px] text-holo/50">
+                      <div className="font-mono text-[11px] text-holo/50">
                         {e.pnlPercent >= 0 ? '+' : ''}
                         {e.pnlPercent.toFixed(1)}% ·{' '}
                         {e.rMultiple?.toFixed(2) ?? '—'}R
                       </div>
                     )}
                     {e.status === 'OPEN' && (
-                      <div className="flex items-center justify-end gap-1 font-mono text-[9px] text-holo/35">
+                      <div className="flex items-center justify-end gap-1 font-mono text-[11px] text-holo/35">
                         <Clock className="h-2.5 w-2.5" />
                         MFE {e.mfePercent.toFixed(1)}% / MAE{' '}
                         {e.maePercent.toFixed(1)}%
@@ -702,9 +702,9 @@ function StatTile({
 }) {
   return (
     <div className="rounded-lg border border-hull-border bg-hull/60 px-3 py-2">
-      <div className="font-mono text-[9px] uppercase text-holo/40">{label}</div>
+      <div className="font-mono text-[11px] uppercase text-holo/40">{label}</div>
       <div className={`font-mono text-xl font-bold ${accent}`}>{value}</div>
-      <div className="font-mono text-[9px] text-holo/35">{sub}</div>
+      <div className="font-mono text-[11px] text-holo/35">{sub}</div>
     </div>
   )
 }
@@ -737,7 +737,7 @@ function ChannelStatsCard({
         active ? 'ring-1 ring-holo/30' : 'opacity-90 hover:opacity-100'
       }`}
     >
-      <div className={`mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase ${titleColor}`}>
+      <div className={`mb-2 flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase ${titleColor}`}>
         {icon}
         {title}
       </div>
@@ -754,11 +754,11 @@ function ChannelStatsCard({
           >
             {sample === 0 ? '—' : `${stats.winRate.toFixed(0)}%`}
           </div>
-          <div className="font-mono text-[9px] text-holo/40">
+          <div className="font-mono text-[11px] text-holo/40">
             {stats.wins}W / {stats.losses}L · {stats.open} open
           </div>
         </div>
-        <div className="text-right font-mono text-[9px] text-holo/45">
+        <div className="text-right font-mono text-[11px] text-holo/45">
           <div>
             {stats.avgR >= 0 ? '+' : ''}
             {stats.avgR.toFixed(2)}R

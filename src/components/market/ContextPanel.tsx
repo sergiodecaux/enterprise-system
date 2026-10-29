@@ -35,18 +35,18 @@ export function ContextPanel({ ctx }: { ctx: FullMarketContext }) {
   const weekly = ctx.htf?.weeklyClose
 
   return (
-    <div className="rounded-xl border border-hull-border bg-hull/40 p-3">
-      <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
+    <div className="rounded-lg border border-border bg-bg-panel p-3">
+      <div className="mb-1.5 font-sans text-[11px] font-medium leading-4 text-text-muted">
         Контекст
       </div>
-      <p className="font-mono text-[11px] text-holo/80">
+      <p className="font-mono text-[11px] leading-4 text-text-secondary">
         {SESSION_RU[ctx.session.session]}
         {flags.length ? ` · ${flags.join(' · ')}` : ''}
         {' · '}
         {confirm}
       </p>
       {daily && weekly && (
-        <p className="mt-1 font-mono text-[11px] text-holo/60">
+        <p className="mt-1 font-mono text-[11px] leading-4 text-text-muted">
           день {biasRu(daily.bias)}
           {ctx.htf?.closedNearHighOrLow === 'HIGH'
             ? ' у хая'
@@ -57,7 +57,7 @@ export function ContextPanel({ ctx }: { ctx: FullMarketContext }) {
           {ctx.htf?.closedAboveMidpoint ? ' · день выше середины' : ' · день ниже середины'}
         </p>
       )}
-      <p className="mt-1 font-mono text-[11px] text-holo/60">
+      <p className="mt-1 font-mono text-[11px] leading-4 text-text-muted">
         {ctx.crowd.longShortBook === 'binance'
           ? `книга Binance L/S ${ctx.crowd.longShortRatio.toFixed(2)} ${ctx.crowd.longShortTrend.toLowerCase()}`
           : 'книга Binance L/S: ряда нет'}
@@ -74,7 +74,7 @@ export function ContextPanel({ ctx }: { ctx: FullMarketContext }) {
             : ''}
       </p>
       {ctx.notes.length > 0 && (
-        <p className="mt-1 font-mono text-[10px] leading-snug text-amber-200/80">
+        <p className="mt-1 font-sans text-[11px] leading-4 text-market-warning/90">
           {ctx.notes.slice(0, 3).join(' · ')}
         </p>
       )}

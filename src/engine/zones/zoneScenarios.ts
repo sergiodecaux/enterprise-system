@@ -280,7 +280,7 @@ export function buildZoneTradeVariants(
       id: `${z.id}_bounce_${tradeStyle.toLowerCase()}`,
       kind: z.source === 'SSL' ? 'BOUNCE_SSL' : z.source === 'BSL' ? 'BOUNCE_BSL' : 'SURGICAL',
       side: bounceSide,
-      title: `${prof.tag} ↗ ${prof.label} · ${z.label}`,
+      title: `${prof.tag} ${prof.label} · ${z.label}`,
       probability: bounceWin,
       preconditions: bouncePre,
       entryZone: { top: z.top, bottom: z.bottom },

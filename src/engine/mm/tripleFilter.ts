@@ -42,7 +42,7 @@ export function evaluateTripleFilter(
     return {
       status: 'CONFIRMED',
       passed: true,
-      emoji: '🎯',
+      emoji: '',
       label: 'TRIPLE CONFIRMED',
       reason: 'Агрессия + дисбаланс стакана + цена идёт в нашу сторону.',
       scoreOverride: null,
@@ -53,7 +53,7 @@ export function evaluateTripleFilter(
     return {
       status: 'MM_DISTRIBUTION',
       passed: false,
-      emoji: '⚠️',
+      emoji: '',
       label: 'MM DISTRIBUTION',
       reason:
         direction === 'LONG'
@@ -66,7 +66,7 @@ export function evaluateTripleFilter(
   return {
     status: 'INCOMPLETE',
     passed: false,
-    emoji: '⏳',
+    emoji: '',
     label: 'TRIPLE INCOMPLETE',
     reason: 'Нет полного подтверждения (лента ∩ стакан ∩ цена).',
     scoreOverride: null,
@@ -89,7 +89,7 @@ export function mergeMmGates(
       blocked: true,
       scoreOverride: effort.scoreOverride,
       status: effort.label,
-      recommendation: `${effort.emoji} ${effort.label}: ${effort.reason}`,
+      recommendation: `${effort.label}: ${effort.reason}`,
     }
   }
   if (triple.status === 'MM_DISTRIBUTION' && triple.scoreOverride != null) {
@@ -97,7 +97,7 @@ export function mergeMmGates(
       blocked: true,
       scoreOverride: triple.scoreOverride,
       status: triple.label,
-      recommendation: `${triple.emoji} ${triple.label}: ${triple.reason}`,
+      recommendation: `${triple.label}: ${triple.reason}`,
     }
   }
   if (triple.passed) {
@@ -105,7 +105,7 @@ export function mergeMmGates(
       blocked: false,
       scoreOverride: null,
       status: triple.label,
-      recommendation: `${triple.emoji} ${triple.reason}${obi ? ` | ${obi.label}` : ''}`,
+      recommendation: `${triple.reason}${obi ? ` | ${obi.label}` : ''}`,
     }
   }
   return {

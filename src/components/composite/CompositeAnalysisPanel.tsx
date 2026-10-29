@@ -43,12 +43,12 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
 
   const colors = assetColors[assetType]
 
-  const forceEmoji: Record<CompositeAnalysis['dominantForce'], string> = {
-    STRONG_BUYERS: '🟢🟢',
-    BUYERS: '🟢',
-    NEUTRAL: '⚪',
-    SELLERS: '🔴',
-    STRONG_SELLERS: '🔴🔴',
+  const forceTone: Record<CompositeAnalysis['dominantForce'], string> = {
+    STRONG_BUYERS: 'bg-market-long',
+    BUYERS: 'bg-market-long/70',
+    NEUTRAL: 'bg-text-muted',
+    SELLERS: 'bg-market-short/70',
+    STRONG_SELLERS: 'bg-market-short',
   }
 
   const breakdownEntries = Object.entries(confluenceBreakdown) as Array<
@@ -64,14 +64,14 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
           </span>
         </div>
 
-        <div className={`font-mono text-[10px] font-bold uppercase ${colors.text}`}>
+        <div className={`font-mono text-[11px] font-bold uppercase ${colors.text}`}>
           {assetTypeLabel[assetType]}
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-2 rounded-lg bg-black/20 p-2">
         <div className="text-center">
-          <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Фаза
           </div>
           <div className="font-mono text-xs font-bold text-holo">
@@ -80,16 +80,20 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
         </div>
 
         <div className="text-center">
-          <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Сила
           </div>
           <div className="font-mono text-xs font-bold text-holo">
-            {forceEmoji[dominantForce]} {dominantForceLabel[dominantForce]}
+            <span
+              aria-hidden
+              className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full align-middle ${forceTone[dominantForce]}`}
+            />
+            {dominantForceLabel[dominantForce]}
           </div>
         </div>
 
         <div className="text-center">
-          <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Волатильность
           </div>
           <div
@@ -120,7 +124,7 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
               </div>
 
               {facts.length > 0 && (
-                <div className="pl-2 font-mono text-[10px] text-holo/40">
+                <div className="pl-2 font-mono text-[11px] text-holo/40">
                   {facts.slice(0, 2).join(' · ')}
                   {facts.length > 2 && ` +ещё ${facts.length - 2}`}
                 </div>
@@ -144,7 +148,7 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
 
         {tacticalAdvice.reasoning.length > 0 && (
           <div className="space-y-1">
-            <div className="font-mono text-[10px] uppercase text-holo/30">
+            <div className="font-mono text-[11px] uppercase text-holo/30">
               Обоснование:
             </div>
             {tacticalAdvice.reasoning.map((reason, idx) => (
@@ -161,7 +165,7 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
 
         <div className="grid grid-cols-2 gap-2 rounded-md bg-black/20 p-2">
           <div>
-            <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
+            <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
               Вход
             </div>
             <div className="font-mono text-xs text-holo">
@@ -170,7 +174,7 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
           </div>
 
           <div>
-            <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
+            <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
               Стоп
             </div>
             <div className="font-mono text-xs text-holo">
@@ -179,7 +183,7 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
           </div>
 
           <div>
-            <div className="mb-0.5 font-mono text-[9px] uppercase text-holo/30">
+            <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
               Таймфрейм
             </div>
             <div className="font-mono text-xs text-holo">
@@ -192,14 +196,14 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
           <div className="space-y-1 rounded-md border border-alert/20 bg-alert/5 p-2">
             <div className="flex items-center gap-1.5">
               <AlertTriangle className="h-3 w-3 text-alert" />
-              <span className="font-mono text-[10px] font-bold uppercase text-alert">
+              <span className="font-mono text-[11px] font-bold uppercase text-alert">
                 Предупреждения
               </span>
             </div>
             {tacticalAdvice.warnings.map((warning, idx) => (
               <div
                 key={idx}
-                className="font-mono text-[10px] leading-relaxed text-alert/80"
+                className="font-mono text-[11px] leading-relaxed text-alert/80"
               >
                 {warning}
               </div>
@@ -211,7 +215,7 @@ const CompositeAnalysisPanel = ({ analysis }: CompositeAnalysisPanelProps) => {
       {altContext && (
         <div className="rounded-lg border border-matrix/20 bg-matrix/5 p-2.5">
           <div className="mb-2 font-mono text-xs font-bold uppercase text-matrix">
-            📊 Контекст альта
+            Контекст альта
           </div>
           <div className="space-y-1 font-mono text-xs text-holo/70">
             <div>

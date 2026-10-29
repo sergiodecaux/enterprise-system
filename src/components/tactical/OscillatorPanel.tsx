@@ -202,7 +202,7 @@ const OscillatorPanel = ({
 
   return (
     <div className="space-y-0.5">
-      <div className="px-1 font-mono text-[9px] text-holo/40">{MODE_LABELS[mode]}</div>
+      <div className="px-1 font-mono text-[11px] text-holo/40">{MODE_LABELS[mode]}</div>
       <div ref={containerRef} style={{ height }} className="w-full" />
     </div>
   )

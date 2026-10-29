@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Crosshair, RefreshCw, Rocket } from 'lucide-react'
+import { Bot, Crosshair, RefreshCw, Rocket } from 'lucide-react'
 import type { BotJournalPayload } from '../../api/telegram/botJournal'
 import BotTradeCard from './BotTradeCard'
 
@@ -63,7 +63,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
             <div className="font-mono text-xs font-bold uppercase text-sky-200">
               Сделки бота
             </div>
-            <p className="mt-1 font-mono text-[9px] leading-relaxed text-holo/45">
+            <p className="mt-1 font-mono text-[11px] leading-relaxed text-holo/45">
               Predator (мемы) и Vane (альты) — отдельно. Синк с Worker каждые 30с.
             </p>
           </div>
@@ -71,7 +71,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
             type="button"
             onClick={onRefresh}
             disabled={loading}
-            className="rounded-lg border border-sky-400/30 bg-sky-500/10 p-2 text-sky-200 disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-sky-400/30 bg-sky-500/10 text-sky-200 disabled:opacity-40 desk:h-8 desk:w-8"
             aria-label="Обновить сделки бота"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -90,14 +90,14 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
                 : 'border-hull-border/60 bg-black/20'
             }`}
           >
-            <div className="flex items-center gap-1 font-mono text-[9px] uppercase text-alert">
+            <div className="flex items-center gap-1 font-mono text-[11px] uppercase text-alert">
               <Rocket className="h-3 w-3" />
               Мемы
             </div>
             <div className="font-mono text-lg font-bold text-holo">
               {memeOpen}
             </div>
-            <div className="font-mono text-[8px] text-holo/35">активных</div>
+            <div className="font-mono text-[11px] text-holo/35">активных</div>
           </button>
           <button
             type="button"
@@ -110,14 +110,14 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
                 : 'border-hull-border/60 bg-black/20'
             }`}
           >
-            <div className="flex items-center gap-1 font-mono text-[9px] uppercase text-sky-300">
+            <div className="flex items-center gap-1 font-mono text-[11px] uppercase text-sky-300">
               <Crosshair className="h-3 w-3" />
               Альты
             </div>
             <div className="font-mono text-lg font-bold text-holo">
               {altsOpen}
             </div>
-            <div className="font-mono text-[8px] text-holo/35">активных</div>
+            <div className="font-mono text-[11px] text-holo/35">активных</div>
           </button>
         </div>
 
@@ -126,7 +126,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
             <div className="font-mono text-base font-bold text-yellow-300">
               {active.filter((entry) => !entry.filledAt).length}
             </div>
-            <div className="font-mono text-[8px] uppercase text-holo/35">
+            <div className="font-mono text-[11px] uppercase text-holo/35">
               Ждут зону
             </div>
           </div>
@@ -134,7 +134,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
             <div className="font-mono text-base font-bold text-matrix">
               {active.filter((entry) => Boolean(entry.filledAt)).length}
             </div>
-            <div className="font-mono text-[8px] uppercase text-holo/35">
+            <div className="font-mono text-[11px] uppercase text-holo/35">
               В позиции
             </div>
           </div>
@@ -142,7 +142,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
             <div className="font-mono text-base font-bold text-holo/70">
               {history.length}
             </div>
-            <div className="font-mono text-[8px] uppercase text-holo/35">
+            <div className="font-mono text-[11px] uppercase text-holo/35">
               Закрыто
             </div>
           </div>
@@ -155,7 +155,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
             key={id}
             type="button"
             onClick={() => setChannel(id)}
-            className={`flex-1 rounded-lg border px-2 py-1.5 font-mono text-[9px] font-bold uppercase ${
+            className={`inline-flex min-h-10 flex-1 items-center justify-center rounded-lg border px-2 py-1.5 font-mono text-[11px] font-bold uppercase desk:min-h-0 ${
               channel === id
                 ? id === 'MEME'
                   ? 'border-alert/40 bg-alert/15 text-alert'
@@ -174,7 +174,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
         <button
           type="button"
           onClick={() => setTab('ACTIVE')}
-          className={`flex-1 rounded-lg border px-3 py-2 font-mono text-[10px] font-bold uppercase ${
+          className={`min-h-10 flex-1 rounded-lg border px-3 py-2 font-mono text-[11px] font-bold uppercase desk:min-h-0 ${
             tab === 'ACTIVE'
               ? 'border-sky-400/50 bg-sky-500/15 text-sky-200'
               : 'border-hull-border bg-hull text-holo/40'
@@ -185,7 +185,7 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
         <button
           type="button"
           onClick={() => setTab('HISTORY')}
-          className={`flex-1 rounded-lg border px-3 py-2 font-mono text-[10px] font-bold uppercase ${
+          className={`min-h-10 flex-1 rounded-lg border px-3 py-2 font-mono text-[11px] font-bold uppercase desk:min-h-0 ${
             tab === 'HISTORY'
               ? 'border-sky-400/50 bg-sky-500/15 text-sky-200'
               : 'border-hull-border bg-hull text-holo/40'
@@ -196,15 +196,18 @@ const BotTradesPanel = ({ payload, loading, error, onRefresh }: Props) => {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-alert/30 bg-alert/5 p-2 font-mono text-[10px] text-alert">
+        <div className="rounded-md border border-market-short/25 bg-market-short/[0.06] p-2 font-sans text-[11px] leading-4 text-market-short">
           {error}
         </div>
       )}
 
       {shown.length === 0 ? (
         <div className="py-10 text-center">
-          <div className="text-4xl opacity-25">🤖</div>
-          <p className="mt-2 font-mono text-xs text-holo/45">
+          <Bot
+            className="mx-auto h-8 w-8 text-text-muted/40"
+            strokeWidth={1.4}
+          />
+          <p className="mt-2 font-sans text-[11px] leading-4 text-text-muted">
             {loading
               ? 'Загружаю сделки бота…'
               : tab === 'ACTIVE'

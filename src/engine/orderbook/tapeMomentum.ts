@@ -62,8 +62,8 @@ export function computeTapeMomentum(
     signal = 'STRONG_BUY'
     color = 'rgba(0, 255, 65, 1)'
     label = isBurst
-      ? '⚡ АГРЕССИВНЫЕ ПОКУПКИ — лимитник съеден!'
-      : '📈 Сильный Buy Flow'
+      ? 'АГРЕССИВНЫЕ ПОКУПКИ — лимитник съеден!'
+      : 'Сильный Buy Flow'
   } else if (delta > 0.1 && pressure === 'BUYERS') {
     signal = 'BUY'
     color = 'rgba(34, 197, 94, 0.9)'
@@ -72,8 +72,8 @@ export function computeTapeMomentum(
     signal = 'STRONG_SELL'
     color = 'rgba(255, 0, 60, 1)'
     label = isBurst
-      ? '⚡ АГРЕССИВНЫЕ ПРОДАЖИ — лимитник съеден!'
-      : '📉 Сильный Sell Flow'
+      ? 'АГРЕССИВНЫЕ ПРОДАЖИ — лимитник съеден!'
+      : 'Сильный Sell Flow'
   } else if (delta < -0.1 && pressure === 'SELLERS') {
     signal = 'SELL'
     color = 'rgba(239, 68, 68, 0.9)'

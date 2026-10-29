@@ -116,7 +116,7 @@ export function detectMeanReversion(
       expectedRetracePct,
       quality,
       label: `Перекупленность | RSI ${rsi.toFixed(0)} | Откат ${expectedRetracePct.toFixed(1)}% ожидается`,
-      emoji: '🔻',
+      emoji: '',
     }
   }
 
@@ -137,7 +137,7 @@ export function detectMeanReversion(
       expectedRetracePct,
       quality,
       label: `Перепроданность | RSI ${rsi.toFixed(0)} | Откат ${expectedRetracePct.toFixed(1)}% ожидается`,
-      emoji: '🔼',
+      emoji: '',
     }
   }
 

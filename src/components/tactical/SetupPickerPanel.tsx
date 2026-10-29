@@ -40,10 +40,10 @@ const SetupPickerPanel = ({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-holo/60">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-holo/60">
           Подобранные сетапы
         </div>
-        <div className="font-mono text-[9px] text-holo/30">
+        <div className="font-mono text-[11px] text-holo/30">
           {setups.length} шт. · условные + сейчас
         </div>
       </div>
@@ -78,7 +78,7 @@ const SetupPickerPanel = ({
                     <span className={`font-mono text-xs font-bold ${sideColor}`}>
                       {s.side}
                     </span>
-                    <span className="font-mono text-[10px] text-holo/40">
+                    <span className="font-mono text-[11px] text-holo/40">
                       {s.kind}
                     </span>
                   </div>
@@ -86,12 +86,12 @@ const SetupPickerPanel = ({
                     {s.title}
                   </div>
                 </div>
-                <div className={`shrink-0 font-mono text-[9px] font-bold ${statusColor}`}>
+                <div className={`shrink-0 font-mono text-[11px] font-bold ${statusColor}`}>
                   {statusLabel[s.status] ?? s.status}
                 </div>
               </div>
 
-              <p className="mb-2 font-mono text-[10px] leading-relaxed text-holo/45">
+              <p className="mb-2 font-mono text-[11px] leading-relaxed text-holo/45">
                 {s.triggerSummary}
               </p>
 
@@ -99,7 +99,7 @@ const SetupPickerPanel = ({
                 {s.preconditions.slice(0, 4).map((p) => (
                   <li
                     key={p.id}
-                    className="flex items-center gap-1.5 font-mono text-[9px] text-holo/40"
+                    className="flex items-center gap-1.5 font-mono text-[11px] text-holo/40"
                   >
                     <span>
                       {p.status === 'MET'
@@ -115,34 +115,34 @@ const SetupPickerPanel = ({
 
               <div className="mb-2 grid grid-cols-4 gap-1 rounded-lg bg-black/25 p-1.5">
                 <div className="text-center">
-                  <div className="font-mono text-[8px] uppercase text-holo/30">
+                  <div className="font-mono text-[11px] uppercase text-holo/30">
                     Зона
                   </div>
-                  <div className="font-mono text-[9px] leading-tight text-holo">
+                  <div className="font-mono text-[11px] leading-tight text-holo">
                     {s.entryZone.bottom.toPrecision(5)}–{s.entryZone.top.toPrecision(5)}
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="font-mono text-[8px] uppercase text-holo/30">
+                  <div className="font-mono text-[11px] uppercase text-holo/30">
                     Limit
                   </div>
-                  <div className="font-mono text-[10px] text-holo">
+                  <div className="font-mono text-[11px] text-holo">
                     {s.limitEntry.toPrecision(6)}
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="font-mono text-[8px] uppercase text-holo/30">
+                  <div className="font-mono text-[11px] uppercase text-holo/30">
                     TP
                   </div>
-                  <div className="font-mono text-[10px] text-matrix/80">
+                  <div className="font-mono text-[11px] text-matrix/80">
                     {s.target.toPrecision(6)}
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="font-mono text-[8px] uppercase text-holo/30">
+                  <div className="font-mono text-[11px] uppercase text-holo/30">
                     Inv
                   </div>
-                  <div className="font-mono text-[10px] text-alert/80">
+                  <div className="font-mono text-[11px] text-alert/80">
                     {s.invalidation.toPrecision(6)}
                   </div>
                 </div>
@@ -152,7 +152,7 @@ const SetupPickerPanel = ({
                 <button
                   type="button"
                   onClick={() => onSelect(s)}
-                  className="flex-1 rounded-lg border border-hull-border bg-black/30 py-1.5 font-mono text-[10px] font-bold text-holo hover:bg-hull-light/40"
+                  className="flex-1 rounded-lg border border-hull-border bg-black/30 py-1.5 font-mono text-[11px] font-bold text-holo hover:bg-hull-light/40"
                 >
                   {selected ? 'Выбран' : 'Выбрать'}
                 </button>
@@ -162,7 +162,7 @@ const SetupPickerPanel = ({
                   onClick={() =>
                     watching && onUnwatch ? onUnwatch(s) : onWatch(s)
                   }
-                  className={`flex-1 rounded-lg py-1.5 font-mono text-[10px] font-bold disabled:opacity-40 ${
+                  className={`flex-1 rounded-lg py-1.5 font-mono text-[11px] font-bold disabled:opacity-40 ${
                     watching
                       ? 'border border-yellow-400/40 bg-yellow-400/10 text-yellow-300'
                       : 'bg-matrix/20 text-matrix'

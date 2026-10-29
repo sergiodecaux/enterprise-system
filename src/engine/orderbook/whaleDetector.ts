@@ -117,16 +117,16 @@ export function buildWhaleAlerts(
     if (order.distancePct <= 1.0) {
       type = 'IMMEDIATE'
       if (order.side === 'BID') {
-        message = `🐋 Поддержка китов на ${priceStr} — ${volStr} (СРОЧНО)`
+        message = `Поддержка китов на ${priceStr} — ${volStr} (СРОЧНО)`
       } else {
-        message = `🐋 Сопротивление китов на ${priceStr} — ${volStr} (СРОЧНО)`
+        message = `Сопротивление китов на ${priceStr} — ${volStr} (СРОЧНО)`
       }
     } else if (order.side === 'BID') {
       type = 'SUPPORT'
-      message = `🐋 Поддержка китов на ${priceStr} — ${volStr} (${order.distancePct.toFixed(1)}% ниже)`
+      message = `Поддержка китов на ${priceStr} — ${volStr} (${order.distancePct.toFixed(1)}% ниже)`
     } else {
       type = 'RESISTANCE'
-      message = `🐋 Сопротивление китов на ${priceStr} — ${volStr} (${order.distancePct.toFixed(1)}% выше)`
+      message = `Сопротивление китов на ${priceStr} — ${volStr} (${order.distancePct.toFixed(1)}% выше)`
     }
 
     const now = Date.now()

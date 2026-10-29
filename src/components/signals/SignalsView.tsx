@@ -10,6 +10,10 @@ import {
   Eye,
   Send,
   Check,
+  Calculator,
+  ChevronRight,
+  Crosshair,
+  ListChecks,
 } from 'lucide-react'
 import {
   PINNED_WATCHLIST,
@@ -52,6 +56,10 @@ import { getCachedWorkerMarketContext } from '../../hooks/useWorkerMarketContext
 import { DescriptiveNote } from '../tactical/DescriptiveNote'
 import { AltMacroStrip } from '../market/AltMacroStrip'
 import { ContextPanel } from '../market/ContextPanel'
+import Badge from '../ui/Badge'
+import Button from '../ui/Button'
+import SegmentedControl from '../ui/SegmentedControl'
+import PositionSizeCalculator from '../trades/PositionSizeCalculator'
 import { loadJournal, SETUP_LABELS } from '../../engine/journal'
 import { isSniperFireNew, sniperFireKey } from '../../engine/sniper/fire'
 import { fetchCrowdContext } from '../../api/binance/crowd'
@@ -84,10 +92,13 @@ function fmtPx(p: number): string {
 }
 
 function toneClass(tone: 'ok' | 'warn' | 'bad' | 'neutral'): string {
-  if (tone === 'ok') return 'text-matrix border-matrix/30 bg-matrix/5'
-  if (tone === 'warn') return 'text-amber-300/90 border-amber-400/30 bg-amber-500/5'
-  if (tone === 'bad') return 'text-alert border-alert/30 bg-alert/5'
-  return 'text-holo/70 border-hull-border bg-hull/40'
+  if (tone === 'ok')
+    return 'text-market-long border-market-long/20 bg-market-long/[0.05]'
+  if (tone === 'warn')
+    return 'text-market-warning border-market-warning/25 bg-market-warning/[0.05]'
+  if (tone === 'bad')
+    return 'text-market-short border-market-short/20 bg-market-short/[0.05]'
+  return 'text-text-secondary border-border bg-bg-base/40'
 }
 
 const SignalsView = () => {
@@ -106,6 +117,7 @@ const SignalsView = () => {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [watchBusy, setWatchBusy] = useState(false)
   const [watchedOk, setWatchedOk] = useState(false)
+  const [calcOpen, setCalcOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
 
   const marketContext = useAppStore((s) => s.marketContext)
@@ -181,6 +193,7 @@ const SignalsView = () => {
     setError(null)
     setWatchedOk(false)
     setConfirmOpen(false)
+    setCalcOpen(false)
   }
 
   const runSide = async (side: SignalSide) => {
@@ -190,6 +203,7 @@ const SignalsView = () => {
     setResult(null)
     setWatchedOk(false)
     setConfirmOpen(false)
+    setCalcOpen(false)
 
     try {
       const symbol = selected.symbol
@@ -412,7 +426,7 @@ const SignalsView = () => {
         const base = result.bestSetup.title.startsWith('#')
           ? result.bestSetup.title
           : `${HORIZON_PROFILES[style].tag} ${result.bestSetup.title}`
-        return earlyTag ? `⏳ EARLY · ${base}` : base
+        return earlyTag ? `EARLY · ${base}` : base
       })(),
       reasoning: earlyTag
         ? [
@@ -487,33 +501,61 @@ const SignalsView = () => {
   const zone = result?.catchZone
   const setup = result?.bestSetup
 
+  const isResultLong = result?.side === 'LONG'
+  const SideIcon = result?.side === 'SHORT' ? TrendingDown : TrendingUp
+  const activeProfile = HORIZON_PROFILES[tradeStyle]
+
+  const planEntry = setup?.limitEntry ?? zone?.limitEntry ?? 0
+  const planSl = setup?.invalidation ?? zone?.invalidation ?? 0
+  const planTarget = setup?.target ?? zone?.target ?? 0
+  const planTp2 = setup?.targetsLadder?.r2 ?? null
+  const planRR =
+    planEntry > 0 && planSl > 0 && planTarget > 0
+      ? Math.abs(planTarget - planEntry) / Math.abs(planEntry - planSl)
+      : 0
+  const zoneDistance =
+    zone?.distancePct ??
+    (setup && selected && selected.lastPrice > 0
+      ? ((setup.limitEntry - selected.lastPrice) / selected.lastPrice) * 100
+      : null)
+
   return (
-    <div className="flex min-h-screen flex-col bg-space pb-8">
-      <div className="border-b border-hull-border px-4 py-4">
-        <div className="mb-1 flex items-center gap-2">
-          <Zap className="h-5 w-5 text-amber-300" />
-          <h1 className="font-mono text-xl font-bold uppercase tracking-tight text-holo">
+    <div className="flex min-h-full flex-col bg-bg-base pb-8">
+      <div className="z-10 border-b border-border bg-bg-base/95 px-3 py-2.5 backdrop-blur-sm min-[1100px]:sticky min-[1100px]:top-0">
+        <div className="flex items-center gap-2">
+          <Zap className="h-4 w-4 shrink-0 text-brand" />
+          <h1 className="min-w-0 truncate font-sans text-[15px] font-semibold leading-5 text-text-primary">
             Сигналы
           </h1>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-sans text-[11px] leading-4 text-text-muted">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand" />
+            ручной разбор
+          </span>
         </div>
-        <p className="font-mono text-[11px] text-holo/45">
-          Стиль → монета → LONG/SHORT → зона под горизонт → бот
+        <p className="mt-0.5 font-sans text-[11px] leading-4 text-text-muted">
+          Стиль → монета → сторона → зона под горизонт
         </p>
       </div>
 
       {/* Market strip */}
-      <div className="border-b border-hull-border px-4 py-3">
+      <div className="border-b border-border px-3 py-3">
         <AltMacroStrip ctx={workerCtx} />
-        <p className="mt-1.5 text-center font-mono text-[9px] text-holo/35">
-          F&G alternative.me {workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? '—'}
+        <p className="mt-1.5 text-center font-mono text-[11px] leading-4 text-text-muted">
+          F&amp;G alternative.me {workerCtx?.fearGreed ?? newsIntel.fearGreed?.value ?? '—'}
           {workerCtx?.newsLabel ? ` · News ${workerCtx.newsLabel}` : ''}
         </p>
       </div>
 
       {firedSniper.length > 0 && (
-        <div className="border-b border-hull-border px-4 py-3">
-          <div className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/45">
-            Снайпер выбросил
+        <div className="border-b border-border px-3 py-3">
+          <div className="mb-2 flex items-center gap-1.5">
+            <Crosshair className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            <span className="font-sans text-[11px] font-medium leading-4 text-text-muted">
+              Снайпер выбросил
+            </span>
+            <span className="tnum ml-auto font-mono text-[11px] leading-4 text-text-muted">
+              {firedSniper.length}
+            </span>
           </div>
           <div className="space-y-1.5">
             {firedSniper.map((entry) => {
@@ -529,39 +571,40 @@ const SignalsView = () => {
                     selectCoin(entry.symbol)
                     setDrawerOpen(true)
                   }}
-                  className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left ${
+                  className={`relative w-full overflow-hidden rounded-lg border bg-bg-panel px-2.5 py-2 text-left transition-colors hover:border-border-active ${
                     isLong
-                      ? 'border-matrix/25 bg-matrix/[0.06]'
-                      : 'border-alert/25 bg-alert/[0.06]'
+                      ? 'border-market-long/25'
+                      : 'border-market-short/25'
                   }`}
                 >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate font-mono text-xs font-bold text-holo">
-                        {entry.displayName}
-                      </span>
-                      <span
-                        className={`font-mono text-[10px] font-bold uppercase ${
-                          isLong ? 'text-matrix' : 'text-alert'
-                        }`}
-                      >
-                        {directionLabel(entry.direction)}
-                      </span>
-                      {fresh && (
-                        <span className="rounded border border-matrix/40 bg-matrix/15 px-1 py-px font-mono text-[8px] font-bold uppercase text-matrix">
-                          NEW
+                  <span
+                    aria-hidden
+                    className={`absolute inset-y-0 left-0 w-[2px] ${
+                      isLong ? 'bg-market-long/70' : 'bg-market-short/70'
+                    }`}
+                  />
+                  <div className="flex items-center justify-between gap-2 pl-1.5">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="truncate font-mono text-[13px] font-semibold leading-5 text-text-primary">
+                          {entry.displayName}
                         </span>
-                      )}
+                        <Badge tone={isLong ? 'long' : 'short'} uppercase>
+                          {directionLabel(entry.direction)}
+                        </Badge>
+                        {fresh && (
+                          <Badge tone="brand" dot>
+                            NEW
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-[11px] leading-4 text-text-muted">
+                        {SETUP_LABELS[entry.setupType] ?? entry.setupTag}
+                        {entry.tradeStyle ? ` · ${entry.tradeStyle}` : ''}
+                        {' · '}SL {fmtPx(entry.sl)} · TP {fmtPx(entry.tp1)}
+                      </div>
                     </div>
-                    <div className="mt-0.5 font-mono text-[10px] text-holo/45">
-                      {SETUP_LABELS[entry.setupType] ?? entry.setupTag}
-                      {entry.tradeStyle ? ` · ${entry.tradeStyle}` : ''}
-                      {' · '}
-                      SL {fmtPx(entry.sl)} · TP {fmtPx(entry.tp1)}
-                    </div>
-                  </div>
-                  <div className="max-w-[7.5rem] shrink-0 text-right font-mono text-[9px] leading-snug text-holo/35">
-                    без оценки
+                    <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
                   </div>
                 </button>
               )
@@ -571,9 +614,34 @@ const SignalsView = () => {
       )}
 
       {/* Search */}
-      <div ref={wrapRef} className="relative px-4 pt-4">
+      <div ref={wrapRef} className="relative px-3 pt-3">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <span className="font-sans text-[11px] font-medium leading-4 text-text-muted">
+            Монета
+          </span>
+          {selected ? (
+            <span className="tnum flex items-center gap-2 font-mono text-[11px] leading-4 text-text-secondary">
+              ${fmtPx(selected.lastPrice)}
+              <span
+                className={
+                  selected.priceChangePercent >= 0
+                    ? 'text-market-long'
+                    : 'text-market-short'
+                }
+              >
+                {selected.priceChangePercent >= 0 ? '+' : ''}
+                {selected.priceChangePercent.toFixed(2)}%
+              </span>
+            </span>
+          ) : (
+            <span className="font-sans text-[11px] leading-4 text-text-muted">
+              каталог MEXC
+            </span>
+          )}
+        </div>
+
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-holo/40" />
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
           <input
             type="text"
             value={query}
@@ -589,13 +657,14 @@ const SignalsView = () => {
               setOpen(true)
               loadCatalog()
             }}
-            placeholder="Найти монету (BTC, ETH, PEPE…)"
-            className="w-full rounded-lg border border-hull-border bg-hull py-2.5 pl-10 pr-10 font-mono text-sm text-holo placeholder:text-holo/30 focus:border-amber-400/50 focus:outline-none"
+            placeholder="Найти монету: BTC, ETH, PEPE…"
+            className="h-10 w-full rounded-md border border-border bg-bg-panel pl-8 pr-10 font-mono text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-brand/40 desk:h-8"
           />
           {query && (
             <button
               type="button"
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-holo/40 hover:text-holo"
+              aria-label="Очистить поиск"
+              className="absolute right-0 top-0 flex h-10 w-10 items-center justify-center text-text-muted transition-colors hover:text-text-primary desk:h-8 desk:w-8"
               onClick={() => {
                 setQuery('')
                 setSelected(null)
@@ -609,15 +678,15 @@ const SignalsView = () => {
         </div>
 
         {open && query.trim().length > 0 && (
-          <div className="absolute left-4 right-4 z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-hull-border bg-hull shadow-xl">
+          <div className="absolute left-3 right-3 z-30 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-bg-elevated p-1 shadow-popover">
             {catalogLoading && (
-              <div className="flex items-center gap-2 px-3 py-3 font-mono text-xs text-holo/50">
+              <div className="flex items-center gap-2 px-2.5 py-2.5 font-sans text-[11px] text-text-muted">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Загрузка каталога…
               </div>
             )}
             {!catalogLoading && results.length === 0 && (
-              <div className="px-3 py-3 font-mono text-xs text-holo/50">
+              <div className="px-2.5 py-2.5 font-sans text-[11px] text-text-muted">
                 Ничего не найдено
               </div>
             )}
@@ -626,26 +695,24 @@ const SignalsView = () => {
                 key={ticker.symbol}
                 type="button"
                 onClick={() => pickCoin(ticker)}
-                className="flex w-full items-center justify-between border-b border-hull-border/40 px-3 py-2.5 text-left last:border-0 hover:bg-hull-light"
+                className="flex min-h-10 w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left transition-colors hover:bg-bg-surface"
               >
-                <div>
-                  <div className="font-mono text-sm font-bold text-holo">
-                    {toDisplayName(ticker.symbol)}
-                  </div>
-                  <div className="font-mono text-xs text-holo/40">
-                    ${ticker.lastPrice.toLocaleString('ru-RU')} ·{' '}
-                    <span
-                      className={
-                        ticker.priceChangePercent >= 0
-                          ? 'text-matrix'
-                          : 'text-alert'
-                      }
-                    >
-                      {ticker.priceChangePercent >= 0 ? '+' : ''}
-                      {ticker.priceChangePercent.toFixed(2)}%
-                    </span>
-                  </div>
-                </div>
+                <span className="truncate font-mono text-[12px] font-medium text-text-primary">
+                  {toDisplayName(ticker.symbol)}
+                </span>
+                <span className="tnum shrink-0 font-mono text-[11px] text-text-muted">
+                  ${ticker.lastPrice.toLocaleString('ru-RU')}
+                  <span
+                    className={`ml-1.5 ${
+                      ticker.priceChangePercent >= 0
+                        ? 'text-market-long'
+                        : 'text-market-short'
+                    }`}
+                  >
+                    {ticker.priceChangePercent >= 0 ? '+' : ''}
+                    {ticker.priceChangePercent.toFixed(2)}%
+                  </span>
+                </span>
               </button>
             ))}
           </div>
@@ -653,278 +720,352 @@ const SignalsView = () => {
       </div>
 
       {/* Trade style: SCALP / INTRA / SWING */}
-      <div className="px-4 pt-4">
-        <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/45">
+      <div className="px-3 pt-3">
+        <div className="mb-1.5 font-sans text-[11px] font-medium leading-4 text-text-muted">
           Горизонт сделки
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          {STYLE_OPTIONS.map((opt) => {
-            const active = tradeStyle === opt.id
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                disabled={!!sideBusy}
-                onClick={() => {
-                  setTradeStyle(opt.id)
-                  setResult(null)
-                  setWatchedOk(false)
-                  setConfirmOpen(false)
-                  setError(null)
-                  haptic.impact()
-                }}
-                className={`rounded-xl border px-2 py-2.5 text-left transition-colors disabled:opacity-40 ${
-                  active
-                    ? 'border-amber-400/50 bg-amber-500/15 text-amber-100'
-                    : 'border-hull-border bg-hull/40 text-holo/55 hover:border-holo/30 hover:text-holo/80'
-                }`}
-              >
-                <div className="font-mono text-[11px] font-bold uppercase">
-                  {opt.label}
-                </div>
-                <div className="mt-0.5 font-mono text-[9px] opacity-70 leading-snug">
-                  {opt.hint}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-        <p className="mt-1.5 font-mono text-[10px] text-holo/35">
-          {HORIZON_PROFILES[tradeStyle].tag} · зоны до{' '}
-          {HORIZON_PROFILES[tradeStyle].maxDistPct}% · TP×
-          {HORIZON_PROFILES[tradeStyle].tpMult} · R{' '}
-          {HORIZON_PROFILES[tradeStyle].rMultiples.join('/')}
+        <SegmentedControl
+          value={tradeStyle}
+          onChange={(value) => {
+            setTradeStyle(value)
+            setResult(null)
+            setWatchedOk(false)
+            setConfirmOpen(false)
+            setCalcOpen(false)
+            setError(null)
+            haptic.impact()
+          }}
+          options={STYLE_OPTIONS.map((opt) => ({
+            value: opt.id,
+            label: opt.label,
+            title: opt.hint,
+            disabled: !!sideBusy,
+          }))}
+          size="md"
+          stretch
+          ariaLabel="Горизонт сделки"
+          className="w-full"
+        />
+        <p className="mt-1.5 font-sans text-[11px] leading-4 text-text-muted">
+          {STYLE_OPTIONS.find((opt) => opt.id === tradeStyle)?.hint}
+        </p>
+        <p className="font-mono text-[11px] leading-4 text-text-muted">
+          {activeProfile.tag} · зоны до {activeProfile.maxDistPct}% · TP×
+          {activeProfile.tpMult} · R {activeProfile.rMultiples.join('/')}
         </p>
       </div>
 
       {/* LONG / SHORT */}
-      <div className="grid grid-cols-2 gap-3 px-4 pt-3">
+      <div className="grid grid-cols-2 gap-2 px-3 pt-3">
         <button
           type="button"
           disabled={!selected || !!sideBusy}
           onClick={() => runSide('LONG')}
-          className="flex items-center justify-center gap-2 rounded-xl border border-matrix/40 bg-matrix/10 py-3.5 font-mono text-sm font-bold uppercase text-matrix transition-colors hover:bg-matrix/20 disabled:opacity-40"
+          className="flex h-11 items-center justify-center gap-2 rounded-md border border-market-long/30 bg-market-long/10 font-mono text-[13px] font-semibold text-market-long transition-colors hover:bg-market-long/15 active:bg-market-long/20 disabled:opacity-40"
         >
           {sideBusy === 'LONG' ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <TrendingUp className="h-4 w-4" />
           )}
-          Long
+          {directionLabel('LONG')}
         </button>
         <button
           type="button"
           disabled={!selected || !!sideBusy}
           onClick={() => runSide('SHORT')}
-          className="flex items-center justify-center gap-2 rounded-xl border border-alert/40 bg-alert/10 py-3.5 font-mono text-sm font-bold uppercase text-alert transition-colors hover:bg-alert/20 disabled:opacity-40"
+          className="flex h-11 items-center justify-center gap-2 rounded-md border border-market-short/30 bg-market-short/10 font-mono text-[13px] font-semibold text-market-short transition-colors hover:bg-market-short/15 active:bg-market-short/20 disabled:opacity-40"
         >
           {sideBusy === 'SHORT' ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <TrendingDown className="h-4 w-4" />
           )}
-          Short
+          {directionLabel('SHORT')}
         </button>
       </div>
 
       {!selected && (
-        <p className="px-4 pt-3 font-mono text-[11px] text-holo/35">
-          Выберите стиль и монету, затем Long или Short
+        <p className="px-3 pt-2 font-sans text-[11px] leading-4 text-text-muted">
+          Выберите монету, затем сторону — движок подберёт зону под горизонт.
         </p>
       )}
 
       {error && (
-        <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-alert/40 bg-alert/10 px-3 py-2.5">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-alert" />
-          <span className="font-mono text-xs text-alert">{error}</span>
+        <div className="mx-3 mt-3 flex items-start gap-2 rounded-md border border-market-short/25 bg-market-short/[0.06] px-2.5 py-2">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-market-short" />
+          <span className="font-sans text-[11px] leading-4 text-market-short">
+            {error}
+          </span>
         </div>
       )}
 
       {/* Result */}
       {result && selected && (
-        <div className="mx-4 mt-4 space-y-3">
-          <div
-            className={`rounded-xl border p-3 ${
-              result.side === 'LONG'
-                ? 'border-matrix/35 bg-matrix/[0.06]'
-                : 'border-alert/35 bg-alert/[0.06]'
+        <div className="mt-3 space-y-3 px-3">
+          <section
+            className={`relative overflow-hidden rounded-lg border bg-bg-panel p-3 ${
+              isResultLong ? 'border-market-long/25' : 'border-market-short/25'
             }`}
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-mono text-sm font-bold text-holo">
-                {toDisplayName(selected.symbol)} · {result.side} ·{' '}
-                {HORIZON_PROFILES[tradeStyle].tag}
+            <span
+              aria-hidden
+              className={`absolute inset-y-0 left-0 w-[2px] ${
+                isResultLong ? 'bg-market-long/70' : 'bg-market-short/70'
+              }`}
+            />
+            <div className="pl-1">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <h2 className="truncate font-mono text-[15px] font-semibold leading-5 text-text-primary">
+                      {toDisplayName(selected.symbol)}
+                    </h2>
+                    <Badge tone={isResultLong ? 'long' : 'short'} uppercase>
+                      <SideIcon className="h-3 w-3" strokeWidth={2} />
+                      {directionLabel(result.side)}
+                    </Badge>
+                    <Badge tone="neutral">{activeProfile.tag}</Badge>
+                  </div>
+                  <p className="mt-1 font-sans text-[11px] leading-4 text-text-muted">
+                    {activeProfile.label}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-sans text-[11px] leading-4 text-text-muted">
+                    Совпадение
+                  </div>
+                  <div className="tnum font-mono text-[15px] font-medium leading-5 text-text-primary">
+                    {Math.round(result.winPct)}%
+                  </div>
+                </div>
               </div>
+
+              <div className="mt-2">
+                <DescriptiveNote />
+              </div>
+
+              <p className="mt-2 font-sans text-[13px] font-medium leading-5 text-text-primary">
+                {result.primary.title}
+                {result.targetMovePct != null ? (
+                  <span className="font-mono text-[11px] font-normal text-text-muted">
+                    {' '}
+                    · цель ~{result.targetMovePct.toFixed(1)}%
+                  </span>
+                ) : null}
+              </p>
+              <p className="mt-1 font-sans text-[11px] leading-4 text-text-secondary">
+                {result.primary.summary}
+              </p>
             </div>
-            <p className="mt-1 font-mono text-[11px] text-holo/70">
-              {HORIZON_PROFILES[tradeStyle].label}
-            </p>
-            <div className="mt-2">
-              <DescriptiveNote />
-            </div>
-            <p className="mt-2 font-mono text-xs leading-snug text-holo/80">
-              {result.primary.title}
-              {result.targetMovePct != null
-                ? ` · цель ~${result.targetMovePct.toFixed(1)}%`
-                : ''}
-            </p>
-            <p className="mt-1 font-mono text-[11px] leading-snug text-holo/55">
-              {result.primary.summary}
-            </p>
-          </div>
+          </section>
 
           {result.live.marketContext && (
             <ContextPanel ctx={result.live.marketContext} />
           )}
 
           {/* Catch zone */}
-          <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.05] p-3">
-            <div className="font-mono text-[10px] font-bold uppercase tracking-wide text-amber-200/85">
-              Зона ловли
-            </div>
-            {zone || setup ? (
-              <div className="mt-2 space-y-1.5 font-mono text-xs text-holo/80">
-                <div>
-                  Диапазон:{' '}
-                  <span className="font-bold text-holo">
-                    {fmtPx(zone?.bottom ?? setup!.entryZone.bottom)} —{' '}
-                    {fmtPx(zone?.top ?? setup!.entryZone.top)}
-                  </span>
-                </div>
-                <div>
-                  {result.side === 'SHORT' ? 'Лимитка SHORT' : 'Лимитка LONG'}:{' '}
-                  <span
-                    className={
-                      result.side === 'SHORT' ? 'text-rose-300' : 'text-teal-300'
-                    }
-                  >
-                    {fmtPx(setup?.limitEntry ?? zone?.limitEntry ?? 0)}
-                  </span>
-                  {(zone?.distancePct != null || setup) && (
-                    <span className="text-holo/45">
-                      {' '}
-                      · до зоны{' '}
-                      {(
-                        zone?.distancePct ??
-                        (((setup!.limitEntry - selected.lastPrice) /
-                          selected.lastPrice) *
-                          100)
-                      ).toFixed(2)}
-                      %
-                    </span>
-                  )}
-                </div>
-                <div>
-                  Цель:{' '}
-                  <span className="text-matrix">
-                    {fmtPx(setup?.target ?? zone?.target ?? 0)}
-                  </span>
-                  {' · '}
-                  SL:{' '}
-                  <span className="text-alert">
-                    {fmtPx(setup?.invalidation ?? zone?.invalidation ?? 0)}
-                  </span>
-                </div>
-                {result.live.phaseLabel && (
-                  <div className="pt-1 text-[10px] text-holo/45">
-                    {result.live.phaseLabel}
-                  </div>
-                )}
+          <section className="rounded-lg border border-border bg-bg-panel p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Crosshair className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                <h3 className="truncate font-sans text-[13px] font-medium leading-5 text-text-primary">
+                  Зона ловли
+                </h3>
               </div>
+              {planRR > 0 && (
+                <Badge
+                  tone={
+                    planRR >= 3 ? 'long' : planRR >= 2 ? 'warning' : 'neutral'
+                  }
+                  uppercase
+                  title="Риск к доходу до цели"
+                >
+                  1 : {planRR.toFixed(1)}
+                </Badge>
+              )}
+            </div>
+
+            {zone || setup ? (
+              <>
+                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border">
+                  <div className="bg-bg-base/60 px-2.5 py-2">
+                    <div className="font-sans text-[11px] leading-4 text-text-muted">
+                      Диапазон
+                    </div>
+                    <div className="tnum mt-0.5 truncate font-mono text-[12px] font-medium leading-4 text-text-primary">
+                      {fmtPx(zone?.bottom ?? setup!.entryZone.bottom)} —{' '}
+                      {fmtPx(zone?.top ?? setup!.entryZone.top)}
+                    </div>
+                  </div>
+                  <div className="bg-bg-base/60 px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-1 font-sans text-[11px] leading-4 text-text-muted">
+                      <span>Лимит</span>
+                      {zoneDistance != null && Number.isFinite(zoneDistance) && (
+                        <span className="tnum font-mono">
+                          {zoneDistance >= 0 ? '+' : ''}
+                          {zoneDistance.toFixed(2)}%
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={`tnum mt-0.5 truncate font-mono text-[12px] font-medium leading-4 ${
+                        isResultLong ? 'text-market-long' : 'text-market-short'
+                      }`}
+                    >
+                      {fmtPx(planEntry)}
+                    </div>
+                  </div>
+                  <div className="bg-bg-base/60 px-2.5 py-2">
+                    <div className="font-sans text-[11px] leading-4 text-text-muted">
+                      Цель
+                    </div>
+                    <div className="tnum mt-0.5 truncate font-mono text-[12px] font-medium leading-4 text-market-long">
+                      {fmtPx(planTarget)}
+                    </div>
+                  </div>
+                  <div className="bg-bg-base/60 px-2.5 py-2">
+                    <div className="font-sans text-[11px] leading-4 text-text-muted">
+                      Стоп
+                    </div>
+                    <div className="tnum mt-0.5 truncate font-mono text-[12px] font-medium leading-4 text-market-short">
+                      {fmtPx(planSl)}
+                    </div>
+                  </div>
+                </div>
+
+                {result.live.phaseLabel && (
+                  <p className="mt-1.5 font-sans text-[11px] leading-4 text-text-muted">
+                    {result.live.phaseLabel}
+                  </p>
+                )}
+
+                <Button
+                  variant="secondary"
+                  size="md"
+                  fullWidth
+                  className="mt-2"
+                  disabled={!(planEntry > 0 && planSl > 0)}
+                  onClick={() => {
+                    haptic.impact()
+                    setCalcOpen(true)
+                  }}
+                >
+                  <Calculator className="h-3.5 w-3.5" />
+                  Рассчитать позицию
+                </Button>
+              </>
             ) : (
-              <p className="mt-2 font-mono text-xs text-holo/50">
-                Зона не найдена — дождитесь подхода к ликвидности
+              <p className="font-sans text-[11px] leading-4 text-text-muted">
+                Зона не найдена — дождитесь подхода к ликвидности.
               </p>
             )}
-          </div>
+          </section>
 
           {/* Doubts */}
           {result.doubts.length > 0 && (
-            <div className="rounded-xl border border-hull-border bg-hull/40 p-3">
-              <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Сомнения / риски
+            <section className="rounded-lg border border-market-warning/20 bg-market-warning/[0.05] p-3">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-market-warning" />
+                <h3 className="font-sans text-[11px] font-medium leading-4 text-market-warning">
+                  Сомнения / риски
+                </h3>
               </div>
               <ul className="space-y-1">
                 {result.doubts.map((d) => (
                   <li
                     key={d}
-                    className="font-mono text-[11px] leading-snug text-holo/65"
+                    className="flex items-start gap-1.5 font-sans text-[11px] leading-4 text-text-secondary"
                   >
-                    · {d}
+                    <span
+                      aria-hidden
+                      className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-market-warning/70"
+                    />
+                    <span className="min-w-0">{d}</span>
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
           )}
 
           {/* Watch factors */}
           {result.watchFactors.length > 0 && (
-            <div className="rounded-xl border border-hull-border bg-hull/40 p-3">
-              <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
-                <Eye className="h-3.5 w-3.5" />
-                За чем следить
+            <section className="rounded-lg border border-border bg-bg-panel p-3">
+              <div className="mb-2 flex items-center gap-1.5">
+                <Eye className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                <h3 className="font-sans text-[11px] font-medium leading-4 text-text-muted">
+                  За чем следить
+                </h3>
               </div>
               <div className="space-y-1.5">
                 {result.watchFactors.map((f) => (
                   <div
                     key={f.id}
-                    className={`rounded-lg border px-2.5 py-1.5 ${toneClass(f.tone)}`}
+                    className={`rounded-md border px-2.5 py-1.5 ${toneClass(f.tone)}`}
                   >
-                    <div className="font-mono text-[10px] font-bold uppercase">
+                    <div className="font-sans text-[11px] font-medium leading-4">
                       {f.label}
                     </div>
-                    <div className="font-mono text-[11px] opacity-90">
+                    <div className="font-sans text-[11px] leading-4 opacity-90">
                       {f.detail}
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           )}
 
           {/* Steps */}
           {result.primary.steps.length > 0 && (
-            <div className="rounded-xl border border-hull-border bg-hull/30 p-3">
-              <div className="mb-1.5 font-mono text-[10px] font-bold uppercase text-holo/45">
-                План
+            <section className="rounded-lg border border-border bg-bg-panel/60 p-3">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <ListChecks className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                <h3 className="font-sans text-[11px] font-medium leading-4 text-text-muted">
+                  План
+                </h3>
               </div>
               <ol className="space-y-1">
                 {result.primary.steps.map((s, i) => (
                   <li
                     key={`${i}-${s}`}
-                    className="font-mono text-[11px] text-holo/70"
+                    className="flex items-start gap-2 font-sans text-[11px] leading-4 text-text-secondary"
                   >
-                    {i + 1}. {s}
+                    <span className="tnum mt-px w-3 shrink-0 font-mono text-[11px] text-text-muted">
+                      {i + 1}.
+                    </span>
+                    <span className="min-w-0">{s}</span>
                   </li>
                 ))}
               </ol>
-            </div>
+            </section>
           )}
 
           {/* Bot CTA */}
           {!confirmOpen && !watchedOk && (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="md"
+              fullWidth
               disabled={!setup}
-              onClick={() => setConfirmOpen(true)}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-sky-400/40 bg-sky-500/10 py-3 font-mono text-sm font-bold uppercase text-sky-200 transition-colors hover:bg-sky-500/20 disabled:opacity-40"
+              onClick={() => {
+                haptic.impact()
+                setConfirmOpen(true)
+              }}
             >
-              <Send className="h-4 w-4" />
-              Отправить оповещение в бота?
-            </button>
+              <Send className="h-3.5 w-3.5" />
+              Отправить оповещение в бота
+            </Button>
           )}
 
           {confirmOpen && (
-            <div className="rounded-xl border border-sky-400/40 bg-sky-500/[0.08] p-3">
-              <p className="font-mono text-xs leading-snug text-holo/80">
+            <section className="rounded-lg border border-brand/25 bg-brand/[0.06] p-3">
+              <p className="font-sans text-[12px] leading-5 text-text-secondary">
                 Бот будет мониторить цену{' '}
-                <span className="font-bold text-holo">
+                <span className="font-mono font-medium text-text-primary">
                   {toDisplayName(selected.symbol)}
                 </span>{' '}
-                и напишет, когда зона {result.side} ·{' '}
-                {HORIZON_PROFILES[tradeStyle].tag} станет READY (или
-                инвалидируется). TTL {ttlHoursForStyle(tradeStyle)}ч.
+                и напишет, когда зона {result.side} · {activeProfile.tag} станет
+                READY или инвалидируется. TTL {ttlHoursForStyle(tradeStyle)} ч.
               </p>
               {(() => {
                 const gateSig = signals.find(
@@ -934,8 +1075,8 @@ const SignalsView = () => {
                 if (!g) return null
                 return (
                   <p
-                    className={`mt-2 font-mono text-[11px] ${
-                      g.ready ? 'text-matrix' : 'text-amber-200/90'
+                    className={`mt-2 font-sans text-[11px] leading-4 ${
+                      g.ready ? 'text-market-long' : 'text-market-warning'
                     }`}
                   >
                     Gate: {g.summary}
@@ -946,51 +1087,63 @@ const SignalsView = () => {
                 )
               })()}
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="md"
                   disabled={watchBusy}
-                  onClick={() => {
-                    setConfirmOpen(false)
-                  }}
-                  className="rounded-lg border border-hull-border py-2.5 font-mono text-xs font-bold uppercase text-holo/60 hover:bg-hull"
+                  onClick={() => setConfirmOpen(false)}
                 >
-                  Нет
-                </button>
-                <button
-                  type="button"
+                  Отмена
+                </Button>
+                <Button
+                  variant="primary"
+                  size="md"
                   disabled={watchBusy || !setup}
                   onClick={() => handleConfirmWatch({ early: false })}
-                  className="flex items-center justify-center gap-1.5 rounded-lg border border-sky-400/50 bg-sky-500/20 py-2.5 font-mono text-xs font-bold uppercase text-sky-200 hover:bg-sky-500/30 disabled:opacity-40"
                 >
                   {watchBusy ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Check className="h-3.5 w-3.5" />
                   )}
-                  Да, следить
-                </button>
+                  Следить
+                </Button>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="md"
+                fullWidth
+                className="mt-2 text-market-warning hover:text-market-warning"
                 disabled={watchBusy || !setup}
                 onClick={() => handleConfirmWatch({ early: true })}
-                className="mt-2 w-full rounded-lg border border-amber-400/35 bg-amber-500/10 py-2 font-mono text-[10px] font-bold uppercase text-amber-200/90 hover:bg-amber-500/15 disabled:opacity-40"
               >
-                Ранний watch (gate ещё не READY)
-              </button>
-            </div>
+                Ранний watch · gate не READY
+              </Button>
+            </section>
           )}
 
           {watchedOk && (
-            <div className="flex items-center gap-2 rounded-xl border border-matrix/35 bg-matrix/10 px-3 py-2.5">
-              <Check className="h-4 w-4 text-matrix" />
-              <span className="font-mono text-xs text-matrix">
+            <div className="flex items-center gap-2 rounded-md border border-market-long/25 bg-market-long/[0.06] px-2.5 py-2">
+              <Check className="h-4 w-4 shrink-0 text-market-long" />
+              <span className="font-sans text-[11px] leading-4 text-market-long">
                 Бот мониторит зону — алерт при READY
               </span>
             </div>
           )}
         </div>
       )}
+
+      <PositionSizeCalculator
+        isOpen={calcOpen}
+        onClose={() => setCalcOpen(false)}
+        symbol={selected ? toFlatSymbol(selected.symbol) : ''}
+        displayName={selected ? toDisplayName(selected.symbol) : ''}
+        direction={result?.side ?? 'LONG'}
+        entry={planEntry}
+        sl={planSl}
+        tp1={planTarget > 0 ? planTarget : null}
+        tp2={planTp2}
+      />
     </div>
   )
 }

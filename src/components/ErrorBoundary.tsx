@@ -1,4 +1,6 @@
 import { Component, ErrorInfo, ReactNode } from 'react'
+import { AlertTriangle } from 'lucide-react'
+import Button from './ui/Button'
 
 interface Props {
   children: ReactNode
@@ -21,27 +23,30 @@ class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // ErrorBoundary errors should always be logged
-    console.error('🔴 ErrorBoundary caught an error:', error, errorInfo)
+    console.error('ErrorBoundary caught an error:', error, errorInfo)
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-space flex items-center justify-center p-4">
-          <div className="text-center max-w-md">
-            <div className="text-4xl mb-4">⚠️</div>
-            <h1 className="text-xl font-mono font-bold text-alert mb-2">
-              ОШИБКА СИСТЕМЫ
+        <div className="flex min-h-screen items-center justify-center bg-bg-base p-4">
+          <div className="w-full max-w-md rounded-lg border border-market-short/25 bg-bg-panel p-5 text-center">
+            <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-md border border-market-short/25 bg-market-short/10 text-market-short">
+              <AlertTriangle className="h-5 w-5" strokeWidth={1.8} />
+            </span>
+            <h1 className="mb-1.5 font-sans text-[15px] font-semibold leading-5 text-text-primary">
+              Ошибка системы
             </h1>
-            <p className="text-sm text-holo/60 font-mono mb-4">
+            <p className="mb-4 break-words font-mono text-[11px] leading-4 text-text-muted">
               {this.state.error?.message || 'Произошла непредвиденная ошибка'}
             </p>
-            <button
+            <Button
+              variant="primary"
+              size="md"
               onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-matrix/20 text-matrix border border-matrix/50 rounded-lg font-mono text-sm hover:bg-matrix/30 transition-colors"
             >
-              ПЕРЕЗАГРУЗИТЬ
-            </button>
+              Перезагрузить
+            </Button>
           </div>
         </div>
       )

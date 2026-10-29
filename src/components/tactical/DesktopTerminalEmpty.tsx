@@ -51,14 +51,14 @@ function StatCard({
 }) {
   return (
     <div className="relative overflow-hidden rounded-xl border border-hull-border/80 bg-hull/45 px-3.5 py-3 shadow-panel">
-      <div className="font-sans text-[9px] font-semibold uppercase tracking-[0.16em] text-holo/35">
+      <div className="font-sans text-[11px] font-semibold uppercase tracking-[0.16em] text-holo/35">
         {label}
       </div>
       <div className={`mt-1.5 font-mono text-xl font-semibold leading-none ${tone}`}>
         {value}
       </div>
       {hint && (
-        <div className="mt-1.5 truncate font-sans text-[10px] text-holo/35">{hint}</div>
+        <div className="mt-1.5 truncate font-sans text-[11px] text-holo/35">{hint}</div>
       )}
       {children}
     </div>
@@ -82,7 +82,7 @@ function SectionCard({
     <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-hull-border/80 bg-hull/35 shadow-panel">
       <header className="flex items-center gap-2 border-b border-hull-border/60 px-3.5 py-2.5">
         <Icon className={`h-3.5 w-3.5 ${iconClass}`} />
-        <h2 className="font-sans text-[10px] font-semibold uppercase tracking-[0.16em] text-holo/55">
+        <h2 className="font-sans text-[11px] font-semibold uppercase tracking-[0.16em] text-holo/55">
           {title}
         </h2>
         <div className="ml-auto flex items-center gap-2">{trailing}</div>
@@ -113,7 +113,7 @@ function CoinLine({
       onClick={onClick}
       className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.045]"
     >
-      <span className="w-4 shrink-0 text-right font-mono text-[10px] text-holo/20 group-hover:text-holo/40">
+      <span className="w-4 shrink-0 text-right font-mono text-[11px] text-holo/20 group-hover:text-holo/40">
         {rank}
       </span>
       <span className="min-w-0 flex-1">
@@ -122,12 +122,12 @@ function CoinLine({
             {signal.displayName}
           </span>
           {signal.hasActiveSetup && (
-            <span className="rounded bg-matrix/15 px-1 py-px font-sans text-[8px] font-semibold uppercase tracking-wide text-matrix/90">
+            <span className="rounded bg-matrix/15 px-1 py-px font-sans text-[11px] font-semibold uppercase tracking-wide text-matrix/90">
               сетап
             </span>
           )}
         </span>
-        <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-holo/35">
+        <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-holo/35">
           <span>${fmtPrice(signal.price)}</span>
           <span className={up ? 'text-matrix/80' : 'text-alert/80'}>
             {fmtChange(signal.priceChange24h)}
@@ -252,7 +252,7 @@ const DesktopTerminalEmpty = () => {
       <div className="px-5 pb-2 pt-5 lg:px-6 lg:pt-6">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_250px] xl:grid-cols-[minmax(0,1fr)_286px]">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 font-sans text-[9px] font-semibold uppercase tracking-[0.24em] text-matrix/70">
+            <div className="flex items-center gap-2 font-sans text-[11px] font-semibold uppercase tracking-[0.24em] text-matrix/70">
               <Crosshair className="h-3.5 w-3.5" />
               терминал · готов к работе
             </div>
@@ -291,10 +291,10 @@ const DesktopTerminalEmpty = () => {
           <div className="relative overflow-hidden rounded-xl border border-hull-border/80 bg-black/25 p-3.5 shadow-panel">
             <div className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-matrix/10 blur-2xl" />
             <div className="flex items-center justify-between">
-              <span className="font-sans text-[9px] font-semibold uppercase tracking-[0.18em] text-holo/35">
+              <span className="font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-holo/35">
                 пульс рынка
               </span>
-              <span className="flex items-center gap-1.5 font-mono text-[9px] text-holo/30">
+              <span className="flex items-center gap-1.5 font-mono text-[11px] text-holo/30">
                 <span className={`h-1.5 w-1.5 rounded-full ${feed.dot}`} />
                 {feed.label}
               </span>
@@ -303,13 +303,13 @@ const DesktopTerminalEmpty = () => {
             <div className={`mt-2 font-sans text-lg font-semibold ${biasTone}`}>
               {biasRu(marketContext?.dailyBias)}
             </div>
-            <div className="mt-0.5 font-sans text-[10px] text-holo/35">
+            <div className="mt-0.5 font-sans text-[11px] text-holo/35">
               BTC {trendRu(marketContext?.btcTrend)} · день
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2">
               <div className="rounded-lg border border-hull-border/70 bg-hull/40 px-2 py-1.5">
-                <div className="font-sans text-[8px] uppercase tracking-wide text-holo/30">
+                <div className="font-sans text-[11px] uppercase tracking-wide text-holo/30">
                   Fear &amp; Greed
                 </div>
                 <div className={`font-mono text-base font-semibold ${fgTone}`}>
@@ -317,7 +317,7 @@ const DesktopTerminalEmpty = () => {
                 </div>
               </div>
               <div className="rounded-lg border border-hull-border/70 bg-hull/40 px-2 py-1.5">
-                <div className="font-sans text-[8px] uppercase tracking-wide text-holo/30">
+                <div className="font-sans text-[11px] uppercase tracking-wide text-holo/30">
                   В скане
                 </div>
                 <div className="font-mono text-base font-semibold text-holo/80">
@@ -357,7 +357,7 @@ const DesktopTerminalEmpty = () => {
 
         <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-accent/15 bg-accent/[0.045] px-3 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-accent/80" />
-          <p className="font-sans text-[10px] leading-relaxed text-holo/40">
+          <p className="font-sans text-[11px] leading-relaxed text-holo/40">
             <span className="text-holo/65">Совет:</span> начните с BTC/USDT —
             он задаёт направление рынка. Затем сравните альты в «Сильных сетапах».
           </p>
@@ -369,7 +369,7 @@ const DesktopTerminalEmpty = () => {
           title="Импульс 24ч"
           icon={Gauge}
           iconClass="text-amber-300/80"
-          trailing={<span className="font-mono text-[10px] text-holo/25">Δ%</span>}
+          trailing={<span className="font-mono text-[11px] text-holo/25">Δ%</span>}
         >
           {movers.length > 0 ? (
             <div className="animate-panel-in">
@@ -399,7 +399,7 @@ const DesktopTerminalEmpty = () => {
           title="Сильные сетапы"
           icon={Radar}
           iconClass="text-matrix/80"
-          trailing={<span className="font-mono text-[10px] text-holo/25">SCORE</span>}
+          trailing={<span className="font-mono text-[11px] text-holo/25">SCORE</span>}
         >
           {setups.length > 0 ? (
             <div className="animate-panel-in">
@@ -428,25 +428,25 @@ const DesktopTerminalEmpty = () => {
         </SectionCard>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-hull-border/50 px-5 py-3 font-sans text-[10px] text-holo/30">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-hull-border/50 px-5 py-3 font-sans text-[11px] text-holo/30">
         <span className="flex items-center gap-1.5">
           <Keyboard className="h-3.5 w-3.5 text-holo/25" />
           Горячие клавиши
         </span>
         <span className="flex items-center gap-1.5">
-          <kbd className="rounded border border-hull-border bg-hull/60 px-1.5 py-0.5 font-mono text-[9px] text-holo/45">
+          <kbd className="rounded border border-hull-border bg-hull/60 px-1.5 py-0.5 font-mono text-[11px] text-holo/45">
             Alt+1…4
           </kbd>
           разделы
         </span>
         <span className="flex items-center gap-1.5">
-          <kbd className="rounded border border-hull-border bg-hull/60 px-1.5 py-0.5 font-mono text-[9px] text-holo/45">
+          <kbd className="rounded border border-hull-border bg-hull/60 px-1.5 py-0.5 font-mono text-[11px] text-holo/45">
             Ctrl+K
           </kbd>
           поиск монеты
         </span>
         <span className="hidden items-center gap-1.5 md:flex">
-          <kbd className="rounded border border-hull-border bg-hull/60 px-1.5 py-0.5 font-mono text-[9px] text-holo/45">
+          <kbd className="rounded border border-hull-border bg-hull/60 px-1.5 py-0.5 font-mono text-[11px] text-holo/45">
             drag
           </kbd>
           ширина панели

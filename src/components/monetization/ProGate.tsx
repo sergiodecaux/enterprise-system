@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X } from 'lucide-react'
+import { Star, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/useAppStore'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
@@ -103,7 +103,7 @@ const ProGate = () => {
           className="fixed bottom-4 right-4 w-14 h-14 bg-matrix/20 text-matrix border border-matrix/50 rounded-full flex items-center justify-center font-mono font-bold text-lg hover:bg-matrix/30 transition-colors neon-glow z-40"
           aria-label="Upgrade to Pro"
         >
-          ⭐
+          <Star className="h-5 w-5" strokeWidth={1.8} />
         </button>
       )}
     </>

@@ -60,10 +60,10 @@ export function detectBidVoid(
       densityRatio: ratio,
       longBlocked: true,
       scorePenalty: 40,
-      emoji: '⚠️',
+      emoji: '',
       label: `BID VOID ×${(1 / ratio).toFixed(1)} — стакан пуст снизу`,
       alert:
-        '⚠️ Стакан пуст! Фиксируй прибыль, готовится дамп! LONG заблокирован.',
+        'Стакан пуст! Фиксируй прибыль, готовится дамп! LONG заблокирован.',
     }
   }
 
@@ -75,7 +75,7 @@ export function detectBidVoid(
       densityRatio: ratio,
       longBlocked: false,
       scorePenalty: 15,
-      emoji: '⚠️',
+      emoji: '',
       label: `Bid density ↓ ×${(1 / ratio).toFixed(1)}`,
       alert: null,
     }

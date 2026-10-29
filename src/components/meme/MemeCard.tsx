@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2, Lock } from 'lucide-react'
+import { Flame, Loader2, Lock } from 'lucide-react'
 import type { MemeSignal } from '../../engine/types'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { useAppStore } from '../../store/useAppStore'
@@ -68,12 +68,12 @@ const MemeCard = ({ signal }: MemeCardProps) => {
               {signal.displayName}
             </h3>
             {signal.setupTag && (
-              <span className="animate-pulse rounded-md border border-alert/50 bg-alert/20 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-alert">
+              <span className="animate-pulse rounded-md border border-alert/50 bg-alert/20 px-2 py-0.5 font-mono text-[11px] font-bold uppercase text-alert">
                 {signal.setupTag}
               </span>
             )}
             {signal.recommendation === 'QUICK_ENTRY' && !signal.setupTag && (
-              <span className="animate-pulse rounded-md bg-alert px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-black">
+              <span className="animate-pulse rounded-md bg-alert px-2 py-0.5 font-mono text-[11px] font-bold uppercase text-black">
                 БЫСТРЫЙ ВХОД
               </span>
             )}
@@ -95,7 +95,7 @@ const MemeCard = ({ signal }: MemeCardProps) => {
             </span>
             {signal.lifecycle && (
               <span
-                className={`font-mono text-[10px] font-bold ${signal.lifecycle.color}`}
+                className={`font-mono text-[11px] font-bold ${signal.lifecycle.color}`}
               >
                 {signal.lifecycle.badge}
               </span>
@@ -111,7 +111,7 @@ const MemeCard = ({ signal }: MemeCardProps) => {
             <div className={`mb-0.5 font-mono text-3xl font-bold ${qualityText}`}>
               {signal.heatScore}
             </div>
-            <div className="font-mono text-[10px] uppercase text-holo/40">
+            <div className="font-mono text-[11px] uppercase text-holo/40">
               Fuel
             </div>
           </div>
@@ -121,12 +121,12 @@ const MemeCard = ({ signal }: MemeCardProps) => {
       {(signal.longBlocked || signal.shortBlocked) && (
         <div className="mb-2 flex flex-wrap gap-2">
           {signal.longBlocked && (
-            <span className="inline-flex items-center gap-1 rounded border border-alert/40 bg-alert/10 px-2 py-0.5 font-mono text-[9px] font-bold text-alert">
+            <span className="inline-flex items-center gap-1 rounded border border-alert/40 bg-alert/10 px-2 py-0.5 font-mono text-[11px] font-bold text-alert">
               <Lock className="h-2.5 w-2.5" /> LONG LOCKED
             </span>
           )}
           {signal.shortBlocked && (
-            <span className="inline-flex items-center gap-1 rounded border border-yellow-400/40 bg-yellow-400/10 px-2 py-0.5 font-mono text-[9px] font-bold text-yellow-400">
+            <span className="inline-flex items-center gap-1 rounded border border-yellow-400/40 bg-yellow-400/10 px-2 py-0.5 font-mono text-[11px] font-bold text-yellow-400">
               <Lock className="h-2.5 w-2.5" /> SHORT LOCKED
             </span>
           )}
@@ -145,7 +145,7 @@ const MemeCard = ({ signal }: MemeCardProps) => {
               : 'border-hull-border/50 bg-black/30'
           }`}
         >
-          <div className="mb-1 font-mono text-[9px] uppercase text-holo/40">
+          <div className="mb-1 font-mono text-[11px] uppercase text-holo/40">
             Объём
           </div>
           <div
@@ -155,11 +155,16 @@ const MemeCard = ({ signal }: MemeCardProps) => {
                 : 'text-holo/30'
             }`}
           >
-            {signal.flatline?.detected
-              ? `🔥 ×${signal.flatline.volumeMultiplier.toFixed(0)}`
-              : signal.volumeSpike.detected
-                ? `${signal.volumeSpike.emoji} ×${signal.volumeSpike.volumeMultiplier.toFixed(1)}`
-                : '—'}
+            {signal.flatline?.detected ? (
+              <span className="inline-flex items-center gap-1">
+                <Flame className="h-3 w-3" />
+                ×{signal.flatline.volumeMultiplier.toFixed(0)}
+              </span>
+            ) : signal.volumeSpike.detected ? (
+              `×${signal.volumeSpike.volumeMultiplier.toFixed(1)}`
+            ) : (
+              '—'
+            )}
           </div>
         </div>
 
@@ -172,7 +177,7 @@ const MemeCard = ({ signal }: MemeCardProps) => {
                 : 'border-hull-border/50 bg-black/30'
           }`}
         >
-          <div className="mb-1 font-mono text-[9px] uppercase text-holo/40">
+          <div className="mb-1 font-mono text-[11px] uppercase text-holo/40">
             Fuel/Gap
           </div>
           <div
@@ -185,9 +190,9 @@ const MemeCard = ({ signal }: MemeCardProps) => {
             }`}
           >
             {signal.squeeze?.detected
-              ? `${signal.squeeze.emoji} FR`
+              ? 'FR'
               : signal.liquidityGap.detected
-                ? `${signal.liquidityGap.emoji} ${gapDirectionLabel[signal.liquidityGap.direction] ?? signal.liquidityGap.direction}`
+                ? `${gapDirectionLabel[signal.liquidityGap.direction] ?? signal.liquidityGap.direction}`
                 : '—'}
           </div>
         </div>
@@ -201,7 +206,7 @@ const MemeCard = ({ signal }: MemeCardProps) => {
                 : 'border-hull-border/50 bg-black/30'
           }`}
         >
-          <div className="mb-1 font-mono text-[9px] uppercase text-holo/40">
+          <div className="mb-1 font-mono text-[11px] uppercase text-holo/40">
             Setup
           </div>
           <div
@@ -216,24 +221,24 @@ const MemeCard = ({ signal }: MemeCardProps) => {
             }`}
           >
             {signal.toxic?.detected
-              ? '☠️ TOXIC'
+              ? 'TOXIC'
               : signal.backside?.detected
-                ? '🎯 SHORT'
+                ? 'SHORT'
                 : signal.meanReversion.detected
-                  ? `${signal.meanReversion.emoji} RSI ${signal.meanReversion.rsi?.toFixed(0)}`
+                  ? `RSI ${signal.meanReversion.rsi?.toFixed(0)}`
                   : '—'}
           </div>
         </div>
       </div>
 
       {signal.criticalAlert && (
-        <p className="mt-2 font-mono text-[10px] font-bold leading-snug text-alert">
+        <p className="mt-2 font-mono text-[11px] font-bold leading-snug text-alert">
           {signal.criticalAlert}
         </p>
       )}
       {!signal.criticalAlert && signal.volumeSpike.detected && (
-        <p className="mt-2 font-mono text-[10px] text-orange-400/80">
-          📊 {signal.volumeSpike.label}
+        <p className="mt-2 font-mono text-[11px] text-orange-400/80">
+          {signal.volumeSpike.label}
         </p>
       )}
     </button>

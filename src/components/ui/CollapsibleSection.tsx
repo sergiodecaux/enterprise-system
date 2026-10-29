@@ -41,7 +41,7 @@ const CollapsibleSection = ({
           {title}
         </span>
         {subtitle && (
-          <span className="ml-auto truncate font-mono text-[10px] text-holo/35">
+          <span className="ml-auto truncate font-mono text-[11px] text-holo/35">
             {subtitle}
           </span>
         )}

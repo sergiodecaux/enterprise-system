@@ -42,10 +42,10 @@ const NowStoryHud = ({
     <div
       className={`rounded-md border font-mono font-bold leading-tight backdrop-blur-md ${tone} ${
         toolbar
-          ? 'min-w-0 max-w-[min(16rem,46vw)] shrink truncate px-1.5 py-0.5 text-[10px]'
+          ? 'min-w-0 max-w-[min(16rem,46vw)] shrink truncate px-1.5 py-0.5 text-[11px]'
           : dense
             ? 'max-w-full px-2.5 py-1 text-[12px] shadow-lg'
-            : 'max-w-[82%] px-2 py-0.5 text-[10px] shadow-lg'
+            : 'max-w-[82%] px-2 py-0.5 text-[11px] shadow-lg'
       }`}
       title={[fact || line, dailyLine].filter(Boolean).join(' · ')}
     >

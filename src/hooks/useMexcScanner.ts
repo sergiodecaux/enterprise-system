@@ -344,7 +344,7 @@ export const useMexcScanner = () => {
                     lifetimeMs: s.lifetimeMs,
                     approachPct: 0,
                     label: s.label,
-                    emoji: '👻',
+                    emoji: '',
                     ignoreForConfidence: true,
                   }))
             icebergAlerts = storeIce
@@ -357,7 +357,7 @@ export const useMexcScanner = () => {
                 bookDelta: 0,
                 hiddenVolumeEstimate: 0,
                 label: i.label,
-                emoji: '🧊',
+                emoji: '',
                 status: i.status,
                 confidencePct: i.confidencePct,
               }))

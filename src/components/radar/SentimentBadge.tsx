@@ -16,7 +16,7 @@ const SentimentBadge = ({ sentiment }: Props) => {
 
   return (
     <div
-      className={`inline-flex h-4 w-7 shrink-0 items-center justify-center gap-0.5 rounded px-0.5 font-mono text-[9px] font-bold tabular-nums ${config.color} ${config.bg} ${
+      className={`inline-flex h-4 w-7 shrink-0 items-center justify-center gap-0.5 rounded px-0.5 font-mono text-[11px] font-bold tabular-nums ${config.color} ${config.bg} ${
         empty ? 'invisible' : ''
       }`}
       aria-hidden={empty}

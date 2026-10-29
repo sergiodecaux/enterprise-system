@@ -14,7 +14,7 @@ import {
   type AutoscaleInfo,
 } from 'lightweight-charts'
 import { useTranslation } from 'react-i18next'
-import { Settings, Eye, Maximize2, Minimize2, ArrowUpDown, MessageSquare, MessageCircle, Volume2, VolumeX, Flame, Package } from 'lucide-react'
+import { Settings, Maximize2, Minimize2, Flame, Layers3 } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
 import { useAdvisorStore } from '../../store/useAdvisorStore'
 import type { AdvisorChartInput } from '../../engine/advisor'
@@ -30,6 +30,19 @@ import { buildFullMarketContext } from '../../engine/context'
 import type { CoinSignal } from '../../engine/types'
 import type { LiquidityZone } from '../../engine/indicators/types'
 import { logger } from '../../utils/logger'
+import {
+  CHART_BG,
+  CHART_CROSSHAIR_LINES,
+  CHART_DOWN,
+  CHART_DOWN_FILL,
+  CHART_GRID_LINES,
+  CHART_LAYOUT,
+  CHART_PRICE_LINE,
+  CHART_PRICE_SCALE,
+  CHART_TIME_SCALE,
+  CHART_UP,
+  CHART_UP_FILL,
+} from '../../styles/chartTheme'
 import { useChartIndicators } from '../../hooks/useChartIndicators'
 import { useChartZones } from '../../hooks/useChartZones'
 import { useMultiTFAnalysis } from '../../hooks/useMultiTFAnalysis'
@@ -228,6 +241,31 @@ const FIB_TF_BUTTONS: Array<{ id: '1h' | '4h' | '1d'; label: string }> = [
   { id: '1d', label: '141 1д' },
 ]
 
+/** One row inside the chart layers menu. */
+function LayerToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: () => void
+}) {
+  return (
+    <label className="flex min-h-10 cursor-pointer items-center justify-between gap-3 rounded-sm px-2 transition-colors hover:bg-bg-surface/60">
+      <span className="min-w-0 font-sans text-[12px] leading-4 text-text-secondary">
+        {label}
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="h-4 w-4 shrink-0 accent-brand"
+      />
+    </label>
+  )
+}
+
 function structureTfOf(tf: MexcTimeframe): StructureTf {
   if (tf === '4h') return '4h'
   if (tf === '1d') return '1d'
@@ -310,6 +348,14 @@ const LiveChart = ({
 
   const [timeframe, setTimeframe] = useState<MexcTimeframe>('1h')
   const [chartExpanded, setChartExpanded] = useState(false)
+  const [layersOpen, setLayersOpen] = useState(false)
+  const [layersPos, setLayersPos] = useState<{
+    top: number
+    left: number
+    width: number
+    maxHeight: number
+  } | null>(null)
+  const layersRef = useRef<HTMLDetailsElement>(null)
   const [showFsScenarios, setShowFsScenarios] = useState(false)
   const [phoneLandscape, setPhoneLandscape] = useState(isPhoneLandscapeNow)
   const [viewportH, setViewportH] = useState(
@@ -349,7 +395,7 @@ const LiveChart = ({
   const [chartInstance, setChartInstance] = useState<IChartApi | null>(null)
   const [showForecast, setShowForecast] = useState(false)
   /** INTRA = текущий ТФ · MACRO = недельная картина A/B/C */
-  const [forecastHorizon, setForecastHorizon] = useState<ForecastHorizon>('INTRA')
+  const [forecastHorizon] = useState<ForecastHorizon>('INTRA')
   /** По умолчанию только A — B/C включаются вручную, меньше каши */
   const [activeScenarios, setActiveScenarios] = useState<Set<string>>(
     () => new Set(['A'])
@@ -521,7 +567,7 @@ const LiveChart = ({
     userPanningRef.current = false
     if (chartExpanded) {
       host.style.cssText =
-        'position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;width:100%;height:100%;background:#0c0e12;padding-top:env(safe-area-inset-top);'
+        `position:fixed;inset:0;z-index:200;display:flex;flex-direction:column;width:100%;height:100%;background:${CHART_BG};padding-top:env(safe-area-inset-top);`
       document.body.appendChild(host)
       slot.style.display = 'none'
     } else {
@@ -1328,7 +1374,7 @@ const LiveChart = ({
     if (chatId && isTelegramAlertsConfigured()) {
       showAlert(
         serverWatches > 0
-          ? `👁 ${styleTag}: ${serverWatches} сетапов на сервере · жди 💎`
+          ? `${styleTag}: ${serverWatches} сетапов на сервере · жди сетап`
           : `${styleTag} зоны: ${result.zones.length} · мониторинг бота не активен`
       )
     } else if (!chatId) {
@@ -1492,7 +1538,7 @@ const LiveChart = ({
 
     if (chatId && isTelegramAlertsConfigured() && serverWatches > 0) {
       showAlert(
-        `🎲 ${serverWatches} сделок на сервере · ${result.globalView.bias} · магнит ${
+        `${serverWatches} сделок на сервере · ${result.globalView.bias} · магнит ${
           result.magnet ? result.magnet.label : 'R-лестница'
         }`
       )
@@ -1745,7 +1791,7 @@ const LiveChart = ({
         chatId: chatId ?? undefined,
       })
       haptic.success()
-      showAlert(`💎 Ювелирный ${s.side} → бот · TP ${s.target.toPrecision(5)}`)
+      showAlert(`Ювелирный ${s.side} → бот · TP ${s.target.toPrecision(5)}`)
     }
   }, [
     zonesMode,
@@ -2177,36 +2223,16 @@ const LiveChart = ({
       try {
         chart = createChart(el, {
           layout: {
-            background: { color: '#131722' },
-            textColor: 'rgba(178, 181, 190, 0.92)',
+            ...CHART_LAYOUT,
             fontSize: denseUi ? 12 : 11,
-            fontFamily:
-              'Inter, ui-sans-serif, system-ui, -apple-system, sans-serif',
           },
-          grid: {
-            // TradingView dark: barely-there structure, never a wireframe.
-            vertLines: { color: 'rgba(42, 46, 57, 0.42)' },
-            horzLines: { color: 'rgba(42, 46, 57, 0.6)' },
-          },
+          grid: CHART_GRID_LINES,
           crosshair: {
             mode: CrosshairMode.Magnet,
-            vertLine: {
-              color: 'rgba(117, 134, 150, 0.72)',
-              width: 1,
-              style: 3,
-              labelBackgroundColor: '#363a45',
-            },
-            horzLine: {
-              color: 'rgba(117, 134, 150, 0.72)',
-              width: 1,
-              style: 3,
-              labelBackgroundColor: '#363a45',
-            },
+            ...CHART_CROSSHAIR_LINES,
           },
           timeScale: {
-            borderColor: '#2a2e39',
-            timeVisible: true,
-            secondsVisible: false,
+            ...CHART_TIME_SCALE,
             rightOffset: denseUi ? 18 : 22,
             barSpacing: 8,
             minBarSpacing: 2,
@@ -2214,7 +2240,7 @@ const LiveChart = ({
             shiftVisibleRangeOnNewBar: true,
           },
           rightPriceScale: {
-            borderColor: '#2a2e39',
+            ...CHART_PRICE_SCALE,
             scaleMargins: { top: 0.08, bottom: 0.12 },
             autoScale: true,
             entireTextOnly: true,
@@ -2263,15 +2289,15 @@ const LiveChart = ({
       }
 
       const candleSeries = chart.addCandlestickSeries({
-        upColor: '#26a69a',
-        downColor: '#ef5350',
-        borderUpColor: '#26a69a',
-        borderDownColor: '#ef5350',
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350',
+        upColor: CHART_UP,
+        downColor: CHART_DOWN,
+        borderUpColor: CHART_UP,
+        borderDownColor: CHART_DOWN,
+        wickUpColor: CHART_UP,
+        wickDownColor: CHART_DOWN,
         lastValueVisible: true,
         priceLineVisible: true,
-        priceLineColor: 'rgba(178, 181, 190, 0.42)',
+        priceLineColor: CHART_PRICE_LINE,
         priceLineWidth: 1,
         priceLineStyle: 2,
       })
@@ -2509,9 +2535,7 @@ const LiveChart = ({
       return {
         time: v.time,
         value: v.value,
-        color: bullish
-          ? 'rgba(38, 166, 154, 0.34)'
-          : 'rgba(239, 83, 80, 0.32)',
+        color: bullish ? CHART_UP_FILL : CHART_DOWN_FILL,
       }
     })
     try {
@@ -3439,13 +3463,82 @@ const LiveChart = ({
     (sequenceHit?.detectedAt ?? 0) +
     Math.round((ticker?.timestamp ?? 0) / 15_000)
 
+  const layersActive =
+    [
+      showSrZones,
+      onlyStrong,
+      showFib141,
+      showCont141,
+      showDirection,
+      chartPreferences.showLabels,
+      showComments,
+      showCases,
+      showHints,
+      audioOn,
+      fibTfs.size > 0,
+      ...(chartExpanded ? [showFsScenarios] : []),
+    ].filter(Boolean).length
+
+  /**
+   * The layers popover is portaled to <body>: the chart rail sits inside a
+   * blurred, transformed drawer, which would otherwise clip or offset a
+   * absolutely positioned panel. Position it explicitly against the viewport.
+   */
+  const positionLayersPanel = (details: HTMLDetailsElement) => {
+    if (!details.open) {
+      setLayersOpen(false)
+      return
+    }
+    const rect = details.getBoundingClientRect()
+    const width = Math.min(280, window.innerWidth - 24)
+    const left = Math.min(
+      Math.max(12, rect.right - width),
+      window.innerWidth - width - 12
+    )
+    const below = window.innerHeight - rect.bottom - 12
+    const above = rect.top - 12
+    const openUp = below < 220 && above > below
+    const maxHeight = Math.min(480, Math.max(180, openUp ? above : below))
+    const top = openUp
+      ? Math.max(12, rect.top - maxHeight - 6)
+      : rect.bottom + 6
+
+    setLayersPos({ top, left, width, maxHeight })
+    setLayersOpen(true)
+  }
+
+  const closeLayers = useCallback(() => {
+    setLayersOpen(false)
+    if (layersRef.current?.open) layersRef.current.open = false
+  }, [])
+
+  useEffect(() => {
+    if (!layersOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeLayers()
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null
+      if (!target) return
+      if (layersRef.current?.contains(target)) return
+      if (target.closest?.('[data-layers-panel]')) return
+      closeLayers()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [layersOpen, closeLayers])
+
   void handleFindZones
 
   const ui = (
     <div
       className={
         chartExpanded || fillParent
-          ? 'flex h-full min-h-0 flex-col bg-[#131722]'
+          ? 'flex h-full min-h-0 flex-col bg-bg-base'
           : 'space-y-2'
       }
     >
@@ -3465,7 +3558,7 @@ const LiveChart = ({
           </span>
           {sessionSettings.enabled && !cleanMode && (
             <span
-              className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-black"
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wide text-black"
               style={{ backgroundColor: liveSessionBg }}
               title="Текущая торговая сессия (UTC)"
             >
@@ -3484,146 +3577,23 @@ const LiveChart = ({
             />
           )}
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => {
-              setShowComments((v) => {
-                const next = !v
-                writeLsFlag('enterprise_chart_comments', next)
-                return next
-              })
-              haptic.impact()
-            }}
-            className={`tv-btn ${showComments ? 'tv-btn-on' : ''}`}
-            title="Комментарии на графике: что происходит"
-          >
-            <MessageCircle className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Коммент</span>
-            <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
-              {showComments ? 'ON' : 'OFF'}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowCases((v) => {
-                const next = !v
-                writeLsFlag('enterprise_chart_cases', next)
-                return next
-              })
-              haptic.impact()
-            }}
-            className={`tv-btn ${showCases ? 'tv-btn-on' : ''}`}
-            title="Сундучки: отложенные лимитки на отскок от важных зон (цель 1–5%)"
-          >
-            <Package className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Кейсы</span>
-            <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
-              {showCases ? `${autoCases.length || ''} ON` : 'OFF'}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowHints((v) => !v)
-              haptic.impact()
-            }}
-            className={`tv-btn ${showHints ? 'tv-btn-on' : ''}`}
-            title="Подсказки процесса на графике"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Подсказки</span>
-            <span className="rounded bg-black/25 px-1 py-px text-[8px] opacity-80">
-              {showHints ? 'ON' : 'OFF'}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAudioOn((v) => {
-                const next = !v
-                setProcessAudioEnabled(next)
-                return next
-              })
-              haptic.impact()
-            }}
-            className={`tv-btn ${audioOn ? 'tv-btn-on' : ''}`}
-            title="Звук процесса: удары, ликвидации, момент"
-          >
-            {audioOn ? (
-              <Volume2 className="h-3.5 w-3.5" />
-            ) : (
-              <VolumeX className="h-3.5 w-3.5" />
-            )}
-            <span className="hidden sm:inline">Звук</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => applyCleanMode(!cleanMode)}
-            className={`tv-btn ${cleanMode ? 'tv-btn-on' : ''}`}
-            title="Чистый режим — свечи, одна зона, путь вправо. Полный — все слои."
-          >
-            {cleanMode ? t('chart_clean') : t('chart_full')}
-          </button>
-          {chartExpanded && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowFsScenarios((v) => !v)
-                haptic.impact()
-              }}
-              className={`tv-btn ${showFsScenarios ? 'tv-btn-on' : ''}`}
-              title="Показать четыре сценария"
-            >
-              Сцен.
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setChartExpanded((v) => !v)
-              haptic.impact()
-            }}
-            className={`tv-icon ${chartExpanded ? 'tv-icon-on' : ''}`}
-            title={chartExpanded ? 'Свернуть график' : 'Развернуть как на бирже'}
-          >
-            {chartExpanded ? (
-              <Minimize2 className="h-4 w-4" />
-            ) : (
-              <Maximize2 className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="tv-icon"
-            title={t('chart_settings')}
-          >
-            <Settings className="h-4 w-4" />
-          </button>
-        </div>
       </div>
 
-      {/* Tool rail — ТФ и режимы всегда с графиком */}
+      {/* Unified chart toolbar — one instrument rail, not two rows of buttons. */}
       <div
-        className={`shrink-0 space-y-1 bg-[#131722] py-1 ${
-          chartExpanded ? 'px-2' : 'sticky top-0 z-20 bg-space/95 backdrop-blur-sm'
+        className={`relative z-30 flex shrink-0 items-center gap-1 border-b border-border bg-bg-base py-1 ${
+          chartExpanded ? 'px-2' : 'sticky top-0 bg-bg-base/95 backdrop-blur-sm'
         }`}
       >
-        <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto no-scrollbar">
           <div className="tv-group flex shrink-0 items-center">
             {CHART_TIMEFRAMES.map((tf) => (
               <button
                 key={tf.id}
                 type="button"
                 onClick={() => setTimeframe(tf.id)}
-                className={`rounded-md px-2.5 py-1.5 font-mono text-[11px] font-semibold transition-colors ${
-                  timeframe === tf.id
-                    ? 'bg-emerald-500/20 text-emerald-300'
-                    : tf.id === '1h' || tf.id === '4h'
-                      ? 'text-white/55 hover:text-white/80'
-                      : 'text-white/40 hover:text-white/70'
+                className={`font-mono text-[11px] ${
+                  timeframe === tf.id ? 'bg-brand/10' : ''
                 }`}
                 title={
                   tf.id === '1h'
@@ -3637,177 +3607,31 @@ const LiveChart = ({
               </button>
             ))}
           </div>
+
           <span className="tv-sep" aria-hidden />
-          <button
-            type="button"
-            onClick={resetChartView}
-            className="tv-btn shrink-0"
-            title="Сбросить масштаб"
-          >
-            Fit
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowSrZones((v) => !v)
-              haptic.impact()
-            }}
-            className={`tv-btn shrink-0 ${
-              showSrZones ? 'tv-btn-on' : ''
-            }`}
-            title="Поддержка / сопротивление — ценовой диапазон (не линия)"
-          >
-            Зоны
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOnlyStrong((v) => {
-                const next = !v
-                try {
-                  localStorage.setItem('enterprise_only_strong', next ? '1' : '0')
-                } catch {
-                  /* ignore */
-                }
-                return next
-              })
-              haptic.impact()
-            }}
-            className={`tv-btn shrink-0 ${
-              onlyStrong ? 'tv-btn-on' : ''
-            }`}
-            title="Только одна сильная зона входа — без стопки коробок"
-          >
-            только сильная
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowFib141((v) => {
-                const next = !v
-                try {
-                  localStorage.setItem('enterprise_show_fib141', next ? '1' : '0')
-                } catch {
-                  /* ignore */
-                }
-                return next
-              })
-              haptic.impact()
-            }}
-            className={`tv-btn shrink-0 ${
-              showFib141 ? 'tv-btn-on' : ''
-            }`}
-            title="Sweep 141 — зона разворота за пивот"
-          >
-            Sweep
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowCont141((v) => {
-                const next = !v
-                try {
-                  localStorage.setItem('enterprise_show_cont141', next ? '1' : '0')
-                } catch {
-                  /* ignore */
-                }
-                return next
-              })
-              haptic.impact()
-            }}
-            className={`tv-btn shrink-0 ${
-              showCont141 ? 'tv-btn-on' : ''
-            }`}
-            title="Continuation 141 — расширение за конец импульса"
-          >
-            Cont
-          </button>
-          <span className="tv-sep" aria-hidden />
+
           <div className="tv-group flex shrink-0 items-center">
-            {FIB_TF_BUTTONS.map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => {
-                  toggleFibTf(b.id)
-                  haptic.impact()
-                }}
-                className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                  fibTfs.has(b.id)
-                    ? b.id === '1h'
-                      ? 'bg-amber-500/20 text-amber-200'
-                      : b.id === '4h'
-                        ? 'bg-cyan-500/20 text-cyan-200'
-                        : 'bg-violet-500/20 text-violet-200'
-                    : 'text-white/40 hover:text-white/70'
-                }`}
-                title={`Fibonacci 141 на ${b.label.replace('141 ', '')}`}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-          <span className="tv-sep" aria-hidden />
-          <button
-            id="live-signal-cta"
-            type="button"
-            onClick={() => {
-              if (signalMode) {
-                setSignalMode(false)
-                setLiveSignal(null)
-                haptic.impact()
-                return
-              }
-              handleClearBounces()
-              handleFindLiveSignal()
-            }}
-            className={`tv-btn shrink-0 ${signalMode ? 'tv-btn-on' : ''}`}
-          >
-            {signalMode ? 'Сигнал ON' : 'Сигнал'}
-          </button>
-        </div>
-        <div className="flex gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="tv-group flex shrink-0 items-center">
-            {FORECAST_HORIZON_UI && (
             <button
               type="button"
               onClick={() => {
-                setShowForecast(true)
-                setForecastHorizon((h: ForecastHorizon) => {
-                  const order: ForecastHorizon[] = ['SCALP', 'INTRA', 'SWING']
-                  const idx = order.indexOf(h === 'MACRO' ? 'SWING' : h)
-                  const next = order[(idx + 1) % order.length]
-                  if (
-                    next === 'SWING' &&
-                    (timeframe === '1m' ||
-                      timeframe === '5m' ||
-                      timeframe === '15m')
-                  ) {
-                    setTimeframe('4h')
-                  }
-                  if (
-                    next === 'SCALP' &&
-                    (timeframe === '4h' || timeframe === '1d')
-                  ) {
-                    setTimeframe('5m')
-                  }
-                  return next
-                })
+                setSignalMode(false)
+                setLiveSignal(null)
+                handleClearBounces()
+                handlePickSetups()
               }}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                showForecast
-                  ? forecastHorizon === 'SCALP'
-                    ? 'bg-amber-500/20 text-amber-300'
-                    : forecastHorizon === 'SWING' || forecastHorizon === 'MACRO'
-                      ? 'bg-cyan-500/20 text-cyan-300'
-                      : 'bg-emerald-500/15 text-emerald-300'
-                  : 'text-white/35'
+              className={`tv-btn ${
+                showSetupPicker &&
+                !zonesMode &&
+                !tradesMode &&
+                !signalMode &&
+                !bouncesMode
+                  ? 'tv-btn-on'
+                  : ''
               }`}
-              title="Горизонт: SCALP → INTRA → SWING"
+              title="Сетапы: выбранные зоны входа"
             >
-              {forecastHorizon === 'MACRO' ? 'SWING' : forecastHorizon}
+              Сетап
             </button>
-            )}
             <button
               type="button"
               disabled={toolsChop || !toolsTrendOk}
@@ -3826,13 +3650,7 @@ const LiveChart = ({
                 handleClearBounces()
                 void handleFindProbableTrades()
               }}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                tradesMode
-                  ? 'bg-sky-500/20 text-sky-300'
-                  : toolsTrendOk && !toolsChop
-                    ? 'text-white/55 hover:text-white/80'
-                    : 'text-white/20'
-              }`}
+              className={`tv-btn ${tradesMode ? 'tv-btn-on' : ''}`}
               title={
                 !toolsTrendOk || toolsChop
                   ? 'Сделки — для трендового режима'
@@ -3844,26 +3662,6 @@ const LiveChart = ({
             <button
               type="button"
               onClick={() => {
-                setSignalMode(false)
-                setLiveSignal(null)
-                handleClearBounces()
-                handlePickSetups()
-              }}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                showSetupPicker &&
-                !zonesMode &&
-                !tradesMode &&
-                !signalMode &&
-                !bouncesMode
-                  ? 'bg-emerald-500/15 text-emerald-300'
-                  : 'text-white/35 hover:text-white/70'
-              }`}
-            >
-              Сетапы
-            </button>
-            <button
-              type="button"
-              onClick={() => {
                 if (bouncesMode) {
                   handleClearBounces()
                   haptic.impact()
@@ -3871,48 +3669,282 @@ const LiveChart = ({
                 }
                 handleFindBounces()
               }}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                bouncesMode
-                  ? 'bg-teal-500/25 text-teal-100'
-                  : 'text-white/55 hover:text-white/85'
-              }`}
+              className={`tv-btn ${bouncesMode ? 'tv-btn-on' : ''}`}
               title="Чистый график: зоны отскока, лимитки и стрелки до цели"
             >
-              {bouncesMode ? 'Отскоки ON' : 'Отскоки'}
-            </button>
-          </div>
-          <div className="tv-group flex shrink-0 items-center">
-            <button
-              type="button"
-              onClick={() => setShowDirection((v) => !v)}
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                showDirection
-                  ? 'bg-violet-500/20 text-violet-300'
-                  : 'text-white/35'
-              }`}
-              title="Стрелка направления"
-            >
-              <ArrowUpDown className="inline h-3.5 w-3.5" />
+              Отскоки
             </button>
             <button
+              id="live-signal-cta"
               type="button"
-              onClick={() =>
-                setChartPreferences({
-                  showLabels: !chartPreferences.showLabels,
-                })
-              }
-              className={`rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
-                chartPreferences.showLabels
-                  ? 'bg-white/15 text-white'
-                  : 'text-white/35'
-              }`}
-              title="Подписи уровней"
+              onClick={() => {
+                if (signalMode) {
+                  setSignalMode(false)
+                  setLiveSignal(null)
+                  haptic.impact()
+                  return
+                }
+                handleClearBounces()
+                handleFindLiveSignal()
+              }}
+              className={`tv-btn ${signalMode ? 'tv-btn-on' : ''}`}
+              title="Живой сигнал по текущей структуре"
             >
-              <Eye className="inline h-3.5 w-3.5" />
+              Сигнал
             </button>
           </div>
+
+          <span className="tv-sep" aria-hidden />
+
+          <button
+            type="button"
+            onClick={resetChartView}
+            className="tv-btn shrink-0"
+            title="Сбросить масштаб к текущей структуре"
+          >
+            Fit
+          </button>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => applyCleanMode(!cleanMode)}
+            className={`tv-btn ${cleanMode ? 'tv-btn-on' : ''}`}
+            title="Clean: только свечи и рабочий сетап. Полный режим — все слои."
+          >
+            Clean
+          </button>
+
+          <details
+            ref={layersRef}
+            className="group relative shrink-0"
+            onToggle={(event) => positionLayersPanel(event.currentTarget)}
+          >
+            <summary
+              className="tv-btn cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+              title="Слои и вид графика"
+            >
+              <Layers3 className="h-3.5 w-3.5" />
+              <span className="hidden min-[380px]:inline">Слои</span>
+              <span className="rounded-sm bg-bg-surface px-1 font-mono text-[11px] leading-4 text-text-muted">
+                {layersActive}
+              </span>
+            </summary>
+
+            {layersOpen &&
+              layersPos &&
+              createPortal(
+                <div
+                  data-layers-panel
+                  role="dialog"
+                  aria-label="Слои и вид графика"
+                  className="fixed z-[300] overflow-y-auto rounded-lg border border-border bg-bg-elevated p-1.5 shadow-popover"
+                  style={{
+                    top: layersPos.top,
+                    left: layersPos.left,
+                    width: layersPos.width,
+                    maxHeight: layersPos.maxHeight,
+                  }}
+                >
+              <div className="px-2 pb-1 pt-0.5 font-sans text-[11px] font-medium leading-4 text-text-muted">
+                Разметка
+              </div>
+
+              <LayerToggle
+                label="Зоны поддержки / сопротивления"
+                checked={showSrZones}
+                onChange={() => {
+                  setShowSrZones((v) => !v)
+                  haptic.impact()
+                }}
+              />
+              <LayerToggle
+                label="Только сильная зона"
+                checked={onlyStrong}
+                onChange={() => {
+                  setOnlyStrong((v) => {
+                    const next = !v
+                    try {
+                      localStorage.setItem(
+                        'enterprise_only_strong',
+                        next ? '1' : '0'
+                      )
+                    } catch {
+                      /* ignore */
+                    }
+                    return next
+                  })
+                  haptic.impact()
+                }}
+              />
+              <LayerToggle
+                label="Sweep 141"
+                checked={showFib141}
+                onChange={() => {
+                  setShowFib141((v) => {
+                    const next = !v
+                    try {
+                      localStorage.setItem(
+                        'enterprise_show_fib141',
+                        next ? '1' : '0'
+                      )
+                    } catch {
+                      /* ignore */
+                    }
+                    return next
+                  })
+                  haptic.impact()
+                }}
+              />
+              <LayerToggle
+                label="Continuation 141"
+                checked={showCont141}
+                onChange={() => {
+                  setShowCont141((v) => {
+                    const next = !v
+                    try {
+                      localStorage.setItem(
+                        'enterprise_show_cont141',
+                        next ? '1' : '0'
+                      )
+                    } catch {
+                      /* ignore */
+                    }
+                    return next
+                  })
+                  haptic.impact()
+                }}
+              />
+
+              <div className="mt-1 border-t border-border-subtle px-2 pb-1 pt-1.5 font-sans text-[11px] font-medium leading-4 text-text-muted">
+                Fibonacci 141
+              </div>
+              <div className="grid grid-cols-3 gap-1 px-1 pb-1">
+                {FIB_TF_BUTTONS.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => {
+                      toggleFibTf(b.id)
+                      haptic.impact()
+                    }}
+                    className={`h-9 rounded-sm border font-mono text-[11px] transition-colors ${
+                      fibTfs.has(b.id)
+                        ? 'border-brand/30 bg-brand/10 text-brand'
+                        : 'border-border text-text-secondary hover:border-border-active hover:text-text-primary'
+                    }`}
+                    title={`Fibonacci 141 на ${b.label.replace('141 ', '')}`}
+                  >
+                    {b.label.replace('141 ', '')}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-1 border-t border-border-subtle px-2 pb-1 pt-1.5 font-sans text-[11px] font-medium leading-4 text-text-muted">
+                Вид
+              </div>
+
+              <LayerToggle
+                label="Стрелка направления"
+                checked={showDirection}
+                onChange={() => setShowDirection((v) => !v)}
+              />
+              <LayerToggle
+                label="Подписи уровней"
+                checked={chartPreferences.showLabels}
+                onChange={() =>
+                  setChartPreferences({
+                    showLabels: !chartPreferences.showLabels,
+                  })
+                }
+              />
+              <LayerToggle
+                label="Комментарии на графике"
+                checked={showComments}
+                onChange={() => {
+                  setShowComments((v) => {
+                    const next = !v
+                    writeLsFlag('enterprise_chart_comments', next)
+                    return next
+                  })
+                  haptic.impact()
+                }}
+              />
+              <LayerToggle
+                label="Кейсы: отложенные лимитки"
+                checked={showCases}
+                onChange={() => {
+                  setShowCases((v) => {
+                    const next = !v
+                    writeLsFlag('enterprise_chart_cases', next)
+                    return next
+                  })
+                  haptic.impact()
+                }}
+              />
+              <LayerToggle
+                label="Подсказки процесса"
+                checked={showHints}
+                onChange={() => {
+                  setShowHints((v) => !v)
+                  haptic.impact()
+                }}
+              />
+              <LayerToggle
+                label="Звук процесса"
+                checked={audioOn}
+                onChange={() => {
+                  setAudioOn((v) => {
+                    const next = !v
+                    setProcessAudioEnabled(next)
+                    return next
+                  })
+                  haptic.impact()
+                }}
+              />
+              {chartExpanded && (
+                <LayerToggle
+                  label="Четыре сценария"
+                  checked={showFsScenarios}
+                  onChange={() => {
+                    setShowFsScenarios((v) => !v)
+                    haptic.impact()
+                  }}
+                />
+              )}
+                </div>,
+                document.body
+              )}
+          </details>
+
+          <button
+            type="button"
+            onClick={() => {
+              setChartExpanded((v) => !v)
+              haptic.impact()
+            }}
+            className={`tv-icon ${chartExpanded ? 'tv-icon-on' : ''}`}
+            title={chartExpanded ? 'Свернуть график' : 'Развернуть как на бирже'}
+          >
+            {chartExpanded ? (
+              <Minimize2 className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="tv-icon"
+            title={t('chart_settings')}
+          >
+            <Settings className="h-4 w-4" />
+          </button>
         </div>
       </div>
+
 
       {!chartExpanded && !fillParent && (
       <div className="shrink-0">
@@ -3924,14 +3956,14 @@ const LiveChart = ({
       </div>
       )}
       {!chartExpanded && !fillParent && !cleanMode && (
-      <p className="px-1 font-mono text-[9px] text-white/35">
+      <p className="px-1 font-mono text-[11px] text-white/35">
         Живое чтение структуры. Четыре пути — варианты хода, не прогноз.
       </p>
       )}
 
       <div
         ref={chartShellRef}
-        className={`relative flex w-full flex-col overflow-hidden bg-[#131722] ${
+        className={`relative flex w-full flex-col overflow-hidden bg-bg-base ${
           chartExpanded || fillParent
             ? 'min-h-0 flex-1 rounded-none border-0'
             : 'rounded-xl border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
@@ -3984,39 +4016,39 @@ const LiveChart = ({
                 <div className="flex flex-col items-start gap-0.5">
                   {/* TradingView-style symbol legend */}
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[11px] font-semibold tracking-wide text-[#d1d4dc]">
+                    <span className="font-mono text-[11px] font-semibold tracking-wide text-text-primary">
                       {flatSymbol.replace('_', '')}
                     </span>
-                    <span className="rounded-[3px] bg-white/[0.07] px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-wider text-[#b2b5be]/80">
+                    <span className="rounded-[3px] bg-white/[0.07] px-1 py-px font-mono text-[11px] font-semibold uppercase tracking-wider text-[#b2b5be]/80">
                       {timeframe}
                     </span>
-                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[#787b86]/80">
+                    <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#787b86]/80">
                       MEXC
                     </span>
                   </div>
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 font-mono text-[10px] tabular-nums text-[#787b86]">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 font-mono text-[11px] tabular-nums text-[#787b86]">
                     {!denseUi && (
                       <>
                         <span>
-                          O <span className="text-[#d1d4dc]">{fmt(bar.open)}</span>
+                          O <span className="text-text-primary">{fmt(bar.open)}</span>
                         </span>
                         <span>
-                          H <span className="text-[#d1d4dc]">{fmt(bar.high)}</span>
+                          H <span className="text-text-primary">{fmt(bar.high)}</span>
                         </span>
                         <span>
-                          L <span className="text-[#d1d4dc]">{fmt(bar.low)}</span>
+                          L <span className="text-text-primary">{fmt(bar.low)}</span>
                         </span>
                       </>
                     )}
                     <span>
                       {denseUi ? '' : 'C '}
-                      <span className="text-[#d1d4dc]">{fmt(bar.close)}</span>
+                      <span className="text-text-primary">{fmt(bar.close)}</span>
                     </span>
                     <span
-                      className={`rounded-[3px] px-1 py-px text-[9px] ${
+                      className={`rounded-[3px] px-1 py-px text-[11px] ${
                         up
-                          ? 'bg-[#26a69a]/14 text-[#26a69a]'
-                          : 'bg-[#ef5350]/14 text-[#ef5350]'
+                          ? 'bg-market-long/15 text-market-long'
+                          : 'bg-market-short/15 text-market-short'
                       }`}
                     >
                       {up ? '+' : ''}
@@ -4192,16 +4224,16 @@ const LiveChart = ({
               top: Math.max(8, Math.min(hoverAnchor.y + 14, (containerRef.current?.clientHeight ?? CHART_HEIGHT) - 94)),
             }}
           >
-            <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-100">
+            <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-100">
               <span className="truncate">{hoverAdvisor.zoneLabel}</span>
               <span className="shrink-0 text-cyan-200">LIVE · {hoverAdvisor.timeframe}</span>
             </div>
-            <div className="mt-1 text-[10px] leading-relaxed text-slate-300">{hoverAdvisor.summary}</div>
-            <div className="mt-1.5 flex justify-between border-t border-white/10 pt-1.5 font-mono text-[9px]">
+            <div className="mt-1 text-[11px] leading-relaxed text-slate-300">{hoverAdvisor.summary}</div>
+            <div className="mt-1.5 flex justify-between border-t border-white/10 pt-1.5 font-mono text-[11px]">
               <span className="text-emerald-300">Удержание {hoverAdvisor.primary.probability}%</span>
               <span className="text-rose-300">Пробой {hoverAdvisor.alternate.probability}%</span>
             </div>
-            <div className="mt-1 text-[9px] text-slate-400">Клик по зоне — полный разбор «если → то»</div>
+            <div className="mt-1 text-[11px] text-slate-400">Клик по зоне — полный разбор «если → то»</div>
           </div>
         )}
         {advisor && (
@@ -4239,7 +4271,7 @@ const LiveChart = ({
             })
             haptic.impact()
           }}
-          className={`absolute bottom-8 left-1.5 z-30 inline-flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-md transition-colors ${
+          className={`absolute bottom-8 left-1.5 z-30 inline-flex items-center gap-1 rounded-full border px-2 py-1 font-mono text-[11px] font-bold uppercase tracking-wider shadow-lg backdrop-blur-md transition-colors ${
             showLiqMap
               ? 'border-emerald-400/40 bg-emerald-950/80 text-emerald-200'
               : 'border-white/15 bg-black/65 text-white/55 hover:text-white/85'
@@ -4249,7 +4281,7 @@ const LiveChart = ({
           <Flame className="h-3.5 w-3.5" />
           ликв
           <span
-            className={`rounded px-1 py-px text-[8px] ${
+            className={`rounded px-1 py-px text-[11px] ${
               showLiqMap ? 'bg-emerald-400/20' : 'bg-white/10'
             }`}
           >
@@ -4534,7 +4566,7 @@ const LiveChart = ({
     >
       {chartExpanded && !fillParent && (
         <div
-          className="flex h-[440px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#131722] font-mono text-[10px] text-white/35"
+          className="flex h-[440px] items-center justify-center rounded-xl border border-white/[0.08] bg-bg-base font-mono text-[11px] text-white/35"
           aria-hidden
         >
           график на весь экран

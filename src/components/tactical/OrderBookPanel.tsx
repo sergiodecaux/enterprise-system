@@ -247,7 +247,7 @@ const OrderBookPanel = ({ symbol }: Props) => {
         liquidityMap,
       })
       setMmIntent(symbol, intent)
-      setMmLabel(`${intent.emoji} ${intent.label}`)
+      setMmLabel(intent.label)
 
       setState({
         snapshot,
@@ -468,18 +468,20 @@ const OrderBookPanel = ({ symbol }: Props) => {
 
   if (isLoading && !snapshot) {
     return (
-      <div className="flex items-center justify-center rounded-lg bg-hull-light/20 p-6">
-        <Loader2 className="mr-2 h-5 w-5 animate-spin text-holo/60" />
-        <span className="text-sm text-holo/60">{t('orderbook_loading')}</span>
+      <div className="flex items-center justify-center rounded-md border border-border bg-bg-panel/40 p-6">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin text-text-muted" />
+        <span className="font-sans text-[12px] text-text-secondary">
+          {t('orderbook_loading')}
+        </span>
       </div>
     )
   }
 
   if (error && !snapshot) {
     return (
-      <div className="flex items-center justify-center rounded-lg bg-hull-light/20 p-6">
-        <AlertCircle className="mr-2 h-5 w-5 text-alert" />
-        <span className="text-sm text-alert">
+      <div className="flex items-center justify-center rounded-md border border-market-short/20 bg-market-short/[0.06] p-6">
+        <AlertCircle className="mr-2 h-4 w-4 text-market-short" />
+        <span className="font-sans text-[12px] text-market-short">
           {t('orderbook_error')}: {error}
         </span>
       </div>
@@ -495,6 +497,16 @@ const OrderBookPanel = ({ symbol }: Props) => {
     ...asks.map((l) => l.volume)
   )
   const wallPrices = new Set(metrics.walls.map((w) => w.price))
+
+  const obiBand =
+    weightedObi?.levels.find((l) => l.bandPct === 0.5) ??
+    weightedObi?.levels[0] ??
+    null
+  const obiBidShare = obiBand
+    ? (obiBand.bidVolume /
+        Math.max(1e-9, obiBand.bidVolume + obiBand.askVolume)) *
+      100
+    : 50
 
   const formatMid = (price: number): string => {
     if (price >= 1000) {
@@ -522,23 +534,27 @@ const OrderBookPanel = ({ symbol }: Props) => {
       )}
 
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-mono text-sm font-bold uppercase text-holo">
-          {t('orderbook_title')}
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h3 className="truncate font-sans text-[13px] font-medium leading-5 text-text-primary">
+            {t('orderbook_title')}
+          </h3>
           <span
-            className={`ml-2 text-[9px] font-normal normal-case ${
-              streamSource === 'ws' ? 'text-long/80' : 'text-holo/40'
+            className={`font-mono text-[11px] leading-4 ${
+              streamSource === 'ws' ? 'text-brand' : 'text-text-muted'
             }`}
           >
-            {streamSource === 'ws' ? 'WS live' : 'REST'}
+            {streamSource === 'ws' ? 'LIVE' : 'REST'}
           </span>
-        </h3>
-        <div className="flex items-center gap-2">
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           <DepthSettings currentDepth={depthLimit} onDepthChange={setDepthLimit} />
           <button
             type="button"
             onClick={() => setShowML((v) => !v)}
-            className={`rounded p-1.5 transition-colors ${
-              showML ? 'bg-holo/20 text-holo' : 'bg-hull-light/50 text-holo/50'
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-md border transition-colors desk:h-8 desk:w-8 ${
+              showML
+                ? 'border-brand/25 bg-brand/10 text-brand'
+                : 'border-border bg-bg-panel text-text-muted hover:text-text-primary'
             }`}
             title={t('ml_prediction')}
           >
@@ -547,8 +563,10 @@ const OrderBookPanel = ({ symbol }: Props) => {
           <button
             type="button"
             onClick={() => setShow3D((v) => !v)}
-            className={`rounded p-1.5 transition-colors ${
-              show3D ? 'bg-holo/20 text-holo' : 'bg-hull-light/50 text-holo/50'
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-md border transition-colors desk:h-8 desk:w-8 ${
+              show3D
+                ? 'border-brand/25 bg-brand/10 text-brand'
+                : 'border-border bg-bg-panel text-text-muted hover:text-text-primary'
             }`}
             title={t('heatmap_3d')}
           >
@@ -568,9 +586,11 @@ const OrderBookPanel = ({ symbol }: Props) => {
       {show3D && (
         <Suspense
           fallback={
-            <div className="rounded-lg bg-hull-light/20 p-6 text-center">
-              <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin text-holo/50" />
-              <span className="text-xs text-holo/50">{t('heatmap_3d')}…</span>
+            <div className="rounded-md border border-border bg-bg-panel/40 p-6 text-center">
+              <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin text-text-muted" />
+              <span className="font-sans text-[12px] text-text-secondary">
+                {t('heatmap_3d')}…
+              </span>
             </div>
           }
         >
@@ -583,36 +603,67 @@ const OrderBookPanel = ({ symbol }: Props) => {
       <OrderBookMetricsView metrics={metrics} />
 
       {(weightedObi || proddingLabel || mmLabel) && (
-        <div className="space-y-1.5 rounded-lg bg-hull-light/30 p-3 font-mono text-[11px]">
+        <div className="space-y-1.5 rounded-md border border-border bg-bg-panel/40 px-2.5 py-2 font-mono text-[11px] leading-4">
           {mmLabel && (
-            <div className="font-bold text-holo">{mmLabel}</div>
+            <div className="font-sans text-[12px] font-medium text-text-primary">
+              {mmLabel}
+            </div>
           )}
           {weightedObi && (
             <div
               className={
                 weightedObi.nearTouchPressure === 'BUY'
-                  ? 'text-matrix'
+                  ? 'text-market-long'
                   : weightedObi.nearTouchPressure === 'SELL'
-                    ? 'text-alert'
-                    : 'text-holo/60'
+                    ? 'text-market-short'
+                    : 'text-text-secondary'
               }
             >
-              OBI 0.1%/0.5%/1%: {weightedObi.label}
+              OBI 0.1% / 0.5% / 1%: {weightedObi.label}
               {weightedObi.levels.map((l) => (
-                <span key={l.bandPct} className="ml-2 text-holo/40">
+                <span key={l.bandPct} className="ml-2 text-text-muted">
                   {l.bandPct}%×{l.bidAskRatio.toFixed(1)}
                 </span>
               ))}
             </div>
           )}
           {proddingLabel && (
-            <div className="text-yellow-400">{proddingLabel}</div>
+            <div className="text-market-warning">{proddingLabel}</div>
           )}
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg bg-hull-light/20">
-        <div className="space-y-px">
+      {weightedObi && (
+        <div className="rounded-md border border-border bg-bg-panel/60 px-2 py-1.5">
+          <div className="flex items-center justify-between gap-2 font-sans text-[11px] leading-4">
+            <span className="text-text-muted">Дисбаланс ±0.5%</span>
+            <span className="tnum font-mono text-text-secondary">
+              <span className="text-market-long">
+                {obiBidShare.toFixed(0)}% bids
+              </span>
+              <span className="mx-1 text-text-muted">/</span>
+              <span className="text-market-short">
+                {(100 - obiBidShare).toFixed(0)}% asks
+              </span>
+            </span>
+          </div>
+          <div className="mt-1 flex h-[3px] overflow-hidden rounded-full bg-bg-surface">
+            <div
+              className="bg-market-long transition-[width] duration-300"
+              style={{ width: `${obiBidShare}%` }}
+            />
+            <div className="flex-1 bg-market-short" />
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-md border border-border bg-bg-panel/30">
+        <div className="flex items-center justify-between border-b border-border px-2 py-1 font-sans text-[11px] leading-4 text-text-muted">
+          <span>Цена</span>
+          <span>Объём</span>
+        </div>
+
+        <div>
           {asks
             .slice()
             .reverse()
@@ -629,14 +680,17 @@ const OrderBookPanel = ({ symbol }: Props) => {
         </div>
 
         {metrics.midPrice != null && metrics.spread != null && (
-          <div className="flex h-8 items-center justify-center border-y border-hull-border/50 bg-hull">
-            <span className="font-mono text-xs text-holo/60">
-              ${formatMid(metrics.midPrice)} · Δ{formatMid(metrics.spread)}
+          <div className="flex h-8 items-center justify-between border-y border-border bg-bg-elevated px-2">
+            <span className="tnum font-mono text-[13px] font-medium text-text-primary">
+              ${formatMid(metrics.midPrice)}
+            </span>
+            <span className="tnum font-mono text-[11px] text-text-muted">
+              Δ {formatMid(metrics.spread)}
             </span>
           </div>
         )}
 
-        <div className="space-y-px">
+        <div>
           {bids.map((level, i) => (
             <OrderBookLevelRow
               key={`bid-${level.price}-${i}`}
@@ -650,7 +704,7 @@ const OrderBookPanel = ({ symbol }: Props) => {
         </div>
       </div>
 
-      <div className="text-center text-[10px] text-holo/40">
+      <div className="text-center font-sans text-[11px] leading-4 text-text-muted">
         {streamSource === 'ws'
           ? 'Стакан: WebSocket live · лента сделок online'
           : `Стакан: REST fallback ~${REST_FALLBACK_MS / 1000}с`}

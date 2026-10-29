@@ -66,7 +66,7 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
           enabled: true,
         })
         haptic.success()
-        showAlert('✅ Подписка на алерты активна. Проверьте бота в Telegram.')
+        showAlert('Подписка на алерты активна. Проверьте бота в Telegram.')
       } else {
         showAlert(
           'Не удалось подписаться. Проверьте VITE_MEXC_PROXY_URL и деплой worker.'
@@ -90,10 +90,10 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
       })
       if (result.ok) {
         haptic.success()
-        showAlert('✅ Тест отправлен в Telegram')
+        showAlert('Тест отправлен в Telegram')
       } else {
         showAlert(
-          '❌ Не удалось отправить. Нужны TELEGRAM_BOT_TOKEN + ALERT_SECRET на worker и /start в боте.'
+          'Не удалось отправить. Нужны TELEGRAM_BOT_TOKEN + ALERT_SECRET на worker и /start в боте.'
         )
       }
     } finally {
@@ -198,7 +198,7 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
           </label>
 
           <div>
-            <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
+            <div className="mb-1 font-mono text-[11px] uppercase text-holo/40">
               Мин. Confidence снайпер: {settings.minSniperConfidence}%
             </div>
             <input
@@ -214,7 +214,7 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
           </div>
 
           <div>
-            <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
+            <div className="mb-1 font-mono text-[11px] uppercase text-holo/40">
               Chat ID {!isInTelegram && '(обязательно вне Telegram)'}
             </div>
             <input
@@ -230,21 +230,21 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
               className="w-full rounded-lg border border-hull-border bg-hull px-3 py-2 font-mono text-xs text-holo outline-none focus:border-matrix/50"
             />
             {userId && (
-              <p className="mt-1 font-mono text-[10px] text-matrix/70">
+              <p className="mt-1 font-mono text-[11px] text-matrix/70">
                 ID из Mini App: {userId}
               </p>
             )}
           </div>
 
           {settings.subscribedChatId && (
-            <div className="flex items-center gap-2 font-mono text-[10px] text-matrix">
+            <div className="flex items-center gap-2 font-mono text-[11px] text-matrix">
               <Check className="h-3 w-3" />
               Подписан: {settings.subscribedChatId}
             </div>
           )}
 
           {health && (
-            <p className="font-mono text-[10px] text-holo/40">
+            <p className="font-mono text-[11px] text-holo/40">
               Worker: {health.ok ? 'OK' : 'DOWN'}
               {health.subscribers != null
                 ? ` · подписчиков: ${health.subscribers}`
@@ -284,14 +284,14 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
 
               {watchedSetups.length > 0 && (
                 <div className="rounded-lg border border-hull-border/50 bg-black/20 p-2">
-                  <div className="mb-1 font-mono text-[10px] uppercase text-holo/40">
+                  <div className="mb-1 font-mono text-[11px] uppercase text-holo/40">
                     Активные watch: {watchedSetups.length}
                   </div>
                   <ul className="max-h-24 space-y-1 overflow-y-auto">
                     {watchedSetups.slice(0, 8).map((w) => (
                       <li
                         key={w.watchId}
-                        className="font-mono text-[9px] text-holo/50"
+                        className="font-mono text-[11px] text-holo/50"
                       >
                         {w.symbol} {w.setup.side} · {w.lastStatus}
                       </li>
@@ -300,7 +300,7 @@ const TelegramAlertsPanel = ({ isOpen, onClose }: Props) => {
                 </div>
               )}
 
-          <p className="font-mono text-[10px] leading-relaxed text-holo/35">
+          <p className="font-mono text-[11px] leading-relaxed text-holo/35">
             1) Нажмите /start у @Enterpriseelite_bot. 2) Охота по тактике ищет
             «Можно» на воркере — приложение можно закрыть. Ждут и Стримит во
             вход не приходят. 3) Звезда (макс. 6) — 15-мин сводка. Снимок

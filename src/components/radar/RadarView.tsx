@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Radar, Radio } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import SegmentedControl from '../ui/SegmentedControl'
 import { useAppStore } from '../../store/useAppStore'
 import CoinRow from './CoinRow'
 import FearGreedGauge from '../news/FearGreedGauge'
@@ -71,58 +72,57 @@ const RadarView = () => {
     : ''
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="px-4 pb-4 pt-6">
+    <div className="flex h-full flex-col bg-bg-base">
+      <div className="px-3 pb-2.5 pt-3">
         <div className="mb-1 flex items-center gap-2">
-          <Radar className="h-5 w-5 text-matrix" />
-          <h1 className="font-mono text-lg font-bold uppercase tracking-wide text-holo">
+          <Radar className="h-4 w-4 text-brand" />
+          <h1 className="font-sans text-[15px] font-semibold leading-5 text-text-primary">
             {t('radar_title')}
           </h1>
           {isScanning && (
-            <div className="pulse-dot h-2 w-2 rounded-full bg-matrix" />
+            <div className="pulse-dot h-1.5 w-1.5 rounded-full bg-brand" />
           )}
+          <span className="ml-auto font-mono text-[11px] leading-4 text-text-muted">
+            {signals.length} пар
+          </span>
         </div>
-        <p className="ml-7 font-mono text-xs text-holo/40">{t('radar_subtitle')}</p>
+        <p className="font-sans text-[11px] leading-4 text-text-muted">
+          {t('radar_subtitle')}
+        </p>
         {biasLabel && (
-          <p className="ml-7 mt-1 font-mono text-xs text-matrix/70">{biasLabel}</p>
+          <p className="mt-0.5 font-mono text-[11px] leading-4 text-text-secondary">
+            {biasLabel}
+          </p>
         )}
         {marketContext?.scanProgress && (
-          <p className="ml-7 mt-0.5 font-mono text-xs text-holo/30">
+          <p className="mt-0.5 font-sans text-[11px] leading-4 text-text-muted">
             {marketContext.scanProgress}
           </p>
         )}
-        {newsSettings.enabled &&
-          newsSettings.showFearGreed && (
-            <div className="ml-7 mt-3 min-h-[4.5rem]">
-              {fearGreed && <FearGreedGauge data={fearGreed} />}
-            </div>
-          )}
+        {newsSettings.enabled && newsSettings.showFearGreed && (
+          <div className="mt-2.5 min-h-[4.5rem]">
+            {fearGreed && <FearGreedGauge data={fearGreed} />}
+          </div>
+        )}
       </div>
 
-      <div className="flex gap-1 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {(
-          [
-            ['scan', 'Охота'],
-            ['141', '141 скан'],
-            ['map', 'Сильные / слабые'],
-            ['fav', 'Избранное'],
-            ['watch', 'Watch 141'],
-            ['setups', 'Сетапы'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setMode(id)}
-            className={`shrink-0 rounded-md px-2.5 py-1 font-mono text-[10px] font-bold uppercase ${
-              mode === id
-                ? 'bg-emerald-500/20 text-emerald-200'
-                : 'bg-white/5 text-white/40'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="px-3 pb-2.5">
+        <SegmentedControl
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: 'scan', label: 'Охота' },
+            { value: '141', label: '141' },
+            { value: 'map', label: 'Карта' },
+            { value: 'fav', label: 'Избранное' },
+            { value: 'watch', label: 'Watch' },
+            { value: 'setups', label: 'Сетапы' },
+          ]}
+          size="sm"
+          ariaLabel="Режим радара"
+          className="w-full"
+          stretch
+        />
       </div>
 
       {mode === 'scan' ? (
@@ -141,8 +141,8 @@ const RadarView = () => {
         />
       ) : (
         <>
-      <div className="border-b border-hull-border/30 px-4 py-2">
-        <div className="flex items-center gap-3 font-mono text-xs uppercase text-holo/30">
+      <div className="border-b border-border px-3 py-1.5">
+        <div className="flex items-center gap-3 font-sans text-[11px] leading-4 text-text-muted">
           <div className="w-6 text-right">#</div>
           <div className="flex-1">{t('column_asset')}</div>
           <div className="w-[4.5rem] shrink-0">{t('column_signal')}</div>
@@ -158,22 +158,22 @@ const RadarView = () => {
           </div>
         ) : connectionStatus === 'OFFLINE' && signals.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-12">
-            <p className="mb-2 font-mono text-sm uppercase tracking-wider text-alert">
+            <p className="mb-1 font-sans text-[13px] font-medium text-market-short">
               {t('status_offline')}
             </p>
-            <p className="max-w-xs text-center font-mono text-xs text-holo/60">
+            <p className="max-w-xs text-center font-sans text-[11px] leading-4 text-text-muted">
               {t('connection_unavailable')}
             </p>
           </div>
         ) : signals.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-12">
             <div className="relative">
-              <Radio className="mb-4 h-12 w-12 animate-pulse text-matrix/30" />
+              <Radio className="mb-4 h-10 w-10 animate-pulse text-text-muted/40" />
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="h-12 w-12 animate-ping rounded-full border-2 border-matrix/30" />
+                <div className="h-10 w-10 animate-ping rounded-full border border-brand/20" />
               </div>
             </div>
-            <p className="font-mono text-sm uppercase tracking-wider text-holo/40">
+            <p className="font-sans text-[13px] text-text-secondary">
               {t('status_scanning')}
             </p>
           </div>
@@ -192,11 +192,11 @@ const RadarView = () => {
       </div>
 
       {marketContext?.lastScanAt && (
-        <div className="border-t border-hull-border/30 px-4 py-4 text-center">
-          <p className="font-mono text-xs text-holo/20">
+        <div className="border-t border-border px-3 py-3 text-center">
+          <p className="font-sans text-[11px] leading-4 text-text-muted">
             {t('footer_data_age')} {getRelativeTime()}
           </p>
-          <p className="mt-1 font-mono text-xs text-holo/20">
+          <p className="mt-0.5 font-sans text-[11px] leading-4 text-text-muted">
             {(marketContext.watchlistSize || 10) +
               (extraWatchlist.length ? ` (+${extraWatchlist.length})` : '')}{' '}
             {t('footer_pairs')}

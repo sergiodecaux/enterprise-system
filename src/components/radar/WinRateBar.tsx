@@ -39,7 +39,7 @@ const WinRateBar = ({
             />
           </div>
           <span
-            className={`w-6 text-right font-mono text-[9px] tabular-nums ${getTextColorClass()}`}
+            className={`w-6 text-right font-mono text-[11px] tabular-nums ${getTextColorClass()}`}
           >
             {Math.round(value)}
           </span>
@@ -63,7 +63,7 @@ const WinRateBar = ({
           {Math.round(value)}%
         </span>
       </div>
-      <span className="font-mono text-[9px] uppercase tracking-wide text-holo/35">
+      <span className="font-mono text-[11px] uppercase tracking-wide text-holo/35">
         {label}
       </span>
     </div>

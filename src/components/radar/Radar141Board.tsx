@@ -50,7 +50,7 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
-      className={`shrink-0 rounded-md border px-2 py-1 font-mono text-[10px] font-bold uppercase ${
+      className={`shrink-0 rounded-md border px-2 py-1 font-mono text-[11px] font-bold uppercase ${
         on
           ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
           : 'border-white/10 bg-[#10141a] text-white/40'
@@ -68,7 +68,7 @@ function CoinName({ row }: { row: Radar141Row }) {
       <span className="whitespace-nowrap font-mono text-[13px] font-bold tracking-wide text-white">
         {label.title}
       </span>
-      <span className="shrink-0 font-mono text-[10px] text-white/35">
+      <span className="shrink-0 font-mono text-[11px] text-white/35">
         {label.hint}
       </span>
     </div>
@@ -121,12 +121,12 @@ function RadarRow({
           onClick={onOpen}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
-          <span className="w-5 shrink-0 font-mono text-[10px] text-white/30">
+          <span className="w-5 shrink-0 font-mono text-[11px] text-white/30">
             {index + 1}
           </span>
           <div className="min-w-0 flex-1">
             <CoinName row={row} />
-            <div className={`mt-0.5 font-mono text-[10px] ${triggerClass(row.trigger)}`}>
+            <div className={`mt-0.5 font-mono text-[11px] ${triggerClass(row.trigger)}`}>
               {row.triggerLabel}
               {' · '}gap {row.gapPct.toFixed(1)}%
               {row.preferredSide
@@ -136,7 +136,7 @@ function RadarRow({
                 : ''}
               {row.newsRisk ? ' · риск' : ''}
             </div>
-            <div className={`mt-0.5 font-mono text-[10px] ${contClass(row.contTrigger)}`}>
+            <div className={`mt-0.5 font-mono text-[11px] ${contClass(row.contTrigger)}`}>
               {row.contTriggerLabel}
             </div>
           </div>
@@ -150,7 +150,7 @@ function RadarRow({
               {row.change24h.toFixed(1)}%
             </div>
             <div
-              className={`font-mono text-[10px] ${
+              className={`font-mono text-[11px] ${
                 rs > 0.3
                   ? 'text-amber-300'
                   : rs < -0.3
@@ -166,7 +166,7 @@ function RadarRow({
         <button
           type="button"
           onClick={onChart}
-          className="shrink-0 rounded-md border border-white/10 px-1.5 py-1 font-mono text-[9px] uppercase text-white/50"
+          className="shrink-0 rounded-md border border-white/10 px-1.5 py-1 font-mono text-[11px] uppercase text-white/50"
         >
           график
         </button>
@@ -293,7 +293,7 @@ const Radar141Board = ({
         </div>
       )}
 
-      <p className="px-4 pb-1 font-mono text-[10px] text-white/35">
+      <p className="px-4 pb-1 font-mono text-[11px] text-white/35">
         {meta.scanning ? meta.progress || 'скан…' : meta.progress}
         {meta.error ? ` · ${meta.error}` : ''}
         {mode === 'watch'
@@ -349,7 +349,7 @@ const Radar141Board = ({
                   {selectedLabel?.hint === 'USDT' ? '/USDT' : selectedLabel?.hint}
                 </span>
               </p>
-              <p className="mt-0.5 font-mono text-[10px] text-white/45">
+              <p className="mt-0.5 font-mono text-[11px] text-white/45">
                 {selected.scoreWhy}
               </p>
             </div>
@@ -371,7 +371,7 @@ const Radar141Board = ({
             </button>
           </div>
           {selected.gap ? (
-            <div className="mt-2 space-y-1 font-mono text-[10px] text-white/65">
+            <div className="mt-2 space-y-1 font-mono text-[11px] text-white/65">
               <p>
                 {selected.gap.lower.label} {fmtPx(selected.gap.lower.price)} →{' '}
                 {selected.gap.upper.label} {fmtPx(selected.gap.upper.price)} ·{' '}
@@ -385,7 +385,7 @@ const Radar141Board = ({
               <p className="text-rose-300/70">{selected.gap.plan.invalidation}</p>
             </div>
           ) : (
-            <p className="mt-2 font-mono text-[10px] text-white/40">
+            <p className="mt-2 font-mono text-[11px] text-white/40">
               RS к BTC {selected.rsBtc1d >= 0 ? '+' : ''}
               {selected.rsBtc1d.toFixed(1)} · рынок {selected.rsMarket >= 0 ? '+' : ''}
               {selected.rsMarket.toFixed(1)}

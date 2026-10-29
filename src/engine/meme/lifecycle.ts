@@ -28,7 +28,7 @@ export function detectMemeLifecycle(
 ): LifecycleResult {
   const unknown: LifecycleResult = {
     phase: 'UNKNOWN',
-    badge: '❔ UNKNOWN',
+    badge: 'UNKNOWN',
     color: 'text-holo/40',
     longAllowed: true,
     shortAllowed: true,
@@ -67,7 +67,7 @@ export function detectMemeLifecycle(
     if (olderAvg < 1.2 && olderVol > 0 && lastVol >= olderVol * 8 && volSpike) {
       return {
         phase: 'IGNITION',
-        badge: '🟢 IGNITION',
+        badge: 'IGNITION',
         color: 'text-matrix',
         longAllowed: true,
         shortAllowed: false,
@@ -83,7 +83,7 @@ export function detectMemeLifecycle(
     if (avgRange >= 2.5 || deviationPct >= 20) {
       return {
         phase: 'FRENZY',
-        badge: '🟡 FRENZY',
+        badge: 'FRENZY',
         color: 'text-yellow-400',
         longAllowed: true, // только жёсткий скальп
         shortAllowed: false,
@@ -106,7 +106,7 @@ export function detectMemeLifecycle(
   if (highVolChop && (rsi == null || rsi > 55)) {
     return {
       phase: 'DISTRIBUTION',
-      badge: '🔴 DISTRIBUTION',
+      badge: 'DISTRIBUTION',
       color: 'text-alert',
       longAllowed: false,
       shortAllowed: false,
@@ -127,7 +127,7 @@ export function detectMemeLifecycle(
   if (falling && deviationPct > 5 && (rsi == null || rsi < 55)) {
     return {
       phase: 'WATERFALL',
-      badge: '⚫️ WATERFALL',
+      badge: 'WATERFALL',
       color: 'text-holo/70',
       longAllowed: false,
       shortAllowed: true,
@@ -140,7 +140,7 @@ export function detectMemeLifecycle(
   if (volSpike && deviationPct > 0 && (rsi == null || rsi < 70)) {
     return {
       phase: 'IGNITION',
-      badge: '🟢 IGNITION',
+      badge: 'IGNITION',
       color: 'text-matrix',
       longAllowed: true,
       shortAllowed: false,
@@ -152,7 +152,7 @@ export function detectMemeLifecycle(
 
   return {
     phase: 'UNKNOWN',
-    badge: '❔ RANGE',
+    badge: 'RANGE',
     color: 'text-holo/40',
     longAllowed: true,
     shortAllowed: true,

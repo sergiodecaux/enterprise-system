@@ -28,14 +28,14 @@ function Quote({
   const up = (ticker?.priceChange24h ?? 0) >= 0
   return (
     <span className="flex items-baseline gap-1.5 px-2.5 py-1">
-      <span className="font-sans text-[10px] font-semibold uppercase tracking-wide text-holo/40">
+      <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-holo/40">
         {fallback}
       </span>
       <span className="tnum font-mono text-[11px] font-semibold text-holo/90">
         ${fmtPrice(ticker?.price)}
       </span>
       <span
-        className={`tnum font-mono text-[10px] font-medium ${
+        className={`tnum font-mono text-[11px] font-medium ${
           ticker ? (up ? 'text-matrix' : 'text-alert') : 'text-holo/30'
         }`}
       >
@@ -71,16 +71,16 @@ const MarketRibbon = () => {
       <Quote ticker={eth} fallback="ETH" />
       <span className="h-4 w-px bg-hull-border/80" />
       <span className="flex items-center gap-1.5 px-2.5 py-1">
-        <span className="font-sans text-[10px] font-semibold uppercase tracking-wide text-holo/40">
+        <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-holo/40">
           День
         </span>
-        <span className={`font-sans text-[10px] font-semibold ${biasTone}`}>
+        <span className={`font-sans text-[11px] font-semibold ${biasTone}`}>
           {biasLabel(bias)}
         </span>
       </span>
       <span className="h-4 w-px bg-hull-border/80" />
       <span className="flex items-center gap-1.5 px-2.5 py-1">
-        <span className="font-sans text-[10px] font-semibold uppercase tracking-wide text-holo/40">
+        <span className="font-sans text-[11px] font-semibold uppercase tracking-wide text-holo/40">
           F&amp;G
         </span>
         <span className={`tnum font-mono text-[11px] font-semibold ${fgTone}`}>

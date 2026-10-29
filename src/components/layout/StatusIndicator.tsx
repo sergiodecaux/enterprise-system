@@ -49,12 +49,12 @@ const StatusIndicator = () => {
         className={`h-1.5 w-1.5 shrink-0 rounded-full ${config.dot} ${config.pulse}`}
       />
       <span
-        className={`whitespace-nowrap font-sans text-[10px] font-semibold uppercase tracking-[0.12em] ${config.text} sm:hidden`}
+        className={`whitespace-nowrap font-sans text-[11px] font-semibold uppercase tracking-[0.12em] ${config.text} sm:hidden`}
       >
         {connectionStatus === 'OFFLINE' ? 'OFF' : 'MEXC'}
       </span>
       <span
-        className={`hidden whitespace-nowrap font-sans text-[10px] font-semibold uppercase tracking-[0.12em] sm:inline ${config.text}`}
+        className={`hidden whitespace-nowrap font-sans text-[11px] font-semibold uppercase tracking-[0.12em] sm:inline ${config.text}`}
       >
         {config.label}
       </span>

@@ -173,7 +173,7 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
   // ── 1. HTF Structure (0–2) ─────────────────────────────────────────────
   const htf = input.htfTrend
   let htfScore = 0
-  let htfReason = '⚠️ HTF unavailable'
+  let htfReason = 'HTF unavailable'
   if (htf) {
     const aligned4 =
       (dir === 'LONG' && htf.bias4h === 'BULLISH') ||
@@ -183,25 +183,25 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
       (dir === 'SHORT' && htf.bias1h === 'BEARISH')
     if (aligned4 && aligned1) {
       htfScore = 2
-      htfReason = `✅ 4H+1H aligned ${dir === 'LONG' ? 'BULLISH' : 'BEARISH'}`
+      htfReason = `4H+1H aligned ${dir === 'LONG' ? 'BULLISH' : 'BEARISH'}`
     } else if (aligned4 || aligned1) {
       htfScore = 1
       htfReason = aligned4
-        ? `⚠️ 4H aligned, 1H mixed`
-        : `⚠️ 1H aligned, 4H counter-trend`
+        ? `4H aligned, 1H mixed`
+        : `1H aligned, 4H counter-trend`
     } else {
       htfScore = 0
       htfReason =
         style === 'SWING'
-          ? `❌ Against HTF — bad for SWING`
-          : `⚠️ Counter-trend (needs extra confirmation)`
+          ? `Against HTF — bad for SWING`
+          : `Counter-trend (needs extra confirmation)`
     }
   }
 
   // ── 2. MM Intent (0–2) + spoof freshness ───────────────────────────────
   const mm = input.mmIntent
   let mmScore = 0
-  let mmReason = '❌ MM neutral / unavailable'
+  let mmReason = 'MM neutral / unavailable'
   const spoofN = (input.spoofAlerts ?? []).filter((s) => s.detected).length
   const iceN = (input.icebergAlerts ?? []).filter((i) => i.detected).length
 
@@ -210,22 +210,22 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
     const strong = mm.confidence >= 70
     if (aligned && strong) {
       mmScore = 2
-      mmReason = `✅ MM strongly aligned (conf ${mm.confidence})`
+      mmReason = `MM strongly aligned (conf ${mm.confidence})`
     } else if (aligned) {
       mmScore = 1
-      mmReason = `⚠️ MM weakly aligned (conf ${mm.confidence})`
+      mmReason = `MM weakly aligned (conf ${mm.confidence})`
     } else if (mm.preferredSide == null && mm.drive !== 'NEUTRAL') {
       const driveAligned =
         (dir === 'LONG' && mm.drive === 'UP') ||
         (dir === 'SHORT' && mm.drive === 'DOWN')
       if (driveAligned) {
         mmScore = 1
-        mmReason = `⚠️ MM drive ${mm.drive} (no preferred yet)`
+        mmReason = `MM drive ${mm.drive} (no preferred yet)`
       } else {
-        mmReason = `❌ MM against (${mm.label})`
+        mmReason = `MM against (${mm.label})`
       }
     } else {
-      mmReason = `❌ MM against / neutral (${mm.label})`
+      mmReason = `MM against / neutral (${mm.label})`
     }
   }
 
@@ -248,7 +248,7 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
   // ── 3. Orderflow / CVD (0–2) + quality penalty ─────────────────────────
   const cvd = input.enhancedCvd
   let ofScore = 0
-  let ofReason = '❌ CVD unavailable'
+  let ofReason = 'CVD unavailable'
   if (cvd) {
     const cvdAligned =
       (dir === 'LONG' && cvd.trend === 'BULLISH') ||
@@ -264,14 +264,14 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
     if ((cvdAligned && aggressionAligned) || divOk) {
       ofScore = 2
       ofReason = divOk
-        ? `✅ CVD divergence ${cvd.divergenceType}`
-        : `✅ CVD + aggression (${cvd.aggression.toFixed(0)}% buys, ${cvd.source})`
+        ? `CVD divergence ${cvd.divergenceType}`
+        : `CVD + aggression (${cvd.aggression.toFixed(0)}% buys, ${cvd.source})`
     } else if (cvdAligned || aggressionAligned) {
       ofScore = 1
-      ofReason = `⚠️ Partial orderflow (${cvd.source})`
+      ofReason = `Partial orderflow (${cvd.source})`
     } else {
       ofScore = 0
-      ofReason = `❌ CVD/aggression against (${cvd.source})`
+      ofReason = `CVD/aggression against (${cvd.source})`
     }
 
     if (dataQuality.cvd.quality === 'POOR' && ofScore > 0) {
@@ -325,7 +325,7 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
   // ── 4. Liquidity Sweep (0–1) ───────────────────────────────────────────
   const raid = input.raid
   let liqScore = 0
-  let liqReason = '❌ No liquidity sweep'
+  let liqReason = 'No liquidity sweep'
   const swept =
     raid &&
     raid.isFresh &&
@@ -334,7 +334,7 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
       (dir === 'SHORT' && raid.type === 'BEAR_SWEEP'))
   if (swept) {
     liqScore = 1
-    liqReason = `✅ ${raid!.type} fresh`
+    liqReason = `${raid!.type} fresh`
   } else {
     const shift = input.obDelta?.volumeShift
     if (
@@ -342,55 +342,55 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
       (dir === 'SHORT' && shift === 'SELLING')
     ) {
       liqScore = 1
-      liqReason = `✅ OB delta ${shift}`
+      liqReason = `OB delta ${shift}`
     }
   }
 
   // ── 5. OB + FVG entry (0–1) ────────────────────────────────────────────
   let obScore = 0
-  let obReason = '❌ Entry not in OB/FVG'
+  let obReason = 'Entry not in OB/FVG'
   if (input.inOrderBlock && input.inFvg) {
     obScore = 1
-    obReason = '✅ OB + FVG confluence'
+    obReason = 'OB + FVG confluence'
   } else if (input.inOrderBlock || input.inFvg || input.hasBestZone) {
     obScore = 1
     obReason = input.inOrderBlock
-      ? '✅ Entry in Order Block'
+      ? 'Entry in Order Block'
       : input.inFvg
-        ? '✅ Entry in FVG'
-        : '✅ Entry in confluence zone'
+        ? 'Entry in FVG'
+        : 'Entry in confluence zone'
   }
 
   // ── 6. Session (0–1) ───────────────────────────────────────────────────
   const sess = input.session
   let sessionScore = 0
-  let sessionReason = `❌ ${sess.session} low liquidity`
+  let sessionReason = `${sess.session} low liquidity`
   if (sess.score >= 80) {
     sessionScore = 1
-    sessionReason = `✅ ${sess.session} peak liquidity`
+    sessionReason = `${sess.session} peak liquidity`
   } else if (sess.score >= 50) {
     sessionScore = style === 'SCALP' ? 0 : 1
     sessionReason =
       style === 'SCALP'
-        ? `⚠️ ${sess.session} weak for SCALP`
-        : `⚠️ ${sess.session} ok for ${style}`
+        ? `${sess.session} weak for SCALP`
+        : `${sess.session} ok for ${style}`
   }
 
   // ── 7. Regime (0–1) ────────────────────────────────────────────────────
   let regimeScore = 0
-  let regimeReason = `⚠️ ${input.regime}`
+  let regimeReason = `${input.regime}`
   if (input.regime === 'TRENDING_STRONG') {
     regimeScore = 1
-    regimeReason = '✅ Strong trend'
+    regimeReason = 'Strong trend'
   } else if (input.regime === 'TRENDING_WEAK') {
     regimeScore = 1
-    regimeReason = '⚠️ Weak trend'
+    regimeReason = 'Weak trend'
   } else if (input.regime === 'RANGING') {
     regimeScore = 1
-    regimeReason = '✅ Range — bounce/mean-revert ok'
+    regimeReason = 'Range — bounce/mean-revert ok'
   } else if (input.regime === 'VOLATILE_CHOP') {
     regimeScore = 0
-    regimeReason = '❌ Choppy — skip / scalp only with care'
+    regimeReason = 'Choppy — skip / scalp only with care'
   }
 
   // ── 8. R:R Quality (0–1) ───────────────────────────────────────────────
@@ -398,7 +398,7 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
   const sl = input.stopLoss
   const tp = input.takeProfit
   let rrScore = 0
-  let rrReason = '❌ Invalid levels'
+  let rrReason = 'Invalid levels'
   if (entry > 0 && sl > 0 && tp > 0) {
     const riskDist = Math.abs(entry - sl) / entry
     const rewardDist = Math.abs(tp - entry) / entry
@@ -406,13 +406,13 @@ export function buildScoreCard(input: ScoreCardInput): ScoreCard {
     const minRR = { SCALP: 2, INTRADAY: 2.5, SWING: 3 }[style]
     if (rr >= minRR && riskDist < 0.025) {
       rrScore = 1
-      rrReason = `✅ R:R ${rr.toFixed(1)}:1 (min ${minRR}), SL ${(riskDist * 100).toFixed(2)}%`
+      rrReason = `R:R ${rr.toFixed(1)}:1 (min ${minRR}), SL ${(riskDist * 100).toFixed(2)}%`
     } else if (rr >= minRR * 0.8) {
       rrScore = 0
-      rrReason = `⚠️ R:R ${rr.toFixed(1)}:1 below min ${minRR}`
+      rrReason = `R:R ${rr.toFixed(1)}:1 below min ${minRR}`
     } else {
       rrScore = 0
-      rrReason = `❌ R:R ${rr.toFixed(1)}:1 too low`
+      rrReason = `R:R ${rr.toFixed(1)}:1 too low`
     }
   }
 

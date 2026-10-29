@@ -3,7 +3,7 @@ import type { StructuralStyleLevels, StyleProfile } from './types'
 export const SCALP_PROFILE: StyleProfile = {
   style: 'SCALP',
   label: 'Скальп',
-  badge: '⚡️ SCALP',
+  badge: 'SCALP',
   timeframeHint: 'M5',
   risk: {
     maxStopPct: 0.8,

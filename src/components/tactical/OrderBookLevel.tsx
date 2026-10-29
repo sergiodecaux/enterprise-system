@@ -10,19 +10,17 @@ interface Props {
 }
 
 const OrderBookLevelRow = ({ level, side, maxVolume, isWall, heatmap }: Props) => {
-  const barWidth = maxVolume > 0 ? Math.min(100, (level.volume / maxVolume) * 100) : 0
+  const barWidth =
+    maxVolume > 0 ? Math.min(100, (level.volume / maxVolume) * 100) : 0
 
-  const bgColor =
-    side === 'BID'
-      ? isWall
-        ? 'bg-matrix/30'
-        : 'bg-matrix/10'
-      : isWall
-        ? 'bg-alert/30'
-        : 'bg-alert/10'
-
-  const textColor = side === 'BID' ? 'text-matrix' : 'text-alert'
-  const wallBorder = isWall ? 'ring-1 ring-inset ring-holo/40' : ''
+  const isBid = side === 'BID'
+  const fill = isBid
+    ? isWall
+      ? 'bg-market-long/[0.18]'
+      : 'bg-market-long/[0.08]'
+    : isWall
+      ? 'bg-market-short/[0.18]'
+      : 'bg-market-short/[0.08]'
 
   const formatPrice = (price: number): string => {
     if (price >= 1000) {
@@ -41,16 +39,38 @@ const OrderBookLevelRow = ({ level, side, maxVolume, isWall, heatmap }: Props) =
   }
 
   return (
-    <div className={`relative h-6 flex items-center px-2 ${wallBorder}`}>
-      {heatmap && <HeatmapOverlay price={level.price} heatmap={heatmap} side={side} />}
+    <div className="relative flex h-6 items-center gap-2 px-2">
+      {isWall && (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 z-20 w-[2px] bg-market-warning"
+        />
+      )}
+      {heatmap && (
+        <HeatmapOverlay price={level.price} heatmap={heatmap} side={side} />
+      )}
       <div
-        className={`absolute inset-y-0 ${side === 'BID' ? 'right-0' : 'left-0'} ${bgColor}`}
+        aria-hidden
+        className={`absolute inset-y-0 ${isBid ? 'right-0' : 'left-0'} ${fill}`}
         style={{ width: `${barWidth}%` }}
       />
-      <div className="relative z-10 flex justify-between w-full text-xs font-mono">
-        <span className={textColor}>{formatPrice(level.price)}</span>
-        <span className="text-holo/60">{formatVolume(level.volume)}</span>
-      </div>
+      <span
+        className={`tnum relative z-10 truncate font-mono text-[11px] leading-4 ${
+          isBid ? 'text-market-long' : 'text-market-short'
+        }`}
+      >
+        {formatPrice(level.price)}
+      </span>
+      {isWall && (
+        <span
+          aria-hidden
+          className="relative z-10 h-1 w-1 shrink-0 rounded-full bg-market-warning"
+          title="Аномальная плотность"
+        />
+      )}
+      <span className="tnum relative z-10 ml-auto shrink-0 font-mono text-[11px] leading-4 text-text-secondary">
+        {formatVolume(level.volume)}
+      </span>
     </div>
   )
 }

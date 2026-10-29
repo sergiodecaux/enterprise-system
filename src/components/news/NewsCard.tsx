@@ -46,12 +46,12 @@ const NewsCard = ({ item, compact = false }: Props) => {
     >
       <div className="mb-1.5 flex items-start justify-between gap-2">
         <span
-          className={`flex-shrink-0 rounded bg-black/20 px-1.5 py-0.5 font-mono text-[10px] font-bold ${sc.color}`}
+          className={`flex-shrink-0 rounded bg-black/20 px-1.5 py-0.5 font-mono text-[11px] font-bold ${sc.color}`}
         >
           {sc.label}
         </span>
         <div className="flex flex-shrink-0 items-center gap-1.5">
-          <span className="font-mono text-[10px] text-holo/40">
+          <span className="font-mono text-[11px] text-holo/40">
             {timeAgo(item.publishedAt)}
           </span>
           <ExternalLink className="h-3 w-3 text-holo/30" />
@@ -67,13 +67,13 @@ const NewsCard = ({ item, compact = false }: Props) => {
       </p>
 
       <div className="mt-1.5 flex items-center justify-between">
-        <span className="text-[10px] capitalize text-holo/40">{item.source}</span>
+        <span className="text-[11px] capitalize text-holo/40">{item.source}</span>
         {item.coins.length > 0 && (
           <div className="flex gap-1">
             {item.coins.slice(0, 3).map((coin) => (
               <span
                 key={coin}
-                className="rounded bg-holo/10 px-1 font-mono text-[9px] text-holo/60"
+                className="rounded bg-holo/10 px-1 font-mono text-[11px] text-holo/60"
               >
                 {coin}
               </span>

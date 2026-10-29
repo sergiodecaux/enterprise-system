@@ -102,7 +102,7 @@ export const ScenarioBoard = ({
       {dailyLine ? (
         <p
           className={`truncate font-mono font-bold text-violet-200/90 ${
-            dense ? 'mb-0.5 px-1.5 text-[10px]' : 'mb-1 px-1.5 text-[11px]'
+            dense ? 'mb-0.5 px-1.5 text-[11px]' : 'mb-1 px-1.5 text-[11px]'
           }`}
           title={dailyLine}
         >
@@ -140,14 +140,14 @@ export const ScenarioBoard = ({
                 />
                 <span
                   className={`w-[2.6rem] shrink-0 font-bold uppercase ${
-                    dense ? 'text-[10px]' : 'text-[9px]'
+                    dense ? 'text-[11px]' : 'text-[11px]'
                   } ${spent ? 'text-white/35' : dirTone(sc.side)}`}
                 >
                   {sc.dirLabel}
                 </span>
                 <span
                   className={`min-w-0 flex-1 truncate ${
-                    dense ? 'text-[11px]' : 'text-[10px]'
+                    dense ? 'text-[11px]' : 'text-[11px]'
                   } ${
                     spent
                       ? 'text-white/40'
@@ -163,7 +163,7 @@ export const ScenarioBoard = ({
                 {!spent && sc.toPrice != null && sc.toPrice > 0 && (
                   <span
                     className={`shrink-0 tabular-nums ${
-                      dense ? 'text-[10px]' : 'text-[9px]'
+                      dense ? 'text-[11px]' : 'text-[11px]'
                     } ${on ? 'text-white/70' : 'text-white/40'}`}
                   >
                     {fmtStoryTargetPx(sc.toPrice)}

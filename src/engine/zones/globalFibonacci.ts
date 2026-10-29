@@ -377,7 +377,7 @@ function toChartZones(
       } else if (near141) {
         label = `◎ ${z.label} · рядом · ${z.bias}${conf}`
       } else {
-        label = `★ ${z.label} · после слома ${px} · ${z.bias}${conf}`
+        label = `${z.label} · после слома ${px} · ${z.bias}${conf}`
       }
     } else if (z.active) {
       label = `◎ ${z.label}`

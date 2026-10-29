@@ -1,3 +1,4 @@
+import { AlertTriangle, Check, Gem, Minus } from 'lucide-react'
 import type { ConfidenceScoreResult } from '../../engine/confidence'
 
 interface ConfidenceScoreProps {
@@ -30,23 +31,26 @@ const ConfidenceScore = ({ result }: ConfidenceScoreProps) => {
 
   const mmBadge =
     mmStatus === 'ABSORPTION_TRAP'
-      ? '⚠️ ABSORPTION TRAP'
+      ? 'ABSORPTION TRAP'
       : mmStatus === 'MM_DISTRIBUTION'
-        ? '⚠️ MM DISTRIBUTION'
+        ? 'MM DISTRIBUTION'
         : mmStatus === 'TRIPLE_CONFIRMED'
-          ? '🎯 TRIPLE CONFIRMED'
+          ? 'TRIPLE CONFIRMED'
           : mmStatus === 'BTC_DUMP'
-            ? '📉 BTC DUMP'
+            ? 'BTC DUMP'
             : mmStatus === 'NO_LIQUIDITY_RAID'
-              ? '🔄 NO LIQUIDITY RAID'
+              ? 'NO LIQUIDITY RAID'
               : null
+
+  const QualityIcon =
+    quality === 'ELITE' ? Gem : quality === 'STRONG' ? Check : AlertTriangle
 
   return (
     <div className={`rounded-xl border ${qualityBorder} ${qualityBg} p-4`}>
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xl">
-            {quality === 'ELITE' ? '💎' : quality === 'STRONG' ? '✅' : '⚠️'}
+          <span className="flex h-5 w-5 items-center justify-center">
+            <QualityIcon className={`h-4 w-4 ${qualityColor}`} strokeWidth={1.9} />
           </span>
           <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
             Оценка уверенности
@@ -74,11 +78,10 @@ const ConfidenceScore = ({ result }: ConfidenceScoreProps) => {
           <div key={factor.name} className="rounded-lg bg-black/10 p-2.5">
             <div className="mb-1.5 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-sm">{factor.emoji}</span>
                 <span className="font-mono text-xs font-bold text-holo/80">
                   {factor.name}
                 </span>
-                <span className="font-mono text-[10px] text-holo/40">
+                <span className="font-mono text-[11px] text-holo/40">
                   ({factor.weight}%)
                 </span>
               </div>
@@ -87,7 +90,11 @@ const ConfidenceScore = ({ result }: ConfidenceScoreProps) => {
                   factor.passed ? 'text-matrix' : 'text-holo/30'
                 }`}
               >
-                {factor.passed ? '✓' : '—'}
+                {factor.passed ? (
+                  <Check className="h-3 w-3" strokeWidth={2.2} />
+                ) : (
+                  <Minus className="h-3 w-3" strokeWidth={2.2} />
+                )}
               </span>
             </div>
 
@@ -100,7 +107,7 @@ const ConfidenceScore = ({ result }: ConfidenceScoreProps) => {
               />
             </div>
 
-            <p className="font-mono text-[10px] text-holo/50">{factor.reason}</p>
+            <p className="font-mono text-[11px] text-holo/50">{factor.reason}</p>
           </div>
         ))}
       </div>

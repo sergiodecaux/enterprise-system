@@ -133,7 +133,7 @@ const GhostPathOverlay = ({
       if (ghost.warning) {
         ctx.font = '9px monospace'
         ctx.fillStyle = '#f59e0bcc'
-        ctx.fillText('⚠ Нереалистичный TP → ATR-коррекция', 8, 14)
+        ctx.fillText('! Нереалистичный TP → ATR-коррекция', 8, 14)
       }
     }
 

@@ -49,7 +49,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
   return (
     <div className="space-y-3 font-mono text-[12px] text-holo/80">
       <label className="block">
-        <span className="mb-1 block text-[10px] uppercase text-holo/50">
+        <span className="mb-1 block text-[11px] uppercase text-holo/50">
           Токен (не обязателен — уже встроен)
         </span>
         <input
@@ -63,7 +63,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
       </label>
 
       <label className="block">
-        <span className="mb-1 block text-[10px] uppercase text-holo/50">
+        <span className="mb-1 block text-[11px] uppercase text-holo/50">
           Узлы советника (через запятую или с новой строки; пусто = из сборки)
         </span>
         <textarea
@@ -77,7 +77,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
 
       <div className="space-y-1">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase text-holo/50">Состояние узлов</span>
+          <span className="text-[11px] uppercase text-holo/50">Состояние узлов</span>
           <div className="flex gap-2">
             <button
               type="button"
@@ -85,7 +85,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
                 clearAdvisorExhausted()
                 setTick((t) => t + 1)
               }}
-              className="rounded border border-hull-border px-2 py-0.5 text-[10px] text-holo/60 hover:text-holo"
+              className="rounded border border-hull-border px-2 py-0.5 text-[11px] text-holo/60 hover:text-holo"
             >
               Сбросить отметки
             </button>
@@ -93,7 +93,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
               type="button"
               onClick={() => void probe()}
               disabled={probing}
-              className="flex items-center gap-1 rounded border border-hull-border px-2 py-0.5 text-[10px] text-holo/60 hover:text-holo disabled:opacity-50"
+              className="flex items-center gap-1 rounded border border-hull-border px-2 py-0.5 text-[11px] text-holo/60 hover:text-holo disabled:opacity-50"
             >
               <RefreshCw className={`h-3 w-3 ${probing ? 'animate-spin' : ''}`} />
               Проверить
@@ -104,7 +104,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
         {nodes.map((n) => {
           const h = health?.find((x) => x.url === n.url)
           return (
-            <div key={n.url} className="rounded border border-hull-border/60 px-2 py-1 text-[10px]">
+            <div key={n.url} className="rounded border border-hull-border/60 px-2 py-1 text-[11px]">
               <div className="truncate text-holo/70">{n.url.replace(/^https?:\/\//, '')}</div>
               <div className="text-holo/50">
                 {n.exhaustedUntil
@@ -130,7 +130,7 @@ const AdvisorSettings = ({ onDone }: { onDone: () => void }) => {
         })}
       </div>
 
-      <div className="text-[10px] text-holo/40">
+      <div className="text-[11px] text-holo/40">
         Снимок контекста сейчас: ~{snap.approxTokens} токенов ({snap.chars} символов)
         {snap.trimmed.length ? ` · урезано: ${snap.trimmed.join(', ')}` : ''}
       </div>

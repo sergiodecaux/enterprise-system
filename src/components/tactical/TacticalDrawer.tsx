@@ -1,13 +1,20 @@
 import { useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import {
+  Activity,
   Bot,
+  Check,
+  Crosshair,
   Gauge,
   Layers,
   Magnet,
+  Minus,
   Newspaper,
   ScrollText,
   Sparkles,
+  TrendingDown,
+  TrendingUp,
   X,
+  Zap,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toBaseTicker } from '../../api/mexc'
@@ -80,18 +87,18 @@ const BtcDivergencePanel = ({
       ? 'text-alert'
       : 'text-holo/40'
 
-  const icon = isBull ? '⚡' : isBear ? '🔻' : '≈'
+  const DivergenceIcon = isBull ? Zap : isBear ? TrendingDown : Minus
 
   return (
     <div className={`rounded-xl border ${borderColor} ${bgColor} p-3`}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm">{icon}</span>
+        <DivergenceIcon className={`h-3.5 w-3.5 ${textColor}`} strokeWidth={1.9} />
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
           Корреляция с BTC
         </span>
         {divergence.scoreBoost > 0 && !isCorr && (
           <span
-            className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+            className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[11px] font-bold ${
               isBull ? 'bg-matrix/20 text-matrix' : 'bg-alert/20 text-alert'
             }`}
           >
@@ -108,7 +115,7 @@ const BtcDivergencePanel = ({
 
       <div className="grid grid-cols-3 gap-2 rounded-lg bg-black/20 p-2">
         <div className="text-center">
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             BTC {divergence.lookbackCandles}H
           </div>
           <div
@@ -126,7 +133,7 @@ const BtcDivergencePanel = ({
         </div>
 
         <div className="text-center">
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Альт {divergence.lookbackCandles}H
           </div>
           <div
@@ -141,7 +148,7 @@ const BtcDivergencePanel = ({
       </div>
 
       <div className="mt-2 flex items-center gap-2">
-        <span className="font-mono text-[10px] text-holo/30">Сила альта:</span>
+        <span className="font-mono text-[11px] text-holo/30">Сила альта:</span>
         <span
           className={`font-mono text-xs font-bold ${
             divergence.relativeStrength > 0 ? 'text-matrix' : 'text-alert'
@@ -175,8 +182,12 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
 
   if (!hasLevels) return null
 
-  const strengthIcon = (s: string) =>
-    s === 'STRONG' ? '🔴' : s === 'MEDIUM' ? '🟡' : '⚪'
+  const strengthDot = (s: string) =>
+    s === 'STRONG'
+      ? 'bg-market-short'
+      : s === 'MEDIUM'
+        ? 'bg-market-warning'
+        : 'bg-text-muted'
 
   const renderLevel = (level: EqualLevel, color: string) => (
     <div
@@ -185,7 +196,10 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
       style={{ borderColor: color + '40', backgroundColor: color + '10' }}
     >
       <div className="flex items-center gap-2">
-        <span className="text-xs">{strengthIcon(level.strength)}</span>
+        <span
+          aria-hidden
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${strengthDot(level.strength)}`}
+        />
         <span className="font-mono text-xs font-bold" style={{ color }}>
           {level.type === 'HIGH' ? 'BSL' : 'SSL'}
         </span>
@@ -198,13 +212,17 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
           {level.price.toLocaleString('ru-RU', { maximumFractionDigits: 4 })}
         </span>
         <span
-          className="font-mono text-[10px]"
+          className="flex items-center gap-0.5 font-mono text-[11px]"
           style={{
             color: level.isActive ? color : 'rgba(100,100,100,0.6)',
           }}
         >
           {level.distancePct.toFixed(1)}%
-          {level.isActive ? ' 🧲' : ' ✓'}
+          {level.isActive ? (
+            <Magnet className="h-3 w-3" aria-label="магнит" />
+          ) : (
+            <Check className="h-3 w-3" aria-label="не активно" />
+          )}
         </span>
       </div>
     </div>
@@ -218,7 +236,7 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
           Магниты ликвидности
         </span>
         {map.liquidityBoost > 0 && (
-          <span className="ml-auto rounded bg-yellow-400/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-yellow-400">
+          <span className="ml-auto rounded bg-yellow-400/20 px-1.5 py-0.5 font-mono text-[11px] font-bold text-yellow-400">
             +{map.liquidityBoost.toFixed(1)} к оценке
           </span>
         )}
@@ -234,7 +252,7 @@ const LiquidityMagnetPanel = ({ map }: { map: LiquidityMap }) => {
       </div>
 
       {map.nearestBSL && (
-        <p className="mt-2 font-mono text-[10px] text-holo/30">
+        <p className="mt-2 font-mono text-[11px] text-holo/30">
           Ближайший BSL: {map.nearestBSL.distancePct.toFixed(2)}% выше
           {map.nearestSSL
             ? ` · SSL: ${map.nearestSSL.distancePct.toFixed(2)}% ниже`
@@ -267,11 +285,11 @@ const SurgicalEntryPanel = ({ plan }: { plan: SurgicalEntrySnapshot }) => {
   return (
     <div className={`rounded-xl border p-3 ${statusColor}`}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm">🎯</span>
+        <Crosshair className="h-3.5 w-3.5 text-market-long" strokeWidth={1.9} />
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
           Surgical Entry
         </span>
-        <span className="ml-auto font-mono text-[10px] font-bold">
+        <span className="ml-auto font-mono text-[11px] font-bold">
           {statusLabel[plan.status] ?? plan.status}
         </span>
       </div>
@@ -281,7 +299,7 @@ const SurgicalEntryPanel = ({ plan }: { plan: SurgicalEntrySnapshot }) => {
       {plan.limitEntry != null && (
         <div className="mb-2 grid grid-cols-3 gap-2 rounded-lg bg-black/20 p-2">
           <div className="text-center">
-            <div className="font-mono text-[9px] uppercase text-holo/30">
+            <div className="font-mono text-[11px] uppercase text-holo/30">
               Limit
             </div>
             <div className="font-mono text-sm font-bold text-holo">
@@ -289,20 +307,20 @@ const SurgicalEntryPanel = ({ plan }: { plan: SurgicalEntrySnapshot }) => {
             </div>
           </div>
           <div className="text-center">
-            <div className="font-mono text-[9px] uppercase text-holo/30">
+            <div className="font-mono text-[11px] uppercase text-holo/30">
               Zone
             </div>
-            <div className="font-mono text-[10px] text-holo/70">
+            <div className="font-mono text-[11px] text-holo/70">
               {plan.zoneBottom != null && plan.zoneTop != null
                 ? `${plan.zoneBottom.toPrecision(5)}–${plan.zoneTop.toPrecision(5)}`
                 : '—'}
             </div>
           </div>
           <div className="text-center">
-            <div className="font-mono text-[9px] uppercase text-holo/30">
+            <div className="font-mono text-[11px] uppercase text-holo/30">
               Invalid
             </div>
-            <div className="font-mono text-[10px] text-alert/80">
+            <div className="font-mono text-[11px] text-alert/80">
               {plan.invalidation != null
                 ? plan.invalidation.toPrecision(6)
                 : '—'}
@@ -315,7 +333,7 @@ const SurgicalEntryPanel = ({ plan }: { plan: SurgicalEntrySnapshot }) => {
           {plan.confirmations.map((c) => (
             <span
               key={c}
-              className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-holo/60"
+              className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[11px] text-holo/60"
             >
               {c}
             </span>
@@ -344,11 +362,14 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
   return (
     <div className="rounded-xl border border-hull-border bg-hull p-3">
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm">{intent.emoji}</span>
+        <Activity
+          className={`h-3.5 w-3.5 ${intent.drive === 'UP' ? 'text-market-long' : intent.drive === 'DOWN' ? 'text-market-short' : 'text-text-muted'}`}
+          strokeWidth={1.9}
+        />
         <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
           MM Intent
         </span>
-        <span className={`ml-auto font-mono text-[10px] font-bold ${driveColor}`}>
+        <span className={`ml-auto font-mono text-[11px] font-bold ${driveColor}`}>
           Drive {intent.drive}
         </span>
       </div>
@@ -363,7 +384,7 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
       )}
       <div className="grid grid-cols-2 gap-2 rounded-lg bg-black/20 p-2">
         <div>
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Микро
           </div>
           <div className="font-mono text-[11px] text-holo/80">
@@ -376,7 +397,7 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
           </div>
         </div>
         <div>
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Макро (магнит)
           </div>
           <div className="font-mono text-[11px] text-holo/80">
@@ -392,7 +413,7 @@ const MmIntentPanel = ({ intent }: { intent: MmIntentSnapshot }) => {
       {intent.reasons.length > 0 && (
         <ul className="mt-2 space-y-0.5">
           {intent.reasons.slice(0, 4).map((r) => (
-            <li key={r} className="font-mono text-[10px] text-holo/35">
+            <li key={r} className="font-mono text-[11px] text-holo/35">
               · {r}
             </li>
           ))}
@@ -409,11 +430,11 @@ const HeaderStat = ({
   tone = 'text-holo',
 }: {
   label: string
-  value: string
+  value: ReactNode
   tone?: string
 }) => (
   <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hull-border/70 bg-black/20 px-2.5 py-1">
-    <span className="font-sans text-[9px] font-medium uppercase tracking-[0.08em] text-holo/35">
+    <span className="font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-holo/35">
       {label}
     </span>
     <span className={`tnum font-mono text-[11px] font-semibold leading-tight ${tone}`}>
@@ -421,6 +442,15 @@ const HeaderStat = ({
     </span>
   </div>
 )
+
+/** Направление HTF/дневного биаса в шапке ПК-терминала. */
+const BiasGlyph = ({ bias }: { bias?: string | null }) => {
+  if (bias === 'BULLISH')
+    return <TrendingUp className="h-3 w-3 text-market-long" strokeWidth={2} />
+  if (bias === 'BEARISH')
+    return <TrendingDown className="h-3 w-3 text-market-short" strokeWidth={2} />
+  return <Minus className="h-3 w-3 text-text-muted" strokeWidth={2} />
+}
 
 /** Секция правой информационной колонки ПК-терминала. */
 const RailSection = ({
@@ -434,11 +464,11 @@ const RailSection = ({
 }) => (
   <section className="overflow-hidden rounded-xl border border-hull-border bg-hull/40">
     <header className="flex items-center gap-2 border-b border-hull-border/60 px-3 py-2">
-      <h3 className="font-mono text-[10px] font-bold uppercase tracking-widest text-holo/55">
+      <h3 className="font-mono text-[11px] font-bold uppercase tracking-widest text-holo/55">
         {title}
       </h3>
       {subtitle && (
-        <span className="ml-auto truncate font-mono text-[10px] text-holo/30">
+        <span className="ml-auto truncate font-mono text-[11px] text-holo/30">
           {subtitle}
         </span>
       )}
@@ -753,7 +783,7 @@ const TacticalDrawer = () => {
             {signal.htfTrend.bias} · {signal.htfTrend.label}{' '}
             {signal.htfTrend.strength}
           </div>
-          <div className="mt-1 font-mono text-[10px] text-holo/35">
+          <div className="mt-1 font-mono text-[11px] text-holo/35">
             1H {signal.htfTrend.strength1h} · 4H {signal.htfTrend.strength4h}
           </div>
         </div>
@@ -781,7 +811,7 @@ const TacticalDrawer = () => {
       {surgicalPlan && <SurgicalEntryPanel plan={surgicalPlan} />}
       {watchedForCoin > 0 && (
         <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
-          <div className="font-mono text-[10px] font-bold uppercase text-yellow-300/80">
+          <div className="font-mono text-[11px] font-bold uppercase text-yellow-300/80">
             Слежение
           </div>
           <p className="font-mono text-xs text-yellow-200/90">
@@ -791,7 +821,7 @@ const TacticalDrawer = () => {
       )}
       {signal.sessionFlipReason && (
         <div className="rounded-xl border border-yellow-400/25 bg-yellow-400/5 px-3 py-2">
-          <div className="mb-1 font-mono text-[10px] font-bold uppercase tracking-wider text-yellow-300/80">
+          <div className="mb-1 font-mono text-[11px] font-bold uppercase tracking-wider text-yellow-300/80">
             Session Flip
           </div>
           <p className="font-mono text-xs text-yellow-200/90">
@@ -860,7 +890,7 @@ const TacticalDrawer = () => {
           <div className="flex items-center gap-3 px-4 py-2.5">
             <div className="flex min-w-0 items-center gap-3">
               <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-matrix/25 bg-gradient-to-br from-matrix/15 to-transparent shadow-[0_0_24px_-14px_rgba(44,224,138,0.9)]">
-                <span className="font-mono text-[10px] font-bold tracking-tight text-matrix">
+                <span className="font-mono text-[11px] font-bold tracking-tight text-matrix">
                   {toBaseTicker(signal.internalSymbol).slice(0, 4)}
                 </span>
               </div>
@@ -870,12 +900,12 @@ const TacticalDrawer = () => {
                   <h2 className="truncate font-sans text-xl font-semibold leading-none tracking-tight text-holo">
                     {signal.displayName}
                   </h2>
-                  <span className="hidden rounded border border-hull-border/80 bg-black/20 px-1.5 py-0.5 font-sans text-[8px] font-semibold uppercase tracking-[0.12em] text-holo/35 sm:inline">
+                  <span className="hidden rounded border border-hull-border/80 bg-black/20 px-1.5 py-0.5 font-sans text-[11px] font-semibold uppercase tracking-[0.12em] text-holo/35 sm:inline">
                     perp
                   </span>
                   {signal.direction && (
                     <span
-                      className={`rounded px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide ${
+                      className={`rounded px-1.5 py-0.5 font-sans text-[11px] font-bold uppercase tracking-wide ${
                         signal.direction === 'LONG'
                           ? 'bg-matrix/15 text-matrix'
                           : 'bg-alert/15 text-alert'
@@ -885,7 +915,7 @@ const TacticalDrawer = () => {
                     </span>
                   )}
                   {signal.hasActiveSetup && (
-                    <span className="hidden rounded bg-matrix/10 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase tracking-wide text-matrix/90 md:inline">
+                    <span className="hidden rounded bg-matrix/10 px-1.5 py-0.5 font-sans text-[11px] font-bold uppercase tracking-wide text-matrix/90 md:inline">
                       сетап
                     </span>
                   )}
@@ -902,7 +932,7 @@ const TacticalDrawer = () => {
                   >
                     {formatChange(signal.priceChange24h)}
                   </span>
-                  <span className="font-sans text-[9px] uppercase tracking-[0.12em] text-holo/25">
+                  <span className="font-sans text-[11px] uppercase tracking-[0.12em] text-holo/25">
                     24ч
                   </span>
                 </div>
@@ -919,7 +949,7 @@ const TacticalDrawer = () => {
                   }`}
                   title={signal.scoreCard.missingFactors.slice(0, 2).join(' · ')}
                 >
-                  <span className="font-sans text-[8px] uppercase tracking-[0.12em] text-holo/30">
+                  <span className="font-sans text-[11px] uppercase tracking-[0.12em] text-holo/30">
                     score
                   </span>
                   <span
@@ -990,19 +1020,13 @@ const TacticalDrawer = () => {
             />
             <HeaderStat
               label="4ч / день"
-              value={`${
-                signal.htfTrend?.bias4h === 'BULLISH'
-                  ? '↑'
-                  : signal.htfTrend?.bias4h === 'BEARISH'
-                    ? '↓'
-                    : '↔'
-              } / ${
-                signal.dailyBias === 'BULLISH'
-                  ? '↑'
-                  : signal.dailyBias === 'BEARISH'
-                    ? '↓'
-                    : '↔'
-              }`}
+              value={
+                <span className="flex items-center gap-1">
+                  <BiasGlyph bias={signal.htfTrend?.bias4h} />
+                  <span className="text-holo/30">/</span>
+                  <BiasGlyph bias={signal.dailyBias} />
+                </span>
+              }
             />
             {signal.sl != null && (
               <HeaderStat
@@ -1078,7 +1102,7 @@ const TacticalDrawer = () => {
                   key={id}
                   type="button"
                   onClick={() => setRailTab(id)}
-                  className={`flex flex-col items-center gap-1 rounded-lg py-1.5 font-sans text-[9px] font-semibold transition-colors ${
+                  className={`flex flex-col items-center gap-1 rounded-lg py-1.5 font-sans text-[11px] font-semibold transition-colors ${
                     railTab === id
                       ? 'bg-matrix/10 text-matrix ring-1 ring-matrix/20'
                       : 'text-holo/35 hover:bg-white/[0.045] hover:text-holo/70'
@@ -1102,11 +1126,11 @@ const TacticalDrawer = () => {
                       <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-100">
                         Найти сигнал
                       </div>
-                      <div className="mt-0.5 font-mono text-[9px] text-amber-100/60">
+                      <div className="mt-0.5 font-mono text-[11px] text-amber-100/60">
                         Живое чтение структуры. Не прогноз.
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[10px] font-bold text-amber-50">
+                    <span className="shrink-0 rounded-md bg-amber-400/25 px-2.5 py-1 font-mono text-[11px] font-bold text-amber-50">
                       GO
                     </span>
                   </button>
@@ -1335,7 +1359,7 @@ const TacticalDrawer = () => {
                     <div className="font-mono text-[12px] font-bold uppercase tracking-wider text-amber-100">
                       Найти сигнал
                     </div>
-                    <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
+                    <div className="mt-0.5 font-mono text-[11px] text-amber-100/60">
                       Живое чтение структуры. Не прогноз.
                     </div>
                   </div>
@@ -1396,7 +1420,7 @@ const TacticalDrawer = () => {
                   <div className="font-mono text-[12px] font-bold uppercase tracking-wider text-amber-100">
                     Найти сигнал
                   </div>
-                  <div className="mt-0.5 font-mono text-[10px] text-amber-100/60">
+                  <div className="mt-0.5 font-mono text-[11px] text-amber-100/60">
                     Живое чтение структуры. Не прогноз.
                   </div>
                 </div>

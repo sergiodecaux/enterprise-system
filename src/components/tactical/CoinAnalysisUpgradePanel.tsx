@@ -107,16 +107,16 @@ const CoinAnalysisUpgradePanel = ({
       {/* Idea status + historical WR */}
       <div className="grid grid-cols-2 gap-2">
         <div className={`rounded-xl border px-3 py-2.5 ${lifeClass(idea.life)}`}>
-          <div className="mb-1 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wide opacity-80">
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide opacity-80">
             <LifeIcon className="h-3.5 w-3.5" />
             Статус идеи
           </div>
           <div className="font-mono text-sm font-bold">{idea.label}</div>
-          <div className="mt-0.5 font-mono text-[10px] opacity-80 leading-snug">
+          <div className="mt-0.5 font-mono text-[11px] opacity-80 leading-snug">
             {idea.reason}
           </div>
           {idea.invalidationPrice != null && (
-            <div className="mt-1.5 font-mono text-[10px] opacity-70">
+            <div className="mt-1.5 font-mono text-[11px] opacity-70">
               Invalidation: {fmtPx(idea.invalidationPrice)}
               {idea.invalidationMessage
                 ? ` · ${idea.invalidationMessage.slice(0, 42)}`
@@ -126,14 +126,14 @@ const CoinAnalysisUpgradePanel = ({
         </div>
 
         <div className="rounded-xl border border-hull-border bg-hull/40 px-3 py-2.5">
-          <div className="mb-1 flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wide text-holo/45">
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-holo/45">
             <History className="h-3.5 w-3.5" />
             История 30д
           </div>
           <div className="font-mono text-xs leading-snug text-holo/70">
             Журнал ведётся отдельно. Частота исходов здесь не показывается.
           </div>
-          <div className="mt-0.5 font-mono text-[10px] text-holo/45">
+          <div className="mt-0.5 font-mono text-[11px] text-holo/45">
             {hist.sample === 'GLOBAL' ? 'похожие сетапы' : 'эта монета'}
             {hist.open > 0 ? ` · открыто ${hist.open}` : ''}
           </div>
@@ -143,12 +143,12 @@ const CoinAnalysisUpgradePanel = ({
       {/* Ready gate */}
       <div className="rounded-xl border border-hull-border bg-hull/30 p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
+          <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-holo/50">
             <Gauge className="h-3.5 w-3.5" />
             Gate перед READY
           </div>
           <span
-            className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+            className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-bold ${
               gate.ready
                 ? 'bg-matrix/20 text-matrix'
                 : 'bg-holo/10 text-holo/50'
@@ -165,14 +165,14 @@ const CoinAnalysisUpgradePanel = ({
               className={`flex items-start justify-between gap-2 rounded-lg border px-2 py-1.5 ${gateColor(item.status)}`}
             >
               <div>
-                <div className="font-mono text-[10px] font-bold uppercase">
+                <div className="font-mono text-[11px] font-bold uppercase">
                   {item.label}
                 </div>
-                <div className="font-mono text-[10px] opacity-85">
+                <div className="font-mono text-[11px] opacity-85">
                   {item.detail}
                 </div>
               </div>
-              <span className="shrink-0 font-mono text-[9px] font-bold">
+              <span className="shrink-0 font-mono text-[11px] font-bold">
                 {item.status}
               </span>
             </div>
@@ -183,24 +183,24 @@ const CoinAnalysisUpgradePanel = ({
       {/* Structure vs pressure */}
       {(technical || orderFlow) && (
         <div className="rounded-xl border border-hull-border bg-hull/30 p-3">
-          <div className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
+          <div className="mb-2 flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-holo/50">
             <Activity className="h-3.5 w-3.5" />
             Структура vs давление
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-lg border border-sky-400/25 bg-sky-500/5 px-2.5 py-2">
-              <div className="font-mono text-[9px] uppercase text-sky-200/70">
+              <div className="font-mono text-[11px] uppercase text-sky-200/70">
                 Структура (HTF)
               </div>
-              <div className="font-mono text-[10px] text-holo/50 leading-snug">
+              <div className="font-mono text-[11px] text-holo/50 leading-snug">
                 {technical?.factors?.[0] ?? 'SMC / HTF / Fib'}
               </div>
             </div>
             <div className="rounded-lg border border-amber-400/25 bg-amber-500/5 px-2.5 py-2">
-              <div className="font-mono text-[9px] uppercase text-amber-200/70">
+              <div className="font-mono text-[11px] uppercase text-amber-200/70">
                 Микро-давление
               </div>
-              <div className="font-mono text-[10px] text-holo/50 leading-snug">
+              <div className="font-mono text-[11px] text-holo/50 leading-snug">
                 {orderFlow?.factors?.[0] ??
                   signal.mmIntent?.label ??
                   'стакан / MM / лента'}
@@ -208,7 +208,7 @@ const CoinAnalysisUpgradePanel = ({
             </div>
           </div>
           {workerCtx && (
-            <div className="mt-2 flex flex-wrap gap-1.5 font-mono text-[9px] text-holo/45">
+            <div className="mt-2 flex flex-wrap gap-1.5 font-mono text-[11px] text-holo/45">
               {workerCtx.btcDominance != null && (
                 <span className="rounded border border-hull-border px-1.5 py-0.5">
                   BTC.D {workerCtx.btcDominance.toFixed(1)}%
@@ -254,7 +254,7 @@ const CoinAnalysisUpgradePanel = ({
       {/* What changed */}
       {changed && (
         <div className="rounded-xl border border-hull-border bg-hull/30 p-3">
-          <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
+          <div className="mb-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-holo/50">
             Что изменилось · ~{changed.ageMin} мин
           </div>
           {changed.lines.length === 0 ? (
@@ -290,11 +290,11 @@ const CoinAnalysisUpgradePanel = ({
       {/* Playbook */}
       <div className="rounded-xl border border-hull-border bg-hull/30 p-3">
         <div className="mb-1.5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide text-holo/50">
+          <div className="flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-holo/50">
             <BookOpen className="h-3.5 w-3.5" />
             Playbook
           </div>
-          <span className="font-mono text-[10px] font-bold text-holo/60">
+          <span className="font-mono text-[11px] font-bold text-holo/60">
             {assetTypeLabel[playbook.assetType]} · {playbook.setupLabel}
           </span>
         </div>
@@ -303,24 +303,24 @@ const CoinAnalysisUpgradePanel = ({
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <div className="mb-1 font-mono text-[9px] uppercase text-matrix/70">
+            <div className="mb-1 font-mono text-[11px] uppercase text-matrix/70">
               Следить
             </div>
             <ul className="space-y-0.5">
               {playbook.focus.map((f) => (
-                <li key={f} className="font-mono text-[10px] text-holo/65">
+                <li key={f} className="font-mono text-[11px] text-holo/65">
                   · {f}
                 </li>
               ))}
             </ul>
           </div>
           <div>
-            <div className="mb-1 font-mono text-[9px] uppercase text-alert/70">
+            <div className="mb-1 font-mono text-[11px] uppercase text-alert/70">
               Избегать
             </div>
             <ul className="space-y-0.5">
               {playbook.avoid.map((f) => (
-                <li key={f} className="font-mono text-[10px] text-holo/65">
+                <li key={f} className="font-mono text-[11px] text-holo/65">
                   · {f}
                 </li>
               ))}
@@ -328,7 +328,7 @@ const CoinAnalysisUpgradePanel = ({
           </div>
         </div>
         {playbook.tradeStyle && (
-          <div className="mt-2 font-mono text-[10px] text-holo/40">
+          <div className="mt-2 font-mono text-[11px] text-holo/40">
             Стиль: {playbook.tradeStyle} · тег {playbook.setupTag}
           </div>
         )}

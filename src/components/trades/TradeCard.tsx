@@ -1,4 +1,12 @@
-import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle, Bot } from 'lucide-react'
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react'
+import Badge, { type BadgeTone } from '../ui/Badge'
+import Button from '../ui/Button'
 import type { ActiveTrade } from '../../engine/types'
 import { useTelegramWebApp } from '../../hooks/useTelegramWebApp'
 import { directionLabel } from '../../i18n/displayMaps'
@@ -7,6 +15,24 @@ import { useAdvisorStore } from '../../store/useAdvisorStore'
 
 interface TradeCardProps {
   trade: ActiveTrade
+}
+
+const STATUS_LABEL: Partial<Record<ActiveTrade['status'], string>> = {
+  ACTIVE: 'Активна',
+  BREAKEVEN: 'Безубыток',
+  INVALIDATED: 'Сломан',
+  CLOSED_WIN: 'Прибыль',
+  CLOSED_LOSS: 'Убыток',
+  PARTIAL_CLOSE: 'Частично закрыта',
+}
+
+const STATUS_TONE: Partial<Record<ActiveTrade['status'], BadgeTone>> = {
+  ACTIVE: 'neutral',
+  BREAKEVEN: 'info',
+  INVALIDATED: 'warning',
+  CLOSED_WIN: 'long',
+  CLOSED_LOSS: 'short',
+  PARTIAL_CLOSE: 'info',
 }
 
 const TradeCard = ({ trade }: TradeCardProps) => {
@@ -18,23 +44,8 @@ const TradeCard = ({ trade }: TradeCardProps) => {
   const isProfit = trade.pnlPercent > 0
   const isInvalidated = trade.status === 'INVALIDATED'
 
-  const directionColor = isLong ? 'text-matrix' : 'text-alert'
-  const directionBg = isLong ? 'bg-matrix/10' : 'bg-alert/10'
-  const directionBorder = isLong ? 'border-matrix/30' : 'border-alert/30'
   const DirectionIcon = isLong ? TrendingUp : TrendingDown
-
-  const pnlColor = isProfit ? 'text-matrix' : 'text-alert'
-
-  const statusEmoji =
-    trade.status === 'ACTIVE'
-      ? '🟢'
-      : trade.status === 'BREAKEVEN'
-        ? '💎'
-        : trade.status === 'INVALIDATED'
-          ? '🔴'
-          : trade.status === 'CLOSED_WIN'
-            ? '✅'
-            : '❌'
+  const pnlColor = isProfit ? 'text-market-long' : 'text-market-short'
 
   const distanceToTP1 = Math.abs(trade.tp1 - trade.entryPrice)
   const currentDistance = Math.abs(trade.currentPrice - trade.entryPrice)
@@ -55,82 +66,103 @@ const TradeCard = ({ trade }: TradeCardProps) => {
 
   return (
     <div
-      className={`rounded-xl border ${directionBorder} ${directionBg} p-4 ${
-        isInvalidated ? 'opacity-60' : ''
+      className={`relative overflow-hidden rounded-lg border bg-bg-panel p-3 pl-4 ${
+        isInvalidated ? 'border-border opacity-70' : 'border-border'
       }`}
     >
-      <div className="mb-3 flex items-start justify-between">
-        <div className="flex-1">
-          <div className="mb-1 flex items-center gap-2">
-            <span className="text-base">{statusEmoji}</span>
-            <h3 className="font-mono text-lg font-bold text-holo">
+      <span
+        aria-hidden
+        className={`absolute inset-y-0 left-0 w-[2px] ${
+          isLong ? 'bg-market-long/70' : 'bg-market-short/70'
+        }`}
+      />
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="truncate font-mono text-[15px] font-semibold leading-5 text-text-primary">
               {trade.symbol.replace('USDT', '/USDT')}
             </h3>
-            <span
-              className={`flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-bold uppercase ${directionColor}`}
-            >
-              <DirectionIcon className="h-3 w-3" />
+            <Badge tone={isLong ? 'long' : 'short'} uppercase>
+              <DirectionIcon className="h-3 w-3" strokeWidth={2} />
               {directionLabel(trade.direction)}
-            </span>
+            </Badge>
+            {STATUS_LABEL[trade.status] && (
+              <Badge tone={STATUS_TONE[trade.status] ?? 'neutral'}>
+                {STATUS_LABEL[trade.status]}
+              </Badge>
+            )}
           </div>
-
+          {trade.tradeStyle && (
+            <div className="mt-1 font-mono text-[11px] leading-4 text-text-muted">
+              {trade.tradeStyle === 'SCALP'
+                ? 'скальп'
+                : trade.tradeStyle === 'SWING'
+                  ? 'свинг'
+                  : 'интрадей'}
+            </div>
+          )}
         </div>
 
-        <div className="text-right">
-          <div className={`mb-0.5 font-mono text-2xl font-bold ${pnlColor}`}>
+        <div className="shrink-0 text-right">
+          <div className={`tnum font-mono text-[18px] font-medium leading-[22px] ${pnlColor}`}>
             {isProfit ? '+' : ''}
             {trade.pnlPercent.toFixed(2)}%
           </div>
           {trade.pnlUsd != null && (
-            <div className={`font-mono text-xs ${pnlColor}`}>
+            <div className={`tnum font-mono text-[11px] leading-4 ${pnlColor}`}>
               {isProfit ? '+' : ''}${trade.pnlUsd.toFixed(2)}
             </div>
           )}
         </div>
       </div>
 
-      <div className="mb-3 grid grid-cols-3 gap-2 rounded-lg bg-black/20 p-2">
-        <div>
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/40">
+      <div className="mt-2.5 grid grid-cols-3 divide-x divide-border-subtle overflow-hidden rounded-md border border-border bg-bg-base/50">
+        <div className="px-2.5 py-1.5">
+          <div className="font-sans text-[11px] leading-4 text-text-muted">
             Вход
           </div>
-          <div className="font-mono text-sm font-bold text-holo">
+          <div className="tnum truncate font-mono text-[13px] font-medium leading-4 text-text-primary">
             {trade.entryPrice.toFixed(4)}
           </div>
         </div>
-
-        <div>
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/40">
-            Текущая
+        <div className="px-2.5 py-1.5">
+          <div className="font-sans text-[11px] leading-4 text-text-muted">
+            Сейчас
           </div>
-          <div className={`font-mono text-sm font-bold ${pnlColor}`}>
+          <div className={`tnum truncate font-mono text-[13px] font-medium leading-4 ${pnlColor}`}>
             {trade.currentPrice.toFixed(4)}
           </div>
         </div>
-
-        <div>
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/40">
-            TP1
+        <div className="px-2.5 py-1.5">
+          <div className="flex items-center justify-between gap-1 font-sans text-[11px] leading-4 text-text-muted">
+            <span>TP1</span>
+            <span className="tnum font-mono text-market-long">
+              {trade.tp1.toFixed(4)}
+            </span>
           </div>
-          <div className="font-mono text-sm font-bold text-matrix">
-            {trade.tp1.toFixed(4)}
+          <div className="flex items-center justify-between gap-1 font-sans text-[11px] leading-4 text-text-muted">
+            <span>SL</span>
+            <span className="tnum font-mono text-market-short">
+              {trade.sl.toFixed(4)}
+            </span>
           </div>
         </div>
       </div>
 
       {(trade.status === 'ACTIVE' || trade.status === 'BREAKEVEN') && (
-        <div className="mb-3">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase text-holo/40">
-              Прогресс до TP1
-            </span>
-            <span className="font-mono text-xs font-bold text-holo/70">
+        <div className="mt-2">
+          <div className="flex items-center justify-between gap-2 font-sans text-[11px] leading-4 text-text-muted">
+            <span>Прогресс до TP1</span>
+            <span className="tnum font-mono text-text-secondary">
               {progressPercent.toFixed(0)}%
             </span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-hull-border">
+          <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-bg-surface">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-matrix/60 to-matrix transition-all"
+              className={`h-full rounded-full transition-[width] ${
+                isLong ? 'bg-market-long' : 'bg-market-short'
+              }`}
               style={{ width: `${progressPercent}%` }}
             />
           </div>
@@ -138,14 +170,14 @@ const TradeCard = ({ trade }: TradeCardProps) => {
       )}
 
       {isInvalidated && (
-        <div className="mb-3 rounded-lg border border-alert/30 bg-alert/5 p-2.5">
-          <div className="mb-1 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-alert" />
-            <span className="font-mono text-xs font-bold uppercase text-alert">
+        <div className="mt-2.5 rounded-md border border-market-warning/20 bg-market-warning/[0.06] px-2.5 py-2">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 text-market-warning" />
+            <span className="font-sans text-[12px] font-medium text-market-warning">
               Сетап сломан
             </span>
           </div>
-          <p className="font-mono text-[10px] leading-relaxed text-alert/80">
+          <p className="mt-0.5 font-sans text-[11px] leading-4 text-text-muted">
             {trade.events.find((e) => e.type === 'INVALIDATION')?.message ??
               'Структура нарушена'}
           </p>
@@ -153,30 +185,28 @@ const TradeCard = ({ trade }: TradeCardProps) => {
       )}
 
       {trade.breakevenAlertShown && trade.status === 'ACTIVE' && (
-        <div className="mb-3 rounded-lg border border-yellow-400/30 bg-yellow-400/5 p-2.5">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-yellow-400" />
-            <span className="font-mono text-xs font-bold text-yellow-400">
-              Рекомендация: SL → Безубыток
-            </span>
-          </div>
+        <div className="mt-2.5 flex items-center gap-1.5 rounded-md border border-market-warning/20 bg-market-warning/[0.06] px-2.5 py-2">
+          <CheckCircle className="h-3.5 w-3.5 text-market-warning" />
+          <span className="font-sans text-[12px] text-market-warning">
+            Рекомендация: перевести SL в безубыток
+          </span>
         </div>
       )}
 
       {(trade.status === 'ACTIVE' ||
         trade.status === 'BREAKEVEN' ||
         trade.status === 'INVALIDATED') && (
-        <div className="space-y-2">
+        <div className="mt-2.5 space-y-2">
           {trade.isMemeTrade && trade.trailingStop != null && (
-            <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-2.5">
-              <div className="mb-0.5 font-mono text-[10px] uppercase text-orange-400/70">
-                Shadow Trailing
+            <div className="rounded-md border border-border bg-bg-base/50 px-2.5 py-2">
+              <div className="font-sans text-[11px] leading-4 text-text-muted">
+                Shadow trailing
               </div>
-              <div className="flex justify-between font-mono text-xs">
-                <span className="text-holo/60">
+              <div className="mt-0.5 flex justify-between font-mono text-[11px] leading-4">
+                <span className="text-text-secondary">
                   Peak: {(trade.peakPrice ?? trade.entryPrice).toFixed(6)}
                 </span>
-                <span className="font-bold text-orange-400">
+                <span className="font-medium text-market-warning">
                   Trail: {trade.trailingStop.toFixed(6)}
                 </span>
               </div>
@@ -189,7 +219,7 @@ const TradeCard = ({ trade }: TradeCardProps) => {
               onClick={() => {
                 haptic.error()
                 const confirmed = window.confirm(
-                  `🚨 PANIC SELL ${trade.symbol}?\n\nСРОЧНО ИДИ В MEXC И ЖМИ SELL MARKET!\n\nЗакрыть локальный трек сделки?`
+                  `PANIC SELL ${trade.symbol}?\n\nСРОЧНО ИДИ В MEXC И ЖМИ SELL MARKET!\n\nЗакрыть локальный трек сделки?`
                 )
                 if (confirmed) {
                   try {
@@ -202,35 +232,40 @@ const TradeCard = ({ trade }: TradeCardProps) => {
                   closeTrade(trade.id, 'MANUAL', trade.currentPrice)
                 }
               }}
-              className="w-full animate-pulse rounded-xl border-2 border-alert bg-gradient-to-r from-alert to-orange-600 px-4 py-4 font-mono text-base font-black uppercase tracking-wider text-white shadow-[0_0_24px_rgba(255,0,60,0.45)] transition-all active:scale-95"
+              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-market-short/40 bg-market-short/15 px-3 py-2 font-sans text-[12px] font-semibold text-market-short transition-colors hover:bg-market-short/20"
             >
-              🚨 PANIC SELL / BAIL OUT
+              <AlertTriangle className="h-4 w-4" />
+              PANIC SELL · выйти в рынок
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() =>
-              askAdvisor({
-                mode: 'trade',
-                symbol: trade.symbol,
-                tradeId: trade.id,
-                text: `Мнение по моей сделке ${trade.symbol} ${trade.direction}: держать, сократить или закрыть?`,
-              })
-            }
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-matrix/30 bg-matrix/5 px-4 py-2 font-mono text-xs font-bold uppercase text-matrix transition-colors hover:bg-matrix/10 active:scale-95"
-          >
-            <Bot className="h-3.5 w-3.5" />
-            Спросить советника
-          </button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                askAdvisor({
+                  mode: 'trade',
+                  symbol: trade.symbol,
+                  tradeId: trade.id,
+                  text: `Мнение по моей сделке ${trade.symbol} ${trade.direction}: держать, сократить или закрыть?`,
+                })
+              }
+              className="flex-1"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              Советник
+            </Button>
 
-          <button
-            type="button"
-            onClick={handleClose}
-            className="w-full rounded-lg border border-hull-border bg-hull-light px-4 py-2 font-mono text-xs font-bold uppercase text-holo transition-colors hover:bg-hull hover:text-matrix active:scale-95"
-          >
-            Закрыть сделку вручную
-          </button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleClose}
+              className="flex-1"
+            >
+              Закрыть вручную
+            </Button>
+          </div>
         </div>
       )}
     </div>

@@ -54,11 +54,11 @@ const DeltaSparkline = ({ symbol, refreshKey = 0, height = 36 }: Props) => {
   return (
     <div className="rounded-lg border border-white/[0.06] bg-[#0c0e12] px-2 py-1.5">
       <div className="mb-1 flex items-center justify-between">
-        <span className="font-mono text-[9px] font-bold uppercase tracking-wide text-white/40">
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wide text-white/40">
           Покупки / продажи · 5м
         </span>
         <span
-          className={`font-mono text-[9px] font-bold ${
+          className={`font-mono text-[11px] font-bold ${
             net >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'
           }`}
         >

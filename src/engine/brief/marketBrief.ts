@@ -168,7 +168,7 @@ export function buildMarketBrief(params: {
   const score = signal.scoreCard
   const nowBits: string[] = []
   if (mm && mm.drive !== 'NEUTRAL') {
-    nowBits.push(`${mm.emoji} ММ: ${mm.label}`)
+    nowBits.push(`ММ: ${mm.label}`)
   }
   if (raid && raid.type !== 'NONE' && raid.isFresh) {
     nowBits.push(`Свежий ${raid.type}`)

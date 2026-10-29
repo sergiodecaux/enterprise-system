@@ -94,10 +94,10 @@ export function calculateConfidenceScore(
       tradeStyle: 'SWING',
       recommendation:
         totalScore >= 88
-          ? `🕯 SWING ELITE ${totalScore}%. Fib/HTF структура, держим дни.`
+          ? `SWING ELITE ${totalScore}%. Fib/HTF структура, держим дни.`
           : totalScore >= 70
-            ? `🕯 SWING ${totalScore}%. Сетап на 4H–1D.`
-            : `🕯 SWING ${totalScore}%. Ждём подтверждение у зоны.`,
+            ? `SWING ${totalScore}%. Сетап на 4H–1D.`
+            : `SWING ${totalScore}%. Ждём подтверждение у зоны.`,
     }
   } else {
     base = calculateIntradayConfidenceScore(signal, orderBookMetrics)
@@ -143,14 +143,14 @@ function applyMarketMakerGates(
         : eliteMeme
           ? 'Элитный мем-сетап (свой триггер входа)'
           : 'Нет 2-го захода / sweep — на мемах вход только после снятия стопов',
-      emoji: '🔄',
+      emoji: '',
     })
     if (!eliteMeme && !hasFreshRaid) {
       approved = false
       mmStatus = 'NO_LIQUIDITY_RAID'
       totalScore = Math.min(totalScore, 45)
       recommendation =
-        '🔄 Liquidity Raid обязателен для мемов. Ждём sweep лоя и резкий возврат — не входим на первом касании.'
+        'Liquidity Raid обязателен для мемов. Ждём sweep лоя и резкий возврат — не входим на первом касании.'
     }
   }
 
@@ -237,7 +237,7 @@ function applyMarketMakerGates(
           score: 0,
           passed: false,
           reason: gate.recommendation,
-          emoji: '⚠️',
+          emoji: '',
         })
       } else if (triple.passed) {
         mmStatus = 'TRIPLE_CONFIRMED'
@@ -247,7 +247,7 @@ function applyMarketMakerGates(
           score: 1,
           passed: true,
           reason: triple.reason,
-          emoji: '🎯',
+          emoji: '',
         })
       } else if (aggressionAligned && !priceResultOk) {
         factors.push({
@@ -256,7 +256,7 @@ function applyMarketMakerGates(
           score: 0.2,
           passed: false,
           reason: 'Агрессия есть, цена не подтверждает — осторожно',
-          emoji: '⚖️',
+          emoji: '',
         })
       }
     }
@@ -271,7 +271,7 @@ function applyMarketMakerGates(
       mmStatus = 'MM_DISTRIBUTION'
       recommendation =
         signal.memePulse.absorptionAlert.alert ??
-        '⚠️ ABSORPTION / DISTRIBUTION — лонг аннулирован'
+        'ABSORPTION / DISTRIBUTION — лонг аннулирован'
     }
   }
 
@@ -284,14 +284,14 @@ function applyMarketMakerGates(
       totalScore = penalized.score
       mmStatus = mmStatus || 'BTC_DUMP'
       if (totalScore < 70) approved = false
-      recommendation = `📉 ${penalized.label} | Score → ${totalScore}%`
+      recommendation = `${penalized.label} | Score → ${totalScore}%`
       factors.push({
         name: 'BTC Correlation',
         weight: 0,
         score: 0,
         passed: false,
         reason: penalized.label,
-        emoji: '📉',
+        emoji: '',
       })
     }
   }
@@ -347,7 +347,7 @@ function calculateScalpConfidenceScore(
       score: signal.raid?.isFresh ? 1 : 0,
       passed: !!signal.raid?.isFresh,
       reason: signal.raid?.label || 'Нет свежего sweep',
-      emoji: '🔄',
+      emoji: '',
     },
     {
       name: 'Order Flow',
@@ -362,7 +362,7 @@ function calculateScalpConfidenceScore(
         sc.factors
           .filter((f) => ['Absorption', 'Tape Momentum'].includes(f))
           .join(' + ') || 'Нет аномалии ленты',
-      emoji: '⚡',
+      emoji: '',
     },
     {
       name: 'CVD / Структура',
@@ -387,7 +387,7 @@ function calculateScalpConfidenceScore(
       score: signal.liquidationContext?.swept ? 1 : 0,
       passed: !!signal.liquidationContext?.swept,
       reason: signal.liquidationContext?.label || 'Пул не снят',
-      emoji: '💥',
+      emoji: '',
     },
   ]
 
@@ -406,10 +406,10 @@ function calculateScalpConfidenceScore(
     tradeStyle: 'SCALP',
     recommendation:
       totalScore >= 88
-        ? `⚡️ SCALP ELITE ${totalScore}%. Микро-вход, стоп за свип.`
+        ? `SCALP ELITE ${totalScore}%. Микро-вход, стоп за свип.`
         : approved
-          ? `⚡️ SCALP ${totalScore}%. Сетап допустим на M1/M5.`
-          : `⚡️ SCALP ${totalScore}%. Недостаточно order-flow confluence.`,
+          ? `SCALP ${totalScore}%. Сетап допустим на M1/M5.`
+          : `SCALP ${totalScore}%. Недостаточно order-flow confluence.`,
   }
 }
 
@@ -446,7 +446,7 @@ function calculateIntradayConfidenceScore(
       reason:
         [dailyAligned && 'Daily', h4Aligned && '4H'].filter(Boolean).join(' + ') ||
         'Нет HTF alignment',
-      emoji: '🌍',
+      emoji: '',
     },
     {
       name: 'Структура / CHoCH',
@@ -459,7 +459,7 @@ function calculateIntradayConfidenceScore(
         ic.factors
           .filter((f) => f.includes('CHoCH') || f.includes('OTE'))
           .join(' + ') || 'Нет смены характера',
-      emoji: '📊',
+      emoji: '',
     },
     {
       name: 'Killzone + OB/POC',
@@ -476,7 +476,7 @@ function calculateIntradayConfidenceScore(
               f.includes('Killzone') || f.includes('OB') || f.includes('POC')
           )
           .join(' + ') || 'Вне сессии / без зоны',
-      emoji: '🎯',
+      emoji: '',
     },
     {
       name: 'Liq Sweep Gate',
@@ -488,7 +488,7 @@ function calculateIntradayConfidenceScore(
           : 0,
       passed: !!signal.liquidationContext?.gateOpen,
       reason: signal.liquidationContext?.label || 'Нет liq-контекста',
-      emoji: '💥',
+      emoji: '',
     },
   ]
 
@@ -505,7 +505,7 @@ function calculateIntradayConfidenceScore(
       reason: aligned
         ? `Давление стакана: ${orderBookMetrics.pressure}`
         : `Стакан: ${orderBookMetrics.pressure} (imbalance ${orderBookMetrics.imbalance.toFixed(0)}%)`,
-      emoji: '📚',
+      emoji: '',
     })
   }
 
@@ -524,10 +524,10 @@ function calculateIntradayConfidenceScore(
     tradeStyle: 'INTRADAY',
     recommendation:
       totalScore >= 88
-        ? `🎯 INTRADAY ELITE ${totalScore}%. Каскадные TP, стоп за структуру.`
+        ? `INTRADAY ELITE ${totalScore}%. Каскадные TP, стоп за структуру.`
         : approved
-          ? `🎯 INTRADAY ${totalScore}%. Сетап допустим на H1/15m.`
-          : `🎯 INTRADAY ${totalScore}%. Недостаточно HTF confluence.`,
+          ? `INTRADAY ${totalScore}%. Сетап допустим на H1/15m.`
+          : `INTRADAY ${totalScore}%. Недостаточно HTF confluence.`,
   }
 }
 

@@ -56,7 +56,7 @@ export function detectPriceProdding(
       ...empty,
       exitSignal: recent.some((h) => h.bidDensityPrice != null),
       label: 'Плотность исчезла — выход',
-      emoji: '🚪',
+      emoji: '',
     }
   }
 
@@ -79,7 +79,7 @@ export function detectPriceProdding(
         direction: 'UP',
         chasing: true,
         distancePct: dist,
-        emoji: '👆',
+        emoji: '',
         label: `PRICE PRODDING UP: Bid-плотность преследует цену (${dist.toFixed(2)}%)`,
         exitSignal: false,
       }
@@ -102,7 +102,7 @@ export function detectPriceProdding(
         direction: 'DOWN',
         chasing: true,
         distancePct: dist,
-        emoji: '👇',
+        emoji: '',
         label: `PRICE PRODDING DOWN: Ask-плотность преследует цену (${dist.toFixed(2)}%)`,
         exitSignal: false,
       }
@@ -123,7 +123,7 @@ export function detectPriceProdding(
       direction: 'NONE',
       chasing: false,
       distancePct: 0,
-      emoji: '🚪',
+      emoji: '',
       label: 'Prodding сломан — плотность перевернулась на селл',
       exitSignal: true,
     }

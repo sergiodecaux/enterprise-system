@@ -4,7 +4,7 @@ import type { StructuralStyleLevels, StyleProfile } from './types'
 export const INTRADAY_PROFILE: StyleProfile = {
   style: 'INTRADAY',
   label: 'Интрадей',
-  badge: '🎯 INTRADAY',
+  badge: 'INTRADAY',
   timeframeHint: 'H1',
   risk: {
     maxStopPct: 2.5,

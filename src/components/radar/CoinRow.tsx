@@ -74,8 +74,7 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
     if (!signal.direction) {
       return signal.currentRSI === null ? t('signal_waiting') : '—'
     }
-    const prefix = signal.hasActiveSetup ? '⚡' : ''
-    return `${prefix}${signal.direction === 'LONG' ? t('signal_long') : t('signal_short')}`
+    return signal.direction === 'LONG' ? t('signal_long') : t('signal_short')
   }
 
   return (
@@ -106,7 +105,7 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
           <span className="whitespace-nowrap font-mono text-sm font-bold text-holo">
             {label.title}
           </span>
-          <span className="shrink-0 font-mono text-[10px] text-holo/35">
+          <span className="shrink-0 font-mono text-[11px] text-holo/35">
             {label.hint}
           </span>
           <SentimentBadge sentiment={sentiment} />
@@ -119,13 +118,13 @@ const CoinRow = ({ signal, rank, onClick }: CoinRowProps) => {
             {formatChange(signal.priceChange24h)}
           </span>
         </div>
-        <div className="mt-0.5 font-mono text-[9px] leading-tight text-holo/45">
+        <div className="mt-0.5 font-mono text-[11px] leading-tight text-holo/45">
           4ч {h4} · день {day}
         </div>
       </div>
 
       <div
-        className={`w-[3.6rem] shrink-0 rounded border px-1 py-0.5 text-center font-mono text-[10px] uppercase ${getSignalBadgeClass()}`}
+        className={`w-[3.6rem] shrink-0 rounded border px-1 py-0.5 text-center font-mono text-[11px] uppercase ${getSignalBadgeClass()}`}
         title={getSignalText()}
       >
         {getSignalText()}

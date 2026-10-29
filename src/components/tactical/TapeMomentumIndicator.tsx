@@ -33,9 +33,9 @@ const TapeMomentumIndicator = ({ momentum }: Props) => {
       </div>
 
       <div className="flex flex-shrink-0 items-center gap-1">
-        <span className="font-mono text-[10px] text-holo/30">Δ</span>
+        <span className="font-mono text-[11px] text-holo/30">Δ</span>
         <span
-          className="font-mono text-[10px] font-bold"
+          className="font-mono text-[11px] font-bold"
           style={{ color: momentum.color }}
         >
           {momentum.imbalanceDelta >= 0 ? '+' : ''}
@@ -45,7 +45,7 @@ const TapeMomentumIndicator = ({ momentum }: Props) => {
 
       {momentum.isBurst && (
         <span
-          className="rounded px-1 font-mono text-[9px] font-bold"
+          className="rounded px-1 font-mono text-[11px] font-bold"
           style={{
             backgroundColor: momentum.color + '30',
             color: momentum.color,

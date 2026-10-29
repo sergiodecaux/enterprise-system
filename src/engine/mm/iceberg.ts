@@ -123,7 +123,7 @@ export function detectIcebergOrder(params: {
     tradedVolume,
     bookDelta,
     hiddenVolumeEstimate: hidden,
-    emoji: '🧊',
+    emoji: '',
     status,
     confidencePct,
     label: `ICEBERG ${status} ${bookSide} @ ${price.toFixed(6)} | hidden≈${hidden.toFixed(2)} | conf ${confidencePct}%`,

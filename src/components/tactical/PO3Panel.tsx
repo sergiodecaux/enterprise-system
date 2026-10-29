@@ -1,36 +1,55 @@
-import type { PO3Analysis } from '../../engine/types'
+import {
+  Drama,
+  HelpCircle,
+  Moon,
+  Rocket,
+  ScanLine,
+  type LucideIcon,
+} from 'lucide-react'
+import type { PO3Analysis, PO3Phase } from '../../engine/types'
 
 interface Props {
   analysis: PO3Analysis
 }
 
-const PHASE_COLORS = {
+const PHASE_TONES: Record<
+  PO3Phase,
+  { border: string; bg: string; text: string }
+> = {
   ACCUMULATION: {
-    border: 'border-indigo-400/30',
-    bg: 'bg-indigo-400/5',
-    text: 'text-indigo-400',
+    border: 'border-market-purple/25',
+    bg: 'bg-market-purple/[0.04]',
+    text: 'text-market-purple',
   },
   MANIPULATION: {
-    border: 'border-amber-400/30',
-    bg: 'bg-amber-400/5',
-    text: 'text-amber-400',
+    border: 'border-market-warning/25',
+    bg: 'bg-market-warning/[0.04]',
+    text: 'text-market-warning',
   },
   DISTRIBUTION: {
-    border: 'border-matrix/30',
-    bg: 'bg-matrix/5',
-    text: 'text-matrix',
+    border: 'border-market-long/20',
+    bg: 'bg-market-long/[0.04]',
+    text: 'text-market-long',
   },
   UNKNOWN: {
-    border: 'border-hull-border',
-    bg: 'bg-hull',
-    text: 'text-holo/40',
+    border: 'border-border',
+    bg: 'bg-bg-panel',
+    text: 'text-text-muted',
   },
-} as const
+}
+
+const PHASE_ICONS: Record<PO3Phase, LucideIcon> = {
+  ACCUMULATION: Moon,
+  MANIPULATION: Drama,
+  DISTRIBUTION: Rocket,
+  UNKNOWN: HelpCircle,
+}
 
 const PO3Panel = ({ analysis }: Props) => {
   if (!analysis.asiaBox && analysis.currentPhase === 'UNKNOWN') return null
 
-  const colors = PHASE_COLORS[analysis.currentPhase]
+  const tone = PHASE_TONES[analysis.currentPhase]
+  const PhaseIcon = PHASE_ICONS[analysis.currentPhase]
 
   const formatPrice = (p: number) =>
     p >= 1000
@@ -40,58 +59,65 @@ const PO3Panel = ({ analysis }: Props) => {
         : p.toFixed(6)
 
   return (
-    <div className={`rounded-xl border ${colors.border} ${colors.bg} p-3`}>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-base">{analysis.phaseIcon}</span>
-        <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
+    <div className={`rounded-lg border ${tone.border} ${tone.bg} p-3`}>
+      <div className="mb-2.5 flex items-center gap-2">
+        <PhaseIcon className={`h-3.5 w-3.5 shrink-0 ${tone.text}`} strokeWidth={1.9} />
+        <span className="font-sans text-[13px] font-medium leading-5 text-text-primary">
           Power of Three
         </span>
         <span
-          className={`ml-auto rounded border ${colors.border} px-1.5 py-0.5 font-mono text-[10px] font-bold ${colors.text}`}
+          className={`ml-auto rounded-sm border ${tone.border} px-1.5 py-0.5 font-mono text-[11px] font-medium leading-4 ${tone.text}`}
         >
           {analysis.currentPhase}
         </span>
       </div>
 
-      <p className={`mb-2 font-mono text-xs font-medium ${colors.text}`}>
+      <p className={`mb-2 font-sans text-[11px] font-medium leading-4 ${tone.text}`}>
         {analysis.phaseLabel}
       </p>
 
       {analysis.asiaBox && (
-        <div className="mb-2 rounded-lg bg-black/20 p-2">
-          <div className="mb-1 font-mono text-[10px] uppercase text-holo/30">
-            🌙 Коробка Азии ({analysis.asiaBox.date})
+        <div className="mb-2 rounded-md border border-border bg-bg-base/40 p-2">
+          <div className="mb-1 flex items-center gap-1 font-sans text-[11px] leading-4 text-text-muted">
+            <Moon className="h-2.5 w-2.5" />
+            Коробка Азии ({analysis.asiaBox.date})
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="text-center">
-              <div className="font-mono text-[9px] text-holo/30">High</div>
-              <div className="font-mono text-xs font-bold text-matrix">
+          <div className="grid grid-cols-3 gap-px overflow-hidden rounded-sm border border-border bg-border">
+            <div className="bg-bg-base/60 px-2 py-1.5 text-center">
+              <div className="font-sans text-[11px] leading-4 text-text-muted">
+                High
+              </div>
+              <div className="tnum font-mono text-[12px] font-medium leading-4 text-market-long">
                 {formatPrice(analysis.asiaBox.high)}
               </div>
             </div>
-            <div className="text-center">
-              <div className="font-mono text-[9px] text-holo/30">Mid</div>
-              <div className="font-mono text-xs font-bold text-holo/60">
+            <div className="bg-bg-base/60 px-2 py-1.5 text-center">
+              <div className="font-sans text-[11px] leading-4 text-text-muted">
+                Mid
+              </div>
+              <div className="tnum font-mono text-[12px] font-medium leading-4 text-text-secondary">
                 {formatPrice(analysis.asiaBox.mid)}
               </div>
             </div>
-            <div className="text-center">
-              <div className="font-mono text-[9px] text-holo/30">Low</div>
-              <div className="font-mono text-xs font-bold text-alert">
+            <div className="bg-bg-base/60 px-2 py-1.5 text-center">
+              <div className="font-sans text-[11px] leading-4 text-text-muted">
+                Low
+              </div>
+              <div className="tnum font-mono text-[12px] font-medium leading-4 text-market-short">
                 {formatPrice(analysis.asiaBox.low)}
               </div>
             </div>
           </div>
-          <div className="mt-1 text-center font-mono text-[9px] text-holo/20">
+          <div className="tnum mt-1 text-center font-mono text-[11px] leading-4 text-text-muted">
             Диапазон: {analysis.asiaBox.rangePct.toFixed(2)}%
           </div>
         </div>
       )}
 
       {analysis.manipulationDetected && (
-        <div className="mb-2 flex items-center gap-2 rounded-lg border border-amber-400/20 bg-amber-400/5 px-2 py-1.5">
-          <span className="text-xs">🎭</span>
-          <span className="font-mono text-xs text-amber-400">
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-market-warning/25 bg-market-warning/[0.05] px-2 py-1.5">
+          <ScanLine className="h-3 w-3 shrink-0 text-market-warning" />
+          <span className="font-sans text-[11px] leading-4 text-market-warning">
             Манипуляция:{' '}
             {analysis.manipulationDirection === 'HIGH_SWEPT'
               ? 'вынос хая Азии'
@@ -100,15 +126,15 @@ const PO3Panel = ({ analysis }: Props) => {
                 : 'двойной вынос'}
           </span>
           {analysis.returnIntoBox && (
-            <span className="ml-auto rounded bg-matrix/20 px-1 font-mono text-[9px] text-matrix">
-              ВОЗВРАТ ✓
+            <span className="ml-auto shrink-0 rounded-sm bg-market-long/15 px-1 font-mono text-[11px] font-medium leading-4 text-market-long">
+              ВОЗВРАТ
             </span>
           )}
         </div>
       )}
 
-      <div className="rounded-lg bg-black/20 px-2 py-2">
-        <p className="font-mono text-xs leading-relaxed text-holo/70">
+      <div className="rounded-md border border-border bg-bg-base/30 px-2 py-2">
+        <p className="font-sans text-[11px] leading-4 text-text-secondary">
           {analysis.tradingAdvice}
         </p>
       </div>

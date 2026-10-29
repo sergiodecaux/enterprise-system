@@ -13,19 +13,19 @@ const LABEL_CONFIG = {
     color: 'text-matrix',
     bg: 'bg-matrix/20',
     border: 'border-matrix/40',
-    text: '⬆ БЫЧИЙ',
+    text: 'Бычий',
   },
   BEARISH: {
     color: 'text-alert',
     bg: 'bg-alert/20',
     border: 'border-alert/40',
-    text: '⬇ МЕДВЕЖИЙ',
+    text: 'Медвежий',
   },
   NEUTRAL: {
     color: 'text-holo/60',
     bg: 'bg-hull/30',
     border: 'border-hull-border',
-    text: '— НЕЙТРАЛЬНЫЙ',
+    text: 'Нейтральный',
   },
 }
 
@@ -67,12 +67,12 @@ const NewsPanel = ({ coinSentiment, symbol }: Props) => {
           className={`flex items-center gap-2 rounded-lg border px-2 py-1 font-mono text-xs font-bold ${cfg.color} ${cfg.bg} ${cfg.border}`}
         >
           {cfg.text}
-          <span className={`text-[10px] ${boostColor}`}>оценка {boostText}</span>
+          <span className={`text-[11px] ${boostColor}`}>оценка {boostText}</span>
         </div>
       </div>
 
       <div className="rounded-lg bg-hull-light/20 p-3">
-        <div className="mb-1.5 flex justify-between font-mono text-[10px] text-holo/50">
+        <div className="mb-1.5 flex justify-between font-mono text-[11px] text-holo/50">
           <span>Медвежий</span>
           <span>{coinSentiment.newsCount} новостей</span>
           <span>Бычий</span>

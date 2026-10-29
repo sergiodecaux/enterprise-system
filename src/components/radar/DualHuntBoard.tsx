@@ -79,7 +79,7 @@ function HuntRow({
         onClick={onOpen}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
-        <span className="mt-0.5 w-4 shrink-0 font-mono text-[10px] text-white/30">
+        <span className="mt-0.5 w-4 shrink-0 font-mono text-[11px] text-white/30">
           {rank}
         </span>
         <div className="min-w-0 flex-1">
@@ -87,31 +87,31 @@ function HuntRow({
             <span className="whitespace-nowrap font-mono text-[13px] font-bold tracking-wide text-white">
               {label.title}
             </span>
-            <span className="shrink-0 font-mono text-[10px] text-white/35">
+            <span className="shrink-0 font-mono text-[11px] text-white/35">
               {label.hint}
             </span>
             <span
-              className={`shrink-0 rounded border px-1 py-px font-mono text-[9px] uppercase ${shelfBadgeClass(card.shelf)}`}
+              className={`shrink-0 rounded border px-1 py-px font-mono text-[11px] uppercase ${shelfBadgeClass(card.shelf)}`}
             >
               {card.shelfLabel}
             </span>
           </div>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-white/55">
+          <p className="mt-0.5 truncate font-mono text-[11px] text-white/55">
             {card.reason}
           </p>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-white/40">
+          <p className="mt-0.5 truncate font-mono text-[11px] text-white/40">
             стрим: {card.streamTo}
           </p>
-          <p className="mt-0.5 truncate font-mono text-[10px] text-white/35">
+          <p className="mt-0.5 truncate font-mono text-[11px] text-white/35">
             топливо: {card.fuelWhere}
           </p>
           {card.doNotChase && (
-            <p className="mt-0.5 font-mono text-[10px] text-rose-200/80">не догонять</p>
+            <p className="mt-0.5 font-mono text-[11px] text-rose-200/80">не догонять</p>
           )}
         </div>
         <div className="shrink-0 text-right">
           <div
-            className={`rounded border px-1.5 py-0.5 text-center font-mono text-[9px] font-bold uppercase ${
+            className={`rounded border px-1.5 py-0.5 text-center font-mono text-[11px] font-bold uppercase ${
               long
                 ? 'border-emerald-400/35 bg-emerald-500/12 text-emerald-200'
                 : 'border-rose-400/35 bg-rose-500/12 text-rose-200'
@@ -237,7 +237,7 @@ function HuntLane({
             <button
               type="button"
               onClick={() => setStreamOpen((v) => !v)}
-              className="w-full border-t border-white/[0.06] px-3 py-2 text-left font-mono text-[10px] text-rose-200/70"
+              className="w-full border-t border-white/[0.06] px-3 py-2 text-left font-mono text-[11px] text-rose-200/70"
             >
               {streamOpen ? '▾' : '▸'} стримят {stream.length} — не догонять
             </button>
@@ -348,7 +348,7 @@ const DualHuntBoard = () => {
               key={id}
               type="button"
               onClick={() => setLane(id)}
-              className={`flex-1 rounded-md px-2 py-1.5 font-mono text-[10px] font-bold uppercase ${
+              className={`inline-flex min-h-10 flex-1 items-center justify-center rounded-md px-2 py-1.5 font-mono text-[11px] font-bold uppercase desk:min-h-0 ${
                 lane === id
                   ? id === 'short'
                     ? 'bg-rose-500/20 text-rose-200'
@@ -376,7 +376,7 @@ const DualHuntBoard = () => {
             key={id}
             type="button"
             onClick={() => setShelf(id)}
-            className={`flex-1 rounded-md px-1.5 py-1.5 font-mono text-[10px] font-bold uppercase ${
+            className={`inline-flex min-h-10 flex-1 items-center justify-center rounded-md px-1.5 py-1.5 font-mono text-[11px] font-bold uppercase desk:min-h-0 ${
               shelf === id ? 'bg-white/15 text-white' : 'bg-white/5 text-white/40'
             }`}
           >
@@ -386,7 +386,7 @@ const DualHuntBoard = () => {
         ))}
       </div>
 
-      <p className="px-4 pb-1 font-mono text-[10px] text-white/35">
+      <p className="px-4 pb-1 font-mono text-[11px] text-white/35">
         {scanning
           ? radarMeta.progress || 'охота за сетапами…'
           : readyN === 0

@@ -35,7 +35,7 @@ const ScenarioLegend = ({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-mono text-[10px] uppercase text-holo/50">
+        <div className="font-mono text-[11px] uppercase text-holo/50">
           {horizon === 'SWING' || horizon === 'MACRO'
             ? 'Сценарии · свинг'
             : horizon === 'SCALP'
@@ -44,7 +44,7 @@ const ScenarioLegend = ({
                 ? 'Сценарии · неделя'
                 : t('forecast_scenarios')}
         </div>
-        <div className="font-mono text-[9px] text-holo/35">
+        <div className="font-mono text-[11px] text-holo/35">
           {ageSec != null
             ? ageSec < 60
               ? `обновлено ${ageSec}с`
@@ -79,7 +79,7 @@ const ScenarioLegend = ({
                   {sc.id}
                 </span>
               </div>
-              <div className="line-clamp-2 font-mono text-[9px] leading-tight text-holo/55">
+              <div className="line-clamp-2 font-mono text-[11px] leading-tight text-holo/55">
                 {sc.label}
               </div>
             </button>
@@ -101,7 +101,7 @@ const ScenarioLegend = ({
               onClick={() => setExpanded(isExpanded ? null : sc.id)}
               className="flex w-full items-center justify-between px-2.5 py-1.5"
             >
-              <span className="font-mono text-[10px] text-holo/60">
+              <span className="font-mono text-[11px] text-holo/60">
                 <span style={{ color: sc.color }}>{sc.id}</span> — детали
               </span>
               {isExpanded ? (
@@ -113,7 +113,7 @@ const ScenarioLegend = ({
 
             {isExpanded && (
               <div className="space-y-2 border-t border-hull-border/20 px-3 pb-3 pt-2">
-                <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
+                <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
                   <div>
                     <div className="text-holo/40">{t('scenario_entry')}</div>
                     <div className="text-holo/80">${sc.entry.toFixed(4)}</div>
@@ -131,20 +131,20 @@ const ScenarioLegend = ({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-[10px] text-holo/40">
+                  <div className="mb-1 text-[11px] text-holo/40">
                     {t('scenario_trigger')}:
                   </div>
-                  <div className="font-mono text-[10px] text-holo/70">
+                  <div className="font-mono text-[11px] text-holo/70">
                     {sc.triggerCondition}
                   </div>
                 </div>
 
                 <div>
-                  <div className="mb-1 text-[10px] text-holo/40">
+                  <div className="mb-1 text-[11px] text-holo/40">
                     {t('scenario_factors')}:
                   </div>
                   {sc.reasoning.map((r) => (
-                    <div key={r} className="text-[10px] text-holo/60">
+                    <div key={r} className="text-[11px] text-holo/60">
                       • {r}
                     </div>
                   ))}

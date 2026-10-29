@@ -148,7 +148,7 @@ function buildDriveNarrative(
 
   if (mm) {
     lines.push(
-      `${mm.emoji || '⚡'} Drive ${mm.drive} · уверенность ${mm.confidence}% · ${mm.label}`
+      `Drive ${mm.drive} · уверенность ${mm.confidence}% · ${mm.label}`
     )
     for (const r of mm.reasons.slice(0, 3)) lines.push(r)
     if (mm.hunt.microTarget != null) {
@@ -189,7 +189,7 @@ function buildDriveNarrative(
       'Краткосрочно цену гонят вниз — жди тест ликвидности и подтверждение, не входи в середину хода.'
   } else if (ssl && bsl) {
     narrative =
-      'Drive нейтрален: цена в коридоре SSL↔BSL. Вероятнее — тест ближайшей ликвидности, затем выбор направления.'
+      'Drive нейтрален: цена в коридоре SSL BSL. Вероятнее — тест ближайшей ликвидности, затем выбор направления.'
   } else {
     narrative =
       'Нет явного drive: строим сценарии от ближайших пулов ликвидности и ScoreCard.'

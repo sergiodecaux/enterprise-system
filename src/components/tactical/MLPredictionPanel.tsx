@@ -54,7 +54,7 @@ const MLPredictionPanel = ({ prediction, model, isTraining }: Props) => {
             {t('ml_prediction')}
           </h4>
         </div>
-        <div className="text-[10px] text-holo/50">
+        <div className="text-[11px] text-holo/50">
           {t('ml_accuracy')}: {model.accuracy.toFixed(1)}%
         </div>
       </div>
@@ -71,7 +71,7 @@ const MLPredictionPanel = ({ prediction, model, isTraining }: Props) => {
         </div>
 
         <div className="space-y-1">
-          <div className="text-[10px] uppercase text-holo/50">{t('ml_reasoning')}:</div>
+          <div className="text-[11px] uppercase text-holo/50">{t('ml_reasoning')}:</div>
           {prediction.reasoning.map((reason) => (
             <div key={reason} className="font-mono text-xs text-holo/70">
               • {reason}
@@ -82,13 +82,13 @@ const MLPredictionPanel = ({ prediction, model, isTraining }: Props) => {
 
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="rounded bg-hull/50 px-2 py-1">
-          <div className="text-[10px] text-holo/50">{t('ml_trained_on')}</div>
+          <div className="text-[11px] text-holo/50">{t('ml_trained_on')}</div>
           <div className="font-mono text-holo/80">
             {model.trainingSize} {t('ml_examples')}
           </div>
         </div>
         <div className="rounded bg-hull/50 px-2 py-1">
-          <div className="text-[10px] text-holo/50">{t('ml_confidence')}</div>
+          <div className="text-[11px] text-holo/50">{t('ml_confidence')}</div>
           <div className="font-mono text-holo/80">{prediction.confidence.toFixed(1)}%</div>
         </div>
       </div>

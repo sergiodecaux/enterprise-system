@@ -64,10 +64,10 @@ export function detectCvdTrap(ohlcv1m: OhlcvCandle[]): CvdTrapResult {
           priceRangePct: rangePct,
           cvdSlope,
           scoreBoost: 28,
-          emoji: '🎯',
+          emoji: '',
           label: `CVD TRAP LONG | range ${rangePct.toFixed(1)}% CVD ↓`,
           alert:
-            '🎯 ABSORPTION LONG (CVD Trap): шорты впитываются. Вероятность выстрела вверх высока.',
+            'ABSORPTION LONG (CVD Trap): шорты впитываются. Вероятность выстрела вверх высока.',
         }
       }
     }

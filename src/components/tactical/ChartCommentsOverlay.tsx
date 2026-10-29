@@ -233,7 +233,7 @@ const ChartCommentsOverlay = ({
               />
               <span className="min-w-0">
                 <span
-                  className="block whitespace-nowrap font-mono text-[10px] font-bold leading-tight"
+                  className="block whitespace-nowrap font-mono text-[11px] font-bold leading-tight"
                   style={{ color: colors.title }}
                 >
                   {compactPins && !showBody
@@ -241,7 +241,7 @@ const ChartCommentsOverlay = ({
                     : title}
                 </span>
                 {showBody && (
-                  <span className="mt-0.5 block font-mono text-[9.5px] leading-snug text-white/70">
+                  <span className="mt-0.5 block font-mono text-[11px] leading-snug text-white/70">
                     {readableRussian(pin.comment.text)}
                   </span>
                 )}

@@ -69,7 +69,7 @@ export function detectEffortVsResult(
         detected: true,
         scoreOverride: 10,
         approved: false,
-        emoji: '⚠️',
+        emoji: '',
         label: 'MM DISTRIBUTION',
         reason:
           'Покупатели бьются об стену. Сил много, а результата нет. Сейчас будет разворот вниз (скрытые продажи ММ).',
@@ -80,7 +80,7 @@ export function detectEffortVsResult(
       detected: true,
       scoreOverride: 10,
       approved: false,
-      emoji: '⚠️',
+      emoji: '',
       label: 'ABSORPTION TRAP',
       reason:
         'Buyer Aggression >80%, цена почти не выросла. Кит абсорбирует покупки лимитными ордерами.',
@@ -98,7 +98,7 @@ export function detectEffortVsResult(
       detected: true,
       scoreOverride: 10,
       approved: false,
-      emoji: '⚠️',
+      emoji: '',
       label: 'ABSORPTION TRAP',
       reason:
         'Seller Aggression >80%, цена почти не упала. Абсорбция продаж — ловушка для шортов.',

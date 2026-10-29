@@ -83,7 +83,7 @@ const VolatilityGauge = ({ volatility, compact = false }: Props) => {
         <circle cx="50" cy="55" r="4" fill={zoneColor} />
       </svg>
       <div
-        className="font-mono text-[9px] font-bold uppercase"
+        className="font-mono text-[11px] font-bold uppercase"
         style={{ color: zoneColor }}
       >
         {volatility.lastCandleMovePct.toFixed(1)}%/1m

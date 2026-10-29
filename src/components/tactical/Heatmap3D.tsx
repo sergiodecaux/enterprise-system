@@ -70,7 +70,7 @@ const Heatmap3D = ({ heatmap3D }: Props) => {
         <VolumeCloud heatmap3D={heatmap3D} />
       </Canvas>
 
-      <div className="absolute bottom-2 left-2 space-y-1 rounded bg-hull/80 px-2 py-1 text-[10px]">
+      <div className="absolute bottom-2 left-2 space-y-1 rounded bg-hull/80 px-2 py-1 text-[11px]">
         <div className="flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-matrix" />
           <span className="text-holo/80">Опора (покупки)</span>

@@ -1,4 +1,16 @@
-import type { SessionDNA, SessionStat } from '../../engine/types'
+import {
+  Drama,
+  Flame,
+  Moon,
+  RefreshCw,
+  Scale,
+  Search,
+  Sunrise,
+  TrendingUp,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react'
+import type { SessionDNA, SessionPersonality, SessionStat } from '../../engine/types'
 
 interface Props {
   dna: SessionDNA
@@ -10,37 +22,51 @@ const SESSION_COLORS: Record<
   { text: string; bg: string; border: string }
 > = {
   ASIA: {
-    text: 'text-indigo-400',
-    bg: 'bg-indigo-400/10',
-    border: 'border-indigo-400/30',
+    text: 'text-market-purple',
+    bg: 'bg-market-purple/[0.08]',
+    border: 'border-market-purple/25',
   },
   LONDON: {
-    text: 'text-amber-400',
-    bg: 'bg-amber-400/10',
-    border: 'border-amber-400/30',
+    text: 'text-market-warning',
+    bg: 'bg-market-warning/[0.08]',
+    border: 'border-market-warning/25',
   },
   OVERLAP: {
-    text: 'text-red-400',
-    bg: 'bg-red-400/10',
-    border: 'border-red-400/30',
+    text: 'text-market-short',
+    bg: 'bg-market-short/[0.08]',
+    border: 'border-market-short/25',
   },
   NEW_YORK: {
-    text: 'text-matrix',
-    bg: 'bg-matrix/10',
-    border: 'border-matrix/30',
+    text: 'text-market-long',
+    bg: 'bg-market-long/[0.08]',
+    border: 'border-market-long/25',
   },
 }
 
 /** Цвет personality-бейджа */
 const PERSONALITY_COLORS: Record<string, string> = {
-  FAKEOUT_KING: 'text-purple-400 bg-purple-400/15 border-purple-400/30',
-  TREND_FOLLOWER: 'text-matrix bg-matrix/15 border-matrix/30',
-  ASIA_RANGER: 'text-indigo-400 bg-indigo-400/15 border-indigo-400/30',
-  OVERLAP_BEAST: 'text-red-400 bg-red-400/15 border-red-400/30',
-  LONDON_BREAKER: 'text-amber-400 bg-amber-400/15 border-amber-400/30',
-  NY_REVERSAL: 'text-orange-400 bg-orange-400/15 border-orange-400/30',
-  STEADY_MOVER: 'text-holo/60 bg-hull-light border-hull-border',
-  UNKNOWN: 'text-holo/30 bg-hull border-hull-border',
+  FAKEOUT_KING:
+    'text-market-purple bg-market-purple/10 border-market-purple/30',
+  TREND_FOLLOWER: 'text-market-long bg-market-long/10 border-market-long/25',
+  ASIA_RANGER:
+    'text-market-purple bg-market-purple/10 border-market-purple/25',
+  OVERLAP_BEAST: 'text-market-short bg-market-short/10 border-market-short/25',
+  LONDON_BREAKER:
+    'text-market-warning bg-market-warning/10 border-market-warning/25',
+  NY_REVERSAL: 'text-market-info bg-market-info/10 border-market-info/25',
+  STEADY_MOVER: 'text-text-secondary bg-bg-elevated border-border',
+  UNKNOWN: 'text-text-muted bg-bg-panel border-border',
+}
+
+const PERSONALITY_ICONS: Record<SessionPersonality, LucideIcon> = {
+  FAKEOUT_KING: Drama,
+  TREND_FOLLOWER: TrendingUp,
+  ASIA_RANGER: Moon,
+  OVERLAP_BEAST: Zap,
+  LONDON_BREAKER: Sunrise,
+  NY_REVERSAL: RefreshCw,
+  STEADY_MOVER: Scale,
+  UNKNOWN: Search,
 }
 
 /** Полоска статистики — визуальный индикатор % */
@@ -53,7 +79,7 @@ const StatBar = ({
   color: string
   max?: number
 }) => (
-  <div className="h-1 flex-1 overflow-hidden rounded-full bg-hull-border">
+  <div className="h-1 flex-1 overflow-hidden rounded-full bg-bg-elevated">
     <div
       className={`h-full rounded-full ${color}`}
       style={{ width: `${Math.min((value / max) * 100, 100)}%` }}
@@ -78,15 +104,15 @@ const StatRow = ({
   const isHot = threshold !== undefined && value >= threshold
   return (
     <div className="flex items-center gap-2">
-      <span className="w-28 font-mono text-[10px] text-holo/40 shrink-0">
+      <span className="w-28 shrink-0 font-sans text-[11px] leading-4 text-text-muted">
         {label}
       </span>
-      <StatBar value={value} color={isHot ? color : 'bg-hull-light'} />
+      <StatBar value={value} color={isHot ? color : 'bg-bg-elevated'} />
       <span
-        className={`w-10 text-right font-mono text-[10px] font-bold shrink-0 ${
+        className={`tnum w-10 shrink-0 text-right font-mono text-[11px] font-medium leading-4 ${
           isHot
             ? color.replace('bg-', 'text-').replace('/10', '')
-            : 'text-holo/40'
+            : 'text-text-muted'
         }`}
       >
         {value.toFixed(0)}
@@ -101,19 +127,20 @@ const SessionCard = ({ stat }: { stat: SessionStat }) => {
   const colors = SESSION_COLORS[stat.session] ?? SESSION_COLORS.ASIA
 
   return (
-    <div className={`rounded-lg border ${colors.border} ${colors.bg} p-2.5`}>
+    <div className={`rounded-md border ${colors.border} ${colors.bg} p-2.5`}>
       {/* Заголовок сессии */}
-      <div className="mb-2 flex items-center justify-between">
-        <span className={`font-mono text-xs font-bold ${colors.text}`}>
+      <div className="mb-2 flex items-center justify-between gap-1">
+        <span className={`font-sans text-[11px] font-medium leading-4 ${colors.text}`}>
           {stat.label}
         </span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {stat.isHighestVolume && (
-            <span className="rounded bg-yellow-400/20 px-1 font-mono text-[9px] text-yellow-400">
-              VOL★
+            <span className="flex items-center gap-0.5 rounded-sm bg-market-warning/15 px-1 py-0.5 font-mono text-[11px] leading-4 text-market-warning">
+              <Flame className="h-2.5 w-2.5" />
+              VOL
             </span>
           )}
-          <span className="font-mono text-[10px] text-holo/40">
+          <span className="tnum font-mono text-[11px] leading-4 text-text-muted">
             {stat.totalDays}д
           </span>
         </div>
@@ -125,31 +152,31 @@ const SessionCard = ({ stat }: { stat: SessionStat }) => {
           label="Диапазон"
           value={stat.avgRangePct}
           suffix="%"
-          color="bg-holo/60"
+          color="bg-text-secondary"
           threshold={1.5}
         />
         <StatRow
           label="Fakeout"
           value={stat.fakeoutPct}
-          color="bg-purple-400"
+          color="bg-market-purple"
           threshold={50}
         />
         <StatRow
           label="Сносит хай"
           value={stat.breaksPrevHighPct}
-          color="bg-matrix"
+          color="bg-market-long"
           threshold={60}
         />
         <StatRow
           label="Сносит лоу"
           value={stat.breaksPrevLowPct}
-          color="bg-alert"
+          color="bg-market-short"
           threshold={60}
         />
         <StatRow
           label="Бычьих дней"
           value={stat.bullishPct}
-          color="bg-matrix"
+          color="bg-market-long"
           threshold={55}
         />
       </div>
@@ -160,10 +187,10 @@ const SessionCard = ({ stat }: { stat: SessionStat }) => {
 const SessionDNAPanel = ({ dna }: Props) => {
   if (dna.personality === 'UNKNOWN' || dna.sessions.length === 0) {
     return (
-      <div className="rounded-xl border border-hull-border bg-hull p-3">
+      <div className="rounded-lg border border-border bg-bg-panel p-3">
         <div className="flex items-center gap-2">
-          <span className="text-base">🔍</span>
-          <span className="font-mono text-xs text-holo/40">
+          <Search className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+          <span className="font-sans text-[11px] leading-4 text-text-muted">
             ДНК сессии: недостаточно данных ({dna.candlesAnalyzed} свечей)
           </span>
         </div>
@@ -173,39 +200,40 @@ const SessionDNAPanel = ({ dna }: Props) => {
 
   const personalityClass =
     PERSONALITY_COLORS[dna.personality] ?? PERSONALITY_COLORS.UNKNOWN
+  const PersonalityIcon = PERSONALITY_ICONS[dna.personality] ?? Search
 
   return (
-    <div className="rounded-xl border border-hull-border bg-hull p-3">
+    <div className="rounded-lg border border-border bg-bg-panel p-3">
       {/* Заголовок */}
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-base">🧬</span>
-        <span className="font-mono text-xs font-bold uppercase tracking-wider text-holo/70">
+      <div className="mb-2.5 flex items-center gap-2">
+        <PersonalityIcon className="h-3.5 w-3.5 shrink-0 text-market-info" strokeWidth={1.9} />
+        <span className="font-sans text-[13px] font-medium leading-5 text-text-primary">
           ДНК сессии
         </span>
         <span
-          className={`ml-auto flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[10px] font-bold ${personalityClass}`}
+          className={`ml-auto flex items-center gap-1 rounded-sm border px-2 py-0.5 font-mono text-[11px] leading-4 ${personalityClass}`}
         >
-          <span>{dna.personalityIcon}</span>
+          <PersonalityIcon className="h-2.5 w-2.5" />
           <span>{dna.personalityLabel}</span>
         </span>
       </div>
 
       {/* Ключевой инсайт */}
-      <div className="mb-3 rounded-lg bg-black/20 px-3 py-2">
-        <p className="font-mono text-xs leading-relaxed text-holo/70">
+      <div className="mb-2.5 rounded-md border border-border bg-bg-base/40 px-2.5 py-2">
+        <p className="font-sans text-[11px] leading-4 text-text-secondary">
           {dna.keyInsight}
         </p>
       </div>
 
       {/* Карточки сессий — 2 колонки */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1.5">
         {dna.sessions.map((stat) => (
           <SessionCard key={stat.session} stat={stat} />
         ))}
       </div>
 
       {/* Подпись */}
-      <p className="mt-2 font-mono text-[9px] text-holo/20">
+      <p className="mt-2 font-mono text-[11px] leading-4 text-text-muted">
         Анализ {dna.candlesAnalyzed} свечей · {dna.sessions[0]?.totalDays ?? 0}
         + дней истории
       </p>
@@ -214,4 +242,3 @@ const SessionDNAPanel = ({ dna }: Props) => {
 }
 
 export default SessionDNAPanel
-

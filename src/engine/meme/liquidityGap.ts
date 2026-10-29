@@ -101,10 +101,10 @@ export function analyzeLiquidityGap(
 
   if (maxGapPct >= 5) {
     quality = 'EXTREME'
-    emoji = '🚀'
+    emoji = ''
   } else if (maxGapPct >= 3) {
     quality = 'SIGNIFICANT'
-    emoji = '💨'
+    emoji = ''
   }
 
   const label = `Гэп ${direction === 'UP' ? 'вверх' : 'вниз'}: ${maxGapPct.toFixed(2)}% пустоты до стенки`

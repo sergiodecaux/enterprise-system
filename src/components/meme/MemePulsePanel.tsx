@@ -1,4 +1,4 @@
-import { Lock } from 'lucide-react'
+import { Lock, Rocket } from 'lucide-react'
 import type { MemeSignal } from '../../engine/types'
 import SpreadPressureBar from './SpreadPressureBar'
 import VolatilityGauge from './VolatilityGauge'
@@ -20,8 +20,9 @@ const MemePulsePanel = ({ meme }: MemePulsePanelProps) => {
   return (
     <div className="rounded-xl border border-alert/40 bg-gradient-to-br from-alert/10 to-orange-600/5 p-4 shadow-[0_0_24px_rgba(255,0,60,0.08)]">
       <div className="mb-3 flex items-center justify-between">
-        <span className="font-mono text-xs font-bold uppercase tracking-wider text-alert">
-          🚀 Meme Fuel
+        <span className="flex items-center gap-1.5 font-mono text-xs font-bold uppercase tracking-wider text-alert">
+          <Rocket className="h-3.5 w-3.5" strokeWidth={1.9} />
+          Meme Fuel
         </span>
         <div className="flex items-center gap-3">
           {meme.volatility && (
@@ -31,7 +32,7 @@ const MemePulsePanel = ({ meme }: MemePulsePanelProps) => {
             <span className={`font-mono text-2xl font-bold ${qualityColor}`}>
               {meme.heatScore}
             </span>
-            <div className="font-mono text-[10px] uppercase text-holo/40">
+            <div className="font-mono text-[11px] uppercase text-holo/40">
               Fuel
             </div>
           </div>
@@ -51,7 +52,7 @@ const MemePulsePanel = ({ meme }: MemePulsePanelProps) => {
           <span className={`font-mono text-xs font-bold ${meme.lifecycle.color}`}>
             {meme.lifecycle.badge}
           </span>
-          <span className="font-mono text-[10px] text-holo/50">
+          <span className="font-mono text-[11px] text-holo/50">
             {meme.lifecycle.label}
           </span>
         </div>
@@ -97,43 +98,43 @@ const MemePulsePanel = ({ meme }: MemePulsePanelProps) => {
 
       <div className="space-y-2">
         {meme.squeeze?.detected && (
-          <p className="font-mono text-[11px] text-alert/90">
-            {meme.squeeze.emoji} {meme.squeeze.label}
+          <p className="font-sans text-[11px] leading-4 text-market-short">
+            {meme.squeeze.label}
           </p>
         )}
         {meme.flatline?.detected && (
-          <p className="font-mono text-[11px] text-orange-400/90">
-            {meme.flatline.emoji} {meme.flatline.label}
+          <p className="font-sans text-[11px] leading-4 text-market-warning">
+            {meme.flatline.label}
           </p>
         )}
         {meme.backside?.detected && (
-          <p className="font-mono text-[11px] text-alert/90">
-            {meme.backside.emoji} {meme.backside.label}
+          <p className="font-sans text-[11px] leading-4 text-market-short">
+            {meme.backside.label}
           </p>
         )}
         {meme.cvdTrap?.detected && (
-          <p className="font-mono text-[11px] text-matrix/90">
-            {meme.cvdTrap.emoji} {meme.cvdTrap.label}
+          <p className="font-sans text-[11px] leading-4 text-market-long">
+            {meme.cvdTrap.label}
           </p>
         )}
         {meme.absorptionAlert?.detected && (
-          <p className="font-mono text-[11px] text-yellow-400/90">
-            {meme.absorptionAlert.emoji} {meme.absorptionAlert.label}
+          <p className="font-sans text-[11px] leading-4 text-market-warning">
+            {meme.absorptionAlert.label}
           </p>
         )}
         {meme.toxic?.detected && (
-          <p className="font-mono text-[11px] text-holo/60">
-            {meme.toxic.emoji} {meme.toxic.label}
+          <p className="font-sans text-[11px] leading-4 text-text-muted">
+            {meme.toxic.label}
           </p>
         )}
         {meme.bidVoid?.detected && (
-          <p className="font-mono text-[11px] text-alert/80">
-            {meme.bidVoid.emoji} {meme.bidVoid.label}
+          <p className="font-sans text-[11px] leading-4 text-market-short">
+            {meme.bidVoid.label}
           </p>
         )}
         {meme.volumeSpike.detected && (
-          <p className="font-mono text-[11px] text-orange-400/80">
-            {meme.volumeSpike.emoji} {meme.volumeSpike.label}
+          <p className="font-sans text-[11px] leading-4 text-market-warning">
+            {meme.volumeSpike.label}
           </p>
         )}
       </div>

@@ -205,7 +205,7 @@ const CoinSearch = ({ className = 'px-4 pb-3', inputId }: CoinSearchProps) => {
           className="w-full rounded-xl border border-hull-border/90 bg-black/25 py-2.5 pl-9 pr-16 font-sans text-[13px] text-holo placeholder:text-holo/30 transition-colors focus:border-matrix/50 focus:bg-black/35 focus:outline-none"
         />
         {!query && (
-          <span className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center rounded-md border border-hull-border/80 bg-hull/70 px-1.5 py-0.5 font-mono text-[9px] text-holo/30 sm:flex">
+          <span className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center rounded-md border border-hull-border/80 bg-hull/70 px-1.5 py-0.5 font-mono text-[11px] text-holo/30 sm:flex">
             Ctrl K
           </span>
         )}
@@ -255,7 +255,7 @@ const CoinSearch = ({ className = 'px-4 pb-3', inputId }: CoinSearchProps) => {
                   <div className="font-mono text-[13px] font-semibold text-holo">
                     {toDisplayName(ticker.symbol)}
                     {label.hint !== 'USDT' && (
-                      <span className="ml-1.5 font-sans text-[10px] font-normal text-holo/40">
+                      <span className="ml-1.5 font-sans text-[11px] font-normal text-holo/40">
                         {label.hint}
                       </span>
                     )}

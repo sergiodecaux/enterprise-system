@@ -47,7 +47,7 @@ export function detectBtcDump(
     dumping: true,
     changePct15m,
     confidenceMultiplier: 0.5,
-    emoji: '📉',
+    emoji: '',
     label: `BTC DUMP ${changePct15m.toFixed(2)}% / 15м — не лови ракету, когда рынок рушится`,
   }
 }

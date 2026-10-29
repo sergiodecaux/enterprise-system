@@ -48,10 +48,10 @@ const ZoneVariantsPanel = ({
   return (
     <div className="space-y-2 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">
+        <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-emerald-300/80">
           Варианты на зонах
         </div>
-        <div className="font-mono text-[9px] text-holo/35">
+        <div className="font-mono text-[11px] text-holo/35">
           {zones.length} зон · {setups.length} сделок ·{' '}
           {setups[0]?.tradeStyle === 'SCALP'
             ? '#SCALP'
@@ -67,7 +67,7 @@ const ZoneVariantsPanel = ({
           {zones.map((z) => (
             <span
               key={z.id}
-              className={`rounded border px-1.5 py-0.5 font-mono text-[9px] ${
+              className={`rounded border px-1.5 py-0.5 font-mono text-[11px] ${
                 z.side === 'LONG'
                   ? 'border-teal-400/45 bg-teal-500/10 text-teal-200'
                   : 'border-rose-400/45 bg-rose-500/10 text-rose-200'
@@ -90,7 +90,7 @@ const ZoneVariantsPanel = ({
         </div>
       )}
 
-      <div className="rounded-lg border border-white/5 bg-black/20 px-2 py-1.5 font-mono text-[9px] text-holo/45">
+      <div className="rounded-lg border border-white/5 bg-black/20 px-2 py-1.5 font-mono text-[11px] text-holo/45">
         <span className="text-teal-300/80">бирюза SSL</span> — закрепиться, чтобы
         идти вверх ·{' '}
         <span className="text-rose-300/80">роза BSL</span> — удерж шорта / слом
@@ -123,7 +123,7 @@ const ZoneVariantsPanel = ({
                   >
                     {s.side}
                   </span>
-                  <span className="ml-2 font-mono text-[10px] text-holo/50">
+                  <span className="ml-2 font-mono text-[11px] text-holo/50">
                     {s.tradeStyle === 'SCALP'
                       ? '#SCALP'
                       : s.tradeStyle === 'SWING'
@@ -141,7 +141,7 @@ const ZoneVariantsPanel = ({
                   <div className="mt-0.5 font-mono text-[11px] text-holo">
                     {s.title}
                   </div>
-                  <div className="mt-0.5 font-mono text-[9px] text-holo/40">
+                  <div className="mt-0.5 font-mono text-[11px] text-holo/40">
                     {isBreak
                       ? s.side === 'LONG'
                         ? `Слом зоны вверх → лонг · SL ${fmt(s.invalidation)}`
@@ -153,7 +153,7 @@ const ZoneVariantsPanel = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-1 font-mono text-[9px] text-holo/45">
+              <div className="grid grid-cols-4 gap-1 font-mono text-[11px] text-holo/45">
                 <div>
                   Зона
                   <div className="text-holo/80">
@@ -181,7 +181,7 @@ const ZoneVariantsPanel = ({
               </div>
 
               <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="font-mono text-[9px] text-holo/35">
+                <span className="font-mono text-[11px] text-holo/35">
                   {s.status === 'READY'
                     ? 'ГОТОВ'
                     : s.status === 'ARMED'
@@ -198,7 +198,7 @@ const ZoneVariantsPanel = ({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !busy && !watching) onWatch(s)
                   }}
-                  className={`rounded px-2 py-0.5 font-mono text-[9px] font-bold ${
+                  className={`rounded px-2 py-0.5 font-mono text-[11px] font-bold ${
                     watching
                       ? 'bg-emerald-500/20 text-emerald-300'
                       : 'bg-holo/10 text-holo/70 hover:bg-holo/20'

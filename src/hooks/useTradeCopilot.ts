@@ -137,7 +137,7 @@ export const useTradeCopilot = () => {
           if (tp1Hit && !trade.partialTp1Taken) {
             haptic.success()
             showAlert(
-              `🎯 ${trade.symbol}: TP1!\nФиксируй 50% позиции. После этого можно переводить остаток в БУ (с ATR-буфером).`
+              `${trade.symbol}: TP1!\nФиксируй 50% позиции. После этого можно переводить остаток в БУ (с ATR-буфером).`
             )
             addTradeEvent(trade.id, {
               type: 'TP1_HIT',
@@ -165,7 +165,7 @@ export const useTradeCopilot = () => {
             if (be.eligible) {
               haptic.impact()
               showAlert(
-                `💎 ${trade.symbol}: БУ после TP1\nПереноси SL → ${be.beStop.toFixed(6)} (вход ± 0.5×ATR, не в ноль).`
+                `${trade.symbol}: БУ после TP1\nПереноси SL → ${be.beStop.toFixed(6)} (вход ± 0.5×ATR, не в ноль).`
               )
               addTradeEvent(trade.id, {
                 type: 'BREAKEVEN_REACHED',
@@ -188,7 +188,7 @@ export const useTradeCopilot = () => {
           if (trailHit && !trade.trailingAlertShown) {
             haptic.error()
             showAlert(
-              `🚨 ${trade.symbol}: ТРЕЙЛИНГ ПРОБИТ!\nСРОЧНО ИДИ В MEXC И ЖМИ SELL MARKET!`
+              `${trade.symbol}: ТРЕЙЛИНГ ПРОБИТ!\nСРОЧНО ИДИ В MEXC И ЖМИ SELL MARKET!`
             )
             addTradeEvent(trade.id, {
               type: 'TRAILING_HIT',
@@ -202,13 +202,13 @@ export const useTradeCopilot = () => {
           // Hard SL still applies
           if (trade.direction === 'LONG' && currentPrice <= trade.sl) {
             haptic.error()
-            showAlert(`🛑 ${trade.symbol}: SL активирован`)
+            showAlert(`${trade.symbol}: SL активирован`)
             closeTrade(trade.id, 'LOSS', currentPrice)
             return
           }
           if (trade.direction === 'SHORT' && currentPrice >= trade.sl) {
             haptic.error()
-            showAlert(`🛑 ${trade.symbol}: SL активирован`)
+            showAlert(`${trade.symbol}: SL активирован`)
             closeTrade(trade.id, 'LOSS', currentPrice)
             return
           }
@@ -229,7 +229,7 @@ export const useTradeCopilot = () => {
             })
             if (effort.detected) {
               haptic.warning()
-              showAlert(`⚠️ ${trade.symbol}: ${effort.label}\n${effort.reason}`)
+              showAlert(`${trade.symbol}: ${effort.label}\n${effort.reason}`)
               addTradeEvent(trade.id, {
                 type: 'ABSORPTION_TRAP',
                 price: currentPrice,
@@ -250,26 +250,26 @@ export const useTradeCopilot = () => {
         } else if (trade.direction === 'LONG') {
           if (currentPrice >= trade.tp1) {
             haptic.success()
-            showAlert(`🎯 ${trade.symbol}: TP1 достигнут!`)
+            showAlert(`${trade.symbol}: TP1 достигнут!`)
             closeTrade(trade.id, 'WIN', currentPrice)
             return
           }
           if (currentPrice <= trade.sl) {
             haptic.error()
-            showAlert(`🛑 ${trade.symbol}: SL активирован`)
+            showAlert(`${trade.symbol}: SL активирован`)
             closeTrade(trade.id, 'LOSS', currentPrice)
             return
           }
         } else {
           if (currentPrice <= trade.tp1) {
             haptic.success()
-            showAlert(`🎯 ${trade.symbol}: TP1 достигнут!`)
+            showAlert(`${trade.symbol}: TP1 достигнут!`)
             closeTrade(trade.id, 'WIN', currentPrice)
             return
           }
           if (currentPrice >= trade.sl) {
             haptic.error()
-            showAlert(`🛑 ${trade.symbol}: SL активирован`)
+            showAlert(`${trade.symbol}: SL активирован`)
             closeTrade(trade.id, 'LOSS', currentPrice)
             return
           }
@@ -290,7 +290,7 @@ export const useTradeCopilot = () => {
           if (progressPercent >= 50 && timeOk && inProfit) {
             haptic.impact()
             showAlert(
-              `💎 ${trade.symbol}: Сила подтверждена! Переноси SL в безубыток.`
+              `${trade.symbol}: Сила подтверждена! Переноси SL в безубыток.`
             )
             addTradeEvent(trade.id, {
               type: 'BREAKEVEN_REACHED',
@@ -316,7 +316,7 @@ export const useTradeCopilot = () => {
           if (htfInv?.breached) {
             haptic.error()
             showAlert(
-              `⚠️ ${trade.symbol}: СЛОМ ПО ${htfInv.timeframe.toUpperCase()}!\n${htfInv.message}`
+              `${trade.symbol}: СЛОМ ПО ${htfInv.timeframe.toUpperCase()}!\n${htfInv.message}`
             )
             addTradeEvent(trade.id, {
               type: 'INVALIDATION',
@@ -338,7 +338,7 @@ export const useTradeCopilot = () => {
             if (invalidation.invalidated) {
               haptic.error()
               showAlert(
-                `⚠️ ${trade.symbol}: ПАТТЕРН СЛОМАН!\n${invalidation.reason}`
+                `${trade.symbol}: ПАТТЕРН СЛОМАН!\n${invalidation.reason}`
               )
               addTradeEvent(trade.id, {
                 type: 'INVALIDATION',
@@ -378,7 +378,7 @@ export const useTradeCopilot = () => {
           ) {
             haptic.warning()
             showAlert(
-              `📚 ${trade.symbol}: OBI против лонга\n${obi.label}`
+              `${trade.symbol}: OBI против лонга\n${obi.label}`
             )
             addTradeEvent(trade.id, {
               type: 'WALL_DETECTED',
@@ -400,7 +400,7 @@ export const useTradeCopilot = () => {
               const volumeUsd = wall.price * wall.volume
               haptic.warning()
               showAlert(
-                `🧱 ${trade.symbol}: Крупная стена Ask на пути!\nЦена: ${wall.price.toFixed(4)} | Объём: $${(volumeUsd / 1000).toFixed(0)}k\nВозможно торможение.`
+                `${trade.symbol}: Крупная стена Ask на пути!\nЦена: ${wall.price.toFixed(4)} | Объём: $${(volumeUsd / 1000).toFixed(0)}k\nВозможно торможение.`
               )
               addTradeEvent(trade.id, {
                 type: 'WALL_DETECTED',
@@ -425,7 +425,7 @@ export const useTradeCopilot = () => {
               const volumeUsd = wall.price * wall.volume
               haptic.warning()
               showAlert(
-                `🧱 ${trade.symbol}: Крупная стена Bid на пути!\nЦена: ${wall.price.toFixed(4)} | Объём: $${(volumeUsd / 1000).toFixed(0)}k\nВозможно торможение.`
+                `${trade.symbol}: Крупная стена Bid на пути!\nЦена: ${wall.price.toFixed(4)} | Объём: $${(volumeUsd / 1000).toFixed(0)}k\nВозможно торможение.`
               )
               addTradeEvent(trade.id, {
                 type: 'WALL_DETECTED',

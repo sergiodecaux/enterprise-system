@@ -429,9 +429,9 @@ function finalizeLimit(
     filled
       ? 'Лимит уже в рынке'
       : `До лимита ${distancePct.toFixed(2)}%`,
-    mmAgrees ? `MM ${ctx.mm?.emoji ?? ''} → ${side}` : '',
-    htfOpposes ? '⚠️ HTF против' : '',
-    dailyOpposes ? '⚠️ Дневной биас против' : '',
+    mmAgrees ? `MM → ${side}` : '',
+    htfOpposes ? 'HTF против' : '',
+    dailyOpposes ? 'Дневной биас против' : '',
   ])
 
   return {
@@ -497,8 +497,8 @@ function fromSurgical(
     priority: surgical.status === 'READY' ? 100 : 80,
     reasons: [
       surgical.status === 'READY'
-        ? '🎯 Surgical: лимит готов'
-        : `⏳ Surgical: ${surgical.status}`,
+        ? 'Surgical: лимит готов'
+        : `Surgical: ${surgical.status}`,
       ...surgical.confirmations.slice(0, 2),
       surgical.reason,
     ].filter(Boolean),
@@ -562,7 +562,7 @@ function fromMmHunt(
     baseConfidence: Math.min(85, 40 + mm.confidence * 0.4),
     priority: 85,
     reasons: [
-      `MM ${mm.emoji} → ${side}`,
+      `MM → ${side}`,
       mm.hunt.macroLabel
         ? `Магнит: ${mm.hunt.macroLabel}`
         : 'Stop-hunt → разворот',

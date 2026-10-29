@@ -63,10 +63,10 @@ export function detectFlatlineBreakout(
       priceMovePct,
       corridorPct,
       scoreBoost: 40,
-      emoji: '🔥',
+      emoji: '',
       label: `IGNITION flatline | Vol ×${volMult.toFixed(0)} | Δ${priceMovePct.toFixed(1)}%`,
       alert:
-        '🔥 IGNITION: алгоритм пампа запущен. Вход по рынку, стоп за свечу пробоя. R:R потенциал 1:20.',
+        'IGNITION: алгоритм пампа запущен. Вход по рынку, стоп за свечу пробоя. R:R потенциал 1:20.',
     }
   }
 
@@ -78,9 +78,9 @@ export function detectFlatlineBreakout(
       priceMovePct,
       corridorPct,
       scoreBoost: 22,
-      emoji: '🔥',
+      emoji: '',
       label: `Early ignition | Vol ×${volMult.toFixed(0)}`,
-      alert: '🔥 Раннее зажигание — следи за продолжением объёма',
+      alert: 'Раннее зажигание — следи за продолжением объёма',
     }
   }
 

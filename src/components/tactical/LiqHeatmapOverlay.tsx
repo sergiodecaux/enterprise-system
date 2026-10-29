@@ -326,7 +326,7 @@ const LiqHeatmapOverlay = ({
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
       <div ref={labelsRef} className="absolute inset-0" />
       {model && !edgeOnly && (
-        <div className="absolute right-12 top-9 z-[12] flex items-center gap-2 rounded-full border border-white/10 bg-black/50 px-2.5 py-1 font-mono text-[9px] uppercase tracking-wider text-white/70 backdrop-blur-md">
+        <div className="absolute right-12 top-9 z-[12] flex items-center gap-2 rounded-full border border-white/10 bg-black/50 px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-white/70 backdrop-blur-md">
           <span className="inline-flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]" />
             лонги

@@ -1,3 +1,4 @@
+import { Zap } from 'lucide-react'
 import type { BuyerAggressionResult } from '../../engine/types'
 
 interface BuyerAggressionIndicatorProps {
@@ -69,7 +70,7 @@ const BuyerAggressionIndicator = ({
 
         {detected && (
           <span
-            className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${c.badge}`}
+            className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[11px] font-bold ${c.badge}`}
           >
             +{aggression.scoreBoost} к оценке
           </span>
@@ -78,7 +79,7 @@ const BuyerAggressionIndicator = ({
 
       <div className="mb-3 flex items-end gap-3">
         <div>
-          <div className="mb-0.5 font-mono text-[10px] uppercase text-holo/30">
+          <div className="mb-0.5 font-mono text-[11px] uppercase text-holo/30">
             Покупка / Продажа
           </div>
           <div className={`font-mono text-2xl font-bold ${c.text}`}>
@@ -88,13 +89,13 @@ const BuyerAggressionIndicator = ({
         </div>
 
         <div className="mb-1">
-          <div className="mb-0.5 font-mono text-[10px] text-holo/30">порог</div>
+          <div className="mb-0.5 font-mono text-[11px] text-holo/30">порог</div>
           <div className="font-mono text-sm text-holo/50">{threshold}x</div>
         </div>
 
         {largeBuyCount > 0 && (
           <div className="mb-1 ml-auto">
-            <div className="mb-0.5 font-mono text-[10px] text-holo/30">
+            <div className="mb-0.5 font-mono text-[11px] text-holo/30">
               крупных покупок
             </div>
             <div className={`font-mono text-sm font-bold ${c.text}`}>
@@ -119,14 +120,21 @@ const BuyerAggressionIndicator = ({
             }}
           />
         </div>
-        <div className="mt-1 flex justify-between font-mono text-[9px] text-holo/30">
+        <div className="mt-1 flex justify-between font-mono text-[11px] text-holo/30">
           <span>ПРОДАЖА</span>
           <span>ПОКУПКА</span>
         </div>
       </div>
 
-      <p className={`font-mono text-[10px] leading-relaxed ${c.text}`}>
-        {detected ? `⚡ ${label}` : `Мониторинг ленты · окно ${windowSec}с`}
+      <p className={`font-mono text-[11px] leading-relaxed ${c.text}`}>
+        {detected ? (
+          <span className="inline-flex items-center gap-1">
+            <Zap className="h-3 w-3" />
+            {label}
+          </span>
+        ) : (
+          `Мониторинг ленты · окно ${windowSec}с`
+        )}
       </p>
     </div>
   )

@@ -46,7 +46,7 @@ const WhaleAlertBanner = ({ alert, onDismiss }: Props) => {
         />
       </div>
 
-      <div className="min-w-0 flex-1 truncate font-mono text-[10px]">
+      <div className="min-w-0 flex-1 truncate font-mono text-[11px]">
         <span className={`font-bold uppercase ${accentColor}`}>
           {isSupport ? 'ОПОРА ↓' : 'КРЫША ↑'}
           {isImmediate ? ' · близко' : ''}

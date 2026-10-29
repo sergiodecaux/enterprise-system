@@ -4,7 +4,7 @@ import type { StyleProfile } from './types'
 export const SWING_PROFILE: StyleProfile = {
   style: 'SWING',
   label: 'Свинг',
-  badge: '🕯 SWING',
+  badge: 'SWING',
   timeframeHint: '4H–1D',
   risk: {
     maxStopPct: 5,
