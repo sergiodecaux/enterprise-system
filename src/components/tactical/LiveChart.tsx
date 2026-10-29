@@ -163,6 +163,8 @@ import { useWorkerMarketContext } from '../../hooks/useWorkerMarketContext'
 import { buildLiqHeatmap } from '../../engine/derivatives/liqHeatmap'
 import WhaleLevelsOverlay from './WhaleLevelsOverlay'
 import WhaleSitStrip from './WhaleSitStrip'
+import WhaleTrapButton from './WhaleTrapButton'
+import WhaleTrapOverlay from './WhaleTrapOverlay'
 import { buildWhaleSitMap } from '../../engine/orderbook/whaleSitLevels'
 import LiqHeatmapOverlay from './LiqHeatmapOverlay'
 import SequenceProcessOverlay from './SequenceProcessOverlay'
@@ -377,6 +379,7 @@ const LiveChart = ({
   const [showLiqMap, setShowLiqMap] = useState(() =>
     readLsFlag('enterprise_liq_layer', true)
   )
+  const [showWhaleTrap, setShowWhaleTrap] = useState(false)
   const [audioOn, setAudioOn] = useState(() => {
     try {
       return localStorage.getItem('enterprise_process_audio') === '1'
@@ -3707,6 +3710,14 @@ const LiveChart = ({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          <WhaleTrapButton
+            active={showWhaleTrap}
+            onClick={() => {
+              setShowWhaleTrap((value) => !value)
+              haptic.impact()
+            }}
+          />
+
           <button
             type="button"
             onClick={() => applyCleanMode(!cleanMode)}
@@ -4258,6 +4269,17 @@ const LiveChart = ({
               cleanMode ? (showLiqMap ? 0.52 : 0.36) : showLiqMap ? 1 : 0.42
             }
             edgeOnly={cleanMode || chartExpanded || !showLiqMap}
+          />
+        )}
+        {chartReady > 0 && showWhaleTrap && !bouncesMode && (
+          <WhaleTrapOverlay
+            chart={chartInstance}
+            series={candleRef.current}
+            containerRef={containerRef}
+            candles={candles}
+            currentPrice={currentPrice}
+            symbol={flatSymbol}
+            visible={showWhaleTrap}
           />
         )}
         {!bouncesMode && (

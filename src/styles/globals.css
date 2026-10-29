@@ -260,6 +260,19 @@
   white-space: nowrap;
 }
 
+/* Whale Trap keeps the amber liquidation semantic even when active. */
+.tv-btn-whale-on {
+  color: #f5b942;
+  border-color: rgba(245, 185, 66, 0.4);
+  background: rgba(245, 185, 66, 0.12);
+  box-shadow: 0 0 12px rgba(245, 185, 66, 0.16);
+}
+
+.tv-btn-whale-on:hover {
+  color: #ffd27a;
+  background: rgba(245, 185, 66, 0.17);
+}
+
 .tv-icon {
   display: inline-flex;
   align-items: center;
